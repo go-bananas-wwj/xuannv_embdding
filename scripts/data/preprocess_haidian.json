@@ -1,0 +1,10 @@
+{
+  "region": "haidian",
+  "raw_root": "/data/xuannv_embedding/raw/haidian",
+  "output_root": "/data/xuannv_embedding/processed/haidian/scenes",
+  "crs": "EPSG:32650",
+  "patch_size_m": 2560,
+  "patch_size_px": 256,
+  "sources": ["s2", "s1", "landsat"],
+  "fill_missing": "skip"
+}
