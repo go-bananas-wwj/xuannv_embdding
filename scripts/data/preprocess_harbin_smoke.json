@@ -1,0 +1,10 @@
+{
+  "region": "harbin",
+  "raw_root": "/data/xuannv_embedding/raw/harbin",
+  "output_root": "/data/xuannv_embedding/processed/harbin_smoke/scenes",
+  "crs": "EPSG:32652",
+  "patch_size_m": 640,
+  "patch_size_px": 64,
+  "sources": ["s2", "s1"],
+  "fill_missing": "zero"
+}
