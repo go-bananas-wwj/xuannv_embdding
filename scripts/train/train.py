@@ -129,7 +129,6 @@ def _resolve_device(args_device: str | None, is_distributed: bool) -> torch.devi
 def _build_loader(
     cfg: Config,
     target_heads: dict[str, dict[str, Any]],
-    device: torch.device,
     split: str,
     is_distributed: bool,
 ) -> DataLoader:
@@ -213,14 +212,12 @@ def main() -> None:
     train_loader = _build_loader(
         cfg,
         cfg.model.target_heads,
-        device,
         split="train",
         is_distributed=is_distributed,
     )
     val_loader = _build_loader(
         cfg,
         cfg.model.target_heads,
-        device,
         split="val",
         is_distributed=is_distributed,
     )
