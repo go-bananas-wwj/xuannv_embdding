@@ -45,9 +45,16 @@ def test_dataset_loads_manifest() -> None:
     assert sample["source_masks"]["s2"].sum().item() == 1.0
     assert sample["timestamps"]["s2"][0].item() == 202501
 
-    # s1 在当前数据中不存在，应为空张量
+    # s1 在当前数据中已存在，应能正确加载
     s1_frames = sample["source_frames"]["s1"]
-    assert s1_frames.shape[0] == 0
+    assert s1_frames.ndim == 4
+    assert s1_frames.shape[0] == 2  # 2 个时相
+    assert s1_frames.shape[1] == 2  # Sentinel-1 2 波段
+    assert s1_frames.shape[2] == 256
+    assert s1_frames.shape[3] == 256
+    assert s1_frames.dtype == torch.float32
+
+    assert sample["source_masks"]["s1"].sum().item() == 2.0
 
 
 def test_collate_fn() -> None:
