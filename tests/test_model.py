@@ -6,6 +6,7 @@ import torch
 
 from xuannv_embedding.models.blocks import SpaceOperator, TimeOperator
 from xuannv_embedding.models.bottleneck import VMFBottleneck
+from xuannv_embedding.models.decoders import CategoricalDecoder, ContinuousDecoder
 from xuannv_embedding.models.sensor_encoders import SensorEncoder, SensorEncoderBank
 
 
@@ -100,3 +101,31 @@ def test_vmf_bottleneck() -> None:
     # 每个空间位置的 L2 范数应接近 1。
     norms = z.norm(dim=1)
     assert torch.allclose(norms, torch.ones_like(norms), atol=1e-6)
+
+
+def test_continuous_decoder() -> None:
+    """ContinuousDecoder 应保持空间尺寸并将通道映射到 out_channels。"""
+    batch_size = 2
+    embed_dim = 64
+    out_channels = 13
+    height, width = 8, 8
+
+    decoder = ContinuousDecoder(embed_dim, out_channels)
+    emb = torch.randn(batch_size, embed_dim, height, width)
+    y = decoder(emb)
+
+    assert y.shape == (batch_size, out_channels, height, width)
+
+
+def test_categorical_decoder() -> None:
+    """CategoricalDecoder 应保持空间尺寸并输出 num_classes 个 logits。"""
+    batch_size = 2
+    embed_dim = 64
+    num_classes = 11
+    height, width = 8, 8
+
+    decoder = CategoricalDecoder(embed_dim, num_classes)
+    emb = torch.randn(batch_size, embed_dim, height, width)
+    y = decoder(emb)
+
+    assert y.shape == (batch_size, num_classes, height, width)
