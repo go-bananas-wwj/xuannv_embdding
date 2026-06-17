@@ -111,7 +111,9 @@ class TotalLoss(nn.Module):
             ``recon_{name}`` 的字典。
         """
         recon_losses: dict[str, torch.Tensor] = {}
-        total_recon = torch.tensor(0.0, device=output.embedding.device, dtype=output.embedding.dtype)
+        total_recon = torch.tensor(
+            0.0, device=output.embedding.device, dtype=output.embedding.dtype
+        )
 
         for name, cfg in self.target_cfg.items():
             pred = output.reconstructions[name]
