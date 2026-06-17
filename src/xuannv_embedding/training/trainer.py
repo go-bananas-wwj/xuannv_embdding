@@ -76,8 +76,12 @@ class Trainer:
         self.global_step = 0
         self.gradient_accumulation_steps = getattr(cfg.training, "gradient_accumulation_steps", 1)
 
-        # 输出目录：约定 /data/xuannv_embedding/outputs/{experiment_name}
-        self.output_dir = Path("/data/xuannv_embedding/outputs") / cfg.experiment.name
+        # 输出目录：优先使用 experiment.output_dir，否则约定为
+        # /data/xuannv_embedding/outputs/{experiment_name}
+        output_dir = getattr(cfg.experiment, "output_dir", None)
+        if output_dir is None:
+            output_dir = Path("/data/xuannv_embedding/outputs") / cfg.experiment.name
+        self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def _unwrap_model(self) -> nn.Module:

@@ -19,12 +19,13 @@ class DataConfig:
     root: Path
     region: str
     manifest_path: Path
-    num_samples: int
+    num_samples: int | None = None  # 仅作为元数据，实际样本数由 dataset 长度决定
     statistics_dir: Path | None = None
     max_patches: int | None = None
     batch_size: int = 4
     num_workers: int = 4
     patch_size: int = 256
+    months: list[str] = field(default_factory=lambda: [])
     sources: list[str] = field(default_factory=lambda: ["s2", "s1", "landsat"])
 
 
@@ -34,6 +35,7 @@ class ExperimentConfig:
 
     name: str
     seed: int = 42
+    output_dir: Path | None = None
 
 
 @dataclass
@@ -92,9 +94,7 @@ class Config:
             key = exc.args[0]
             raise ConfigError(f"配置文件 {path} 缺少必填顶层字段: {key}") from exc
 
-        _validate_required_keys(
-            data_cfg, ["root", "region", "manifest_path", "num_samples"], path, "data"
-        )
+        _validate_required_keys(data_cfg, ["root", "region", "manifest_path"], path, "data")
         _validate_required_keys(
             model_cfg, ["embed_dim", "sensor_channels", "target_heads"], path, "model"
         )
@@ -128,17 +128,21 @@ class Config:
                 root=root,
                 region=region,
                 manifest_path=Path(data_cfg["manifest_path"]),
-                num_samples=data_cfg["num_samples"],
+                num_samples=data_cfg.get("num_samples"),
                 statistics_dir=statistics_dir,
                 max_patches=data_cfg.get("max_patches"),
                 batch_size=data_cfg.get("batch_size", 4),
                 num_workers=data_cfg.get("num_workers", 4),
                 patch_size=data_cfg.get("patch_size", 256),
+                months=data_cfg.get("months", []),
                 sources=data_cfg.get("sources", ["s2", "s1", "landsat"]),
             ),
             experiment=ExperimentConfig(
                 name=experiment_cfg["name"],
                 seed=experiment_cfg.get("seed", 42),
+                output_dir=(
+                    Path(experiment_cfg["output_dir"]) if experiment_cfg.get("output_dir") else None
+                ),
             ),
             model=ModelConfig(
                 embed_dim=model_cfg["embed_dim"],

@@ -11,10 +11,10 @@
 ## 项目状态
 
 - [x] 项目计划已制定：见 `docs/superpowers/plans/2026-06-17-xuannv-embedding-rebuild.md`
-- [ ] 数据下载脚本
-- [ ] 预处理 pipeline
-- [ ] 模型实现
-- [ ] 训练与评估
+- [x] 数据下载脚本：PC / ModelScope / 百度网盘三类脚本已完成
+- [x] 预处理 pipeline：对齐、patchify、统计量、manifest 生成已完成
+- [x] 模型实现：sensor encoders、space/time operators、VMF bottleneck、decoders 框架代码完成
+- [x] 训练与评估：DDP 训练器、评估脚本、哈尔滨样本数据已下载，单卡冒烟训练通过
 
 ## 目录约定
 

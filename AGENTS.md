@@ -65,7 +65,10 @@ python scripts/data/download_pc.py --region harbin --start 2025-01-01 --end 2026
 python scripts/data/download_modelscope.py --dataset WeijieWu/haidian_sar_2025 --output /data/xuannv_embedding/raw/haidian/highres_sar
 
 # 百度网盘
-python scripts/data/download_baidu.py --links-file links.txt --output /data/xuannv_embedding/raw/beijing/highres_optical
+python scripts/data/download_baidu.py \
+    --links-file scripts/data/baidu_links_harbin.txt \
+    --output /data/xuannv_embedding/raw/harbin/highres_optical
+# 注：links 文件需根据实际百度网盘目录生成，区域名应为 haidian 或 harbin。
 ```
 
 ## 执行计划
