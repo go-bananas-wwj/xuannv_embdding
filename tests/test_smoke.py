@@ -6,6 +6,7 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
 import torch
 
 import xuannv_embedding
@@ -118,11 +119,8 @@ def test_get_device_fallback_no_npu(monkeypatch) -> None:
 
 def test_get_device_invalid_preference() -> None:
     """非法 preference 应抛出 RuntimeError。"""
-    try:
+    with pytest.raises(RuntimeError):
         get_device("not_a_device")
-    except RuntimeError:
-        return
-    raise AssertionError("非法设备字符串应抛出 RuntimeError")
 
 
 def test_model_forward_from_config() -> None:
