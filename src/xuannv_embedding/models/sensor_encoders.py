@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-# 多源遥感数据 stem encoder：为每个数据源提供独立的浅层卷积编码器。
-
 import torch
 from torch import nn
+
+# 多源遥感数据 stem encoder：为每个数据源提供独立的浅层卷积编码器。
 
 
 class SensorEncoder(nn.Module):
@@ -24,9 +24,7 @@ class SensorEncoder(nn.Module):
         # GroupNorm 要求 num_channels 能被 num_groups 整除；
         # 当 out_channels 小于 8 时，直接使用 out_channels 作为 group 数。
         num_groups = 8 if out_channels % 8 == 0 else out_channels
-        self.conv = nn.Conv2d(
-            in_channels, out_channels, kernel_size=3, padding=1, bias=False
-        )
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=False)
         self.norm = nn.GroupNorm(num_groups=num_groups, num_channels=out_channels)
         self.relu = nn.ReLU(inplace=True)
 
@@ -84,7 +82,5 @@ class SensorEncoderBank(nn.Module):
             KeyError: 当 ``source`` 不在已注册的编码器中时抛出。
         """
         if source not in self.encoders:
-            raise KeyError(
-                f"未知数据源: {source!r}，可用数据源: {list(self.encoders.keys())}"
-            )
+            raise KeyError(f"未知数据源: {source!r}，可用数据源: {list(self.encoders.keys())}")
         return self.encoders[source](x)
