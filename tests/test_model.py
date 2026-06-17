@@ -8,7 +8,9 @@ from xuannv_embedding.models.blocks import SpaceOperator, TimeOperator
 from xuannv_embedding.models.bottleneck import VMFBottleneck
 from xuannv_embedding.models.decoders import CategoricalDecoder, ContinuousDecoder
 from xuannv_embedding.models.highres_fusion import AvailabilityAwareFusion
+from xuannv_embedding.models.model import AEFModel, AEFOutput
 from xuannv_embedding.models.sensor_encoders import SensorEncoder, SensorEncoderBank
+from xuannv_embedding.models.time_encoding import TimeEncoding, WindowCode
 
 
 def test_space_operator() -> None:
@@ -151,3 +153,106 @@ def test_availability_aware_fusion() -> None:
     assert out_zero.shape == (batch_size, dim, height, width)
     assert out_one.shape == (batch_size, dim, height, width)
     assert not torch.allclose(out_zero, out_one)
+
+
+def test_time_encoding() -> None:
+    """TimeEncoding 应将时间戳编码为 (B, T, embed_dim)。"""
+    batch_size, time_steps, embed_dim = 2, 6, 16
+
+    encoding = TimeEncoding(embed_dim, max_periods=64)
+    timestamps = torch.arange(time_steps).float().unsqueeze(0).expand(batch_size, -1)
+    out = encoding(timestamps)
+
+    assert out.shape == (batch_size, time_steps, embed_dim)
+
+
+def test_window_code() -> None:
+    """WindowCode 应将窗口 ID 映射为 embedding。"""
+    num_windows, embed_dim = 12, 16
+    batch_size = 2
+
+    window_code = WindowCode(num_windows, embed_dim)
+    window_ids = torch.randint(0, num_windows, (batch_size,))
+    out = window_code(window_ids)
+
+    assert out.shape == (batch_size, embed_dim)
+
+
+def test_aef_model_forward() -> None:
+    """AEFModel 应能前向传播并返回正确形状的输出（含高分辨率数据）。"""
+    sensor_channels = {"s2": 10, "s1": 2, "landsat": 6, "highres": 3}
+    embed_dim = 16
+    target_heads = {
+        "s2_recon": ("continuous", 10),
+        "s1_recon": ("continuous", 2),
+        "worldcover": ("categorical", 11),
+    }
+    model = AEFModel(
+        sensor_channels,
+        embed_dim,
+        target_heads,
+        num_time_heads=2,
+        num_space_heads=2,
+    )
+
+    batch_size, time_steps, height, width = 2, 4, 16, 16
+    source_frames = {
+        "s2": torch.randn(batch_size, time_steps, 10, height, width),
+        "s1": torch.randn(batch_size, time_steps, 2, height, width),
+        "landsat": torch.randn(batch_size, time_steps, 6, height, width),
+    }
+    source_masks = {k: torch.ones(batch_size, time_steps) for k in source_frames}
+    timestamps = torch.arange(time_steps).float().unsqueeze(0).expand(batch_size, -1)
+    highres_frame = torch.randn(batch_size, 3, height, width)
+    highres_mask = torch.ones(batch_size, 1, height, width)
+
+    out = model(
+        source_frames,
+        source_masks,
+        timestamps,
+        highres_frame,
+        highres_mask,
+    )
+
+    assert isinstance(out, AEFOutput)
+    assert out.embedding.shape == (batch_size, embed_dim)
+    assert out.embedding_map.shape == (batch_size, embed_dim, height, width)
+    assert set(out.reconstructions.keys()) == set(target_heads.keys())
+    assert out.reconstructions["s2_recon"].shape == (batch_size, 10, height, width)
+    assert out.reconstructions["s1_recon"].shape == (batch_size, 2, height, width)
+    assert out.reconstructions["worldcover"].shape == (batch_size, 11, height, width)
+
+    # embedding_map 应位于单位球面上。
+    norms = out.embedding_map.norm(dim=1)
+    assert torch.allclose(norms, torch.ones_like(norms), atol=1e-6)
+
+
+def test_aef_model_without_highres() -> None:
+    """AEFModel 在没有高分辨率数据时也应能正常前向传播。"""
+    sensor_channels = {"s2": 10, "s1": 2, "landsat": 6}
+    embed_dim = 16
+    target_heads = {"s2_recon": ("continuous", 10)}
+    model = AEFModel(
+        sensor_channels,
+        embed_dim,
+        target_heads,
+        num_time_heads=2,
+        num_space_heads=2,
+    )
+
+    batch_size, time_steps, height, width = 2, 3, 16, 16
+    source_frames = {
+        "s2": torch.randn(batch_size, time_steps, 10, height, width),
+        "s1": torch.randn(batch_size, time_steps, 2, height, width),
+        "landsat": torch.randn(batch_size, time_steps, 6, height, width),
+    }
+    source_masks = {k: torch.ones(batch_size, time_steps) for k in source_frames}
+    timestamps = torch.arange(time_steps).float().unsqueeze(0).expand(batch_size, -1)
+
+    out = model(source_frames, source_masks, timestamps)
+
+    assert isinstance(out, AEFOutput)
+    assert out.embedding.shape == (batch_size, embed_dim)
+    assert out.embedding_map.shape == (batch_size, embed_dim, height, width)
+    assert "s2_recon" in out.reconstructions
+    assert out.reconstructions["s2_recon"].shape == (batch_size, 10, height, width)
