@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -28,12 +29,19 @@ def _find_patches_for_patch_id(
     patch_id: str,
     source: str,
 ) -> list[Path] | None:
-    """在指定 source 目录中查找与 patch_id 匹配的 patch 文件。"""
+    """在指定 source 目录中查找与 patch_id 匹配的 patch 文件。
+
+    优先精确匹配 ``{source}_{patch_id}``；当不同 sensor 的观测日期不一致时，
+    退而匹配 patch_id 末尾的网格编号 ``pXXX_rXXX``，以便将同一空间格网但不同
+    日期的影像归到同一条目。
+    """
     if not source_dir.exists():
         return None
 
     candidates: list[Path] = []
     expected_stem = f"{source}_{patch_id}"
+    grid_match = re.search(r"p\d{3}_r\d{3}$", patch_id)
+    grid_suffix = f"_{grid_match.group()}" if grid_match else None
 
     for path in source_dir.iterdir():
         if not path.is_file():
@@ -41,8 +49,10 @@ def _find_patches_for_patch_id(
         if path.suffix.lower() not in PATCH_EXTENSIONS:
             continue
         stem = path.stem
-        # 完全同名，或以 ``_{patch_id}`` 结尾（允许不同 source 前缀）
+        # 完全同名，或以 ``_{patch_id}`` 结尾（日期也相同）
         if stem == expected_stem or stem == patch_id or stem.endswith(f"_{patch_id}"):
+            candidates.append(path)
+        elif grid_suffix and stem.endswith(grid_suffix):
             candidates.append(path)
 
     if not candidates:
