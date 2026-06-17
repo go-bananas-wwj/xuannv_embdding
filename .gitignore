@@ -6,7 +6,7 @@ __pycache__/
 .mypy_cache/
 
 # Data / outputs
-data/
+/data/
 outputs/
 out/
 *.tiff
@@ -23,3 +23,9 @@ out/
 
 # Logs
 *.log
+
+# Tools / sessions
+tools/baidupcs/
+*.db
+.baidupcs_session
+BaiduPCS-Go.ini
