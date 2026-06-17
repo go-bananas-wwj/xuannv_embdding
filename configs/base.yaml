@@ -18,6 +18,10 @@ model:
       loss_type: continuous
       channels: 2
       weight: 1.0
+    worldcover:
+      loss_type: categorical
+      channels: 11
+      weight: 0.5
 
 training:
   epochs: 100
