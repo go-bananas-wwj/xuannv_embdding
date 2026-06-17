@@ -10,7 +10,6 @@ import numpy as np
 from sklearn.metrics import accuracy_score, f1_score
 from sklearn.neighbors import KNeighborsClassifier
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -30,9 +29,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _check_input_files(*paths: Path) -> None:
+    """校验所有输入文件均存在，缺失时抛出清晰的 FileNotFoundError。"""
+    for path in paths:
+        if not path.exists():
+            raise FileNotFoundError(f"输入文件不存在: {path}")
+
+
 def _main(argv: list[str] | None = None) -> None:
     """KNN 评估主函数（可被测试直接调用）。"""
     args = parse_args(argv)
+
+    _check_input_files(
+        args.embedding_train,
+        args.label_train,
+        args.embedding_test,
+        args.label_test,
+    )
 
     train = np.load(args.embedding_train)
     test = np.load(args.embedding_test)
@@ -55,6 +68,7 @@ def _main(argv: list[str] | None = None) -> None:
 
 def main() -> None:
     """命令行入口。"""
+    logging.basicConfig(level=logging.INFO)
     _main()
 
 
