@@ -4,7 +4,40 @@ from __future__ import annotations
 import pytest
 import torch
 
+from xuannv_embedding.models.blocks import SpaceOperator, TimeOperator
 from xuannv_embedding.models.sensor_encoders import SensorEncoder, SensorEncoderBank
+
+
+def test_space_operator() -> None:
+    """SpaceOperator 应保持 (B, H*W, C) 的输入输出形状一致。"""
+    batch_size = 2
+    height, width = 8, 8
+    dim = 64
+
+    operator = SpaceOperator(dim, num_heads=8)
+    x = torch.randn(batch_size, height * width, dim)
+    y = operator(x)
+
+    assert y.shape == (batch_size, height * width, dim)
+
+
+def test_time_operator() -> None:
+    """TimeOperator 应保持 (B, T, C) 的输入输出形状一致。"""
+    batch_size = 2
+    time_steps = 12
+    dim = 64
+
+    operator = TimeOperator(dim, num_heads=8)
+    x = torch.randn(batch_size, time_steps, dim)
+    y = operator(x)
+
+    assert y.shape == (batch_size, time_steps, dim)
+
+
+def test_operator_invalid_heads() -> None:
+    """当 dim 不能被 num_heads 整除时应抛出 ValueError。"""
+    with pytest.raises(ValueError, match="必须能被"):
+        SpaceOperator(dim=63, num_heads=8)
 
 
 def test_sensor_encoder_shape() -> None:
