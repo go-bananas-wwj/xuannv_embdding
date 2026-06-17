@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from xuannv_embedding.utils.manifest import generate_manifest, load_manifest, save_manifest
 
 
