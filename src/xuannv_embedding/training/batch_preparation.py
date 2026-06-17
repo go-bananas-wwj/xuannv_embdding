@@ -30,7 +30,9 @@ def _head_source_name(
     if explicit is not None:
         return explicit
     if head_name.endswith("_recon"):
-        return head_name[: -len("_recon")]
+        stripped = head_name[: -len("_recon")]
+        if stripped in available_sources:
+            return stripped
     if head_name in available_sources:
         return head_name
     return None
@@ -55,12 +57,13 @@ def _weighted_temporal_mean(frames: torch.Tensor, mask: torch.Tensor) -> torch.T
 def prepare_batch(
     batch: dict[str, Any],
     target_heads: dict[str, dict[str, Any]],
-    device: torch.device,
 ) -> dict[str, Any]:
     """将 collate 后的 batch 转换为 AEFModel / Trainer 需要的格式。
 
+    本函数只负责 shape/head 转换与张量构造，不搬运 device；device 搬运由
+    ``Trainer._move_batch_to_device`` 统一完成，避免职责重复。
+
     主要转换:
-        - 将 ``source_frames`` / ``source_masks`` 及构造出的统一 ``timestamps`` 移动到 device。
         - 从第一个有效的 source 提取全局 ``timestamps``（``[B, T]``）。
         - 若存在 ``highres`` source，将其聚合为单帧与可用性掩码并从时序源中移除。
         - 为每个 target head 构造 ``targets`` 与 ``target_masks``。
@@ -71,7 +74,6 @@ def prepare_batch(
         target_heads: 配置中的 target_heads，每个 head 至少包含
             ``loss_type``（``continuous`` / ``categorical``）与 ``channels``，
             可选 ``source`` 与 ``weight``。
-        device: 目标设备。
 
     返回:
         转换后的 batch 字典，可直接喂给 ``Trainer``。
@@ -81,41 +83,18 @@ def prepare_batch(
     source_timestamps = batch["timestamps"]
     patch_ids = batch["patch_ids"]
 
+    if not source_frames:
+        raise ValueError("source_frames 不能为空字典")
+
     # 取第一个 T > 0 的 source 的时间戳作为全局 timestamps。
     global_timestamps: torch.Tensor | None = None
     for source, frames in source_frames.items():
         if frames.shape[1] > 0:
-            global_timestamps = source_timestamps[source].to(device, non_blocking=True)
+            global_timestamps = source_timestamps[source]
             break
     if global_timestamps is None:
         batch_size = next(iter(source_frames.values())).shape[0]
-        global_timestamps = torch.zeros(
-            batch_size,
-            0,
-            dtype=torch.long,
-            device=device,
-        )
-
-    # 将时序源数据移动到目标设备。
-    source_frames = {
-        source: frames.to(device, non_blocking=True) for source, frames in source_frames.items()
-    }
-    source_masks = {
-        source: masks.to(device, non_blocking=True) for source, masks in source_masks.items()
-    }
-
-    # 分离高分辨率数据：按时间掩码加权聚合为单帧，并生成空间可用性掩码。
-    highres_frame: torch.Tensor | None = None
-    highres_mask: torch.Tensor | None = None
-    if "highres" in source_frames:
-        hr_frames = source_frames.pop("highres")
-        hr_masks = source_masks.pop("highres")
-        source_timestamps.pop("highres", None)
-        if hr_frames.shape[1] > 0:
-            highres_frame = _weighted_temporal_mean(hr_frames, hr_masks)
-            _, _, height, width = highres_frame.shape
-            avail = (hr_masks.sum(dim=1) > 0).float()
-            highres_mask = avail[:, None, None, None].expand(-1, 1, height, width)
+        global_timestamps = torch.zeros(batch_size, 0, dtype=torch.long)
 
     # 为每个 target head 构造 target 与 target_mask。
     available_sources = set(source_frames.keys())
@@ -140,13 +119,7 @@ def prepare_batch(
             masks = source_masks[source_name]
             agg = _weighted_temporal_mean(frames, masks)
             height, width = agg.shape[2], agg.shape[3]
-            target_mask = torch.ones(
-                batch_size,
-                height,
-                width,
-                dtype=torch.float32,
-                device=device,
-            )
+            target_mask = torch.ones(batch_size, height, width, dtype=torch.float32)
             if loss_type == "continuous":
                 targets[head_name] = agg
             else:  # categorical
@@ -160,7 +133,6 @@ def prepare_batch(
                     spatial_h,
                     spatial_w,
                     dtype=torch.float32,
-                    device=device,
                 )
             else:
                 targets[head_name] = torch.zeros(
@@ -168,15 +140,26 @@ def prepare_batch(
                     spatial_h,
                     spatial_w,
                     dtype=torch.long,
-                    device=device,
                 )
             target_masks[head_name] = torch.zeros(
                 batch_size,
                 spatial_h,
                 spatial_w,
                 dtype=torch.float32,
-                device=device,
             )
+
+    # 分离高分辨率数据：按时间掩码加权聚合为单帧，并生成空间可用性掩码。
+    highres_frame: torch.Tensor | None = None
+    highres_mask: torch.Tensor | None = None
+    if "highres" in source_frames:
+        hr_frames = source_frames.pop("highres")
+        hr_masks = source_masks.pop("highres")
+        source_timestamps.pop("highres", None)
+        if hr_frames.shape[1] > 0:
+            highres_frame = _weighted_temporal_mean(hr_frames, hr_masks)
+            _, _, height, width = highres_frame.shape
+            avail = (hr_masks.sum(dim=1) > 0).float()
+            highres_mask = avail[:, None, None, None].expand(-1, 1, height, width)
 
     return {
         "patch_ids": patch_ids,

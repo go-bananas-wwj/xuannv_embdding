@@ -103,10 +103,14 @@ def _set_seed(seed: int) -> None:
 
 
 def _resolve_device(args_device: str | None, is_distributed: bool) -> torch.device:
-    """根据用户参数与分布式环境解析训练设备。"""
-    if args_device is not None:
-        return get_device(args_device)
+    """根据用户参数与分布式环境解析训练设备。
+
+    分布式模式下固定按 ``LOCAL_RANK`` 选择设备，忽略用户传入的 ``--device``，
+    避免所有 rank 被绑定到同一设备导致 DDP 失败。
+    """
     if not is_distributed:
+        if args_device is not None:
+            return get_device(args_device)
         return get_device()
 
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
@@ -142,7 +146,7 @@ def _build_loader(
 
     def training_collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
         collated = collate_fn(batch)
-        return prepare_batch(collated, target_heads, device)
+        return prepare_batch(collated, target_heads)
 
     shuffle = (split == "train") and (sampler is None)
     drop_last = split == "train"
