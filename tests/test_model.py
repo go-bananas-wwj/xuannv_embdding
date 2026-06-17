@@ -5,6 +5,7 @@ import pytest
 import torch
 
 from xuannv_embedding.models.blocks import SpaceOperator, TimeOperator
+from xuannv_embedding.models.bottleneck import VMFBottleneck
 from xuannv_embedding.models.sensor_encoders import SensorEncoder, SensorEncoderBank
 
 
@@ -81,3 +82,21 @@ def test_sensor_encoder_bank_unknown_source() -> None:
 
     with pytest.raises(KeyError, match="未知数据源"):
         bank(x, source="landsat")
+
+
+def test_vmf_bottleneck() -> None:
+    """VMFBottleneck 应保持 (B, C, H, W) 形状并将输出约束到单位球面。"""
+    batch_size = 2
+    in_dim = 64
+    out_dim = 32
+    height, width = 8, 8
+
+    bottleneck = VMFBottleneck(in_dim, out_dim, kappa=100.0)
+    x = torch.randn(batch_size, in_dim, height, width)
+    z = bottleneck(x)
+
+    assert z.shape == (batch_size, out_dim, height, width)
+
+    # 每个空间位置的 L2 范数应接近 1。
+    norms = z.norm(dim=1)
+    assert torch.allclose(norms, torch.ones_like(norms), atol=1e-6)
