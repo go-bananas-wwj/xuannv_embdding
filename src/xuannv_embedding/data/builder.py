@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-"""DataLoader 工厂。"""
-
-from pathlib import Path
-from typing import Any
-
+# DataLoader 工厂
 from torch.utils.data import DataLoader
 
 from xuannv_embedding.config import DataConfig

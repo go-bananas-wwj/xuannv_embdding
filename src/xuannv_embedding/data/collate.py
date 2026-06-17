@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-"""变长时序 batch 对齐。"""
-
+# 变长时序 batch 对齐
 from typing import Any
 
 import torch
