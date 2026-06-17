@@ -8,11 +8,18 @@ training:
   lr: 1.0e-3
   warmup_epochs: 0
 
+model:
+  sensor_channels:
+    s2: 12
+  target_heads:
+    s2_recon:
+      channels: 12
+
 data:
-  region: harbin
-  root: /data/xuannv_embedding/processed/harbin/scenes
-  manifest_path: /data/xuannv_embedding/processed/harbin/scenes/manifest.json
-  statistics_dir: /data/xuannv_embedding/statistics/harbin
+  region: harbin_smoke
+  root: /data/xuannv_embedding/processed/harbin_smoke/scenes
+  manifest_path: /data/xuannv_embedding/processed/harbin_smoke/scenes/manifest.json
+  statistics_dir: /data/xuannv_embedding/statistics/harbin_smoke
   num_samples: 8
   batch_size: 2
   max_patches: 8
