@@ -1,4 +1,5 @@
 """生成 processed patches 的 manifest JSON。"""
+
 from __future__ import annotations
 
 import argparse
