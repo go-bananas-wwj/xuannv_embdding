@@ -26,8 +26,12 @@ from xuannv_embedding.utils.device import get_device
 logger = logging.getLogger(__name__)
 
 
-def parse_args() -> argparse.Namespace:
-    """解析命令行参数。"""
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """解析命令行参数。
+
+    参数:
+        argv: 可选参数列表，用于测试；为 ``None`` 时解析 ``sys.argv``。
+    """
     parser = argparse.ArgumentParser(description="AEF 月度地理嵌入训练入口")
     parser.add_argument(
         "--config",
@@ -47,7 +51,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="覆盖自动设备选择，例如 cpu / cuda:0 / npu:0",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def setup_distributed() -> bool:
