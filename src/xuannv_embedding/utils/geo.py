@@ -65,9 +65,7 @@ def make_patch_grid(
     while x < right:
         y = bottom
         while y < top:
-            patches.append(
-                (x, y, min(x + patch_size_m, right), min(y + patch_size_m, top))
-            )
+            patches.append((x, y, min(x + patch_size_m, right), min(y + patch_size_m, top)))
             y += patch_size_m
         x += patch_size_m
     return patches
