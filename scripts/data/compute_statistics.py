@@ -7,9 +7,9 @@ import json
 import logging
 import math
 from pathlib import Path
-from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import rasterio
 
 logging.basicConfig(
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_OUTPUT_ROOT = Path("/data/xuannv_embedding/statistics")
 
 
-def _valid_mask(values: np.ndarray, nodata: float | None) -> np.ndarray:
+def _valid_mask(values: np.ndarray, nodata: float | None) -> npt.NDArray[np.bool_]:
     """生成有效像素掩码：排除 nan、inf 以及 nodata 值。"""
     mask = np.isfinite(values)
     if nodata is not None and not math.isnan(nodata):
@@ -91,7 +91,7 @@ def compute_statistics(
     processed_dir: Path,
     source: str,
     max_patches: int | None = None,
-) -> dict[str, Any]:
+) -> dict[str, list[float] | list[int] | int | str]:
     """计算单个数据源所有波段的统计量。
 
     参数
@@ -105,8 +105,14 @@ def compute_statistics(
 
     返回
     -------
-    dict:
-        包含 mean、std、count 等字段的统计字典。
+    dict[str, list[float] | list[int] | int | str]:
+        包含以下字段的统计字典：
+        - mean: 各波段有效像素均值列表。
+        - std: 各波段有效像素标准差列表。
+        - count: 所有波段有效像素总数。
+        - band_counts: 各波段有效像素数量列表。
+        - num_files: 成功处理的文件数量。
+        - source: 数据源名称。
     """
     source_dir = processed_dir / source
     files = _collect_tif_files(source_dir, max_patches)
@@ -121,7 +127,6 @@ def compute_statistics(
 
     accumulators: list[_WelfordAccumulator] | None = None
     num_success = 0
-    nodata_counts: list[int] | None = None
 
     for idx, tif_path in enumerate(files, start=1):
         try:
@@ -136,7 +141,6 @@ def compute_statistics(
         if accumulators is None:
             num_bands = data.shape[0]
             accumulators = [_WelfordAccumulator() for _ in range(num_bands)]
-            nodata_counts = [0] * num_bands
         else:
             num_bands = data.shape[0]
             if num_bands != len(accumulators):
@@ -151,8 +155,6 @@ def compute_statistics(
         for band_idx in range(num_bands):
             band_data = data[band_idx]
             mask = _valid_mask(band_data, nodata)
-            if nodata_counts is not None:
-                nodata_counts[band_idx] += int((~mask).sum())
             accumulators[band_idx].update(band_data[mask])
 
         num_success += 1
