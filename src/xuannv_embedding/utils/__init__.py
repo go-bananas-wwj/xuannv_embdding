@@ -9,6 +9,11 @@ from xuannv_embedding.utils.geo import (
     reproject_array,
     reproject_raster_to_match,
 )
+from xuannv_embedding.utils.manifest import (
+    generate_manifest,
+    load_manifest,
+    save_manifest,
+)
 
 __all__ = [
     "get_device",
@@ -17,4 +22,7 @@ __all__ = [
     "make_patch_grid",
     "reproject_array",
     "reproject_raster_to_match",
+    "generate_manifest",
+    "save_manifest",
+    "load_manifest",
 ]
