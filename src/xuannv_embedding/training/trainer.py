@@ -29,7 +29,7 @@ class Trainer:
         self,
         cfg: Any,
         model: nn.Module,
-        train_loader: DataLoader | None,
+        train_loader: DataLoader,
         val_loader: DataLoader | None,
         device: torch.device | str | None,
         criterion: nn.Module,
@@ -86,9 +86,7 @@ class Trainer:
             return self.model.module
         return self.model
 
-    def _move_batch_to_device(
-        self, batch: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _move_batch_to_device(self, batch: dict[str, Any]) -> dict[str, Any]:
         """将 batch 中所有 Tensor 移动到训练设备。"""
         moved: dict[str, Any] = {}
         for key, value in batch.items():
@@ -163,6 +161,7 @@ class Trainer:
         if (len(self.train_loader) % self.gradient_accumulation_steps) != 0:
             self.optimizer.step()
             self.optimizer.zero_grad(set_to_none=True)
+            self.global_step += 1
 
         self.scheduler.step()
 

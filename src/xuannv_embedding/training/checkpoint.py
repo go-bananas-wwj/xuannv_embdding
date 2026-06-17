@@ -62,7 +62,9 @@ def load_checkpoint(
         checkpoint 字典，包含 ``epoch``、``metrics`` 等字段。
     """
     path = Path(path)
-    state = torch.load(path, map_location=device, weights_only=False)
+    # 使用 weights_only=True 防止不受信任 checkpoint 的 pickle 反序列化漏洞，
+    # 同时避免 PyTorch 2.6+ 的安全警告。
+    state = torch.load(path, map_location=device, weights_only=True)
 
     model.load_state_dict(state["model"])
 
