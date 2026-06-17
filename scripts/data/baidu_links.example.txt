@@ -1,4 +1,4 @@
 # 每行一个百度网盘远程路径
 # 远程路径应为 BaiduPCS-Go 可识别的绝对路径，例如 /我的资源/example.zip
-/我的资源/beijin_rs_psscene_analytic_sr_udm2.zip
+/我的资源/beijing_rs_psscene_analytic_sr_udm2.zip
 /我的资源/haidian_highres.zip

@@ -7,7 +7,8 @@
         --links-file scripts/data/baidu_links.example.txt \
         --output /data/xuannv_embedding/raw/beijing/highres_optical
 
-links 文件每行一个远程路径，以 ``#`` 开头的行为注释。若本地已存在同名文件/目录，默认跳过；使用 ``--overwrite`` 可强制重新下载。
+links 文件每行一个远程路径，以 ``#`` 开头的行为注释。
+若本地已存在同名文件/目录，默认跳过；使用 ``--overwrite`` 可强制重新下载。
 """
 
 from __future__ import annotations
