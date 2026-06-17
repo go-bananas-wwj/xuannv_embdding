@@ -1,0 +1,17 @@
+# 海淀/北京高分辨率样本远程路径（百度网盘 /玄女科技/）
+# 以下路径来自 BaiduPCS-Go 递归 listing；大文件已注释，仅作为索引。
+# 天仪 SAR 数据已通过 ModelScope 下载，此处列出等效百度网盘路径供参考。
+
+# 北京高分辨率光学 PlanetScene patch 压缩包（5.45 GB）
+# /玄女科技/beijin_rs_psscene_analytic_sr_udm2.zip
+
+# 海淀 SAR 单轨道目录（约 672 MB，2 个 zip）
+# /玄女科技/海淀区sar/玄女底座/中国北京市点位1_干涉/BC3-015516
+
+# 海淀 SAR 全部轨道根目录（与 ModelScope 数据集内容对应）
+# /玄女科技/海淀区sar/玄女底座/中国北京市点位1_干涉
+
+# 海淀 AOI/标签小文件（可作为辅助数据）
+# /玄女科技/haidian_320_patches_aoi.shp
+# /玄女科技/haidian_aoi_boundary.shp
+# /玄女科技/haidianlabel.rar

@@ -1,0 +1,17 @@
+# 哈尔滨高分辨率样本远程路径（百度网盘 /玄女科技/）
+# 以下路径来自 BaiduPCS-Go 递归 listing；大文件已注释，仅作为索引。
+
+# 单个 patch 样本（约 56 MB，推荐用于快速验证）
+/玄女科技/haerbin_patches/patch_000112
+
+# 全部 patch 压缩包（41.22 GB，不建议在此任务中下载）
+# /玄女科技/haerbin_patches.zip
+
+# 哈尔滨 2025-12 整幅 DOM（22.14 GB）
+# /玄女科技/哈尔滨_202512/哈尔滨新区_BJ3_202512_DOM_RGB.tif
+
+# 哈尔滨 2026-05 整幅影像（22.14 GB）
+# /玄女科技/哈尔滨_202605/哈尔滨江北区域.tif
+
+# PlanetScene patch 压缩包（5.96 GB）
+# /玄女科技/planetscene-patches.zip
