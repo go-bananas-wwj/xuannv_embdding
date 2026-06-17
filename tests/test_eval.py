@@ -168,3 +168,117 @@ def test_extract_embeddings_argparse() -> None:
     assert args.output == "out.npz"
     assert args.split == "train"
     assert args.include_maps is False
+
+
+def _import_knn_module() -> types.ModuleType:
+    """通过 importlib 动态导入 scripts/eval/knn_eval.py。"""
+    knn_path = Path(__file__).parent.parent / "scripts" / "eval" / "knn_eval.py"
+    spec = importlib.util.spec_from_file_location("scripts.eval.knn_eval", str(knn_path))
+    if spec is None or spec.loader is None:
+        raise ImportError(f"无法加载 KNN 评估脚本: {knn_path}")
+    module = types.ModuleType(spec.name)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _import_change_detection_module() -> types.ModuleType:
+    """通过 importlib 动态导入 scripts/eval/change_detection_eval.py。"""
+    cd_path = Path(__file__).parent.parent / "scripts" / "eval" / "change_detection_eval.py"
+    spec = importlib.util.spec_from_file_location(
+        "scripts.eval.change_detection_eval", str(cd_path)
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"无法加载变化检测评估脚本: {cd_path}")
+    module = types.ModuleType(spec.name)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_knn_eval_end_to_end(tmp_path: Path) -> None:
+    """KNN 评估脚本应能在随机数据上跑通并输出指标。"""
+    num_train, num_test, dim = 32, 8, 16
+    rng = np.random.default_rng(42)
+
+    train_embeddings = rng.random((num_train, dim)).astype(np.float32)
+    test_embeddings = rng.random((num_test, dim)).astype(np.float32)
+    train_labels = rng.integers(0, 3, size=num_train).astype(np.int64)
+    test_labels = rng.integers(0, 3, size=num_test).astype(np.int64)
+
+    embedding_train_path = tmp_path / "train.npz"
+    embedding_test_path = tmp_path / "test.npz"
+    label_train_path = tmp_path / "labels_train.npz"
+    label_test_path = tmp_path / "labels_test.npz"
+    output_path = tmp_path / "knn_metrics.npz"
+
+    np.savez(embedding_train_path, embeddings=train_embeddings)
+    np.savez(embedding_test_path, embeddings=test_embeddings)
+    np.savez(label_train_path, labels=train_labels)
+    np.savez(label_test_path, labels=test_labels)
+
+    knn_module = _import_knn_module()
+    knn_module._main(
+        [
+            "--embedding-train",
+            str(embedding_train_path),
+            "--label-train",
+            str(label_train_path),
+            "--embedding-test",
+            str(embedding_test_path),
+            "--label-test",
+            str(label_test_path),
+            "--k",
+            "3",
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert output_path.exists()
+    metrics = np.load(output_path)
+    assert "accuracy" in metrics
+    assert "f1_macro" in metrics
+    assert float(metrics["accuracy"]) >= 0.0
+
+
+def test_change_detection_eval_end_to_end(tmp_path: Path) -> None:
+    """变化检测评估脚本应能计算 AUC 并保存结果。"""
+    num_samples, dim = 32, 16
+    rng = np.random.default_rng(24)
+
+    before = rng.random((num_samples, dim)).astype(np.float32)
+    after = rng.random((num_samples, dim)).astype(np.float32)
+    labels = rng.integers(0, 2, size=num_samples).astype(np.int64)
+    # 确保同时包含正负样本，否则 roc_auc_score 会报错。
+    labels[0] = 0
+    labels[1] = 1
+
+    before_path = tmp_path / "before.npz"
+    after_path = tmp_path / "after.npz"
+    label_path = tmp_path / "labels.npz"
+    output_path = tmp_path / "cd_metrics.npz"
+
+    np.savez(before_path, embeddings=before)
+    np.savez(after_path, embeddings=after)
+    np.savez(label_path, labels=labels)
+
+    cd_module = _import_change_detection_module()
+    cd_module._main(
+        [
+            "--before",
+            str(before_path),
+            "--after",
+            str(after_path),
+            "--label",
+            str(label_path),
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert output_path.exists()
+    metrics = np.load(output_path)
+    assert "auc" in metrics
+    auc_value = float(metrics["auc"])
+    assert 0.0 <= auc_value <= 1.0
