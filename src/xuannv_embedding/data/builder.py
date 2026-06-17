@@ -33,6 +33,7 @@ def build_dataloader(
         manifest_path=cfg.manifest_path,
         statistics_dir=statistics_dir,
         sources=cfg.sources,
+        patch_size=cfg.patch_size,
         max_patches=cfg.max_patches,
     )
 
