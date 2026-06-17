@@ -1,0 +1,16 @@
+_base_: base.yaml
+
+experiment:
+  name: harbin_monthly_v1
+
+data:
+  region: harbin
+  root: /data/xuannv_embedding/processed/harbin/scenes
+  manifest_path: /data/xuannv_embedding/processed/harbin/scenes/manifest.json
+  statistics_dir: /data/xuannv_embedding/statistics/harbin
+  num_samples: 424
+  batch_size: 4
+  sources:
+    - s2
+    - s1
+    - landsat
