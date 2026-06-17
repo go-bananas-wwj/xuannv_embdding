@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-"""基于 dataclass 的 YAML 配置加载，支持 ``_base_`` 继承。"""
-
-from dataclasses import dataclass
+# 基于 dataclass 的 YAML 配置加载，支持 ``_base_`` 继承。
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+
+class ConfigError(ValueError):
+    """配置解析或校验失败的自定义异常。"""
 
 
 @dataclass
@@ -20,11 +23,7 @@ class DataConfig:
     max_patches: int | None = None
     batch_size: int = 4
     num_workers: int = 4
-    sources: list[str] = None  # type: ignore[assignment]
-
-    def __post_init__(self) -> None:
-        if self.sources is None:
-            self.sources = ["s2", "s1", "landsat"]
+    sources: list[str] = field(default_factory=lambda: ["s2", "s1", "landsat"])
 
 
 @dataclass
@@ -41,7 +40,7 @@ class ModelConfig:
 
     embed_dim: int
     sensor_channels: dict[str, int]
-    target_heads: dict[str, dict]
+    target_heads: dict[str, dict[str, Any]]
 
 
 @dataclass
@@ -75,44 +74,125 @@ class Config:
 
         返回:
             解析后的 ``Config`` 实例。
+
+        异常:
+            ConfigError: YAML 解析结果非法或必填字段缺失。
         """
         raw = _load_yaml_with_base(Path(path))
+        _validate_yaml_is_dict(raw, path)
+
+        try:
+            data_cfg = raw["data"]
+            experiment_cfg = raw["experiment"]
+            model_cfg = raw["model"]
+            training_cfg = raw["training"]
+        except KeyError as exc:
+            key = exc.args[0]
+            raise ConfigError(f"配置文件 {path} 缺少必填顶层字段: {key}") from exc
+
+        _validate_required_keys(
+            data_cfg, ["root", "region", "manifest_path", "num_samples"], path, "data"
+        )
+        _validate_required_keys(
+            model_cfg, ["embed_dim", "sensor_channels", "target_heads"], path, "model"
+        )
+        _validate_required_keys(
+            training_cfg,
+            [
+                "epochs",
+                "lr",
+                "weight_decay",
+                "warmup_epochs",
+                "gradient_accumulation_steps",
+                "save_every",
+                "eval_every",
+            ],
+            path,
+            "training",
+        )
+        _validate_required_keys(experiment_cfg, ["name"], path, "experiment")
+
         return cls(
             data=DataConfig(
-                root=Path(raw["data"]["root"]),
-                region=raw["data"]["region"],
-                manifest_path=Path(raw["data"]["manifest_path"]),
-                num_samples=raw["data"]["num_samples"],
-                max_patches=raw["data"].get("max_patches"),
-                batch_size=raw["data"].get("batch_size", 4),
-                num_workers=raw["data"].get("num_workers", 4),
-                sources=raw["data"].get("sources", ["s2", "s1", "landsat"]),
+                root=Path(data_cfg["root"]),
+                region=data_cfg["region"],
+                manifest_path=Path(data_cfg["manifest_path"]),
+                num_samples=data_cfg["num_samples"],
+                max_patches=data_cfg.get("max_patches"),
+                batch_size=data_cfg.get("batch_size", 4),
+                num_workers=data_cfg.get("num_workers", 4),
+                sources=data_cfg.get("sources", ["s2", "s1", "landsat"]),
             ),
             experiment=ExperimentConfig(
-                name=raw["experiment"]["name"],
-                seed=raw["experiment"].get("seed", 42),
+                name=experiment_cfg["name"],
+                seed=experiment_cfg.get("seed", 42),
             ),
             model=ModelConfig(
-                embed_dim=raw["model"]["embed_dim"],
-                sensor_channels=raw["model"]["sensor_channels"],
-                target_heads=raw["model"]["target_heads"],
+                embed_dim=model_cfg["embed_dim"],
+                sensor_channels=model_cfg["sensor_channels"],
+                target_heads=model_cfg["target_heads"],
             ),
             training=TrainingConfig(
-                epochs=raw["training"]["epochs"],
-                lr=raw["training"]["lr"],
-                weight_decay=raw["training"]["weight_decay"],
-                warmup_epochs=raw["training"]["warmup_epochs"],
-                gradient_accumulation_steps=raw["training"]["gradient_accumulation_steps"],
-                save_every=raw["training"]["save_every"],
-                eval_every=raw["training"]["eval_every"],
+                epochs=training_cfg["epochs"],
+                lr=training_cfg["lr"],
+                weight_decay=training_cfg["weight_decay"],
+                warmup_epochs=training_cfg["warmup_epochs"],
+                gradient_accumulation_steps=training_cfg["gradient_accumulation_steps"],
+                save_every=training_cfg["save_every"],
+                eval_every=training_cfg["eval_every"],
             ),
         )
 
 
-def _load_yaml_with_base(path: Path) -> dict[str, Any]:
-    """加载 YAML，并在存在 ``_base_`` 字段时递归合并父配置。"""
+def _validate_yaml_is_dict(raw: Any, path: str | Path) -> None:
+    """校验 YAML 解析结果是否为字典。"""
+    if not isinstance(raw, dict):
+        raise ConfigError(f"配置文件 {path} 必须是 YAML mapping，实际得到 {type(raw).__name__}")
+
+
+def _validate_required_keys(
+    section: Any, keys: list[str], path: str | Path, section_name: str
+) -> None:
+    """校验配置段是否为字典并包含所有必填字段。"""
+    if not isinstance(section, dict):
+        actual_type = type(section).__name__
+        raise ConfigError(
+            f"配置文件 {path} 中的 `{section_name}` 必须是 mapping，实际得到 {actual_type}"
+        )
+    for key in keys:
+        if key not in section:
+            raise ConfigError(f"配置文件 {path} 的 `{section_name}` 缺少必填字段: {key}")
+
+
+def _load_yaml_with_base(path: Path, loaded: set[str] | None = None) -> dict[str, Any]:
+    """加载 YAML，并在存在 ``_base_`` 字段时递归合并父配置。
+
+    参数:
+        path: 当前待加载的 YAML 文件路径。
+        loaded: 已加载文件路径集合，用于检测循环引用。
+
+    返回:
+        合并后的配置字典。
+
+    异常:
+        ConfigError: 文件不存在、YAML 非法或出现循环继承。
+    """
+    if loaded is None:
+        loaded = set()
+
+    abs_path = path.resolve()
+    path_str = str(abs_path)
+    if path_str in loaded:
+        raise ConfigError(f"检测到 `_base_` 循环引用: {path_str}")
+    loaded.add(path_str)
+
+    if not path.is_file():
+        raise ConfigError(f"配置文件不存在: {path}")
+
     with path.open("r", encoding="utf-8") as f:
-        config: dict[str, Any] = yaml.safe_load(f) or {}
+        config: Any = yaml.safe_load(f)
+
+    _validate_yaml_is_dict(config, path)
 
     base_name = config.pop("_base_", None)
     if base_name is None:
@@ -122,7 +202,7 @@ def _load_yaml_with_base(path: Path) -> dict[str, Any]:
     if not base_path.is_absolute():
         base_path = path.parent / base_path
 
-    base_config = _load_yaml_with_base(base_path)
+    base_config = _load_yaml_with_base(base_path, loaded)
     merged = _deep_merge(base_config, config)
     return merged
 

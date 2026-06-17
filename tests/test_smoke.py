@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-"""冒烟测试：验证包导入、配置加载和设备选择。"""
-
+# 冒烟测试：验证包导入、配置加载和设备选择。
+import sys
 from pathlib import Path
 
-import pytest
 import torch
 
 import xuannv_embedding
@@ -82,7 +81,29 @@ data:
     assert cfg.model.sensor_channels["s1"] == 2
 
 
-def test_get_device() -> None:
+def test_get_device_with_preference() -> None:
     """``preference`` 参数应被直接尊重。"""
-    device = get_device("cpu")
-    assert device == torch.device("cpu")
+    assert get_device("cpu") == torch.device("cpu")
+    assert get_device("npu:0") == torch.device("npu:0")
+    assert get_device("cuda:0") == torch.device("cuda:0")
+
+
+def test_get_device_fallback_no_npu(monkeypatch) -> None:
+    """无 preference 且 NPU 不可用时，应正确回退到 CUDA 或 CPU。"""
+    # 模拟 torch_npu 未安装
+    monkeypatch.setitem(sys.modules, "torch_npu", None)
+
+    device = get_device()
+    if torch.cuda.is_available():
+        assert device == torch.device("cuda:0")
+    else:
+        assert device == torch.device("cpu")
+
+
+def test_get_device_invalid_preference() -> None:
+    """非法 preference 应抛出 RuntimeError。"""
+    try:
+        get_device("not_a_device")
+    except RuntimeError:
+        return
+    raise AssertionError("非法设备字符串应抛出 RuntimeError")
