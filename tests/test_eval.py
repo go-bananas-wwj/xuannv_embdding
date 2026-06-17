@@ -16,14 +16,12 @@ from xuannv_embedding.models.model import AEFModel
 from xuannv_embedding.training.checkpoint import save_checkpoint
 
 
-def _import_extract_module() -> types.ModuleType:
-    """通过 importlib 动态导入 scripts/eval/extract_embeddings.py。"""
-    extract_path = Path(__file__).parent.parent / "scripts" / "eval" / "extract_embeddings.py"
-    spec = importlib.util.spec_from_file_location(
-        "scripts.eval.extract_embeddings", str(extract_path)
-    )
+def _import_script_module(relative_path: str, module_name: str) -> types.ModuleType:
+    """通过 importlib 动态加载 scripts/ 下的脚本模块。"""
+    script_path = Path(__file__).parent.parent / relative_path
+    spec = importlib.util.spec_from_file_location(module_name, str(script_path))
     if spec is None or spec.loader is None:
-        raise ImportError(f"无法加载评估脚本: {extract_path}")
+        raise ImportError(f"无法加载脚本: {script_path}")
     module = types.ModuleType(spec.name)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -145,7 +143,9 @@ def test_extract_embeddings_end_to_end(tmp_path: Path, monkeypatch: pytest.Monke
     ]
     monkeypatch.setattr(sys, "argv", argv)
 
-    extract_module = _import_extract_module()
+    extract_module = _import_script_module(
+        "scripts/eval/extract_embeddings.py", "scripts.eval.extract_embeddings"
+    )
     extract_module.main()
 
     assert output_path.exists()
@@ -159,7 +159,9 @@ def test_extract_embeddings_end_to_end(tmp_path: Path, monkeypatch: pytest.Monke
 
 def test_extract_embeddings_argparse() -> None:
     """评估脚本参数解析应能被测试导入并正确解析。"""
-    extract_module = _import_extract_module()
+    extract_module = _import_script_module(
+        "scripts/eval/extract_embeddings.py", "scripts.eval.extract_embeddings"
+    )
     args = extract_module.parse_args(
         ["--config", "cfg.yaml", "--checkpoint", "ckpt.pt", "--output", "out.npz"]
     )
@@ -168,32 +170,6 @@ def test_extract_embeddings_argparse() -> None:
     assert args.output == "out.npz"
     assert args.split == "train"
     assert args.include_maps is False
-
-
-def _import_knn_module() -> types.ModuleType:
-    """通过 importlib 动态导入 scripts/eval/knn_eval.py。"""
-    knn_path = Path(__file__).parent.parent / "scripts" / "eval" / "knn_eval.py"
-    spec = importlib.util.spec_from_file_location("scripts.eval.knn_eval", str(knn_path))
-    if spec is None or spec.loader is None:
-        raise ImportError(f"无法加载 KNN 评估脚本: {knn_path}")
-    module = types.ModuleType(spec.name)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-def _import_change_detection_module() -> types.ModuleType:
-    """通过 importlib 动态导入 scripts/eval/change_detection_eval.py。"""
-    cd_path = Path(__file__).parent.parent / "scripts" / "eval" / "change_detection_eval.py"
-    spec = importlib.util.spec_from_file_location(
-        "scripts.eval.change_detection_eval", str(cd_path)
-    )
-    if spec is None or spec.loader is None:
-        raise ImportError(f"无法加载变化检测评估脚本: {cd_path}")
-    module = types.ModuleType(spec.name)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 def test_knn_eval_end_to_end(tmp_path: Path) -> None:
@@ -217,7 +193,7 @@ def test_knn_eval_end_to_end(tmp_path: Path) -> None:
     np.savez(label_train_path, labels=train_labels)
     np.savez(label_test_path, labels=test_labels)
 
-    knn_module = _import_knn_module()
+    knn_module = _import_script_module("scripts/eval/knn_eval.py", "scripts.eval.knn_eval")
     knn_module._main(
         [
             "--embedding-train",
@@ -239,6 +215,9 @@ def test_knn_eval_end_to_end(tmp_path: Path) -> None:
     metrics = np.load(output_path)
     assert "accuracy" in metrics
     assert "f1_macro" in metrics
+    assert "predictions" in metrics
+    assert "labels" in metrics
+    assert metrics["predictions"].shape == metrics["labels"].shape
     assert float(metrics["accuracy"]) >= 0.0
 
 
@@ -263,7 +242,9 @@ def test_change_detection_eval_end_to_end(tmp_path: Path) -> None:
     np.savez(after_path, embeddings=after)
     np.savez(label_path, labels=labels)
 
-    cd_module = _import_change_detection_module()
+    cd_module = _import_script_module(
+        "scripts/eval/change_detection_eval.py", "scripts.eval.change_detection_eval"
+    )
     cd_module._main(
         [
             "--before",
@@ -280,5 +261,8 @@ def test_change_detection_eval_end_to_end(tmp_path: Path) -> None:
     assert output_path.exists()
     metrics = np.load(output_path)
     assert "auc" in metrics
+    assert "diff" in metrics
+    assert "labels" in metrics
+    assert metrics["diff"].shape == metrics["labels"].shape
     auc_value = float(metrics["auc"])
     assert 0.0 <= auc_value <= 1.0
