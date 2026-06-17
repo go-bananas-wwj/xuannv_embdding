@@ -14,7 +14,8 @@ def build_dataloader(
 ) -> DataLoader:
     """根据 ``DataConfig`` 构造 ``DataLoader``。
 
-    统计量目录约定为 ``{processed_root}/../statistics/{region}``。
+    统计量目录优先使用 ``cfg.statistics_dir``；若未提供，
+    则按约定从 ``processed/{region}/scenes`` 推导为 ``{data_root}/statistics/{region}``。
 
     参数:
         cfg: 数据配置。
@@ -23,8 +24,10 @@ def build_dataloader(
     返回:
         配置好的 ``DataLoader``。
     """
-    # 从 processed 目录推导统计量目录
-    statistics_dir = cfg.root.parent / "statistics" / cfg.region
+    if cfg.statistics_dir is not None:
+        statistics_dir = cfg.statistics_dir
+    else:
+        statistics_dir = cfg.root.parent.parent.parent / "statistics" / cfg.region
 
     dataset = MonthlyEmbeddingDataset(
         manifest_path=cfg.manifest_path,

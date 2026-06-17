@@ -51,25 +51,19 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
             padded_masks: list[torch.Tensor] = []
             padded_timestamps: list[torch.Tensor] = []
 
-            for frames, masks, timestamps in zip(
-                frames_list, masks_list, timestamps_list
-            ):
+            for frames, masks, timestamps in zip(frames_list, masks_list, timestamps_list):
                 t = frames.shape[0]
                 if t < max_t:
                     pad_t = max_t - t
                     channels, height, width = frames.shape[1:]
 
-                    pad_frames = torch.zeros(
-                        pad_t, channels, height, width, dtype=torch.float32
-                    )
+                    pad_frames = torch.zeros(pad_t, channels, height, width, dtype=torch.float32)
                     pad_masks = torch.zeros(pad_t, dtype=torch.float32)
                     pad_timestamps = torch.zeros(pad_t, dtype=torch.long)
 
                     padded_frames.append(torch.cat([frames, pad_frames], dim=0))
                     padded_masks.append(torch.cat([masks, pad_masks], dim=0))
-                    padded_timestamps.append(
-                        torch.cat([timestamps, pad_timestamps], dim=0)
-                    )
+                    padded_timestamps.append(torch.cat([timestamps, pad_timestamps], dim=0))
                 else:
                     padded_frames.append(frames)
                     padded_masks.append(masks)

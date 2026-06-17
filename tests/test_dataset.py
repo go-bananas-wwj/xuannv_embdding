@@ -67,6 +67,23 @@ def test_collate_fn() -> None:
     assert len(collated["patch_ids"]) == 2
 
 
+def test_dataset_normalizes_with_statistics() -> None:
+    """dataset 应读取统计量并对 S2 数据进行归一化，数值应脱离原始反射率范围。"""
+    dataset = MonthlyEmbeddingDataset(
+        manifest_path=MANIFEST_PATH,
+        statistics_dir=STATISTICS_DIR,
+        sources=["s2"],
+        max_patches=1,
+    )
+    sample = dataset[0]
+    s2_frames = sample["source_frames"]["s2"]
+
+    # 原始 S2 反射率通常在 [0, 10000+]；归一化后应大致在 [-5, 5] 内
+    assert s2_frames.min().item() < 0.0
+    assert s2_frames.max().item() < 10.0
+    assert s2_frames.abs().max().item() < 10.0
+
+
 def test_build_dataloader() -> None:
     """builder 应能构造 DataLoader 并产生合法 batch。"""
     from xuannv_embedding.config import DataConfig
@@ -76,6 +93,7 @@ def test_build_dataloader() -> None:
         region="harbin",
         manifest_path=MANIFEST_PATH,
         num_samples=2,
+        statistics_dir=STATISTICS_DIR,
         max_patches=2,
         batch_size=2,
         num_workers=0,

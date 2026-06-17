@@ -30,6 +30,7 @@ data:
   root: /data/xuannv_embedding/processed/base
   region: base_region
   manifest_path: /data/xuannv_embedding/processed/base/manifest.json
+  statistics_dir: /data/xuannv_embedding/statistics/base_region
   num_samples: 100
   batch_size: 4
 model:
