@@ -70,11 +70,7 @@ class PatchInfo:
 def _find_data_variable(ds: xr.Dataset) -> str:
     """从 Dataset 中找出具有 (time, band, y, x) 维度的数据变量。"""
     target_dims = {"time", "band", "y", "x"}
-    candidates = [
-        name
-        for name, var in ds.data_vars.items()
-        if set(var.dims) == target_dims
-    ]
+    candidates = [name for name, var in ds.data_vars.items() if set(var.dims) == target_dims]
     if not candidates:
         raise ValueError(
             f"NetCDF 中未找到维度为 (time, band, y, x) 的数据变量，"
@@ -212,9 +208,7 @@ def extract_patch(
         若 patch 完全为空且配置跳过，则返回 None。
     """
     left, bottom, right, top = patch.bounds
-    dst_transform = from_bounds(
-        left, bottom, right, top, width=patch_size_px, height=patch_size_px
-    )
+    dst_transform = from_bounds(left, bottom, right, top, width=patch_size_px, height=patch_size_px)
 
     da: xr.DataArray = ds[data_var]
     src_array = da.isel(time=time_idx).values.astype(np.float32)
@@ -225,9 +219,7 @@ def extract_patch(
         src_array = src_array[:, ::-1, :]
 
     src_crs = CRS.from_epsg(int(ds.coords["epsg"].values))
-    src_transform, _, _ = _build_src_transform(
-        np.asarray(ds.x.values), np.asarray(ds.y.values)
-    )
+    src_transform, _, _ = _build_src_transform(np.asarray(ds.x.values), np.asarray(ds.y.values))
 
     dst_array = np.empty((src_array.shape[0], patch_size_px, patch_size_px), dtype=np.float32)
     reproject(
