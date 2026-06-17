@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 # 训练模块单元测试。
-import pytest
 import torch
 import torch.nn.functional as F
 
 from xuannv_embedding.models.model import AEFOutput
 from xuannv_embedding.training.losses import (
+    TotalLoss,
     batch_uniformity_loss,
     reconstruction_loss,
-    TotalLoss,
 )
 
 
@@ -107,7 +106,5 @@ def test_total_loss() -> None:
     assert torch.allclose(losses["total"], expected_total)
 
     # recon 应为加权求和。
-    expected_recon = (
-        1.0 * losses["recon_s2_recon"] + 0.5 * losses["recon_worldcover"]
-    )
+    expected_recon = 1.0 * losses["recon_s2_recon"] + 0.5 * losses["recon_worldcover"]
     assert torch.allclose(losses["recon"], expected_recon)
