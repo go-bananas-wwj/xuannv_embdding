@@ -47,7 +47,22 @@ class _BaseSelfAttentionBlock(nn.Module):
 
         Returns:
             输出张量，形状为 (B, N, C)。
+
+        Raises:
+            ValueError: 当输入维度或通道数不符合预期时抛出。
         """
+        if x.dim() != 3:
+            raise ValueError(f"自注意力输入必须是 3 维张量 (B, N, C)，当前维度为 {x.dim()}")
+        batch_size, seq_len, channels = x.shape
+        if channels != self.dim:
+            raise ValueError(f"输入通道数 ({channels}) 与初始化维度 ({self.dim}) 不一致")
+        if seq_len == 0:
+            # 空序列无 token 可处理，直接返回，避免进入后端触发未定义行为。
+            return x
+
+        # MultiheadAttention 的 CPU backend 在输入非连续内存时可能触发段错误，
+        # 因此在进入注意力前强制 contiguous。
+        x = x.contiguous()
         attn_out, _ = self.attn(x, x, x, need_weights=False)
         x = self.norm1(x + attn_out)
         mlp_out = self.mlp(x)
