@@ -1,14 +1,29 @@
 from __future__ import annotations
 
-# 冒烟测试：验证包导入、配置加载和设备选择。
+# 冒烟测试：验证包导入、配置加载、设备选择、端到端模型前向与训练入口。
+import importlib.util
 import sys
+import types
 from pathlib import Path
 
 import torch
 
 import xuannv_embedding
 from xuannv_embedding.config import Config
+from xuannv_embedding.models.model import AEFModel, AEFOutput
 from xuannv_embedding.utils.device import get_device
+
+
+def _import_train_module() -> types.ModuleType:
+    """通过 importlib 动态导入 scripts/train/train.py，避免包路径依赖。"""
+    train_path = Path(__file__).parent.parent / "scripts" / "train" / "train.py"
+    spec = importlib.util.spec_from_file_location("scripts.train.train", str(train_path))
+    if spec is None or spec.loader is None:
+        raise ImportError(f"无法加载训练脚本: {train_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["scripts.train.train"] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_import_package() -> None:
@@ -108,3 +123,65 @@ def test_get_device_invalid_preference() -> None:
     except RuntimeError:
         return
     raise AssertionError("非法设备字符串应抛出 RuntimeError")
+
+
+def test_model_forward_from_config() -> None:
+    """从真实配置文件构造 AEFModel 并完成一次前向传播。"""
+    cfg = Config.from_yaml(Path(__file__).parent.parent / "configs" / "smoke.yaml")
+
+    aef_target_heads = {
+        name: (head_cfg["loss_type"], head_cfg["channels"])
+        for name, head_cfg in cfg.model.target_heads.items()
+    }
+    model = AEFModel(
+        sensor_channels=cfg.model.sensor_channels,
+        embed_dim=cfg.model.embed_dim,
+        target_heads=aef_target_heads,
+    )
+
+    batch_size = 2
+    time_steps = 2
+    height, width = 16, 16
+
+    source_frames: dict[str, torch.Tensor] = {}
+    source_masks: dict[str, torch.Tensor] = {}
+    for source in cfg.data.sources:
+        channels = cfg.model.sensor_channels[source]
+        source_frames[source] = torch.randn(batch_size, time_steps, channels, height, width)
+        source_masks[source] = torch.ones(batch_size, time_steps)
+
+    timestamps = torch.arange(time_steps).float().unsqueeze(0).expand(batch_size, -1)
+
+    highres_frame: torch.Tensor | None = None
+    highres_mask: torch.Tensor | None = None
+    if "highres" in cfg.model.sensor_channels:
+        highres_frame = torch.randn(batch_size, cfg.model.sensor_channels["highres"], height, width)
+        highres_mask = torch.ones(batch_size, 1, height, width)
+
+    output = model(
+        source_frames=source_frames,
+        source_masks=source_masks,
+        timestamps=timestamps,
+        highres_frame=highres_frame,
+        highres_mask=highres_mask,
+    )
+
+    assert isinstance(output, AEFOutput)
+    assert output.embedding.shape == (batch_size, cfg.model.embed_dim)
+    assert output.embedding_map.shape == (batch_size, cfg.model.embed_dim, height, width)
+    assert set(output.reconstructions.keys()) == set(cfg.model.target_heads.keys())
+
+
+def test_train_entry_argparse() -> None:
+    """训练入口参数解析应能被测试导入并正确解析。"""
+    train_module = _import_train_module()
+    parse_args = train_module.parse_args
+
+    args = parse_args(["--config", "configs/smoke.yaml"])
+    assert args.config == "configs/smoke.yaml"
+    assert args.resume is None
+    assert args.device is None
+
+    args = parse_args(["--config", "configs/smoke.yaml", "--resume", "foo.pt"])
+    assert args.config == "configs/smoke.yaml"
+    assert args.resume == "foo.pt"
