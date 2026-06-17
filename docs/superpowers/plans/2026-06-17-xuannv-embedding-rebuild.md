@@ -19,6 +19,7 @@
 5. **模型基线**: 先做 AEF 原论文的 clean re-implementation，不默认引入旧仓库 v1 的 `skip_l2_norm` 等自定义改动（这些作为后续消融）。
 6. **下载工具**: S1/S2/Landsat 走 Planetary Computer；天仪 SAR 走 ModelScope（token 已提供）；北京/哈尔滨高分辨率走 BaiduPCS-Go。
 7. **当前阶段**: 先把框架和数据准备好，训练之后再沟通；但仍需写出完整训练入口和冒烟测试。
+8. **GitHub 仓库**: 远程仓库为 `go-bananas-wwj/xuannv_embdding`（注意拼写），本地项目名/包名为 `xuannv_embedding`。
 
 ---
 
@@ -122,7 +123,7 @@
 - Create: `/root/workspace/xuannv/.gitignore`
 - Create: `/root/workspace/xuannv/README.md`
 - Create: `/root/workspace/xuannv/pyproject.toml`
-- Modify: 在 GitHub 创建 `go-bananas-wwj/xuannv_embedding`
+- Modify: 在 GitHub 创建 `go-bananas-wwj/xuannv_embdding`
 
 - [ ] **Step 1: 检查 SSH key 是否可访问 GitHub**
 
@@ -134,7 +135,7 @@ Expected: `Hi go-bananas-wwj! You've successfully authenticated...`
 - [ ] **Step 2: 在 GitHub 创建空仓库（无 README）**
 
 ```bash
-gh repo create go-bananas-wwj/xuannv_embedding --private --confirm
+gh repo create go-bananas-wwj/xuannv_embdding --private --confirm
 ```
 或浏览器访问 https://github.com/new 创建。
 
@@ -143,7 +144,7 @@ gh repo create go-bananas-wwj/xuannv_embedding --private --confirm
 ```bash
 cd /root/workspace/xuannv
 git init
-git remote add origin git@github.com:go-bananas-wwj/xuannv_embedding.git
+git remote add origin git@github.com:go-bananas-wwj/xuannv_embdding.git
 ```
 
 - [ ] **Step 4: 写入 `.gitignore`**
