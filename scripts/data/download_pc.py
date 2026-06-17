@@ -255,6 +255,26 @@ def download_source(
 
     # 清理无法序列化为 NetCDF 的 stackstac 内部属性
     ds.attrs.pop("spec", None)
+    for attr_key in list(ds.attrs.keys()):
+        try:
+            _ = str(ds.attrs[attr_key])
+        except Exception:
+            ds.attrs.pop(attr_key, None)
+
+    # 清理坐标上的非序列化属性
+    for coord in ds.coords.values():
+        for attr_key in list(coord.attrs.keys()):
+            val = coord.attrs[attr_key]
+            if isinstance(val, (list, tuple, dict, set)) or not isinstance(
+                val, (str, int, float, np.generic)
+            ):
+                coord.attrs.pop(attr_key, None)
+
+    # 丢弃 object 类型坐标（如 proj:bbox / proj:transform 为 set/list，无法序列化为 NetCDF）
+    drop_coords = [name for name, coord in ds.coords.items() if coord.dtype == object]
+    if drop_coords:
+        logger.info("丢弃非序列化坐标: %s", drop_coords)
+        ds = ds.drop_vars(drop_coords)
 
     logger.info("开始写入 NetCDF: %s", out_path)
     ds.to_netcdf(out_path)
