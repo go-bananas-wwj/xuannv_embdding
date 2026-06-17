@@ -20,6 +20,7 @@ class DataConfig:
     region: str
     manifest_path: Path
     num_samples: int
+    statistics_dir: Path | None = None
     max_patches: int | None = None
     batch_size: int = 4
     num_workers: int = 4
@@ -112,12 +113,22 @@ class Config:
         )
         _validate_required_keys(experiment_cfg, ["name"], path, "experiment")
 
+        root = Path(data_cfg["root"])
+        region = data_cfg["region"]
+        statistics_dir = data_cfg.get("statistics_dir")
+        if statistics_dir is None:
+            # 约定 root 为 processed/{region}/scenes，统计量位于数据根目录 statistics/{region}
+            statistics_dir = root.parent.parent.parent / "statistics" / region
+        else:
+            statistics_dir = Path(statistics_dir)
+
         return cls(
             data=DataConfig(
-                root=Path(data_cfg["root"]),
-                region=data_cfg["region"],
+                root=root,
+                region=region,
                 manifest_path=Path(data_cfg["manifest_path"]),
                 num_samples=data_cfg["num_samples"],
+                statistics_dir=statistics_dir,
                 max_patches=data_cfg.get("max_patches"),
                 batch_size=data_cfg.get("batch_size", 4),
                 num_workers=data_cfg.get("num_workers", 4),
