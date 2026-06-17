@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xuannv_embedding"
+version = "0.1.0"
+description = "Clean re-implementation of AlphaEarth Foundations with monthly embeddings"
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.0,<2.2",
+    "torch_npu>=2.1.0",
+    "numpy>=1.24",
+    "rasterio>=1.3",
+    "geopandas>=0.14",
+    "xarray>=2023.0",
+    "pyyaml>=6.0",
+    "tqdm",
+    "planetary-computer>=1.0",
+    "pystac-client",
+    "stackstac",
+    "modelscope>=1.15",
+    "requests",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I", "W"]

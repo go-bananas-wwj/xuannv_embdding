@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Data / outputs
+data/
+outputs/
+out/
+*.tiff
+*.tif
+*.npz
+*.pt
+*.pth
+*.ckpt
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log
