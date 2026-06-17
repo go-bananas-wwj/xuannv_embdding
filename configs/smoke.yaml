@@ -7,6 +7,8 @@ training:
   epochs: 1
   lr: 1.0e-3
   warmup_epochs: 0
+  save_every: 1
+  eval_every: 1
 
 model:
   sensor_channels:
@@ -23,6 +25,7 @@ data:
   num_samples: 8
   batch_size: 2
   max_patches: 8
+  patch_size: 64
   sources:
     - s2
     - s1
