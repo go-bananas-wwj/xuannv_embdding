@@ -1,4 +1,5 @@
 {
+  "_comment": "region 指原始数据所属区域；output_root 才是 smoke 产物目录",
   "region": "harbin",
   "raw_root": "/data/xuannv_embedding/raw/harbin",
   "output_root": "/data/xuannv_embedding/processed/harbin_smoke/scenes",

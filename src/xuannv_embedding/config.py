@@ -24,6 +24,7 @@ class DataConfig:
     max_patches: int | None = None
     batch_size: int = 4
     num_workers: int = 4
+    patch_size: int = 256
     sources: list[str] = field(default_factory=lambda: ["s2", "s1", "landsat"])
 
 
@@ -132,6 +133,7 @@ class Config:
                 max_patches=data_cfg.get("max_patches"),
                 batch_size=data_cfg.get("batch_size", 4),
                 num_workers=data_cfg.get("num_workers", 4),
+                patch_size=data_cfg.get("patch_size", 256),
                 sources=data_cfg.get("sources", ["s2", "s1", "landsat"]),
             ),
             experiment=ExperimentConfig(
