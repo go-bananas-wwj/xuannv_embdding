@@ -7,6 +7,7 @@ import torch
 from xuannv_embedding.models.blocks import SpaceOperator, TimeOperator
 from xuannv_embedding.models.bottleneck import VMFBottleneck
 from xuannv_embedding.models.decoders import CategoricalDecoder, ContinuousDecoder
+from xuannv_embedding.models.highres_fusion import AvailabilityAwareFusion
 from xuannv_embedding.models.sensor_encoders import SensorEncoder, SensorEncoderBank
 
 
@@ -129,3 +130,24 @@ def test_categorical_decoder() -> None:
     y = decoder(emb)
 
     assert y.shape == (batch_size, num_classes, height, width)
+
+
+def test_availability_aware_fusion() -> None:
+    """AvailabilityAwareFusion 应保持形状，并且可用性掩码应影响输出。"""
+    batch_size = 2
+    dim = 64
+    height, width = 8, 8
+
+    fusion = AvailabilityAwareFusion(dim)
+    base_feat = torch.randn(batch_size, dim, height, width)
+    highres_feat = torch.randn(batch_size, dim, height, width)
+
+    mask_zero = torch.zeros(batch_size, 1, height, width)
+    mask_one = torch.ones(batch_size, 1, height, width)
+
+    out_zero = fusion(base_feat, highres_feat, mask_zero)
+    out_one = fusion(base_feat, highres_feat, mask_one)
+
+    assert out_zero.shape == (batch_size, dim, height, width)
+    assert out_one.shape == (batch_size, dim, height, width)
+    assert not torch.allclose(out_zero, out_one)
