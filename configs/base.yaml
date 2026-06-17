@@ -1,0 +1,56 @@
+experiment:
+  name: xuannv_emb_baseline
+  seed: 42
+
+model:
+  embed_dim: 64
+  sensor_channels:
+    s2: 10
+    s1: 2
+    landsat: 6
+    highres: 3
+  target_heads:
+    s2_recon:
+      loss_type: continuous
+      channels: 10
+      weight: 1.0
+    s1_recon:
+      loss_type: continuous
+      channels: 2
+      weight: 1.0
+
+training:
+  epochs: 100
+  lr: 1.0e-4
+  weight_decay: 0.05
+  warmup_epochs: 5
+  gradient_accumulation_steps: 1
+  save_every: 10
+  eval_every: 10
+
+data:
+  root: /data/xuannv_embedding/processed
+  region: base
+  manifest_path: /data/xuannv_embedding/processed/manifest.json
+  statistics_dir: /data/xuannv_embedding/statistics
+  num_samples: 0
+  batch_size: 4
+  patch_size: 256
+  months:
+    - "2025-01"
+    - "2025-02"
+    - "2025-03"
+    - "2025-04"
+    - "2025-05"
+    - "2025-06"
+    - "2025-07"
+    - "2025-08"
+    - "2025-09"
+    - "2025-10"
+    - "2025-11"
+    - "2025-12"
+    - "2026-01"
+    - "2026-02"
+    - "2026-03"
+    - "2026-04"
+    - "2026-05"

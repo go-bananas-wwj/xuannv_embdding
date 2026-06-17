@@ -1,0 +1,16 @@
+_base_: base.yaml
+
+experiment:
+  name: haidian_monthly_v1
+
+data:
+  region: haidian
+  root: /data/xuannv_embedding/processed/haidian/scenes
+  manifest_path: /data/xuannv_embedding/processed/haidian/scenes/manifest.json
+  statistics_dir: /data/xuannv_embedding/statistics/haidian
+  num_samples: 320
+  batch_size: 4
+  sources:
+    - s2
+    - s1
+    - landsat
