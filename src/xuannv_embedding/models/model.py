@@ -169,9 +169,7 @@ class AEFModel(nn.Module):
             if highres_mask is None:
                 raise ValueError("提供 highres_frame 时必须同时提供 highres_mask")
             if "highres" not in self.sensor_channels:
-                raise KeyError(
-                    "sensor_channels 中未注册 'highres'，无法融合高分辨率数据"
-                )
+                raise KeyError("sensor_channels 中未注册 'highres'，无法融合高分辨率数据")
             highres_feat = self.sensor_bank(highres_frame, "highres")
             base_feat = self.highres_fusion(base_feat, highres_feat, highres_mask)
 
@@ -182,10 +180,6 @@ class AEFModel(nn.Module):
         emb = emb_map.mean(dim=[2, 3])  # (B, embed_dim)
 
         # 解码器重建目标模态。
-        reconstructions = {
-            name: decoder(emb_map) for name, decoder in self.decoders.items()
-        }
+        reconstructions = {name: decoder(emb_map) for name, decoder in self.decoders.items()}
 
-        return AEFOutput(
-            embedding_map=emb_map, embedding=emb, reconstructions=reconstructions
-        )
+        return AEFOutput(embedding_map=emb_map, embedding=emb, reconstructions=reconstructions)

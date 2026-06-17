@@ -56,7 +56,11 @@ class TimeEncoding(nn.Module):
 
         # 构建正弦/余弦位置编码。
         pe = torch.zeros(
-            batch_size, time_steps, self.sinusoidal_dim, device=timestamps.device, dtype=torch.float32
+            batch_size,
+            time_steps,
+            self.sinusoidal_dim,
+            device=timestamps.device,
+            dtype=torch.float32,
         )
         pe[:, :, 0::2] = torch.sin(angle)
         pe[:, :, 1::2] = torch.cos(angle)
