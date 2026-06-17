@@ -1,11 +1,13 @@
 """从 Planetary Computer 下载 S1/S2/Landsat 时序影像并保存为 NetCDF。"""
+
 from __future__ import annotations
 
 import argparse
 import logging
 import sys
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 import geopandas as gpd
 import numpy as np
@@ -19,7 +21,45 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+DEFAULT_OUTPUT_ROOT = Path("/data/xuannv_embedding/raw")
+
 CATALOG_URL = "https://planetarycomputer.microsoft.com/api/stac/v1"
+MAX_RETRIES = 3
+RETRY_BACKOFF_SECONDS = 2.0
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def _retry(
+    max_retries: int = MAX_RETRIES, backoff: float = RETRY_BACKOFF_SECONDS
+) -> Callable[[F], F]:
+    """对网络 IO 操作进行基础指数退避重试的装饰器。"""
+
+    def decorator(func: F) -> F:
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            last_exc: Exception | None = None
+            for attempt in range(max_retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as exc:
+                    last_exc = exc
+                    if attempt < max_retries:
+                        sleep_time = backoff * (2**attempt)
+                        logger.warning(
+                            "%s 第 %d 次失败，%.1f 秒后重试: %s",
+                            func.__name__,
+                            attempt + 1,
+                            sleep_time,
+                            exc,
+                        )
+                        time.sleep(sleep_time)
+            raise last_exc  # type: ignore[misc]
+
+        return wrapper  # type: ignore[return-value]
+
+    return decorator
+
+
 COLLECTIONS: dict[str, str] = {
     "s2": "sentinel-2-l2a",
     "s1": "sentinel-1-rtc",
@@ -36,14 +76,41 @@ DEFAULT_RESOLUTION: dict[str, float] = {
 # 默认读取的 asset 名称，避免 collection 中包含无空间 CRS 的辅助 asset
 DEFAULT_ASSETS: dict[str, list[str] | None] = {
     "s2": [
-        "B02", "B03", "B04", "B05", "B06", "B07",
-        "B08", "B8A", "B09", "B11", "B12", "SCL",
+        "B02",
+        "B03",
+        "B04",
+        "B05",
+        "B06",
+        "B07",
+        "B08",
+        "B8A",
+        "B09",
+        "B11",
+        "B12",
+        "SCL",
     ],
     "s1": ["vv", "vh"],
     "landsat": [
-        "blue", "green", "red", "nir08", "swir16", "swir22",
+        "blue",
+        "green",
+        "red",
+        "nir08",
+        "swir16",
+        "swir22",
     ],
 }
+
+
+def _validate_date(date_str: str, name: str) -> None:
+    """校验日期字符串是否为 YYYY-MM-DD 格式；非法时抛出 ValueError。"""
+    from datetime import datetime
+
+    try:
+        datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError as exc:
+        raise ValueError(
+            f"{name} 必须是 YYYY-MM-DD 格式，例如 2025-01-01，收到: {date_str}"
+        ) from exc
 
 
 def _extract_epsg(item: Any) -> int | None:
@@ -71,6 +138,7 @@ def _load_aoi(region_file: Path) -> gpd.GeoDataFrame:
     return aoi.to_crs("EPSG:4326")
 
 
+@_retry()
 def _search_items(
     catalog: pystac_client.Client,
     collection: str,
@@ -121,19 +189,22 @@ def download_source(
         max_items: 最多搜索的 item 数量，None 表示不限制。
 
     返回:
-        保存的 NetCDF 路径；若未搜索到有效 item 则返回 None。
+        保存的 NetCDF 路径；若未搜索到有效 item 或文件已存在且不覆盖，则返回 None。
     """
+    _validate_date(start, "--start")
+    _validate_date(end, "--end")
+
     collection = COLLECTIONS[source]
     output_dir = output_root / region / source
     output_dir.mkdir(parents=True, exist_ok=True)
 
     out_path = _build_output_path(output_dir, source, start, end)
     if out_path.exists() and not overwrite:
-        logger.error(
+        logger.warning(
             "输出文件已存在: %s，如需覆盖请添加 --overwrite",
             out_path,
         )
-        raise FileExistsError(f"{out_path} already exists")
+        return None
 
     aoi = _load_aoi(region_file)
     bbox = tuple(aoi.total_bounds.tolist())
@@ -169,7 +240,7 @@ def download_source(
     # 使用 stackstac 堆叠为 xarray Dataset；这里用 latlon bounds 裁剪到 AOI
     assets = DEFAULT_ASSETS.get(source)
     logger.info("读取 assets: %s", assets)
-    ds = stackstac.stack(
+    ds = _retry()(stackstac.stack)(
         items,
         bounds_latlon=bbox,
         resolution=res,
@@ -226,8 +297,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--output-root",
-        default="/data/xuannv_embedding/raw",
-        help="原始数据输出根目录（默认 /data/xuannv_embedding/raw）",
+        default=DEFAULT_OUTPUT_ROOT,
+        type=Path,
+        help=f"原始数据输出根目录（默认 {DEFAULT_OUTPUT_ROOT}）",
     )
     parser.add_argument(
         "--resolution",
@@ -255,12 +327,12 @@ def main(argv: list[str] | None = None) -> int:
             start=args.start,
             end=args.end,
             region_file=args.region_file,
-            output_root=Path(args.output_root),
+            output_root=args.output_root,
             resolution=args.resolution,
             overwrite=args.overwrite,
             max_items=args.max_items,
         )
-    except FileExistsError as exc:
+    except ValueError as exc:
         logger.error("%s", exc)
         return 1
     except Exception as exc:
