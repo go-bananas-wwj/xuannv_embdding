@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-"""Dataset、collate 与 transforms 的单元测试。"""
-
+# Dataset、collate 与 transforms 的单元测试
 from pathlib import Path
 
 import torch

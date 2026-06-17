@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-"""月度地理嵌入 Dataset 实现。"""
-
+# 月度地理嵌入 Dataset 实现
 import json
 import logging
 from pathlib import Path

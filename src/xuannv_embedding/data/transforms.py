@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-"""影像读取、归一化与时间戳解析工具。"""
-
+# 影像读取、归一化与时间戳解析工具
 import logging
 import re
 from pathlib import Path
