@@ -276,8 +276,17 @@ def download_source(
         logger.info("丢弃非序列化坐标: %s", drop_coords)
         ds = ds.drop_vars(drop_coords)
 
+    # 将时间坐标规范化为秒级精度，避免 netCDF3 后端因 int64 纳秒时间编码失败
+    if "time" in ds.coords:
+        ds["time"] = ds["time"].astype("datetime64[s]")
+
     logger.info("开始写入 NetCDF: %s", out_path)
-    ds.to_netcdf(out_path)
+    ds.to_netcdf(
+        out_path,
+        encoding={
+            "time": {"dtype": "int32", "units": "seconds since 1970-01-01"},
+        },
+    )
     logger.info("保存成功: %s", out_path)
     return out_path
 
