@@ -130,8 +130,8 @@ class AEFModel(nn.Module):
         source_frames: dict[str, torch.Tensor],
         source_masks: dict[str, torch.Tensor],
         timestamps: torch.Tensor,
-        highres_frame: torch.Tensor | None = None,
-        highres_mask: torch.Tensor | None = None,
+        highres_frames: dict[str, torch.Tensor] | None = None,
+        highres_masks: dict[str, torch.Tensor] | None = None,
     ) -> AEFOutput:
         """AEFModel 前向传播。
 
@@ -139,9 +139,9 @@ class AEFModel(nn.Module):
             source_frames: 各时序数据源的输入，格式 ``{source: (B, T, C, H, W)}``。
             source_masks: 各时序数据源的时间有效掩码，格式 ``{source: (B, T)}``。
             timestamps: 时间戳，形状 (B, T)。
-            highres_frame: 可选的高分辨率单帧输入，形状 (B, C, H, W)。
-            highres_mask: 高分辨率可用性掩码，形状 (B, 1, H, W)；
-                提供 ``highres_frame`` 时也必须提供。
+            highres_frames: 可选的高分辨率单帧输入字典，格式 ``{source: (B, C, H, W)}``。
+            highres_masks: 高分辨率可用性掩码字典，格式 ``{source: (B, 1, H, W)}``；
+                提供 ``highres_frames`` 时也必须提供，且 key 需与 ``highres_frames`` 一致。
 
         Returns:
             AEFOutput，包含 embedding_map、embedding 与 reconstructions。
@@ -172,14 +172,18 @@ class AEFModel(nn.Module):
         spatial = self.space_op(spatial)
         base_feat = spatial.permute(0, 2, 1).view(batch_size, channels, height, width)
 
-        # 可选的高分辨率 availability-aware 融合。
-        if highres_frame is not None:
-            if highres_mask is None:
-                raise ValueError("提供 highres_frame 时必须同时提供 highres_mask")
-            if "highres" not in self.sensor_channels:
-                raise KeyError("sensor_channels 中未注册 'highres'，无法融合高分辨率数据")
-            highres_feat = self.sensor_bank(highres_frame, "highres")
-            base_feat = self.highres_fusion(base_feat, highres_feat, highres_mask)
+        # 可选的高分辨率 availability-aware 融合：按 source 顺序逐个融合。
+        if highres_frames:
+            if highres_masks is None:
+                raise ValueError("提供 highres_frames 时必须同时提供 highres_masks")
+            for source, highres_frame in highres_frames.items():
+                if source not in self.sensor_channels:
+                    raise KeyError(f"sensor_channels 中未注册 {source!r}，无法融合高分辨率数据")
+                highres_mask = highres_masks.get(source)
+                if highres_mask is None:
+                    raise KeyError(f"缺少 highres_mask: {source!r}")
+                highres_feat = self.sensor_bank(highres_frame, source)
+                base_feat = self.highres_fusion(base_feat, highres_feat, highres_mask)
 
         # vMF 瓶颈：输出位于单位球面。
         emb_map = self.bottleneck(base_feat)  # (B, embed_dim, H, W)

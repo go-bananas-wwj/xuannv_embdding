@@ -150,18 +150,24 @@ def test_model_forward_from_config() -> None:
 
     timestamps = torch.arange(time_steps).float().unsqueeze(0).expand(batch_size, -1)
 
-    highres_frame: torch.Tensor | None = None
-    highres_mask: torch.Tensor | None = None
-    if "highres" in cfg.model.sensor_channels:
-        highres_frame = torch.randn(batch_size, cfg.model.sensor_channels["highres"], height, width)
-        highres_mask = torch.ones(batch_size, 1, height, width)
+    highres_frames: dict[str, torch.Tensor] | None = None
+    highres_masks: dict[str, torch.Tensor] | None = None
+    highres_sources = [s for s in cfg.model.sensor_channels if s.startswith("highres")]
+    if highres_sources:
+        highres_frames = {}
+        highres_masks = {}
+        for source in highres_sources:
+            highres_frames[source] = torch.randn(
+                batch_size, cfg.model.sensor_channels[source], height, width
+            )
+            highres_masks[source] = torch.ones(batch_size, 1, height, width)
 
     output = model(
         source_frames=source_frames,
         source_masks=source_masks,
         timestamps=timestamps,
-        highres_frame=highres_frame,
-        highres_mask=highres_mask,
+        highres_frames=highres_frames,
+        highres_masks=highres_masks,
     )
 
     assert isinstance(output, AEFOutput)

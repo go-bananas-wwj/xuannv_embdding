@@ -92,7 +92,8 @@ def prepare_batch(
 
     主要转换:
         - 从第一个有效的 source 提取全局 ``timestamps``（``[B, T]``）。
-        - 若存在 ``highres`` source，将其聚合为单帧与可用性掩码并从时序源中移除。
+        - 若存在名称以 ``highres`` 开头的高分辨率 source，将其各自聚合为单帧与
+          可用性掩码并从时序源中移除。
         - 为每个 target head 构造 ``targets`` 与 ``target_masks``。
         - 当 ``spatial_stride > 1`` 时，将 target 下采样到与模型 embedding_map
           相同的空间分辨率。
@@ -106,11 +107,12 @@ def prepare_batch(
         spatial_stride: sensor encoder 的下采样倍数，用于对齐 target 分辨率。
 
     返回:
-        转换后的 batch 字典，可直接喂给 ``Trainer``。
+        转换后的 batch 字典，包含 ``highres_frames`` 与 ``highres_masks`` 两个字典
+        （key 为原始高分辨率 source 名），可直接喂给 ``Trainer``。
     """
-    source_frames = batch["source_frames"]
-    source_masks = batch["source_masks"]
-    source_timestamps = batch["timestamps"]
+    source_frames = dict(batch["source_frames"])
+    source_masks = dict(batch["source_masks"])
+    source_timestamps = dict(batch["timestamps"])
     patch_ids = batch["patch_ids"]
 
     if not source_frames:
@@ -182,26 +184,29 @@ def prepare_batch(
                 dtype=torch.float32,
             )
 
-    # 分离高分辨率数据：按时间掩码加权聚合为单帧，并生成空间可用性掩码。
-    highres_frame: torch.Tensor | None = None
-    highres_mask: torch.Tensor | None = None
-    if "highres" in source_frames:
-        hr_frames = source_frames.pop("highres")
-        hr_masks = source_masks.pop("highres")
-        source_timestamps.pop("highres", None)
+    # 分离所有以 highres 开头的高分辨率数据源。
+    highres_frames: dict[str, torch.Tensor] = {}
+    highres_masks: dict[str, torch.Tensor] = {}
+    highres_sources = [s for s in source_frames if s.startswith("highres")]
+    for source in highres_sources:
+        hr_frames = source_frames.pop(source)
+        hr_masks = source_masks.pop(source)
+        source_timestamps.pop(source, None)
         if hr_frames.shape[1] > 0:
             highres_frame = _weighted_temporal_mean(hr_frames, hr_masks)
             _, _, height, width = highres_frame.shape
             avail = (hr_masks.sum(dim=1) > 0).float()
             highres_mask = avail[:, None, None, None].expand(-1, 1, height, width)
+            highres_frames[source] = highres_frame
+            highres_masks[source] = highres_mask
 
     return {
         "patch_ids": patch_ids,
         "source_frames": source_frames,
         "source_masks": source_masks,
         "timestamps": global_timestamps,
-        "highres_frame": highres_frame,
-        "highres_mask": highres_mask,
+        "highres_frames": highres_frames,
+        "highres_masks": highres_masks,
         "targets": targets,
         "target_masks": target_masks,
     }
