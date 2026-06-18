@@ -11,16 +11,18 @@ def _downsample_spatial(tensor: torch.Tensor, stride: int, mode: str = "bilinear
     """按 stride 对空间张量进行下采样。
 
     参数:
-        tensor: 输入张量，最后两维为空间维度 (H, W)。
+        tensor: 输入张量，最后两维为空间维度 (H, W)；3-D 视为类别标签，
+            4-D 视为连续/稠密特征。
         stride: 下采样倍数。
-        mode: ``bilinear`` 用于连续特征，``nearest`` 用于类别标签。
+        mode: 4-D 张量使用的插值模式（``bilinear`` / ``nearest`` 等）；
+            3-D 类别标签固定使用 ``nearest``。
 
     返回:
         下采样后的张量，形状 ``[..., H//stride, W//stride]``。
     """
     if stride <= 1:
         return tensor
-    # 处理类别标签 [B, H, W]，需先/后增加通道维。
+    # 处理类别标签 [B, H, W]，需先/后增加通道维，固定用 nearest。
     if tensor.ndim == 3:
         tensor = tensor.unsqueeze(1).float()
         down = F.interpolate(
@@ -29,7 +31,14 @@ def _downsample_spatial(tensor: torch.Tensor, stride: int, mode: str = "bilinear
             mode="nearest",
         )
         return down.squeeze(1)
-    return F.avg_pool2d(tensor, kernel_size=stride)
+    # 4-D 连续特征按指定 mode 插值下采样。
+    align_corners = False if mode != "nearest" else None
+    return F.interpolate(
+        tensor,
+        scale_factor=1.0 / stride,
+        mode=mode,
+        align_corners=align_corners,
+    )
 
 
 def _head_source_name(

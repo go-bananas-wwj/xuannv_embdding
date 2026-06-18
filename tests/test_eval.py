@@ -157,6 +157,74 @@ def test_extract_embeddings_end_to_end(tmp_path: Path, monkeypatch: pytest.Monke
     assert len(npz["patch_ids"]) == 4
 
 
+def test_extract_embeddings_end_to_end_with_highres(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """提取脚本应能处理包含 highres source 的 batch 并生成正确 npz。"""
+    config_path, checkpoint_path, output_path = _make_dummy_dataset(tmp_path)
+
+    # 在原配置基础上追加 highres 数据源。
+    cfg_text = config_path.read_text(encoding="utf-8")
+    cfg_text = cfg_text.replace(
+        "  sources:\n    - s2",
+        "  sources:\n    - s2\n    - highres",
+    )
+    cfg_text = cfg_text.replace(
+        "  sensor_channels:\n    s2: 10",
+        "  sensor_channels:\n    s2: 10\n    highres: 3",
+    )
+    config_path.write_text(cfg_text, encoding="utf-8")
+
+    # 构造 highres 虚拟影像并更新 manifest。
+    processed = tmp_path / "processed" / "test" / "scenes"
+    manifest_path = processed / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    height, width = 16, 16
+    for i, entry in enumerate(manifest):
+        rel_path = f"highres/highres_2025010{i + 1:02d}_p000_r{i:03d}.tif"
+        array = np.random.rand(3, height, width).astype(np.float32)
+        _write_dummy_tiff(processed / rel_path, array)
+        entry["highres"] = [rel_path]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    # 重新保存包含 highres 的 checkpoint，避免加载时 state_dict 不匹配。
+    model = AEFModel(
+        sensor_channels={"s2": 10, "highres": 3},
+        embed_dim=8,
+        target_heads={"s2_recon": ("continuous", 10)},
+    )
+    optimizer = Adam(model.parameters(), lr=1e-4)
+    save_checkpoint(checkpoint_path, model, optimizer, None, 0, {})
+
+    argv = [
+        "extract_embeddings.py",
+        "--config",
+        str(config_path),
+        "--checkpoint",
+        str(checkpoint_path),
+        "--output",
+        str(output_path),
+        "--device",
+        "cpu",
+        "--split",
+        "val",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    extract_module = _import_script_module(
+        "scripts/eval/extract_embeddings.py", "scripts.eval.extract_embeddings"
+    )
+    extract_module.main()
+
+    assert output_path.exists()
+    npz = np.load(output_path, allow_pickle=True)
+    assert "embeddings" in npz
+    assert "patch_ids" in npz
+    assert npz["embeddings"].shape == (4, 8)
+    assert npz["embeddings"].dtype == np.float32
+    assert len(npz["patch_ids"]) == 4
+
+
 def test_extract_embeddings_argparse() -> None:
     """评估脚本参数解析应能被测试导入并正确解析。"""
     extract_module = _import_script_module(
