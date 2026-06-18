@@ -48,8 +48,9 @@ class AEFModel(nn.Module):
 
         Args:
             sensor_channels: 数据源到输入通道数的映射，例如
-                ``{"s2": 13, "s1": 2, "landsat": 11, "highres": 3}``。
-                若使用高分辨率融合，必须包含 ``"highres"``。
+                ``{"s2": 13, "s1": 2, "landsat": 11, "highres": 3, "highres_sar": 1}``。
+                若使用高分辨率融合，需要为每个以 ``"highres"`` 开头的 source
+                注册对应的通道数。
             embed_dim: 统一嵌入维度，也是各 encoder/operator 的通道数。
             target_heads: 解码器配置，格式为 ``name -> (kind, channels)``，
                 其中 ``kind`` 为 ``"continuous"`` 或 ``"categorical"``。
