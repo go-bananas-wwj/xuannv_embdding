@@ -5,14 +5,14 @@ experiment:
 model:
   embed_dim: 64
   sensor_channels:
-    s2: 10
+    s2: 12
     s1: 2
     landsat: 6
     highres: 3
   target_heads:
     s2_recon:
       loss_type: continuous
-      channels: 10
+      channels: 12
       weight: 1.0
     s1_recon:
       loss_type: continuous

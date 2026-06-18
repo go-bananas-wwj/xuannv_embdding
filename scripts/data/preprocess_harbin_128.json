@@ -1,0 +1,11 @@
+{
+  "_comment": "128x128 patches for harbin training; region refers to raw data region",
+  "region": "harbin",
+  "raw_root": "/data/xuannv_embedding/raw/harbin",
+  "output_root": "/data/xuannv_embedding/processed/harbin_128/scenes",
+  "crs": "EPSG:32652",
+  "patch_size_m": 1280,
+  "patch_size_px": 128,
+  "sources": ["s2", "s1", "landsat"],
+  "fill_missing": "zero"
+}

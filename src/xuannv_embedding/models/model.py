@@ -19,7 +19,7 @@ from xuannv_embedding.models.time_encoding import TimeEncoding
 class AEFOutput:
     """AEFModel 前向输出容器。"""
 
-    embedding_map: torch.Tensor  # [B, D, H, W]
+    embedding_map: torch.Tensor  # [B, D, H/S, W/S]，S 为 sensor encoder 下采样倍数
     embedding: torch.Tensor  # [B, D]
     reconstructions: dict[str, torch.Tensor]
 
@@ -30,6 +30,9 @@ class AEFModel(nn.Module):
     输入支持多源时序遥感数据（如 S2/S1/Landsat），以及可选的稀疏高分辨率
     数据。模型通过 per-sensor encoder、时间/空间自注意力、vMF 瓶颈生成单位
     球面上的像素级与场景级嵌入，并解码回各目标模态。
+
+    当 ``spatial_stride > 1`` 时，sensor encoder 会降低空间分辨率，从而
+    减小 SpaceOperator 的注意力内存开销。
     """
 
     def __init__(
@@ -39,6 +42,7 @@ class AEFModel(nn.Module):
         target_heads: dict[str, tuple[str, int]],
         num_time_heads: int = 8,
         num_space_heads: int = 8,
+        spatial_stride: int = 1,
     ) -> None:
         """初始化 AEFModel。
 
@@ -51,14 +55,18 @@ class AEFModel(nn.Module):
                 其中 ``kind`` 为 ``"continuous"`` 或 ``"categorical"``。
             num_time_heads: TimeOperator 的注意力头数。
             num_space_heads: SpaceOperator 的注意力头数。
+            spatial_stride: sensor encoder 的空间下采样倍数，默认 1。
         """
         super().__init__()
         self.sensor_channels = sensor_channels
         self.embed_dim = embed_dim
         self.target_heads = target_heads
+        self.spatial_stride = spatial_stride
 
         self.time_encoding = TimeEncoding(embed_dim)
-        self.sensor_bank = SensorEncoderBank(sensor_channels, embed_dim)
+        self.sensor_bank = SensorEncoderBank(
+            sensor_channels, embed_dim, spatial_stride=spatial_stride
+        )
         self.time_op = TimeOperator(embed_dim, num_heads=num_time_heads)
         self.space_op = SpaceOperator(embed_dim, num_heads=num_space_heads)
         self.highres_fusion = AvailabilityAwareFusion(embed_dim)
@@ -90,29 +98,29 @@ class AEFModel(nn.Module):
             mask: 时间有效掩码，形状 (B, T)；1 表示有效，0 表示缺失。
 
         Returns:
-            该 source 融合后的空间特征，形状 (B, embed_dim, H, W)。
+            该 source 融合后的空间特征，形状 (B, embed_dim, H/S, W/S)，其中 S 为
+            sensor encoder 的下采样倍数。
         """
         batch_size, time_steps, in_channels, height, width = x.shape
 
         # 1) 将时序帧展平为 (B*T, C, H, W)，过 per-sensor encoder。
         x = x.reshape(batch_size * time_steps, in_channels, height, width)
-        x = self.sensor_bank(x, source)  # (B*T, embed_dim, H, W)
-        x = x.view(batch_size, time_steps, self.embed_dim, height, width)
+        x = self.sensor_bank(x, source)  # (B*T, embed_dim, H/S, W/S)
+        _, _, enc_h, enc_w = x.shape
+        x = x.view(batch_size, time_steps, self.embed_dim, enc_h, enc_w)
 
         # 2) 注入时间编码。
-        x = x + time_emb[:, :, :, None, None]  # 广播到 (B, T, embed_dim, H, W)
+        x = x + time_emb[:, :, :, None, None]  # 广播到 (B, T, embed_dim, H/S, W/S)
 
-        # 3) 对时间维度应用 TimeOperator：把 H*W 合并到 batch 维度。
-        # 结果形状 (B*H*W, T, embed_dim)，每个空间位置独立做时间自注意力。
-        x = x.permute(0, 3, 4, 1, 2).reshape(
-            batch_size * height * width, time_steps, self.embed_dim
-        )
+        # 3) 对时间维度应用 TimeOperator：把 (H/S)*(W/S) 合并到 batch 维度。
+        # 结果形状 (B*H/S*W/S, T, embed_dim)，每个空间位置独立做时间自注意力。
+        x = x.permute(0, 3, 4, 1, 2).reshape(batch_size * enc_h * enc_w, time_steps, self.embed_dim)
         x = self.time_op(x)
-        x = x.view(batch_size, height, width, time_steps, self.embed_dim).permute(
+        x = x.view(batch_size, enc_h, enc_w, time_steps, self.embed_dim).permute(
             0, 3, 4, 1, 2
-        )  # (B, T, embed_dim, H, W)
+        )  # (B, T, embed_dim, H/S, W/S)
 
-        # 4) 按时间掩码做加权平均，得到 (B, embed_dim, H, W)。
+        # 4) 按时间掩码做加权平均，得到 (B, embed_dim, H/S, W/S)。
         mask = mask[..., None, None, None]  # (B, T, 1, 1, 1)
         x = (x * mask).sum(dim=1) / (mask.sum(dim=1) + 1e-8)
         return x

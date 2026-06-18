@@ -9,22 +9,33 @@ from torch import nn
 class SensorEncoder(nn.Module):
     """单个数据源的浅层卷积 stem。
 
-    结构为 Conv2d -> GroupNorm -> ReLU，用于把多波段输入投影到统一的
-    中间通道数，便于后续空间/时间融合模块处理。
+    结构为可选的下采样卷积 + Conv2d -> GroupNorm -> ReLU，用于把多波段输入
+    投影到统一的中间通道数，并在需要时降低空间分辨率，便于后续空间/时间
+    融合模块处理。
     """
 
-    def __init__(self, in_channels: int, out_channels: int) -> None:
+    def __init__(self, in_channels: int, out_channels: int, spatial_stride: int = 1) -> None:
         """初始化 SensorEncoder。
 
         Args:
             in_channels: 输入数据的波段数，例如 S2=13、S1=2。
             out_channels: 输出通道数，即投影后的统一通道数。
+            spatial_stride: 输入空间分辨率下采样倍数，默认 1 保持尺寸。
         """
         super().__init__()
+        self.spatial_stride = spatial_stride
         # GroupNorm 要求 num_channels 能被 num_groups 整除；
         # 当 out_channels 小于 8 时，直接使用 out_channels 作为 group 数。
         num_groups = 8 if out_channels % 8 == 0 else out_channels
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=False)
+        # 通过 strided conv 同时完成投影与可选下采样。
+        self.conv = nn.Conv2d(
+            in_channels,
+            out_channels,
+            kernel_size=3,
+            stride=spatial_stride,
+            padding=1,
+            bias=False,
+        )
         self.norm = nn.GroupNorm(num_groups=num_groups, num_channels=out_channels)
         self.relu = nn.ReLU(inplace=True)
 
@@ -35,7 +46,8 @@ class SensorEncoder(nn.Module):
             x: 输入张量，形状为 (B, in_channels, H, W)。
 
         Returns:
-            输出张量，形状为 (B, out_channels, H, W)。
+            输出张量，形状为 (B, out_channels, H/S, W/S)，其中 S 为
+            ``spatial_stride``。
         """
         x = self.conv(x)
         x = self.norm(x)
@@ -50,20 +62,27 @@ class SensorEncoderBank(nn.Module):
     不同传感器之间不共享参数，避免波段语义不一致带来的干扰。
     """
 
-    def __init__(self, sensor_configs: dict[str, int], out_channels: int) -> None:
+    def __init__(
+        self,
+        sensor_configs: dict[str, int],
+        out_channels: int,
+        spatial_stride: int = 1,
+    ) -> None:
         """初始化 SensorEncoderBank。
 
         Args:
             sensor_configs: 数据源到输入通道数的映射，例如
                 ``{"s2": 13, "s1": 2, "landsat": 11}``。
             out_channels: 每个编码器输出的统一通道数。
+            spatial_stride: 所有 sensor encoder 共用的空间下采样倍数。
         """
         super().__init__()
         self.sensor_configs = sensor_configs
         self.out_channels = out_channels
+        self.spatial_stride = spatial_stride
         self.encoders = nn.ModuleDict(
             {
-                source: SensorEncoder(in_channels, out_channels)
+                source: SensorEncoder(in_channels, out_channels, spatial_stride)
                 for source, in_channels in sensor_configs.items()
             }
         )
@@ -76,7 +95,8 @@ class SensorEncoderBank(nn.Module):
             source: 数据源名称，必须在 ``sensor_configs`` 中存在。
 
         Returns:
-            输出张量，形状为 (B, out_channels, H, W)。
+            输出张量，形状为 (B, out_channels, H/S, W/S)，其中 S 为
+            ``spatial_stride``。
 
         Raises:
             KeyError: 当 ``source`` 不在已注册的编码器中时抛出。

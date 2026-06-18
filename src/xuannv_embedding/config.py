@@ -45,6 +45,7 @@ class ModelConfig:
     embed_dim: int
     sensor_channels: dict[str, int]
     target_heads: dict[str, dict[str, Any]]
+    spatial_stride: int = 1
 
 
 @dataclass
@@ -148,6 +149,7 @@ class Config:
                 embed_dim=model_cfg["embed_dim"],
                 sensor_channels=model_cfg["sensor_channels"],
                 target_heads=model_cfg["target_heads"],
+                spatial_stride=model_cfg.get("spatial_stride", 1),
             ),
             training=TrainingConfig(
                 epochs=training_cfg["epochs"],
