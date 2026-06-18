@@ -180,7 +180,7 @@ def test_window_code() -> None:
 
 def test_aef_model_forward() -> None:
     """AEFModel 应能前向传播并返回正确形状的输出（含高分辨率数据）。"""
-    sensor_channels = {"s2": 10, "s1": 2, "landsat": 6, "highres": 3}
+    sensor_channels = {"s2": 10, "s1": 2, "landsat": 6, "highres": 3, "highres_sar": 1}
     embed_dim = 16
     target_heads = {
         "s2_recon": ("continuous", 10),
@@ -203,15 +203,21 @@ def test_aef_model_forward() -> None:
     }
     source_masks = {k: torch.ones(batch_size, time_steps) for k in source_frames}
     timestamps = torch.arange(time_steps).float().unsqueeze(0).expand(batch_size, -1)
-    highres_frame = torch.randn(batch_size, 3, height, width)
-    highres_mask = torch.ones(batch_size, 1, height, width)
+    highres_frames = {
+        "highres": torch.randn(batch_size, 3, height, width),
+        "highres_sar": torch.randn(batch_size, 1, height, width),
+    }
+    highres_masks = {
+        "highres": torch.ones(batch_size, 1, height, width),
+        "highres_sar": torch.ones(batch_size, 1, height, width),
+    }
 
     out = model(
         source_frames,
         source_masks,
         timestamps,
-        highres_frame,
-        highres_mask,
+        highres_frames,
+        highres_masks,
     )
 
     assert isinstance(out, AEFOutput)

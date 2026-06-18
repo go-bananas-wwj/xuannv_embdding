@@ -190,8 +190,8 @@ class _DummyAEFModel(nn.Module):
         source_frames: dict[str, torch.Tensor],
         source_masks: dict[str, torch.Tensor],
         timestamps: torch.Tensor,
-        highres_frame: torch.Tensor | None = None,
-        highres_mask: torch.Tensor | None = None,
+        highres_frames: dict[str, torch.Tensor] | None = None,
+        highres_masks: dict[str, torch.Tensor] | None = None,
     ) -> AEFOutput:
         # 只取 s2 时序最后一帧作为输入，输出固定空间尺寸。
         x = source_frames["s2"][:, -1, :, :, :]  # [B, 10, H, W]

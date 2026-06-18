@@ -9,6 +9,7 @@ model:
     s1: 2
     landsat: 6
     highres: 3
+    highres_sar: 1
   target_heads:
     s2_recon:
       loss_type: continuous

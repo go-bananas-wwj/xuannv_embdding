@@ -110,14 +110,14 @@ class Trainer:
         source_frames = batch["source_frames"]
         source_masks = batch["source_masks"]
         timestamps = batch["timestamps"]
-        highres_frame = batch.get("highres_frame")
-        highres_mask = batch.get("highres_mask")
+        highres_frames = batch.get("highres_frames")
+        highres_masks = batch.get("highres_masks")
         return self.model(
             source_frames=source_frames,
             source_masks=source_masks,
             timestamps=timestamps,
-            highres_frame=highres_frame,
-            highres_mask=highres_mask,
+            highres_frames=highres_frames,
+            highres_masks=highres_masks,
         )
 
     def train_epoch(self) -> dict[str, float]:

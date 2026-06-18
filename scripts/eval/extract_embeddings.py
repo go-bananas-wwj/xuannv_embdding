@@ -86,8 +86,14 @@ def _move_tensor(value: Any, device: torch.device) -> Any:
 
 
 def _move_batch_to_device(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
-    """将 batch 中所有需要喂给模型的张量搬到 device。"""
-    return {key: _move_tensor(value, device) for key, value in batch.items()}
+    """将 batch 中所有需要喂给模型的张量搬到 device（支持嵌套字典）。"""
+    moved: dict[str, Any] = {}
+    for key, value in batch.items():
+        if isinstance(value, dict):
+            moved[key] = {k: _move_tensor(v, device) for k, v in value.items()}
+        else:
+            moved[key] = _move_tensor(value, device)
+    return moved
 
 
 def main() -> None:
@@ -140,8 +146,8 @@ def main() -> None:
                 source_frames=prepared["source_frames"],
                 source_masks=prepared["source_masks"],
                 timestamps=prepared["timestamps"],
-                highres_frame=prepared["highres_frame"],
-                highres_mask=prepared["highres_mask"],
+                highres_frames=prepared.get("highres_frames"),
+                highres_masks=prepared.get("highres_masks"),
             )
 
             # 将结果移回 CPU 并转换为 numpy，避免占用显存/NPU 内存。

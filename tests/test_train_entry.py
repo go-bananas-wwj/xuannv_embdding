@@ -147,13 +147,46 @@ def test_prepare_batch_highres_separation() -> None:
     out = prepare_batch(batch, target_heads)
 
     assert "highres" not in out["source_frames"]
-    assert out["highres_frame"] is not None
-    assert out["highres_frame"].shape == (2, 3, 4, 4)
-    assert out["highres_mask"] is not None
-    assert out["highres_mask"].shape == (2, 1, 4, 4)
+    assert "highres" in out["highres_frames"]
+    assert out["highres_frames"]["highres"].shape == (2, 3, 4, 4)
+    assert "highres" in out["highres_masks"]
+    assert out["highres_masks"]["highres"].shape == (2, 1, 4, 4)
     # 第二个样本 highres 第二帧缺失，但仍有一帧有效，掩码应为 1。
-    assert out["highres_mask"][0].sum().item() == 16.0
-    assert out["highres_mask"][1].sum().item() == 16.0
+    assert out["highres_masks"]["highres"][0].sum().item() == 16.0
+    assert out["highres_masks"]["highres"][1].sum().item() == 16.0
+
+
+def test_prepare_batch_multiple_highres_sources() -> None:
+    """多个以 highres 开头的 source 应被分别聚合并保留各自 source 名。"""
+    batch = {
+        "patch_ids": ["p0", "p1"],
+        "source_frames": {
+            "s2": torch.zeros(2, 1, 3, 4, 4),
+            "highres": torch.ones(2, 2, 3, 4, 4),
+            "highres_sar": torch.ones(2, 1, 1, 4, 4) * 2.0,
+        },
+        "source_masks": {
+            "s2": torch.ones(2, 1),
+            "highres": torch.tensor([[1.0, 1.0], [1.0, 0.0]]),
+            "highres_sar": torch.ones(2, 1),
+        },
+        "timestamps": {
+            "s2": torch.tensor([[202501], [202501]], dtype=torch.long),
+            "highres": torch.tensor([[202501, 202502], [202501, 202502]], dtype=torch.long),
+            "highres_sar": torch.tensor([[202501], [202501]], dtype=torch.long),
+        },
+    }
+    target_heads: dict[str, dict] = {}
+
+    out = prepare_batch(batch, target_heads)
+
+    assert "highres" not in out["source_frames"]
+    assert "highres_sar" not in out["source_frames"]
+    assert set(out["highres_frames"].keys()) == {"highres", "highres_sar"}
+    assert out["highres_frames"]["highres"].shape == (2, 3, 4, 4)
+    assert out["highres_frames"]["highres_sar"].shape == (2, 1, 4, 4)
+    assert out["highres_masks"]["highres"].shape == (2, 1, 4, 4)
+    assert out["highres_masks"]["highres_sar"].shape == (2, 1, 4, 4)
 
 
 def test_prepare_batch_missing_source() -> None:
