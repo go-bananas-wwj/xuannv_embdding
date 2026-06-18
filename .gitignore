@@ -29,3 +29,4 @@ tools/baidupcs/
 *.db
 .baidupcs_session
 BaiduPCS-Go.ini
+fusion_result.json
