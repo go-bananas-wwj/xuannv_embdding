@@ -1,0 +1,9 @@
+_base_: harbin_128.yaml
+
+experiment:
+  name: harbin_128_quick
+
+training:
+  epochs: 1
+  save_every: 1
+  eval_every: 1

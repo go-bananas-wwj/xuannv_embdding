@@ -4,6 +4,32 @@ from __future__ import annotations
 from typing import Any
 
 import torch
+import torch.nn.functional as F
+
+
+def _downsample_spatial(tensor: torch.Tensor, stride: int, mode: str = "bilinear") -> torch.Tensor:
+    """按 stride 对空间张量进行下采样。
+
+    参数:
+        tensor: 输入张量，最后两维为空间维度 (H, W)。
+        stride: 下采样倍数。
+        mode: ``bilinear`` 用于连续特征，``nearest`` 用于类别标签。
+
+    返回:
+        下采样后的张量，形状 ``[..., H//stride, W//stride]``。
+    """
+    if stride <= 1:
+        return tensor
+    # 处理类别标签 [B, H, W]，需先/后增加通道维。
+    if tensor.ndim == 3:
+        tensor = tensor.unsqueeze(1).float()
+        down = F.interpolate(
+            tensor,
+            scale_factor=1.0 / stride,
+            mode="nearest",
+        )
+        return down.squeeze(1)
+    return F.avg_pool2d(tensor, kernel_size=stride)
 
 
 def _head_source_name(
@@ -57,6 +83,7 @@ def _weighted_temporal_mean(frames: torch.Tensor, mask: torch.Tensor) -> torch.T
 def prepare_batch(
     batch: dict[str, Any],
     target_heads: dict[str, dict[str, Any]],
+    spatial_stride: int = 1,
 ) -> dict[str, Any]:
     """将 collate 后的 batch 转换为 AEFModel / Trainer 需要的格式。
 
@@ -67,6 +94,8 @@ def prepare_batch(
         - 从第一个有效的 source 提取全局 ``timestamps``（``[B, T]``）。
         - 若存在 ``highres`` source，将其聚合为单帧与可用性掩码并从时序源中移除。
         - 为每个 target head 构造 ``targets`` 与 ``target_masks``。
+        - 当 ``spatial_stride > 1`` 时，将 target 下采样到与模型 embedding_map
+          相同的空间分辨率。
 
     参数:
         batch: ``collate_fn`` 输出，包含 ``patch_ids``、``source_frames``、
@@ -74,6 +103,7 @@ def prepare_batch(
         target_heads: 配置中的 target_heads，每个 head 至少包含
             ``loss_type``（``continuous`` / ``categorical``）与 ``channels``，
             可选 ``source`` 与 ``weight``。
+        spatial_stride: sensor encoder 的下采样倍数，用于对齐 target 分辨率。
 
     返回:
         转换后的 batch 字典，可直接喂给 ``Trainer``。
@@ -104,6 +134,8 @@ def prepare_batch(
     batch_size = next(iter(source_frames.values())).shape[0]
     spatial_h = next(iter(source_frames.values())).shape[-2]
     spatial_w = next(iter(source_frames.values())).shape[-1]
+    out_h = spatial_h // spatial_stride
+    out_w = spatial_w // spatial_stride
 
     for head_name, head_cfg in target_heads.items():
         source_name = _head_source_name(head_name, head_cfg, available_sources)
@@ -118,33 +150,35 @@ def prepare_batch(
             frames = source_frames[source_name]
             masks = source_masks[source_name]
             agg = _weighted_temporal_mean(frames, masks)
-            height, width = agg.shape[2], agg.shape[3]
-            target_mask = torch.ones(batch_size, height, width, dtype=torch.float32)
             if loss_type == "continuous":
-                targets[head_name] = agg
+                target = _downsample_spatial(agg, spatial_stride, mode="bilinear")
             else:  # categorical
-                targets[head_name] = agg.argmax(dim=1).long()
+                label = agg.argmax(dim=1).long()
+                target = _downsample_spatial(label, spatial_stride, mode="nearest")
+            height, width = target.shape[-2], target.shape[-1]
+            target_mask = torch.ones(batch_size, height, width, dtype=torch.float32)
+            targets[head_name] = target
             target_masks[head_name] = target_mask
         else:
             if loss_type == "continuous":
                 targets[head_name] = torch.zeros(
                     batch_size,
                     channels,
-                    spatial_h,
-                    spatial_w,
+                    out_h,
+                    out_w,
                     dtype=torch.float32,
                 )
             else:
                 targets[head_name] = torch.zeros(
                     batch_size,
-                    spatial_h,
-                    spatial_w,
+                    out_h,
+                    out_w,
                     dtype=torch.long,
                 )
             target_masks[head_name] = torch.zeros(
                 batch_size,
-                spatial_h,
-                spatial_w,
+                out_h,
+                out_w,
                 dtype=torch.float32,
             )
 

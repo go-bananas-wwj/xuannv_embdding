@@ -1,0 +1,30 @@
+_base_: base.yaml
+
+experiment:
+  name: harbin_128_v1
+
+training:
+  epochs: 10
+  lr: 1.0e-4
+  weight_decay: 0.05
+  warmup_epochs: 1
+  gradient_accumulation_steps: 1
+  save_every: 5
+  eval_every: 5
+
+model:
+  spatial_stride: 2
+
+data:
+  region: harbin_128
+  root: /data/xuannv_embedding/processed/harbin_128/scenes
+  manifest_path: /data/xuannv_embedding/processed/harbin_128/scenes/manifest.json
+  statistics_dir: /data/xuannv_embedding/statistics/harbin_128
+  patch_size: 128
+  num_samples: 63
+  batch_size: 4
+  max_patches: 63
+  sources:
+    - s2
+    - s1
+    - landsat
