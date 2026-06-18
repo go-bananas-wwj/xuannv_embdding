@@ -189,6 +189,33 @@ def test_prepare_batch_multiple_highres_sources() -> None:
     assert out["highres_masks"]["highres_sar"].shape == (2, 1, 4, 4)
 
 
+def test_prepare_batch_highres_mask_with_spatial_stride() -> None:
+    """spatial_stride > 1 时 highres_mask 应下采样到与编码特征对齐的分辨率。"""
+    batch = {
+        "patch_ids": ["p0"],
+        "source_frames": {
+            "s2": torch.zeros(1, 1, 3, 8, 8),
+            "highres": torch.ones(1, 1, 3, 8, 8),
+        },
+        "source_masks": {
+            "s2": torch.ones(1, 1),
+            "highres": torch.ones(1, 1),
+        },
+        "timestamps": {
+            "s2": torch.tensor([[202501]], dtype=torch.long),
+            "highres": torch.tensor([[202501]], dtype=torch.long),
+        },
+    }
+    target_heads: dict[str, dict] = {}
+
+    out = prepare_batch(batch, target_heads, spatial_stride=2)
+
+    assert out["highres_frames"]["highres"].shape == (1, 3, 8, 8)
+    assert out["highres_masks"]["highres"].shape == (1, 1, 4, 4)
+    # 全部可用，下采样后掩码仍应为 1。
+    assert torch.equal(out["highres_masks"]["highres"], torch.ones(1, 1, 4, 4))
+
+
 def test_prepare_batch_missing_source() -> None:
     """target 对应 source 缺失时应返回零 target 与零 target_mask。"""
     batch = {

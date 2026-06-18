@@ -197,6 +197,11 @@ def prepare_batch(
             _, _, height, width = highres_frame.shape
             avail = (hr_masks.sum(dim=1) > 0).float()
             highres_mask = avail[:, None, None, None].expand(-1, 1, height, width)
+            # 高分辨率特征会经过 sensor_bank 按 spatial_stride 下采样，
+            # 因此可用性掩码也需要对齐到相同空间分辨率（平均池化后二值化）。
+            if spatial_stride > 1:
+                highres_mask = F.avg_pool2d(highres_mask, kernel_size=spatial_stride)
+                highres_mask = (highres_mask > 0).float()
             highres_frames[source] = highres_frame
             highres_masks[source] = highres_mask
 
