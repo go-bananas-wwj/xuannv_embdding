@@ -145,7 +145,7 @@ def _extract_epsg(item: Any) -> int | None:
 
 def _get_aoi_utm_epsg(aoi: gpd.GeoDataFrame) -> int:
     """返回 AOI 中心点所在 UTM 带的 EPSG 代码。"""
-    centroid = aoi.to_crs("EPSG:4326").geometry.unary_union.centroid
+    centroid = aoi.to_crs("EPSG:4326").union_all().centroid
     lon, lat = centroid.x, centroid.y
     zone = int((lon + 180) // 6) + 1
     return 32600 + zone if lat >= 0 else 32700 + zone
@@ -311,8 +311,7 @@ def download_source(
 
 def _validate_coverage(ds: Any, min_valid_ratio: float = 0.05) -> None:
     """校验每个时间切片有效像素比例，低于阈值时抛出 RuntimeError。"""
-    var = list(ds.data_vars)[0]
-    arr = ds[var]
+    arr = ds[list(ds.data_vars)[0]] if hasattr(ds, "data_vars") else ds
     for t in range(arr.sizes["time"]):
         band0 = arr.isel(time=t, band=0)
         # 有效 = 非 NaN 且非 0（覆盖 NaN fill 与原始 0 nodata）
