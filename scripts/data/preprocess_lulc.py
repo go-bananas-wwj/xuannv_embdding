@@ -34,6 +34,35 @@ DEFAULT_SOURCE_NAME = "worldcover"
 DEFAULT_DATE_STR = "20230101"
 DEFAULT_FILL_NODATA = 0
 
+# ESRI 2023 原始值 → 连续训练索引（0 为 ignore_index，10 Clouds 也 ignore）
+ESRI2023_REMAP = {
+    0: 0,   # No Data / ignore
+    1: 1,   # Water
+    2: 2,   # Trees
+    4: 3,   # Flooded Vegetation
+    5: 4,   # Crops
+    7: 5,   # Built Area
+    8: 6,   # Bare Ground
+    9: 7,   # Snow/Ice
+    10: 0,  # Clouds → ignore
+    11: 8,  # Rangeland
+}
+
+
+def remap_esri2023(arr: np.ndarray) -> np.ndarray:
+    """使用向量化查找表将 ESRI 2023 LULC 原始值重映射到训练索引。"""
+    src = np.asarray(arr)
+    old_keys = np.array(sorted(ESRI2023_REMAP.keys()), dtype=np.uint8)
+    new_vals = np.array([ESRI2023_REMAP[k] for k in old_keys], dtype=np.uint8)
+
+    flat = src.ravel()
+    idx = np.searchsorted(old_keys, flat)
+    # 对不在映射表中的异常值统一置为 0（ignore）
+    valid = (idx < len(old_keys)) & (old_keys[idx] == flat)
+    remapped = np.zeros_like(flat, dtype=np.uint8)
+    remapped[valid] = new_vals[idx[valid]]
+    return remapped.reshape(src.shape)
+
 
 def load_config(path: Path) -> dict[str, Any]:
     """加载 JSON 配置文件。"""
@@ -126,6 +155,7 @@ def preprocess_lulc(
                 continue
 
             array = _read_patch(src, pbounds, (patch_size_px, patch_size_px), dst_crs)
+            array = remap_esri2023(array)
             if np.all(array == DEFAULT_FILL_NODATA):
                 continue
 
