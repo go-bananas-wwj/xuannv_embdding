@@ -91,3 +91,24 @@ def test_generate_manifest_missing_source_dir(tmp_path: Path) -> None:
     assert len(manifest) == 1
     assert manifest[0]["s2"] == [Path("s2/s2_20250129_p000_r000.tif")]
     assert manifest[0]["landsat"] is None
+
+
+def test_generate_manifest_different_dates_same_grid(tmp_path: Path) -> None:
+    """不同 source 的观测日期不一致时，应通过网格编号归到同一条目。"""
+    processed = tmp_path / "processed"
+    (processed / "s2").mkdir(parents=True)
+    (processed / "worldcover").mkdir(parents=True)
+
+    (processed / "s2" / "s2_20250129_p000_r000.tif").write_text("s2")
+    (processed / "worldcover" / "worldcover_20230101_p000_r000.tif").write_text("wc")
+
+    manifest = generate_manifest(
+        processed,
+        ["s2", "worldcover"],
+        source_dirs={"s2": "s2", "worldcover": "worldcover"},
+    )
+    assert len(manifest) == 1
+    entry = manifest[0]
+    assert entry["patch_id"] == "20250129_p000_r000"
+    assert entry["s2"] == [Path("s2/s2_20250129_p000_r000.tif")]
+    assert entry["worldcover"] == [Path("worldcover/worldcover_20230101_p000_r000.tif")]
