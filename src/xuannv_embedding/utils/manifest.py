@@ -66,15 +66,21 @@ def _index_source_dir(
     processed_dir: Path,
     source: str,
     rel_dir: str,
-) -> dict[str, list[Path]]:
-    """扫描 source 子目录，建立 patch_id -> 相对路径列表的索引。
+) -> tuple[dict[str, list[Path]], dict[str, list[Path]]]:
+    """扫描 source 子目录，建立两个索引。
 
+    返回 ``(patch_id_index, grid_index)``：
+    - ``patch_id_index`` 以完整 ``{date}_{grid}`` 为键；
+    - ``grid_index`` 仅以末尾 ``pXXX_rXXX`` 网格编号为键，用于跨源日期不一致时匹配。
     跳过 *_mask.tif 掩膜文件，只保留数据影像。
     """
-    index: dict[str, list[Path]] = {}
+    patch_index: dict[str, list[Path]] = {}
+    grid_index: dict[str, list[Path]] = {}
     source_dir = processed_dir / rel_dir
     if not source_dir.exists():
-        return index
+        return patch_index, grid_index
+
+    grid_match = re.compile(r"p\d{3}_r\d{3}$")
 
     for path in source_dir.rglob("*"):
         if not path.is_file():
@@ -84,13 +90,18 @@ def _index_source_dir(
         if path.stem.endswith("_mask"):
             continue
         patch_id = _extract_patch_id(path.stem, source)
-        if patch_id:
-            index.setdefault(patch_id, []).append(path.relative_to(processed_dir))
+        if not patch_id:
+            continue
+        patch_index.setdefault(patch_id, []).append(path.relative_to(processed_dir))
+        grid = grid_match.search(patch_id)
+        if grid:
+            grid_index.setdefault(grid.group(), []).append(path.relative_to(processed_dir))
 
-    for patch_id in index:
-        index[patch_id].sort(key=lambda p: p.name)
+    for idx in (patch_index, grid_index):
+        for key in idx:
+            idx[key].sort(key=lambda p: p.name)
 
-    return index
+    return patch_index, grid_index
 
 
 def generate_manifest(
@@ -121,22 +132,30 @@ def generate_manifest(
         logger.warning("基准 source 缺少目录映射: %s", base_source)
         return []
 
-    # 为每个 source 建立 patch_id 索引，避免 O(N^2) 查找
-    indices: dict[str, dict[str, list[Path]]] = {}
+    # 为每个 source 建立 patch_id 索引与 grid 索引，避免 O(N^2) 查找
+    patch_indices: dict[str, dict[str, list[Path]]] = {}
+    grid_indices: dict[str, dict[str, list[Path]]] = {}
     for source in sources:
-        indices[source] = _index_source_dir(processed_dir, source, source_dirs[source])
+        pidx, gidx = _index_source_dir(processed_dir, source, source_dirs[source])
+        patch_indices[source] = pidx
+        grid_indices[source] = gidx
 
-    if not indices[base_source]:
+    if not patch_indices[base_source]:
         logger.warning("基准 source 目录为空或不存在: %s", source_dirs[base_source])
         return []
 
-    patch_ids = sorted(indices[base_source].keys())
+    patch_ids = sorted(patch_indices[base_source].keys())
+    grid_match = re.compile(r"p\d{3}_r\d{3}$")
 
     manifest: list[dict[str, Any]] = []
     for patch_id in patch_ids:
         entry: dict[str, Any] = {"patch_id": patch_id}
+        grid = grid_match.search(patch_id)
+        grid_key = grid.group() if grid else None
         for source in sources:
-            paths = indices[source].get(patch_id)
+            paths = patch_indices[source].get(patch_id)
+            if paths is None and grid_key and source != base_source:
+                paths = grid_indices[source].get(grid_key)
             entry[source] = paths if paths else None
         manifest.append(entry)
 
