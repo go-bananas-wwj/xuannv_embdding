@@ -12,6 +12,90 @@
 
 ## 阶段 A：数据修复与预处理加速（必须先完成）
 
+### Task A0: 修复 `download_pc.py` 的 S1/Landsat 下载 bug
+
+**Files:**
+- Modify: `scripts/data/download_pc.py`
+- Test: 对单个月份的 S1/Landsat 做端到端下载测试，验证非零像素比例
+
+- [ ] **Step 1: 修改 GDAL 扩展名白名单**
+
+```python
+# 原配置会拦截 .tiff 后缀的 S1 RTC asset
+# os.environ.setdefault("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ".tif")
+os.environ.setdefault("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ".tif,.tiff,.TIF,.jp2")
+```
+
+- [ ] **Step 2: 关闭 `errors_as_nodata` 静默填值，fill_value 改为 NaN**
+
+```python
+import numpy as np
+
+ds = stackstac.stack(
+    items,
+    bounds_latlon=bbox,
+    resolution=res,
+    epsg=epsg,
+    dtype="float32",
+    fill_value=np.float32(np.nan),
+    rescale=False,
+    assets=assets,
+    errors_as_nodata=(),
+)
+```
+
+- [ ] **Step 3: 固定 EPSG 为 AOI 中心点所在 UTM 带**
+
+```python
+def _get_aoi_crs(aoi: gpd.GeoDataFrame) -> int:
+    """返回 AOI 中心点所在 UTM 带的 EPSG 代码。"""
+    centroid = aoi.to_crs("EPSG:4326").geometry.unary_union.centroid
+    lon, lat = centroid.x, centroid.y
+    zone = int((lon + 180) // 6) + 1
+    epsg = 32600 + zone if lat >= 0 else 32700 + zone
+    return epsg
+
+# 在 download_source 中替换
+# epsg = _extract_epsg(items[0])
+epsg = _get_aoi_crs(aoi)
+```
+
+- [ ] **Step 4: Landsat 增加 `qa_pixel` 波段**
+
+```python
+"landsat": [
+    "blue", "green", "red", "nir08", "swir16", "swir22", "qa_pixel"
+]
+```
+
+- [ ] **Step 5: 缩短下载窗口并重新 sign items**
+
+- S1/Landsat 建议按月或 1–2 个月切分；
+- 在 `stackstac.stack` 前再次调用 `planetary_computer.sign_inplace(items)` 刷新 SAS token。
+
+- [ ] **Step 6: 增加下载后覆盖率校验**
+
+```python
+def _validate_coverage(ds, min_valid_ratio=0.05):
+    var = list(ds.data_vars)[0]
+    arr = ds[var]
+    for t in range(arr.sizes["time"]):
+        band0 = arr.isel(time=t, band=0)
+        valid = np.isfinite(band0.values).mean()
+        if valid < min_valid_ratio:
+            raise RuntimeError(f"time {t} coverage {valid:.2%} < {min_valid_ratio:.2%}")
+```
+
+- [ ] **Step 7: Commit & push**
+
+```bash
+git add scripts/data/download_pc.py
+git commit -m "fix: PC download script S1/Landsat silent zero-fill and UTM zone mismatch"
+git push origin feat/data-and-model-rework
+```
+
+---
+
 ### Task A1: 删除错误的海淀区 PC 数据并重新下载
 
 **Files:**
@@ -74,10 +158,14 @@ download s2 2025-07-01 2025-09-30 "$LOG_DIR/download_pc_haidian_s2_2025q3.log" &
 download s2 2025-10-01 2025-12-31 "$LOG_DIR/download_pc_haidian_s2_2025q4.log" &
 download s2 2026-01-01 2026-05-31 "$LOG_DIR/download_pc_haidian_s2_2026.log" &
 
-# S1 / Landsat 2025/2026
-download s1 2025-01-01 2025-12-31 "$LOG_DIR/download_pc_haidian_s1_2025.log" &
-download s1 2026-01-01 2026-05-31 "$LOG_DIR/download_pc_haidian_s1_2026.log" &
-download landsat 2025-01-01 2025-12-31 "$LOG_DIR/download_pc_haidian_landsat_2025.log" &
+# S1 按月下载，避免 token 过期
+download s1 2025-01-01 2025-01-31 "$LOG_DIR/download_pc_haidian_s1_202501.log" &
+download s1 2025-02-01 2025-02-28 "$LOG_DIR/download_pc_haidian_s1_202502.log" &
+# ... 继续到 2026-05（可循环生成）
+
+# Landsat 按月下载
+download landsat 2025-01-01 2025-01-31 "$LOG_DIR/download_pc_haidian_landsat_202501.log" &
+# ... 继续到 2026-05
 
 wait
 
@@ -351,30 +439,48 @@ git push origin feat/data-and-model-rework
 
 ---
 
-### Task A5: 修复 WorldCover 类别越界
+### Task A5: 修复 WorldCover 类别映射（ESRI 2023 → 连续 9 类）
 
 **Files:**
+- Modify: `scripts/data/preprocess_lulc.py`
 - Modify: `configs/base.yaml`
-- Modify: `scripts/data/preprocess_lulc.py`（可选）
-- Test: `tests/test_dataset.py` 或独立脚本
+- Test: `tests/test_lulc.py`
 
-- [ ] **Step 1: 确认 ESRI 2023 类别 11 含义**
+- [ ] **Step 1: 在 `preprocess_lulc.py` 中加入重映射**
 
-ESRI 2023 Land Cover 类别通常包括：
-- 0 No Data
-- 1 Water
-- 2 Trees
-- 3 Grass
-- 4 Flooded vegetation
-- 5 Crops
-- 6 Scrub/shrub
-- 7 Built area
-- 8 Bare ground
-- 9 Snow/Ice
-- 10 Clouds
-- 11 Rangeland（部分版本）
+```python
+import numpy as np
 
-**结论**：项目中存在类别 11，需要把 `channels` 改为 12。
+# ESRI 2023 WorldCover 原始值 → 连续训练索引
+ESRI2023_REMAP = {
+    0: 0,   # No Data / 背景（ignore_index）
+    1: 1,   # Water
+    2: 2,   # Trees
+    4: 3,   # Flooded Vegetation
+    5: 4,   # Crops
+    7: 5,   # Built Area
+    8: 6,   # Bare Ground
+    9: 7,   # Snow/Ice
+    10: 8,  # Clouds
+    11: 9,  # Rangeland
+}
+
+
+def remap_esri2023(arr: np.ndarray) -> np.ndarray:
+    """将 ESRI 2023 原始标签重映射为连续索引，未知值设为 0（nodata）。"""
+    out = np.zeros_like(arr, dtype=np.uint8)
+    for old, new in ESRI2023_REMAP.items():
+        out[arr == old] = new
+    return out
+```
+
+在切 patch 循环中调用：
+
+```python
+label = src.read(1)
+label = remap_esri2023(label)
+# 写出
+```
 
 - [ ] **Step 2: 修改配置**
 
@@ -383,32 +489,51 @@ model:
   target_heads:
     lulc:
       loss_type: categorical
-      channels: 12  # 0-11，0 为 nodata
+      channels: 10          # 0=ignore, 1-9 为有效类别
+      ignore_index: 0
+      class_weight: "inverse_sqrt"
 ```
 
-- [ ] **Step 3: 测试**
+- [ ] **Step 3: 更新损失函数支持 class weight / ignore_index**
 
 ```python
-def test_lulc_channels():
-    from pathlib import Path
-    import rasterio
-    files = list(Path('processed/harbin/labels/worldcover').glob('*.tif'))[:10]
-    max_class = 0
-    for f in files:
-        with rasterio.open(f) as src:
-            arr = src.read(1)
-            max_class = max(max_class, arr.max())
-    assert max_class < 12, f"发现越界类别 {max_class}"
+import torch.nn.functional as F
+
+def masked_cross_entropy(pred, target, mask, weight=None, ignore_index=0):
+    # pred: (B, T, C, H, W), target: (B, T, H, W)
+    B, T, C, H, W = pred.shape
+    pred = pred.reshape(B * T, C, H * W).transpose(1, 2)
+    target = target.reshape(B * T, H * W)
+    loss = F.cross_entropy(
+        pred, target,
+        weight=weight,
+        ignore_index=ignore_index,
+        reduction="none",
+    )
+    mask = mask.reshape(B * T, H * W)
+    return (loss * mask).sum() / mask.sum().clamp(min=1.0)
+```
+
+- [ ] **Step 4: 测试**
+
+```python
+def test_lulc_remap():
+    import numpy as np
+    from scripts.data.preprocess_lulc import remap_esri2023
+    arr = np.array([[0,1,2,4,5,7,8,9,10,11]])
+    out = remap_esri2023(arr)
+    expected = np.array([[0,1,2,3,4,5,6,7,8,9]])
+    assert np.array_equal(out, expected)
 ```
 
 Run: `pytest tests/test_lulc.py -v`
 Expected: PASS
 
-- [ ] **Step 4: Commit & push**
+- [ ] **Step 5: Commit & push**
 
 ```bash
-git add configs/base.yaml tests/test_lulc.py
-git commit -m "fix: support worldcover class 11 by setting channels to 12"
+git add scripts/data/preprocess_lulc.py configs/base.yaml tests/test_lulc.py
+ git commit -m "fix: remap ESRI 2023 WorldCover to continuous 9-class labels"
 git push origin feat/data-and-model-rework
 ```
 
@@ -503,9 +628,99 @@ git push origin feat/data-and-model-rework
 
 - 改造 `prepare_batch` 与 `losses.py`（见原 Task 9）。
 
-### Task B7: 数据集月度窗口采样
+### Task B7: 数据集月度窗口采样（连续窗口 + 随机起始 + Temporal Dropout）
 
-- 改造 `AEFDataset`（见原 Task 10）。
+**Files:**
+- Modify: `src/xuannv_embedding/data/dataset.py`
+- Modify: `src/xuannv_embedding/training/batch_preparation.py`
+- Modify: `src/xuannv_embedding/config.py`
+- Test: `tests/test_dataset.py`
+
+- [ ] **Step 1: 实现 `TemporalSampler`**
+
+```python
+import random
+from typing import List
+
+
+class TemporalSampler:
+    """在可用月份序列中采样连续窗口，并可选做 temporal dropout。"""
+
+    def __init__(self, window_months: int = 12, dropout: float = 0.0):
+        self.window_months = window_months
+        self.dropout = dropout
+
+    def sample(self, available_months: List[int]) -> tuple[List[int], List[int]]:
+        available = sorted(available_months)
+        if len(available) <= self.window_months:
+            window = available
+        else:
+            max_start = len(available) - self.window_months
+            start_idx = random.randint(0, max_start)
+            window = available[start_idx:start_idx + self.window_months]
+
+        # temporal dropout：随机丢弃部分月份（保留索引位置用 mask 表示）
+        mask = [1] * len(window)
+        if self.dropout > 0 and len(window) > 1:
+            for i in range(len(window)):
+                if random.random() < self.dropout:
+                    mask[i] = 0
+        return window, mask
+```
+
+- [ ] **Step 2: 在 `AEFDataset.__getitem__` 中使用**
+
+```python
+sampler = TemporalSampler(
+    window_months=self.cfg.temporal_window_months,
+    dropout=self.cfg.temporal_dropout,
+)
+window, mask = sampler.sample(available_months)
+# 加载 window 内各 source 的帧；缺失月份补 0 且 mask=0
+```
+
+- [ ] **Step 3: 在 `prepare_batch` 中对齐多源时间戳**
+
+- 用全局 `window` 月度网格作为 `timestamps`；
+- 每个 source 独立构造 `(B, T, C, H, W)`，缺失月份补 0 + `source_masks` 对应位置 0；
+- 高分辨率 source 仍聚合为单帧，但记录其所在月份（若无则全窗口缺失）。
+
+- [ ] **Step 4: 配置**
+
+```python
+@dataclass
+class DataConfig:
+    temporal_window_months: int = 12
+    temporal_dropout: float = 0.0
+    use_full_sequence: bool = False
+```
+
+- [ ] **Step 5: 测试**
+
+```python
+def test_temporal_sampler():
+    from src.xuannv_embedding.data.dataset import TemporalSampler
+    sampler = TemporalSampler(window_months=12, dropout=0.0)
+    months = list(range(202501, 202513)) + list(range(202601, 202606))
+    window, mask = sampler.sample(months)
+    assert len(window) == 12
+    assert all(m2 > m1 for m1, m2 in zip(window, window[1:]))
+    assert mask == [1] * 12
+```
+
+Run: `pytest tests/test_dataset.py -v`
+Expected: PASS
+
+- [ ] **Step 6: Commit & push**
+
+```bash
+git add src/xuannv_embedding/data/dataset.py \
+        src/xuannv_embedding/training/batch_preparation.py \
+        src/xuannv_embedding/config.py \
+        tests/test_dataset.py
+git commit -m "feat: continuous monthly window sampling with random start and temporal dropout"
+git push origin feat/data-and-model-rework
+```
 
 ### Task B8: 多 NPU 训练优化
 
@@ -524,15 +739,28 @@ git push origin feat/data-and-model-rework
 
 ## 训练前 Checklist（必须全部打勾才能启动训练）
 
+- [ ] `download_pc.py` 的 S1/Landsat 下载 bug 已修复
 - [ ] 海淀区 S2/S1/Landsat 2025 与 S2/S1 2026 重新下载且非零像素正常
 - [ ] `preprocess.py` 已重写并通过 benchmark（加速 >= 10×）
 - [ ] S1/Landsat/高分辨率光学 patch 已生成
-- [ ] WorldCover 类别越界已修复
+- [ ] WorldCover 已重映射为连续 9 类并配置 `ignore_index=0`
 - [ ] Manifest 已升级为多源逐月格式
 - [ ] 统计量已重新生成
 - [ ] `pytest tests/` 全绿
 - [ ] 模型输出形状为 `(B, T_month, D, H, W)`
 - [ ] 训练脚本可在 6× NPU 上启动且不 OOM
+
+---
+
+## 已确认决策
+
+| 问题 | 决策 |
+|---|---|
+| No-data 值 | **保持 0**，通过独立 valid mask 标识 |
+| S1 / Landsat | **保留并修复下载 bug**；S1 强烈推荐，Landsat 设为可选源 |
+| 时序采样 | **连续 12 个月窗口 + 随机起始 + Temporal Dropout**，不从 17 个月随机挑 |
+| 高分辨率 SAR | 待用户确认（建议最小验证阶段跳过） |
+| WorldCover | **重映射为连续 9 类**，0 为 `ignore_index`，class 11 保留为 Rangeland |
 
 ---
 
@@ -543,4 +771,5 @@ git push origin feat/data-and-model-rework
 
 **请确认：**
 1. 是否按此修订计划先修复数据，再进入模型改造？
-2. 对“待用户决策”中的 5 个问题（no-data、窗口长度、S1/Landsat、高分辨率 SAR、WorldCover 类别）你的选择是什么？
+2. 高分辨率 SAR 是否跳过？
+3. 选择哪种执行方式？
