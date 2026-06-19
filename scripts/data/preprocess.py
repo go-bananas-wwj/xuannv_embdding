@@ -166,19 +166,55 @@ def _compute_valid_mask(slice_arr: np.ndarray, source: str, nodata: float) -> np
     return valid.astype(np.uint8)
 
 
-def _align_to_master(
+def _slice_with_padding(
+    arr: np.ndarray,
+    row_off: int,
+    col_off: int,
+    win_h: int,
+    win_w: int,
+    nodata: float,
+) -> np.ndarray:
+    """从数组中切出指定窗口，越界部分用 nodata 填充。"""
+    src_h, src_w = arr.shape[-2:]
+    pad_top = max(0, -row_off)
+    pad_left = max(0, -col_off)
+    pad_bottom = max(0, row_off + win_h - src_h)
+    pad_right = max(0, col_off + win_w - src_w)
+
+    slice_arr = arr[
+        :,
+        max(0, row_off) : min(row_off + win_h, src_h),
+        max(0, col_off) : min(col_off + win_w, src_w),
+    ]
+
+    if pad_top or pad_left or pad_bottom or pad_right:
+        slice_arr = np.pad(
+            slice_arr,
+            ((0, 0), (pad_top, pad_bottom), (pad_left, pad_right)),
+            mode="constant",
+            constant_values=nodata,
+        )
+    return slice_arr
+
+
+def _extract_patch_bounded(
     arr: np.ndarray,
     src_transform: Affine,
     src_crs: CRS,
     master_transform: Affine,
     master_crs: CRS,
-    master_shape: tuple[int, int],
+    window: rasterio.windows.Window,
     nodata: float,
 ) -> np.ndarray:
-    """将源时相数组对齐到 AOI 主网格，返回完整 AOI 形状数组。"""
+    """按 master 网格窗口提取一个 patch，不分配完整 AOI 数组。
+
+    对 S2/S1 等已匹配 10 m 网格的数据直接整数像素切片；对 Landsat 等
+    分辨率不同的数据，先切出覆盖该 patch 的源区域再重采样到 128x128。
+    """
     bands = arr.shape[0]
-    height, width = master_shape
-    aligned = np.full((bands, height, width), nodata, dtype=arr.dtype)
+    patch_h = int(round(window.height))
+    patch_w = int(round(window.width))
+    patch_transform = rasterio.windows.transform(window, master_transform)
 
     src_res = abs(src_transform.a)
     src_y_res = abs(src_transform.e)
@@ -186,172 +222,131 @@ def _align_to_master(
     res_match = abs(src_res - MASTER_RES) < TOLERANCE and abs(src_y_res - MASTER_RES) < TOLERANCE
     no_skew = abs(src_transform.b) < TOLERANCE and abs(src_transform.d) < TOLERANCE
 
-    if same_crs and res_match and no_skew:
-        # 整数像素偏移放置
-        col_off = int(round((src_transform.c - master_transform.c) / MASTER_RES))
-        row_off = int(round((master_transform.f - src_transform.f) / MASTER_RES))
-        src_h, src_w = arr.shape[-2:]
+    # 计算覆盖 patch 地理范围的源窗口
+    src_window = window_from_bounds(
+        *rasterio.windows.bounds(window, master_transform),
+        transform=src_transform,
+    )
+    row_off = int(round(src_window.row_off))
+    col_off = int(round(src_window.col_off))
+    win_h = int(round(src_window.height))
+    win_w = int(round(src_window.width))
 
-        dst_row_start = max(0, row_off)
-        dst_col_start = max(0, col_off)
-        dst_row_end = min(height, row_off + src_h)
-        dst_col_end = min(width, col_off + src_w)
+    slice_arr = _slice_with_padding(arr, row_off, col_off, win_h, win_w, nodata)
 
-        src_row_start = max(0, -row_off)
-        src_col_start = max(0, -col_off)
-        src_row_end = src_row_start + (dst_row_end - dst_row_start)
-        src_col_end = src_col_start + (dst_col_end - dst_col_start)
+    if same_crs and res_match and no_skew and slice_arr.shape[-2:] == (patch_h, patch_w):
+        return slice_arr
 
-        if dst_row_end > dst_row_start and dst_col_end > dst_col_start:
-            aligned[:, dst_row_start:dst_row_end, dst_col_start:dst_col_end] = arr[
-                :, src_row_start:src_row_end, src_col_start:src_col_end
-            ]
-    else:
-        reproject(
-            source=arr,
-            destination=aligned,
-            src_transform=src_transform,
-            src_crs=src_crs,
-            dst_transform=master_transform,
-            dst_crs=master_crs,
-            resampling=Resampling.bilinear,
-            dst_nodata=nodata,
-        )
-
-    return aligned
-
-
-def _extract_patch_window(
-    aligned: np.ndarray,
-    window: rasterio.windows.Window,
-    master_shape: tuple[int, int],
-    nodata: float,
-) -> np.ndarray:
-    """从对齐数组中提取一个 patch，边缘不足时补 nodata。"""
-    height, width = master_shape
-    row_off = int(round(window.row_off))
-    col_off = int(round(window.col_off))
-    patch_h = int(window.height)
-    patch_w = int(window.width)
-
-    pad_top = max(0, -row_off)
-    pad_left = max(0, -col_off)
-    pad_bottom = max(0, row_off + patch_h - height)
-    pad_right = max(0, col_off + patch_w - width)
-
-    if pad_top or pad_left or pad_bottom or pad_right:
-        slice_arr = aligned[
-            :,
-            max(0, row_off) : min(row_off + patch_h, height),
-            max(0, col_off) : min(col_off + patch_w, width),
-        ]
-        slice_arr = np.pad(
-            slice_arr,
-            ((0, 0), (pad_top, pad_bottom), (pad_left, pad_right)),
-            mode="constant",
-            constant_values=nodata,
-        )
-    else:
-        slice_arr = aligned[:, row_off : row_off + patch_h, col_off : col_off + patch_w]
-
-    return slice_arr
+    dst = np.full((bands, patch_h, patch_w), nodata, dtype=arr.dtype)
+    reproject(
+        source=slice_arr,
+        destination=dst,
+        src_transform=src_transform,
+        src_crs=src_crs,
+        dst_transform=patch_transform,
+        dst_crs=master_crs,
+        resampling=Resampling.bilinear,
+        dst_nodata=nodata,
+    )
+    return dst
 
 
 def process_one_time(args: tuple[Path, int, dict[str, Any]]) -> int:
     """处理单个 NetCDF 的单个时间步，返回写入的 patch 数量。"""
     nc_path, time_idx, config = args
 
-    source = config["source"]
-    nodata = float(config["nodata"])
-    min_valid_ratio = float(config["min_valid_ratio"])
-    master_transform = Affine(*config["master_transform"])
-    master_crs = CRS.from_string(config["crs"])
-    master_shape = tuple(config["master_shape"])
-    patch_gdf = config["patch_gdf"]
+    try:
+        source = config["source"]
+        nodata = float(config["nodata"])
+        min_valid_ratio = float(config["min_valid_ratio"])
+        master_transform = Affine(*config["master_transform"])
+        master_crs = CRS.from_string(config["crs"])
+        patches = config["patches"]
 
-    out_dir = Path(config["output_root"]) / "patches" / source
-    out_dir.mkdir(parents=True, exist_ok=True)
+        out_dir = Path(config["output_root"]) / "patches" / source
+        out_dir.mkdir(parents=True, exist_ok=True)
 
-    written = 0
-    with xr.open_dataset(nc_path, chunks={"time": 1}) as ds:
-        data_var = _find_data_variable(ds)
-        arr = ds[data_var].isel(time=time_idx).values.astype(np.float32)
+        written = 0
+        with xr.open_dataset(nc_path, chunks={"time": 1}) as ds:
+            data_var = _find_data_variable(ds)
+            arr = ds[data_var].isel(time=time_idx).values.astype(np.float32)
 
-        y_coords = np.asarray(ds.y.values, dtype=np.float64)
-        src_transform, needs_vertical_flip = _build_src_transform(
-            np.asarray(ds.x.values, dtype=np.float64), y_coords
-        )
-        if needs_vertical_flip:
-            arr = arr[:, ::-1, :]
+            y_coords = np.asarray(ds.y.values, dtype=np.float64)
+            src_transform, needs_vertical_flip = _build_src_transform(
+                np.asarray(ds.x.values, dtype=np.float64), y_coords
+            )
+            if needs_vertical_flip:
+                arr = arr[:, ::-1, :]
 
-        src_crs = CRS.from_epsg(_extract_epsg(ds))
-        timestamp = pd.Timestamp(ds["time"].values[time_idx])
-        date_str = timestamp.strftime("%Y%m%d")
+            src_crs = CRS.from_epsg(_extract_epsg(ds))
+            timestamp = pd.Timestamp(ds["time"].values[time_idx])
+            date_str = timestamp.strftime("%Y%m%d")
 
-    aligned = _align_to_master(
-        arr=arr,
-        src_transform=src_transform,
-        src_crs=src_crs,
-        master_transform=master_transform,
-        master_crs=master_crs,
-        master_shape=master_shape,
-        nodata=nodata,
-    )
-
-    base_profile = {
-        "driver": "GTiff",
-        "height": config["patch_size_px"],
-        "width": config["patch_size_px"],
-        "crs": master_crs,
-        "nodata": nodata,
-        "compress": "deflate",
-        "tiled": True,
-        "blockxsize": 128,
-        "blockysize": 128,
-    }
-
-    for patch in patch_gdf:
-        bounds = patch["bounds"]
-        patch_id = patch["patch_id"]
-        window = window_from_bounds(*bounds, transform=master_transform)
-
-        slice_arr = _extract_patch_window(aligned, window, master_shape, nodata)
-        valid_mask = _compute_valid_mask(slice_arr, source, nodata)
-
-        if float(valid_mask.mean()) < min_valid_ratio:
-            continue
-
-        out_path = out_dir / f"{source}_{date_str}_{patch_id}.tif"
-        mask_path = out_dir / f"{source}_{date_str}_{patch_id}_mask.tif"
-
-        if out_path.exists() and not config.get("overwrite", False):
-            continue
-
-        patch_transform = rasterio.windows.transform(window, master_transform)
-        profile = {
-            **base_profile,
-            "count": slice_arr.shape[0],
-            "dtype": slice_arr.dtype,
-            "transform": patch_transform,
+        base_profile = {
+            "driver": "GTiff",
+            "height": config["patch_size_px"],
+            "width": config["patch_size_px"],
+            "crs": master_crs,
+            "nodata": nodata,
+            "compress": "deflate",
+            "tiled": True,
+            "blockxsize": 128,
+            "blockysize": 128,
         }
-        with rasterio.open(out_path, "w", **profile) as dst:
-            dst.write(slice_arr)
-            for idx, name in enumerate(config.get("band_names", []), start=1):
-                dst.set_band_description(idx, name)
 
-        mask_profile = {
-            **base_profile,
-            "count": 1,
-            "dtype": "uint8",
-            "nodata": None,
-            "transform": patch_transform,
-        }
-        with rasterio.open(mask_path, "w", **mask_profile) as dst:
-            dst.write(valid_mask, 1)
+        for patch in patches:
+            bounds = patch["bounds"]
+            patch_id = patch["patch_id"]
+            window = window_from_bounds(*bounds, transform=master_transform)
 
-        written += 1
+            slice_arr = _extract_patch_bounded(
+                arr=arr,
+                src_transform=src_transform,
+                src_crs=src_crs,
+                master_transform=master_transform,
+                master_crs=master_crs,
+                window=window,
+                nodata=nodata,
+            )
+            valid_mask = _compute_valid_mask(slice_arr, source, nodata)
 
-    return written
+            if float(valid_mask.mean()) < min_valid_ratio:
+                continue
+
+            out_path = out_dir / f"{source}_{date_str}_{patch_id}.tif"
+            mask_path = out_dir / f"{source}_{date_str}_{patch_id}_mask.tif"
+
+            if out_path.exists() and not config.get("overwrite", False):
+                continue
+
+            patch_transform = rasterio.windows.transform(window, master_transform)
+            profile = {
+                **base_profile,
+                "count": slice_arr.shape[0],
+                "dtype": slice_arr.dtype,
+                "transform": patch_transform,
+            }
+            with rasterio.open(out_path, "w", **profile) as dst:
+                dst.write(slice_arr)
+                for idx, name in enumerate(config.get("band_names", []), start=1):
+                    dst.set_band_description(idx, name)
+
+            mask_profile = {
+                **base_profile,
+                "count": 1,
+                "dtype": "uint8",
+                "nodata": None,
+                "transform": patch_transform,
+            }
+            with rasterio.open(mask_path, "w", **mask_profile) as dst:
+                dst.write(valid_mask, 1)
+
+            written += 1
+
+        return written
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("处理失败: nc=%s time_idx=%s - %s", nc_path, time_idx, exc)
+        return 0
 
 
 def process_file(nc_path: Path, config: dict[str, Any], max_times: int | None = None) -> int:
@@ -363,8 +358,14 @@ def process_file(nc_path: Path, config: dict[str, Any], max_times: int | None = 
     tasks = [(nc_path, t, config) for t in range(n_times)]
     total_written = 0
     with ProcessPoolExecutor(max_workers=config["workers"]) as executor:
-        for written in executor.map(process_one_time, tasks):
+        for time_idx, written in enumerate(executor.map(process_one_time, tasks)):
             total_written += written
+            if written == 0:
+                logger.warning(
+                    "%s: time_idx=%d 未写入任何 patch（可能处理异常或全部被过滤）",
+                    nc_path.name,
+                    time_idx,
+                )
 
     return total_written
 
@@ -405,7 +406,7 @@ def main(argv: list[str] | None = None) -> int:
     config["master_transform"] = tuple(master_transform)
     config["master_shape"] = master_shape
     # 多进程传递：转换为纯 Python 结构
-    config["patch_gdf"] = [
+    config["patches"] = [
         {"patch_id": row["patch_id"], "bounds": row.geometry.bounds}
         for _, row in patch_gdf.iterrows()
     ]
@@ -416,7 +417,7 @@ def main(argv: list[str] | None = None) -> int:
         raw_root,
         output_root,
         crs,
-        len(config["patch_gdf"]),
+        len(config["patches"]),
         master_shape,
     )
 
