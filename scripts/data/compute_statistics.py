@@ -94,17 +94,21 @@ def compute_statistics(
     processed_dir: Path,
     source: str,
     max_patches: int | None = None,
+    source_dirs: dict[str, str] | None = None,
 ) -> dict[str, list[float] | list[int] | int | str]:
     """计算单个数据源所有波段的统计量。
 
     参数
     ----------
     processed_dir:
-        processed 数据根目录，预期子目录结构为 processed_dir / source / *.tif。
+        processed 数据根目录，预期子目录结构为 processed_dir / patches / source / *.tif。
     source:
         数据源名称，例如 "s2"、"s1"、"landsat"。
     max_patches:
         用于快速测试的最大 patch 数量，None 表示处理全部。
+    source_dirs:
+        source 到相对子目录的显式映射；未提供时使用 ``patches/<source>``，
+        不存在则回退到 ``<source>``。
 
     返回
     -------
@@ -117,7 +121,13 @@ def compute_statistics(
         - num_files: 成功处理的文件数量。
         - source: 数据源名称。
     """
-    source_dir = processed_dir / source
+    if source_dirs and source in source_dirs:
+        rel_dir = source_dirs[source]
+    else:
+        rel_dir = f"patches/{source}"
+        if not (processed_dir / rel_dir).exists():
+            rel_dir = source
+    source_dir = processed_dir / rel_dir
     files = _collect_tif_files(source_dir, max_patches)
     if not files:
         return {
@@ -231,7 +241,21 @@ def main() -> None:
         default=None,
         help="每个 source 最多处理的 patch 数量，用于快速测试",
     )
+    parser.add_argument(
+        "--source-dir",
+        action="append",
+        default=[],
+        help="source 到子目录的映射，格式 source=relative_dir；例如 s2=patches/s2。"
+             "未指定的 source 默认使用 patches/<source>。",
+    )
     args = parser.parse_args()
+
+    source_dirs: dict[str, str] = {}
+    for mapping in args.source_dir:
+        if "=" not in mapping:
+            raise ValueError(f"--source-dir 格式错误，应为 source=relative_dir: {mapping}")
+        source, rel_dir = mapping.split("=", 1)
+        source_dirs[source] = rel_dir
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -240,6 +264,7 @@ def main() -> None:
             args.processed_dir,
             source,
             max_patches=args.max_patches,
+            source_dirs=source_dirs,
         )
         out_path = args.output_dir / f"{source}_stats.json"
         with out_path.open("w", encoding="utf-8") as f:
