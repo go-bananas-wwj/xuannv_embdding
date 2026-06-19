@@ -154,6 +154,9 @@ class MonthlyEmbeddingDataset(Dataset):
             for path in paths:
                 array = load_tiff(self.root_dir / path)
                 array = array.astype(np.float32, copy=False)
+                # 将影像中的 NaN/Inf 填充为 0；有效性由独立的 source_masks 控制。
+                if np.issubdtype(array.dtype, np.floating):
+                    array = np.nan_to_num(array, nan=0.0, posinf=0.0, neginf=0.0)
                 if source in self.statistics:
                     stats = self.statistics[source]
                     array = normalize(array, stats["mean"], stats["std"])

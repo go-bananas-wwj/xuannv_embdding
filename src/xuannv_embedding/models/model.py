@@ -3,8 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import logging
+
 import torch
 from torch import nn
+
+logger = logging.getLogger(__name__)
 
 from xuannv_embedding.models.blocks import (
     EmbeddingUpsampleHead,
@@ -152,11 +156,14 @@ class AEFModel(nn.Module):
         timestamps = timestamps.float()
 
         # 1) 编码每个时序数据源到 stem 维度，并屏蔽缺失时间步。
-        # 跳过时间维度为 0 的 source，避免后续 reshape 出错。
+        # 跳过时间维度为 0 或未在 sensor_channels 中注册的 source
+        # （未注册 source 通常作为 target-only 标签，例如 worldcover）。
         temporal_sources = [
             s
             for s in source_frames
-            if not s.startswith("highres") and source_frames[s].shape[1] > 0
+            if not s.startswith("highres")
+            and source_frames[s].shape[1] > 0
+            and s in self.sensor_channels
         ]
         if not temporal_sources:
             raise ValueError("source_frames 中至少需要一个有效的时序数据源")
@@ -173,10 +180,6 @@ class AEFModel(nn.Module):
 
         for source in temporal_sources:
             x = source_frames[source]
-            if source not in self.sensor_channels:
-                raise KeyError(
-                    f"未知数据源: {source!r}，可用数据源: {list(self.sensor_channels.keys())}"
-                )
             mask = source_masks.get(source)
             if mask is None:
                 raise KeyError(f"缺少 source mask: {source!r}")
