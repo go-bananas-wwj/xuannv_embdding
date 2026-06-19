@@ -331,7 +331,7 @@ def patchify_source(
                 desc=f"{source} {date_str}",
                 leave=False,
             ):
-                out_path = output_root / source / f"{source}_{date_str}_{patch.patch_id}.tif"
+                out_path = output_root / "patches" / source / f"{source}_{date_str}_{patch.patch_id}.tif"
                 if out_path.exists() and not overwrite:
                     continue
 

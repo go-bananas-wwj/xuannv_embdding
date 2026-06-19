@@ -1,0 +1,11 @@
+{
+  "region": "haidian",
+  "region_file": "/root/workspace/xuannv/configs/regions/haidian.geojson",
+  "input_tiff": "/data/xuannv_embedding/raw/haidian/esri_lulc_2023/esri_lulc_2023_haidian.tif",
+  "output_root": "/data/xuannv_embedding/processed/haidian",
+  "crs": "EPSG:32650",
+  "patch_size_m": 1280,
+  "patch_size_px": 128,
+  "source_name": "worldcover",
+  "date_str": "20230101"
+}

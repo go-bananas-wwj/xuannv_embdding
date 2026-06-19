@@ -4,6 +4,13 @@ experiment:
 
 model:
   embed_dim: 64
+  stem_dim: 32
+  stp:
+    space_dim: 512
+    time_dim: 256
+    precision_dim: 128
+    num_blocks: 6
+    num_heads: 8
   sensor_channels:
     s2: 12
     s1: 2

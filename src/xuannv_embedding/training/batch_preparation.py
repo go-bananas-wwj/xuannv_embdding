@@ -4,41 +4,6 @@ from __future__ import annotations
 from typing import Any
 
 import torch
-import torch.nn.functional as F
-
-
-def _downsample_spatial(tensor: torch.Tensor, stride: int, mode: str = "bilinear") -> torch.Tensor:
-    """按 stride 对空间张量进行下采样。
-
-    参数:
-        tensor: 输入张量，最后两维为空间维度 (H, W)；3-D 视为类别标签，
-            4-D 视为连续/稠密特征。
-        stride: 下采样倍数。
-        mode: 4-D 张量使用的插值模式（``bilinear`` / ``nearest`` 等）；
-            3-D 类别标签固定使用 ``nearest``。
-
-    返回:
-        下采样后的张量，形状 ``[..., H//stride, W//stride]``。
-    """
-    if stride <= 1:
-        return tensor
-    # 处理类别标签 [B, H, W]，需先/后增加通道维，固定用 nearest。
-    if tensor.ndim == 3:
-        tensor = tensor.unsqueeze(1).float()
-        down = F.interpolate(
-            tensor,
-            scale_factor=1.0 / stride,
-            mode="nearest",
-        )
-        return down.squeeze(1)
-    # 4-D 连续特征按指定 mode 插值下采样。
-    align_corners = False if mode != "nearest" else None
-    return F.interpolate(
-        tensor,
-        scale_factor=1.0 / stride,
-        mode=mode,
-        align_corners=align_corners,
-    )
 
 
 def _head_source_name(
@@ -86,13 +51,12 @@ def _weighted_temporal_mean(frames: torch.Tensor, mask: torch.Tensor) -> torch.T
     m = mask[..., None, None, None]
     weighted = (frames * m).sum(dim=1)
     count = mask.sum(dim=1, keepdim=True)[..., None, None]
-    return weighted / (count + 1e-8)
+    return weighted / count.clamp(min=1.0)
 
 
 def prepare_batch(
     batch: dict[str, Any],
     target_heads: dict[str, dict[str, Any]],
-    spatial_stride: int = 1,
 ) -> dict[str, Any]:
     """将 collate 后的 batch 转换为 AEFModel / Trainer 需要的格式。
 
@@ -103,9 +67,8 @@ def prepare_batch(
         - 从第一个有效的 source 提取全局 ``timestamps``（``[B, T]``）。
         - 若存在名称以 ``highres`` 开头的高分辨率 source，将其各自聚合为单帧与
           可用性掩码并从时序源中移除。
-        - 为每个 target head 构造 ``targets`` 与 ``target_masks``。
-        - 当 ``spatial_stride > 1`` 时，将 target 下采样到与模型 embedding_map
-          相同的空间分辨率。
+        - 为每个 target head 构造 ``targets`` 与 ``target_masks``，均与输入保持
+          相同空间分辨率。
 
     参数:
         batch: ``collate_fn`` 输出，包含 ``patch_ids``、``source_frames``、
@@ -113,7 +76,6 @@ def prepare_batch(
         target_heads: 配置中的 target_heads，每个 head 至少包含
             ``loss_type``（``continuous`` / ``categorical``）与 ``channels``，
             可选 ``source`` 与 ``weight``。
-        spatial_stride: sensor encoder 的下采样倍数，用于对齐 target 分辨率。
 
     返回:
         转换后的 batch 字典，包含 ``highres_frames`` 与 ``highres_masks`` 两个字典
@@ -142,11 +104,13 @@ def prepare_batch(
     targets: dict[str, torch.Tensor] = {}
     target_masks: dict[str, torch.Tensor] = {}
 
-    batch_size = next(iter(source_frames.values())).shape[0]
-    spatial_h = next(iter(source_frames.values())).shape[-2]
-    spatial_w = next(iter(source_frames.values())).shape[-1]
-    out_h = spatial_h // spatial_stride
-    out_w = spatial_w // spatial_stride
+    # 使用第一个非高分辨率 source 的空间尺寸作为参考分辨率。
+    base_sources = [s for s in source_frames if not s.startswith("highres")]
+    ref_source = base_sources[0] if base_sources else next(iter(source_frames))
+    ref_frames = source_frames[ref_source]
+    batch_size = ref_frames.shape[0]
+    spatial_h = ref_frames.shape[-2]
+    spatial_w = ref_frames.shape[-1]
 
     for head_name, head_cfg in target_heads.items():
         source_name = _head_source_name(head_name, head_cfg, available_sources)
@@ -162,12 +126,17 @@ def prepare_batch(
             masks = source_masks[source_name]
             agg = _weighted_temporal_mean(frames, masks)
             if loss_type == "continuous":
-                target = _downsample_spatial(agg, spatial_stride, mode="bilinear")
+                target = agg
+                target_mask = torch.ones(batch_size, *target.shape[-2:], dtype=torch.float32)
             else:  # categorical
-                label = agg.argmax(dim=1).long()
-                target = _downsample_spatial(label, spatial_stride, mode="nearest")
-            height, width = target.shape[-2], target.shape[-1]
-            target_mask = torch.ones(batch_size, height, width, dtype=torch.float32)
+                # 单通道标签图直接取首通道；多通道 one-hot 取 argmax。
+                if agg.shape[1] == 1:
+                    label = agg[:, 0].long()
+                else:
+                    label = agg.argmax(dim=1).long()
+                target = label
+                # 以 0 作为 nodata/背景，不参与损失计算。
+                target_mask = (label != 0).float()
             targets[head_name] = target
             target_masks[head_name] = target_mask
         else:
@@ -175,21 +144,21 @@ def prepare_batch(
                 targets[head_name] = torch.zeros(
                     batch_size,
                     channels,
-                    out_h,
-                    out_w,
+                    spatial_h,
+                    spatial_w,
                     dtype=torch.float32,
                 )
             else:
                 targets[head_name] = torch.zeros(
                     batch_size,
-                    out_h,
-                    out_w,
+                    spatial_h,
+                    spatial_w,
                     dtype=torch.long,
                 )
             target_masks[head_name] = torch.zeros(
                 batch_size,
-                out_h,
-                out_w,
+                spatial_h,
+                spatial_w,
                 dtype=torch.float32,
             )
 
@@ -206,11 +175,6 @@ def prepare_batch(
             _, _, height, width = highres_frame.shape
             avail = (hr_masks.sum(dim=1) > 0).float()
             highres_mask = avail[:, None, None, None].expand(-1, 1, height, width)
-            # 高分辨率特征会经过 sensor_bank 按 spatial_stride 下采样，
-            # 因此可用性掩码也需要对齐到相同空间分辨率（平均池化后二值化）。
-            if spatial_stride > 1:
-                highres_mask = F.avg_pool2d(highres_mask, kernel_size=spatial_stride)
-                highres_mask = (highres_mask > 0).float()
             highres_frames[source] = highres_frame
             highres_masks[source] = highres_mask
 

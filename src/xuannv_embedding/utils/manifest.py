@@ -65,12 +65,15 @@ def _find_patches_for_patch_id(
 def generate_manifest(
     processed_dir: Path,
     sources: list[str],
+    source_dirs: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """以第一个 source 为基准生成 patch manifest。
 
     Args:
-        processed_dir: 预处理数据根目录，子目录按 source 组织。
+        processed_dir: 预处理数据根目录（region 根目录）。
         sources: 数据源名称列表，第一个 source 决定 patch_id 集合。
+        source_dirs: source 到子目录的映射。例如 ``{"s2": "patches/s2", "worldcover": "labels/worldcover"}``。
+            为 ``None`` 时默认子目录名与 source 名相同（向后兼容）。
 
     Returns:
         manifest 列表，每个元素包含 ``patch_id`` 与各 source 对应的相对路径列表；
@@ -79,8 +82,11 @@ def generate_manifest(
     if not sources:
         return []
 
+    if source_dirs is None:
+        source_dirs = {s: s for s in sources}
+
     base_source = sources[0]
-    base_dir = processed_dir / base_source
+    base_dir = processed_dir / source_dirs[base_source]
 
     if not base_dir.exists():
         logger.warning("基准 source 目录不存在: %s", base_dir)
@@ -103,7 +109,7 @@ def generate_manifest(
     for patch_id in patch_ids:
         entry: dict[str, Any] = {"patch_id": patch_id}
         for source in sources:
-            source_dir = processed_dir / source
+            source_dir = processed_dir / source_dirs[source]
             patches = _find_patches_for_patch_id(source_dir, patch_id, source)
             if patches is None:
                 entry[source] = None

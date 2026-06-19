@@ -45,7 +45,8 @@ class ModelConfig:
     embed_dim: int
     sensor_channels: dict[str, int]
     target_heads: dict[str, dict[str, Any]]
-    spatial_stride: int = 1
+    stem_dim: int = 32
+    stp: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -99,6 +100,17 @@ class Config:
         _validate_required_keys(
             model_cfg, ["embed_dim", "sensor_channels", "target_heads"], path, "model"
         )
+
+        stp_cfg = model_cfg.get("stp", {})
+        stp_defaults = {
+            "space_dim": 512,
+            "time_dim": 256,
+            "precision_dim": 128,
+            "num_blocks": 6,
+            "num_heads": 8,
+        }
+        for key, value in stp_defaults.items():
+            stp_cfg.setdefault(key, value)
         _validate_required_keys(
             training_cfg,
             [
@@ -119,8 +131,8 @@ class Config:
         region = data_cfg["region"]
         statistics_dir = data_cfg.get("statistics_dir")
         if statistics_dir is None:
-            # 约定 root 为 processed/{region}/scenes，统计量位于数据根目录 statistics/{region}
-            statistics_dir = root.parent.parent.parent / "statistics" / region
+            # 约定 root 为 processed/{region}，统计量位于数据根目录 statistics/{region}
+            statistics_dir = root.parent / "statistics" / region
         else:
             statistics_dir = Path(statistics_dir)
 
@@ -149,7 +161,8 @@ class Config:
                 embed_dim=model_cfg["embed_dim"],
                 sensor_channels=model_cfg["sensor_channels"],
                 target_heads=model_cfg["target_heads"],
-                spatial_stride=model_cfg.get("spatial_stride", 1),
+                stem_dim=model_cfg.get("stem_dim", 32),
+                stp=stp_cfg,
             ),
             training=TrainingConfig(
                 epochs=training_cfg["epochs"],
