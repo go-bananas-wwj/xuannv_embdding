@@ -39,7 +39,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--output",
         default=None,
-        help="QA 报告输出路径（默认：/data/xuannv_embedding/qa/qa_patch_extraction_{region}_{source}.json）",
+        help=(
+            "QA 报告输出路径"
+            "（默认：/data/xuannv_embedding/qa/qa_patch_extraction_{region}_{source}.json）"
+        ),
     )
     args = parser.parse_args(argv)
 
