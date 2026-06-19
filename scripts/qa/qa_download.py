@@ -1,20 +1,31 @@
-import json
+from __future__ import annotations
+
 import glob
+import json
 from pathlib import Path
+
 import numpy as np
 import xarray as xr
 
 
 def _valid_ratio_for_slice(b: np.ndarray) -> float:
+    """Return the fraction of valid (non-nodata) pixels in a band slice.
+
+    For floating-point bands we mirror the heuristic in download_pc.py:
+    finite and non-zero pixels are considered valid. Integer bands are
+    assumed to use 0 as the nodata sentinel; this is a heuristic that may
+    need adjustment if future sources adopt an explicit nodata value.
+    """
     if np.issubdtype(b.dtype, np.floating):
-        valid = np.isfinite(b)
+        valid = np.isfinite(b) & (b != 0)
     else:
         valid = b != 0
     return float(valid.mean())
 
 
 def check_file(path: Path) -> dict:
-    report = {"file": str(path), "ok": True, "issues": []}
+    print(f"checking {path.name}...")
+    report: dict = {"file": str(path), "ok": True, "issues": []}
     try:
         ds = xr.open_dataset(path, chunks={"time": 1})
     except Exception as e:
@@ -23,6 +34,11 @@ def check_file(path: Path) -> dict:
         return report
 
     try:
+        if not ds.data_vars:
+            report["ok"] = False
+            report["issues"].append("dataset has no data variables")
+            return report
+
         var = list(ds.data_vars)[0]
         arr = ds[var]
         report["dims"] = dict(arr.sizes)
@@ -58,15 +74,28 @@ def check_file(path: Path) -> dict:
     return report
 
 
-def main(region: str):
+def main(
+    region: str,
+    data_root: str = "/data/xuannv_embedding/raw",
+    output: str | None = None,
+) -> None:
+    data_path = Path(data_root)
     out = {"region": region, "sources": {}}
     for source in ["s2", "s1", "landsat"]:
-        files = sorted(
-            glob.glob(str(Path("/data/xuannv_embedding/raw") / region / source / "*.nc"))
-        )
+        files = sorted(glob.glob(str(data_path / region / source / "*.nc")))
+        if not files:
+            out["sources"][source] = [
+                {
+                    "ok": False,
+                    "issues": [f"no .nc files found in {data_path / region / source}"],
+                }
+            ]
+            continue
         out["sources"][source] = [check_file(Path(f)) for f in files]
 
-    out_path = Path(f"/data/xuannv_embedding/qa/qa_download_{region}.json")
+    out_path = Path(output) if output else Path(
+        f"/data/xuannv_embedding/qa/qa_download_{region}.json"
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(out, indent=2))
     print(f"QA report written to {out_path}")
