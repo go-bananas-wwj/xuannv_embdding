@@ -91,21 +91,8 @@ def _read_patch(
     """
     left, bottom, right, top = patch_bounds
 
-    if src.crs == dst_crs:
-        try:
-            window = window_from_bounds(left, bottom, right, top, src.transform)
-            array = src.read(
-                1,
-                window=window,
-                out_shape=dst_shape,
-                resampling=Resampling.nearest,
-                fill_value=DEFAULT_FILL_NODATA,
-            )
-            return array.astype(np.uint8)
-        except Exception:
-            pass
-
-    # 需要重投影或窗口读取失败时，使用 rasterio.warp.reproject
+    # 始终通过 warp.reproject 读取并严格对齐到目标 patch 边界，避免
+    # 当源数据 CRS 与目标相同时窗口读取导致的亚像素偏移。
     dst_transform = from_bounds(left, bottom, right, top, dst_shape[1], dst_shape[0])
     dst_array = np.empty(dst_shape, dtype=np.uint8)
     rasterio.warp.reproject(
