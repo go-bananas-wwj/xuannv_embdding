@@ -1,7 +1,11 @@
-"""对齐多源 NetCDF 时序数据到统一网格并切分为 patches。
+"""对齐多源 NetCDF 时序数据到统一 10 m UTM 网格并切分为 patches。
 
-读取各 source 目录下的 NetCDF 文件，按配置尺寸生成 patch 网格，
-将每个时间步裁剪为固定像素大小的 GeoTIFF，输出到 processed scenes 目录。
+核心改进：
+- 一次性加载整时相到内存；
+- 按 AOI 主网格对齐（整数像素偏移或 warp）；
+- 批量整数窗口切片并补 nodata；
+- 每源独立有效掩膜；
+- 按 (nc_file, time_idx) 多进程并行。
 """
 
 from __future__ import annotations
@@ -9,19 +13,23 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import sys
-from dataclasses import dataclass
-from datetime import datetime
+import time
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any
 
+import geopandas as gpd
 import numpy as np
+import pandas as pd
 import rasterio
+import shapely.geometry
 import xarray as xr
 from rasterio.crs import CRS
 from rasterio.transform import Affine, from_bounds, from_origin
 from rasterio.warp import Resampling, reproject
-from tqdm import tqdm
+from rasterio.windows import from_bounds as window_from_bounds
 
 from xuannv_embedding.utils.geo import make_patch_grid
 
@@ -31,40 +39,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-DEFAULT_FILL_MISSING = "zero"
-DEFAULT_NODATA = 0.0
+TOLERANCE = 1e-3
+MASTER_RES = 10.0
 
-
-@dataclass
-class NetCDFInfo:
-    """NetCDF 数据集的空间与波段信息。"""
-
-    path: Path
-    data_var: str
-    crs: CRS
-    bounds: tuple[float, float, float, float]
-    x_res: float
-    y_res: float
-    shape: tuple[int, int]  # (height, width)
-    band_count: int
-    band_names: list[str]
-    times: list[datetime]
-    src_transform: Affine
-    needs_vertical_flip: bool
-
-
-@dataclass
-class PatchInfo:
-    """单个 patch 的网格索引与地理边界。"""
-
-    row: int
-    col: int
-    bounds: tuple[float, float, float, float]
-
-    @property
-    def patch_id(self) -> str:
-        """行列号格式化字符串，例如 p000_r001。"""
-        return f"p{self.col:03d}_r{self.row:03d}"
+# S2 SCL 有效类别：植被、裸土、水、低云、雪
+S2_VALID_SCL = {4, 5, 6, 7, 11}
 
 
 def _find_data_variable(ds: xr.Dataset) -> str:
@@ -99,14 +78,11 @@ def _extract_epsg(ds: xr.Dataset) -> int:
     raise ValueError(f"无法从 NetCDF 提取 EPSG: {list(ds.coords.keys())}, {dict(ds.attrs)}")
 
 
-def _build_src_transform(
-    x: np.ndarray,
-    y: np.ndarray,
-) -> tuple[Affine, tuple[float, float, float, float], bool]:
-    """根据 xarray 的 x/y 坐标构建 rasterio 仿射变换与 bounds。
+def _build_src_transform(x: np.ndarray, y: np.ndarray) -> tuple[Affine, bool]:
+    """根据 xarray 的 x/y 坐标构建 rasterio 仿射变换。
 
     返回:
-        (src_transform, bounds, needs_vertical_flip)
+        (src_transform, needs_vertical_flip)
     """
     x_vals = np.asarray(x, dtype=np.float64)
     y_vals = np.asarray(y, dtype=np.float64)
@@ -115,322 +91,372 @@ def _build_src_transform(
     y_res = float(np.abs(np.diff(y_vals).mean()))
 
     left = float(x_vals.min()) - x_res / 2.0
-    right = float(x_vals.max()) + x_res / 2.0
-    bottom = float(y_vals.min()) - y_res / 2.0
     top = float(y_vals.max()) + y_res / 2.0
 
-    # 标准 north-up：y 轴向下为负
     src_transform = from_origin(left, top, x_res, y_res)
-
-    # 若 y 坐标自下而上递增，则数组第 0 行对应地理南方，需要垂直翻转
     needs_vertical_flip = bool(y_vals[1] > y_vals[0])
-
-    return src_transform, (left, bottom, right, top), needs_vertical_flip
-
-
-def read_netcdf_info(nc_path: Path) -> NetCDFInfo:
-    """打开 NetCDF 并提取预处理所需的元信息。"""
-    ds = xr.open_dataset(nc_path, chunks=None)
-    data_var = _find_data_variable(ds)
-    da: xr.DataArray = ds[data_var]
-
-    epsg = _extract_epsg(ds)
-    crs = CRS.from_epsg(epsg)
-
-    src_transform, bounds, needs_vertical_flip = _build_src_transform(
-        np.asarray(ds.x.values), np.asarray(ds.y.values)
-    )
-
-    times = [
-        datetime.utcfromtimestamp(int(t.astype("datetime64[s]").astype(int)))
-        for t in ds.time.values
-    ]
-    band_names = [str(b) for b in ds.band.values]
-
-    return NetCDFInfo(
-        path=nc_path,
-        data_var=data_var,
-        crs=crs,
-        bounds=bounds,
-        x_res=src_transform.a,
-        y_res=abs(src_transform.e),
-        shape=(int(da.sizes["y"]), int(da.sizes["x"])),
-        band_count=int(da.sizes["band"]),
-        band_names=band_names,
-        times=times,
-        src_transform=src_transform,
-        needs_vertical_flip=needs_vertical_flip,
-    )
-
-
-def build_patch_grid(
-    bounds: tuple[float, float, float, float],
-    patch_size_m: float,
-) -> list[PatchInfo]:
-    """基于地理边界和 patch 尺寸生成带行列号的 patch 列表。"""
-    raw_patches = make_patch_grid(bounds, patch_size_m)
-    # make_patch_grid 从 left 开始，x 外层循环、y 内层循环；需要映射为 (row, col)
-    left, bottom, right, top = bounds
-    n_rows = int(np.ceil((top - bottom) / patch_size_m))
-    patches: list[PatchInfo] = []
-    for idx, pbounds in enumerate(raw_patches):
-        col = idx // n_rows
-        row = idx % n_rows
-        # 与 col/row 视觉一致：row 从南向北递增
-        patches.append(PatchInfo(row=row, col=col, bounds=pbounds))
-    return patches
-
-
-def _parse_time(time_value: Any) -> datetime:
-    """将 xarray time 坐标值转换为 datetime。"""
-    if isinstance(time_value, datetime):
-        return time_value
-    if isinstance(time_value, np.datetime64):
-        return datetime.utcfromtimestamp(int(time_value.astype("datetime64[s]").astype(int)))
-    if hasattr(time_value, "to_pydatetime"):
-        return time_value.to_pydatetime()
-    raise ValueError(f"无法解析时间值: {time_value} (类型 {type(time_value)})")
-
-
-def extract_patch(
-    ds: xr.Dataset,
-    data_var: str,
-    time_idx: int,
-    patch: PatchInfo,
-    patch_size_px: int,
-    dst_crs: CRS,
-    fill_value: float = DEFAULT_NODATA,
-) -> tuple[np.ndarray, Affine] | None:
-    """从 NetCDF 中裁剪并重采样单个 patch。
-
-    返回:
-        (array, transform)，array 形状为 (band, height, width)；
-        若 patch 完全为空且配置跳过，则返回 None。
-    """
-    left, bottom, right, top = patch.bounds
-    dst_transform = from_bounds(left, bottom, right, top, width=patch_size_px, height=patch_size_px)
-
-    da: xr.DataArray = ds[data_var]
-    src_array = da.isel(time=time_idx).values.astype(np.float32)
-
-    # 若 y 坐标递增，需要垂直翻转使数组为 north-up
-    y_coords = np.asarray(ds.y.values, dtype=np.float64)
-    if y_coords[1] > y_coords[0]:
-        src_array = src_array[:, ::-1, :]
-
-    src_crs = CRS.from_epsg(int(ds.coords["epsg"].values))
-    src_transform, _, _ = _build_src_transform(np.asarray(ds.x.values), np.asarray(ds.y.values))
-
-    dst_array = np.empty((src_array.shape[0], patch_size_px, patch_size_px), dtype=np.float32)
-    reproject(
-        source=src_array,
-        destination=dst_array,
-        src_transform=src_transform,
-        src_crs=src_crs,
-        dst_transform=dst_transform,
-        dst_crs=dst_crs,
-        resampling=Resampling.bilinear,
-        dst_nodata=fill_value,
-    )
-
-    # 将 NaN 也替换为填充值，避免 GeoTIFF 中出现无效值
-    if np.isnan(dst_array).any():
-        dst_array = np.nan_to_num(dst_array, nan=fill_value, posinf=fill_value, neginf=fill_value)
-
-    return dst_array, dst_transform
-
-
-def write_patch_tiff(
-    array: np.ndarray,
-    out_path: Path,
-    transform: Affine,
-    crs: CRS,
-    band_names: list[str],
-    nodata: float = DEFAULT_NODATA,
-) -> None:
-    """将 patch 数组写入多波段 GeoTIFF。"""
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    count, height, width = array.shape
-    with rasterio.open(
-        out_path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
-        dtype=array.dtype,
-        crs=crs,
-        transform=transform,
-        nodata=nodata,
-    ) as dst:
-        dst.write(array)
-        # 写入 band 描述，便于后续识别波段
-        for idx, name in enumerate(band_names, start=1):
-            dst.set_band_description(idx, name)
-
-
-def patchify_source(
-    source: str,
-    raw_root: Path,
-    output_root: Path,
-    dst_crs: CRS,
-    patch_size_m: float,
-    patch_size_px: int,
-    fill_missing: str,
-    overwrite: bool,
-) -> int:
-    """处理单个数据源的所有 NetCDF 文件并输出 patches。
-
-    返回:
-        实际写入的 patch 数量。
-    """
-    source_dir = raw_root / source
-    if not source_dir.exists():
-        logger.warning("source 目录不存在，跳过: %s", source_dir)
-        return 0
-
-    nc_files = sorted(source_dir.glob("*.nc"))
-    if not nc_files:
-        logger.warning("未找到 NetCDF 文件: %s", source_dir)
-        return 0
-
-    # 使用第一个 NetCDF 的空间范围生成统一 patch 网格
-    first_info = read_netcdf_info(nc_files[0])
-    logger.info(
-        "%s: 使用 %s 作为参考网格, bounds=%s, shape=%s, bands=%d",
-        source,
-        nc_files[0].name,
-        first_info.bounds,
-        first_info.shape,
-        first_info.band_count,
-    )
-    patches = build_patch_grid(first_info.bounds, patch_size_m)
-    logger.info(
-        "%s: 生成 %d 个 patches (%d m × %d m)",
-        source,
-        len(patches),
-        patch_size_m,
-        patch_size_m,
-    )
-
-    written = 0
-    skip_empty = fill_missing == "skip"
-
-    for nc_path in nc_files:
-        logger.info("%s: 处理 %s", source, nc_path.name)
-        ds = xr.open_dataset(nc_path, chunks=None)
-        data_var = _find_data_variable(ds)
-        da: xr.DataArray = ds[data_var]
-
-        for time_idx in range(int(da.sizes["time"])):
-            time_val = _parse_time(ds.time.values[time_idx])
-            date_str = time_val.strftime("%Y%m%d")
-
-            for patch in tqdm(
-                patches,
-                desc=f"{source} {date_str}",
-                leave=False,
-            ):
-                out_path = output_root / "patches" / source / f"{source}_{date_str}_{patch.patch_id}.tif"
-                if out_path.exists() and not overwrite:
-                    continue
-
-                result = extract_patch(
-                    ds=ds,
-                    data_var=data_var,
-                    time_idx=time_idx,
-                    patch=patch,
-                    patch_size_px=patch_size_px,
-                    dst_crs=dst_crs,
-                    fill_value=DEFAULT_NODATA,
-                )
-                if result is None:
-                    continue
-                array, transform = result
-
-                # 判断是否为空 patch
-                if skip_empty and np.all(array == DEFAULT_NODATA):
-                    continue
-
-                write_patch_tiff(
-                    array=array,
-                    out_path=out_path,
-                    transform=transform,
-                    crs=dst_crs,
-                    band_names=[str(b) for b in ds.band.values],
-                    nodata=DEFAULT_NODATA,
-                )
-                written += 1
-
-    return written
+    return src_transform, needs_vertical_flip
 
 
 def load_config(path: Path) -> dict[str, Any]:
     """加载 JSON 配置文件。"""
     with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
+        config = json.load(f)
+
+    config.setdefault("min_valid_ratio", 0.3)
+    config.setdefault("workers", 8)
+    config.setdefault("nodata", 0.0)
+    config.setdefault("aoi_path", f"configs/regions/{config['region']}.geojson")
+    return config
+
+
+def generate_patch_grid(
+    aoi_path_or_file: str | Path,
+    patch_size_m: float,
+    crs: str | CRS,
+) -> tuple[gpd.GeoDataFrame, Affine]:
+    """基于 AOI 生成 patch 网格与主变换。
+
+    返回:
+        (patch_gdf, master_transform)，其中 master_transform 的 a=10, e=-10。
+    """
+    aoi = gpd.read_file(aoi_path_or_file)
+    crs_obj = CRS.from_string(crs) if isinstance(crs, str) else crs
+    aoi = aoi.to_crs(crs_obj)
+
+    left, bottom, right, top = aoi.total_bounds
+
+    # 将边界向外吸附到 10 m 网格，确保 transform 严格为 10 m
+    left = math.floor(left / MASTER_RES) * MASTER_RES
+    bottom = math.floor(bottom / MASTER_RES) * MASTER_RES
+    right = math.ceil(right / MASTER_RES) * MASTER_RES
+    top = math.ceil(top / MASTER_RES) * MASTER_RES
+
+    width = int(round((right - left) / MASTER_RES))
+    height = int(round((top - bottom) / MASTER_RES))
+
+    master_transform = from_bounds(left, bottom, right, top, width=width, height=height)
+
+    raw_patches = make_patch_grid((left, bottom, right, top), patch_size_m)
+    n_rows = int(np.ceil((top - bottom) / patch_size_m))
+
+    records: list[dict[str, Any]] = []
+    for idx, pbounds in enumerate(raw_patches):
+        col = idx // n_rows
+        row = idx % n_rows
+        patch_id = f"p{col:03d}_r{row:03d}"
+        records.append({"patch_id": patch_id, "geometry": shapely.geometry.box(*pbounds)})
+
+    patch_gdf = gpd.GeoDataFrame(records, crs=crs_obj)
+    return patch_gdf, master_transform
+
+
+def _compute_valid_mask(slice_arr: np.ndarray, source: str, nodata: float) -> np.ndarray:
+    """计算 uint8 有效像素掩膜。"""
+    ref = slice_arr[0]
+    valid = np.isfinite(ref) & (ref != nodata)
+
+    if source == "s2":
+        scl = slice_arr[-1]
+        valid = valid & np.isin(scl.astype(np.uint8), list(S2_VALID_SCL))
+    elif source == "landsat":
+        qa = slice_arr[-1].astype(np.uint16)
+        valid = valid & ((qa & 0b11111) == 0)
+
+    return valid.astype(np.uint8)
+
+
+def _align_to_master(
+    arr: np.ndarray,
+    src_transform: Affine,
+    src_crs: CRS,
+    master_transform: Affine,
+    master_crs: CRS,
+    master_shape: tuple[int, int],
+    nodata: float,
+) -> np.ndarray:
+    """将源时相数组对齐到 AOI 主网格，返回完整 AOI 形状数组。"""
+    bands = arr.shape[0]
+    height, width = master_shape
+    aligned = np.full((bands, height, width), nodata, dtype=arr.dtype)
+
+    src_res = abs(src_transform.a)
+    src_y_res = abs(src_transform.e)
+    same_crs = src_crs == master_crs
+    res_match = abs(src_res - MASTER_RES) < TOLERANCE and abs(src_y_res - MASTER_RES) < TOLERANCE
+    no_skew = abs(src_transform.b) < TOLERANCE and abs(src_transform.d) < TOLERANCE
+
+    if same_crs and res_match and no_skew:
+        # 整数像素偏移放置
+        col_off = int(round((src_transform.c - master_transform.c) / MASTER_RES))
+        row_off = int(round((master_transform.f - src_transform.f) / MASTER_RES))
+        src_h, src_w = arr.shape[-2:]
+
+        dst_row_start = max(0, row_off)
+        dst_col_start = max(0, col_off)
+        dst_row_end = min(height, row_off + src_h)
+        dst_col_end = min(width, col_off + src_w)
+
+        src_row_start = max(0, -row_off)
+        src_col_start = max(0, -col_off)
+        src_row_end = src_row_start + (dst_row_end - dst_row_start)
+        src_col_end = src_col_start + (dst_col_end - dst_col_start)
+
+        if dst_row_end > dst_row_start and dst_col_end > dst_col_start:
+            aligned[:, dst_row_start:dst_row_end, dst_col_start:dst_col_end] = arr[
+                :, src_row_start:src_row_end, src_col_start:src_col_end
+            ]
+    else:
+        reproject(
+            source=arr,
+            destination=aligned,
+            src_transform=src_transform,
+            src_crs=src_crs,
+            dst_transform=master_transform,
+            dst_crs=master_crs,
+            resampling=Resampling.bilinear,
+            dst_nodata=nodata,
+        )
+
+    return aligned
+
+
+def _extract_patch_window(
+    aligned: np.ndarray,
+    window: rasterio.windows.Window,
+    master_shape: tuple[int, int],
+    nodata: float,
+) -> np.ndarray:
+    """从对齐数组中提取一个 patch，边缘不足时补 nodata。"""
+    height, width = master_shape
+    row_off = int(round(window.row_off))
+    col_off = int(round(window.col_off))
+    patch_h = int(window.height)
+    patch_w = int(window.width)
+
+    pad_top = max(0, -row_off)
+    pad_left = max(0, -col_off)
+    pad_bottom = max(0, row_off + patch_h - height)
+    pad_right = max(0, col_off + patch_w - width)
+
+    if pad_top or pad_left or pad_bottom or pad_right:
+        slice_arr = aligned[
+            :,
+            max(0, row_off) : min(row_off + patch_h, height),
+            max(0, col_off) : min(col_off + patch_w, width),
+        ]
+        slice_arr = np.pad(
+            slice_arr,
+            ((0, 0), (pad_top, pad_bottom), (pad_left, pad_right)),
+            mode="constant",
+            constant_values=nodata,
+        )
+    else:
+        slice_arr = aligned[:, row_off : row_off + patch_h, col_off : col_off + patch_w]
+
+    return slice_arr
+
+
+def process_one_time(args: tuple[Path, int, dict[str, Any]]) -> int:
+    """处理单个 NetCDF 的单个时间步，返回写入的 patch 数量。"""
+    nc_path, time_idx, config = args
+
+    source = config["source"]
+    nodata = float(config["nodata"])
+    min_valid_ratio = float(config["min_valid_ratio"])
+    master_transform = Affine(*config["master_transform"])
+    master_crs = CRS.from_string(config["crs"])
+    master_shape = tuple(config["master_shape"])
+    patch_gdf = config["patch_gdf"]
+
+    out_dir = Path(config["output_root"]) / "patches" / source
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    written = 0
+    with xr.open_dataset(nc_path, chunks={"time": 1}) as ds:
+        data_var = _find_data_variable(ds)
+        arr = ds[data_var].isel(time=time_idx).values.astype(np.float32)
+
+        y_coords = np.asarray(ds.y.values, dtype=np.float64)
+        src_transform, needs_vertical_flip = _build_src_transform(
+            np.asarray(ds.x.values, dtype=np.float64), y_coords
+        )
+        if needs_vertical_flip:
+            arr = arr[:, ::-1, :]
+
+        src_crs = CRS.from_epsg(_extract_epsg(ds))
+        timestamp = pd.Timestamp(ds["time"].values[time_idx])
+        date_str = timestamp.strftime("%Y%m%d")
+
+    aligned = _align_to_master(
+        arr=arr,
+        src_transform=src_transform,
+        src_crs=src_crs,
+        master_transform=master_transform,
+        master_crs=master_crs,
+        master_shape=master_shape,
+        nodata=nodata,
+    )
+
+    base_profile = {
+        "driver": "GTiff",
+        "height": config["patch_size_px"],
+        "width": config["patch_size_px"],
+        "crs": master_crs,
+        "nodata": nodata,
+        "compress": "deflate",
+        "tiled": True,
+        "blockxsize": 128,
+        "blockysize": 128,
+    }
+
+    for patch in patch_gdf:
+        bounds = patch["bounds"]
+        patch_id = patch["patch_id"]
+        window = window_from_bounds(*bounds, transform=master_transform)
+
+        slice_arr = _extract_patch_window(aligned, window, master_shape, nodata)
+        valid_mask = _compute_valid_mask(slice_arr, source, nodata)
+
+        if float(valid_mask.mean()) < min_valid_ratio:
+            continue
+
+        out_path = out_dir / f"{source}_{date_str}_{patch_id}.tif"
+        mask_path = out_dir / f"{source}_{date_str}_{patch_id}_mask.tif"
+
+        if out_path.exists() and not config.get("overwrite", False):
+            continue
+
+        patch_transform = rasterio.windows.transform(window, master_transform)
+        profile = {
+            **base_profile,
+            "count": slice_arr.shape[0],
+            "dtype": slice_arr.dtype,
+            "transform": patch_transform,
+        }
+        with rasterio.open(out_path, "w", **profile) as dst:
+            dst.write(slice_arr)
+            for idx, name in enumerate(config.get("band_names", []), start=1):
+                dst.set_band_description(idx, name)
+
+        mask_profile = {
+            **base_profile,
+            "count": 1,
+            "dtype": "uint8",
+            "nodata": None,
+            "transform": patch_transform,
+        }
+        with rasterio.open(mask_path, "w", **mask_profile) as dst:
+            dst.write(valid_mask, 1)
+
+        written += 1
+
+    return written
+
+
+def process_file(nc_path: Path, config: dict[str, Any], max_times: int | None = None) -> int:
+    """处理单个 NetCDF 文件的所有时间步（或前 max_times 个）。"""
+    with xr.open_dataset(nc_path, chunks={"time": 1}) as ds:
+        n_times = ds.sizes["time"]
+
+    n_times = min(n_times, max_times) if max_times is not None else n_times
+    tasks = [(nc_path, t, config) for t in range(n_times)]
+    total_written = 0
+    with ProcessPoolExecutor(max_workers=config["workers"]) as executor:
+        for written in executor.map(process_one_time, tasks):
+            total_written += written
+
+    return total_written
 
 
 def main(argv: list[str] | None = None) -> int:
     """命令行入口。"""
     parser = argparse.ArgumentParser(
-        description="将 NetCDF 时序数据对齐并切分为 patches",
+        description="将 NetCDF 时序数据对齐到统一 10 m 网格并切分为 patches",
     )
-    parser.add_argument(
-        "--config",
-        required=True,
-        type=Path,
-        help="JSON 配置文件路径",
-    )
-    parser.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="覆盖已存在的 patch 文件",
-    )
-    parser.add_argument(
-        "--source",
-        default=None,
-        help="仅处理指定 source（调试用）",
-    )
+    parser.add_argument("--config", required=True, type=Path, help="JSON 配置文件路径")
+    parser.add_argument("--source", default=None, help="仅处理指定 source（调试用）")
+    parser.add_argument("--overwrite", action="store_true", help="覆盖已存在的 patch 文件")
+    parser.add_argument("--max-files", type=int, default=None, help="最多处理的 NetCDF 文件数")
+    parser.add_argument("--max-times", type=int, default=None, help="每个文件最多处理的时间步数")
     args = parser.parse_args(argv)
 
-    cfg = load_config(args.config)
-    region = cfg["region"]
-    raw_root = Path(cfg["raw_root"])
-    output_root = Path(cfg["output_root"])
-    dst_crs = CRS.from_string(cfg["crs"])
-    patch_size_m = float(cfg["patch_size_m"])
-    patch_size_px = int(cfg["patch_size_px"])
-    sources = cfg["sources"]
-    fill_missing = cfg.get("fill_missing", DEFAULT_FILL_MISSING)
+    config = load_config(args.config)
+    region = config["region"]
+    raw_root = Path(config["raw_root"])
+    output_root = Path(config["output_root"])
+    crs = CRS.from_string(config["crs"])
+    patch_size_m = float(config["patch_size_m"])
+    sources = config["sources"]
 
     if args.source is not None:
         sources = [args.source]
 
+    aoi_path = Path(config["aoi_path"])
+    patch_gdf, master_transform = generate_patch_grid(aoi_path, patch_size_m, crs)
+
+    # 从 snapped bounds 计算主网格形状
+    left, bottom, right, top = patch_gdf.total_bounds
+    master_shape = (
+        int(round((top - bottom) / MASTER_RES)),
+        int(round((right - left) / MASTER_RES)),
+    )
+
+    config["master_transform"] = tuple(master_transform)
+    config["master_shape"] = master_shape
+    # 多进程传递：转换为纯 Python 结构
+    config["patch_gdf"] = [
+        {"patch_id": row["patch_id"], "bounds": row.geometry.bounds}
+        for _, row in patch_gdf.iterrows()
+    ]
+
     logger.info(
-        "开始预处理: region=%s raw_root=%s output_root=%s crs=%s",
+        "开始预处理: region=%s raw_root=%s output_root=%s crs=%s patches=%d shape=%s",
         region,
         raw_root,
         output_root,
-        dst_crs,
+        crs,
+        len(config["patch_gdf"]),
+        master_shape,
     )
 
     total_written = 0
+    t0 = time.time()
     for source in sources:
-        count = patchify_source(
-            source=source,
-            raw_root=raw_root,
-            output_root=output_root,
-            dst_crs=dst_crs,
-            patch_size_m=patch_size_m,
-            patch_size_px=patch_size_px,
-            fill_missing=fill_missing,
-            overwrite=args.overwrite,
-        )
-        total_written += count
-        logger.info("%s: 写入 %d 个 patches", source, count)
+        source_dir = raw_root / source
+        if not source_dir.exists():
+            logger.warning("source 目录不存在，跳过: %s", source_dir)
+            continue
 
-    logger.info("预处理完成: 共写入 %d 个 patches", total_written)
+        nc_files = sorted(source_dir.glob("*.nc"))
+        if not nc_files:
+            logger.warning("未找到 NetCDF 文件: %s", source_dir)
+            continue
+
+        if args.max_files is not None:
+            nc_files = nc_files[: args.max_files]
+
+        config["source"] = source
+        config["overwrite"] = args.overwrite
+
+        with xr.open_dataset(nc_files[0], chunks={"time": 1}) as ds:
+            config["band_names"] = [str(b) for b in ds.band.values]
+
+        written = 0
+        for nc_path in nc_files:
+            logger.info("%s: 处理 %s", source, nc_path.name)
+            written += process_file(nc_path, config, args.max_times)
+
+        total_written += written
+        logger.info("%s: 写入 %d 个 patches", source, written)
+
+    elapsed = time.time() - t0
+    logger.info(
+        "预处理完成: 共写入 %d 个 patches, 耗时 %.1f s (%.2f patches/s)",
+        total_written,
+        elapsed,
+        total_written / elapsed if elapsed > 0 else 0.0,
+    )
     return 0
 
 
