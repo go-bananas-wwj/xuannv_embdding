@@ -114,12 +114,12 @@ def main() -> None:
         name: (head_cfg["loss_type"], head_cfg["channels"])
         for name, head_cfg in cfg.model.target_heads.items()
     }
-    spatial_stride = getattr(cfg.model, "spatial_stride", 1)
     model = AEFModel(
         sensor_channels=cfg.model.sensor_channels,
         embed_dim=cfg.model.embed_dim,
         target_heads=aef_target_heads,
-        spatial_stride=spatial_stride,
+        stem_dim=cfg.model.stem_dim,
+        stp=cfg.model.stp,
     )
 
     load_checkpoint(args.checkpoint, model, device=device)
@@ -141,7 +141,7 @@ def main() -> None:
 
     with torch.no_grad():
         for batch in dataloader:
-            prepared = prepare_batch(batch, cfg.model.target_heads, spatial_stride=spatial_stride)
+            prepared = prepare_batch(batch, cfg.model.target_heads)
             prepared = _move_batch_to_device(prepared, device)
 
             output = model(

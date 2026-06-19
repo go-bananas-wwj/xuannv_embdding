@@ -4,7 +4,17 @@ from __future__ import annotations
 import pytest
 import torch
 
-from xuannv_embedding.models.blocks import SpaceOperator, TimeOperator
+from xuannv_embedding.models.blocks import (
+    EmbeddingUpsampleHead,
+    MultiResolutionSTPBlock,
+    SpaceOperator,
+    STPEncoder,
+    STPPrecisionOperator,
+    STPSpaceOperator,
+    STPTimeOperator,
+    TemporalSummarizer,
+    TimeOperator,
+)
 from xuannv_embedding.models.bottleneck import VMFBottleneck
 from xuannv_embedding.models.decoders import CategoricalDecoder, ContinuousDecoder
 from xuannv_embedding.models.highres_fusion import AvailabilityAwareFusion
@@ -191,7 +201,6 @@ def test_aef_model_forward() -> None:
         sensor_channels,
         embed_dim,
         target_heads,
-        num_time_heads=2,
         num_space_heads=2,
     )
 
@@ -242,7 +251,6 @@ def test_aef_model_without_highres() -> None:
         sensor_channels,
         embed_dim,
         target_heads,
-        num_time_heads=2,
         num_space_heads=2,
     )
 
@@ -262,3 +270,198 @@ def test_aef_model_without_highres() -> None:
     assert out.embedding_map.shape == (batch_size, embed_dim, height, width)
     assert "s2_recon" in out.reconstructions
     assert out.reconstructions["s2_recon"].shape == (batch_size, 10, height, width)
+
+
+
+def test_stp_space_operator() -> None:
+    """STPSpaceOperator 应保持 (B, T, H, W, C) 形状。"""
+    batch_size, time_steps, height, width, dim = 2, 3, 4, 4, 64
+    operator = STPSpaceOperator(dim, num_heads=8)
+    x = torch.randn(batch_size, time_steps, height, width, dim)
+    y = operator(x)
+    assert y.shape == (batch_size, time_steps, height, width, dim)
+
+
+def test_stp_time_operator() -> None:
+    """STPTimeOperator 应保持 (B, T, H, W, C) 形状并支持时间掩码。"""
+    batch_size, time_steps, height, width, dim = 2, 3, 4, 4, 64
+    operator = STPTimeOperator(dim, num_heads=8)
+    x = torch.randn(batch_size, time_steps, height, width, dim)
+    timestamps = torch.arange(time_steps).float().unsqueeze(0).expand(batch_size, -1)
+    mask = torch.ones(batch_size, time_steps)
+    mask[0, -1] = 0
+    y = operator(x, timestamps, mask=mask)
+    assert y.shape == (batch_size, time_steps, height, width, dim)
+
+
+def test_stp_precision_operator() -> None:
+    """STPPrecisionOperator 应保持 (B, T, H, W, C) 形状。"""
+    batch_size, time_steps, height, width, dim = 2, 3, 4, 4, 64
+    operator = STPPrecisionOperator(dim)
+    x = torch.randn(batch_size, time_steps, height, width, dim)
+    y = operator(x)
+    assert y.shape == (batch_size, time_steps, height, width, dim)
+
+
+def test_multi_resolution_stp_block() -> None:
+    """MultiResolutionSTPBlock 应保持三个路径各自的形状。"""
+    batch_size, time_steps = 2, 3
+    space_dim, time_dim, precision_dim = 64, 32, 16
+    space_h, space_w = 1, 1
+    time_h, time_w = 2, 2
+    precision_h, precision_w = 8, 8
+
+    block = MultiResolutionSTPBlock(space_dim, time_dim, precision_dim, num_heads=4)
+    space_x = torch.randn(batch_size, time_steps, space_h, space_w, space_dim)
+    time_x = torch.randn(batch_size, time_steps, time_h, time_w, time_dim)
+    precision_x = torch.randn(batch_size, time_steps, precision_h, precision_w, precision_dim)
+    timestamps = torch.arange(time_steps).float().unsqueeze(0).expand(batch_size, -1)
+
+    s_out, t_out, p_out = block(space_x, time_x, precision_x, timestamps)
+    assert s_out.shape == space_x.shape
+    assert t_out.shape == time_x.shape
+    assert p_out.shape == precision_x.shape
+
+
+def test_stp_encoder() -> None:
+    """STPEncoder 应输出 1/2L 精度的特征。"""
+    batch_size, time_steps, height, width, channels = 2, 3, 16, 16, 32
+    encoder = STPEncoder(
+        input_channels=channels,
+        space_dim=64,
+        time_dim=32,
+        precision_dim=16,
+        num_blocks=2,
+        num_heads=4,
+    )
+    x = torch.randn(batch_size, time_steps, height, width, channels)
+    timestamps = torch.arange(time_steps).float().unsqueeze(0).expand(batch_size, -1)
+    y, input_size = encoder(x, timestamps)
+    assert input_size == (height, width)
+    assert y.shape == (batch_size, time_steps, height // 2, width // 2, 16)
+
+
+def test_temporal_summarizer() -> None:
+    """TemporalSummarizer 应输出单位范数的像素级嵌入。"""
+    batch_size, time_steps, height, width, feature_dim = 2, 3, 4, 4, 32
+    summarizer = TemporalSummarizer(feature_dim, embed_dim=16, num_heads=4)
+    feats = torch.randn(batch_size, time_steps, height, width, feature_dim)
+    timestamps = torch.arange(time_steps).float().unsqueeze(0).expand(batch_size, -1)
+    valid_period = torch.stack([timestamps.min(dim=1).values, timestamps.max(dim=1).values], dim=1)
+    mu = summarizer(feats, timestamps, valid_period)
+
+    assert mu.shape == (batch_size, height, width, 16)
+    norms = mu.norm(dim=-1)
+    assert torch.allclose(norms, torch.ones_like(norms), atol=1e-6)
+
+
+def test_embedding_upsample_head() -> None:
+    """EmbeddingUpsampleHead 应将 (B, H, W, C) 上采样到 (B, 2H, 2W, C)。"""
+    batch_size, height, width, dim = 2, 4, 4, 16
+    head = EmbeddingUpsampleHead(dim)
+    x = torch.randn(batch_size, height, width, dim)
+    y = head(x)
+    assert y.shape == (batch_size, height * 2, width * 2, dim)
+
+
+
+def test_aef_model_odd_size() -> None:
+    """AEFModel 在奇数输入尺寸下应输出与输入相同空间分辨率的 embedding_map。"""
+    sensor_channels = {"s2": 10, "s1": 2}
+    embed_dim = 16
+    target_heads = {"s2_recon": ("continuous", 10)}
+    model = AEFModel(
+        sensor_channels,
+        embed_dim,
+        target_heads,
+        stem_dim=16,
+        stp={"space_dim": 64, "time_dim": 32, "precision_dim": 32, "num_blocks": 2, "num_heads": 2},
+    )
+    batch_size, time_steps, height, width = 1, 2, 17, 17
+    source_frames = {
+        "s2": torch.randn(batch_size, time_steps, 10, height, width),
+        "s1": torch.randn(batch_size, time_steps, 2, height, width),
+    }
+    source_masks = {k: torch.ones(batch_size, time_steps) for k in source_frames}
+    timestamps = torch.arange(time_steps).float().unsqueeze(0).expand(batch_size, -1)
+    out = model(source_frames, source_masks, timestamps)
+    assert out.embedding_map.shape == (batch_size, embed_dim, height, width)
+    assert out.reconstructions["s2_recon"].shape == (batch_size, 10, height, width)
+
+
+def test_time_pooling_all_masked_no_nan() -> None:
+    """TimePooling 对全被掩码的样本行应输出 0 而非 NaN。"""
+    from xuannv_embedding.models.blocks import TimePooling
+
+    dim = 16
+    pool = TimePooling(dim, num_heads=2)
+    feats = torch.randn(2, 3, 4, 4, dim)
+    q = torch.randn(2, dim)
+    mask = torch.tensor([[0, 0, 0], [1, 1, 1]], dtype=torch.float32)
+    out = pool(feats, q, mask=mask)
+    assert out.shape == (2, 4, 4, dim)
+    assert not torch.isnan(out).any()
+
+
+def test_stp_time_operator_all_masked_no_nan() -> None:
+    """STPTimeOperator 对全被掩码的样本行应输出 0 而非 NaN。"""
+    from xuannv_embedding.models.blocks import STPTimeOperator
+
+    dim = 64
+    operator = STPTimeOperator(dim, num_heads=8)
+    x = torch.randn(2, 3, 4, 4, dim)
+    timestamps = torch.arange(3).float().unsqueeze(0).expand(2, -1)
+    mask = torch.tensor([[0, 0, 0], [1, 1, 1]], dtype=torch.float32)
+    out = operator(x, timestamps, mask=mask)
+    assert out.shape == (2, 3, 4, 4, dim)
+    assert not torch.isnan(out).any()
+
+
+def test_stp_encoder_rejects_too_small_input() -> None:
+    """STPEncoder 应对小于 SPACE_SCALE 的输入抛出清晰的 ValueError。"""
+    encoder = STPEncoder(
+        input_channels=8,
+        space_dim=64,
+        time_dim=32,
+        precision_dim=32,
+        num_blocks=2,
+        num_heads=2,
+    )
+    x = torch.randn(1, 2, 8, 15, 15)
+    ts = torch.tensor([[1.0, 2.0]])
+    with pytest.raises(ValueError, match="input height/width >= 16"):
+        encoder(x, ts)
+
+
+def test_aef_model_skips_empty_temporal_source() -> None:
+    """AEFModel 应安全跳过时间维度为 0 的 source。"""
+    sensor_channels = {"s2": 10, "s1": 2}
+    embed_dim = 16
+    target_heads = {"s2_recon": ("continuous", 10)}
+    model = AEFModel(
+        sensor_channels,
+        embed_dim,
+        target_heads,
+        stem_dim=16,
+        stp={"space_dim": 64, "time_dim": 32, "precision_dim": 32, "num_blocks": 2, "num_heads": 2},
+    )
+    batch_size, height, width = 1, 16, 16
+    source_frames = {
+        "s2": torch.randn(batch_size, 0, 10, height, width),
+        "s1": torch.randn(batch_size, 2, 2, height, width),
+    }
+    source_masks = {"s2": torch.zeros(batch_size, 0), "s1": torch.ones(batch_size, 2)}
+    timestamps = torch.arange(2).float().unsqueeze(0).expand(batch_size, -1)
+    out = model(source_frames, source_masks, timestamps)
+    assert out.embedding_map.shape == (batch_size, embed_dim, height, width)
+
+
+def test_summary_period_encoder_direct() -> None:
+    """SummaryPeriodEncoder 对正常 valid_period 应输出非 NaN 的查询向量。"""
+    from xuannv_embedding.models.blocks import SummaryPeriodEncoder
+
+    enc = SummaryPeriodEncoder(dim=16)
+    vp = torch.tensor([[2.0, 3.0]])
+    out = enc(vp)
+    assert out.shape == (1, 16)
+    assert not torch.isnan(out).any()

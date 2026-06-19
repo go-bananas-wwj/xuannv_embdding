@@ -125,6 +125,48 @@ def test_prepare_batch_categorical_target() -> None:
     assert torch.equal(out["targets"]["worldcover"], expected)
 
 
+def test_prepare_batch_categorical_single_channel() -> None:
+    """categorical head 对单通道标签图应直接取首通道，并将 0 作为 nodata 屏蔽。"""
+    batch = {
+        "patch_ids": ["p0"],
+        "source_frames": {
+            "worldcover": torch.tensor(
+                [
+                    [
+                        [[0, 1], [2, 0]],
+                    ]
+                ]
+            ).float(),
+        },
+        "source_masks": {
+            "worldcover": torch.ones(1, 1),
+        },
+        "timestamps": {
+            "worldcover": torch.tensor([[202301]], dtype=torch.long),
+        },
+    }
+    # 维度修正为 [B=1, T=1, C=1, H=2, W=2]
+    batch["source_frames"]["worldcover"] = batch["source_frames"]["worldcover"].reshape(
+        1, 1, 1, 2, 2
+    )
+
+    target_heads = {
+        "worldcover": {
+            "loss_type": "categorical",
+            "channels": 3,
+            "weight": 1.0,
+        }
+    }
+
+    out = prepare_batch(batch, target_heads)
+
+    assert out["targets"]["worldcover"].shape == (1, 2, 2)
+    expected_label = torch.tensor([[[0, 1], [2, 0]]]).long()
+    assert torch.equal(out["targets"]["worldcover"], expected_label)
+    expected_mask = torch.tensor([[[0.0, 1.0], [1.0, 0.0]]])
+    assert torch.equal(out["target_masks"]["worldcover"], expected_mask)
+
+
 def test_prepare_batch_highres_separation() -> None:
     """highres source 应被聚合为单帧，并生成正确形状的可用性掩码。"""
     batch = {
@@ -189,8 +231,8 @@ def test_prepare_batch_multiple_highres_sources() -> None:
     assert out["highres_masks"]["highres_sar"].shape == (2, 1, 4, 4)
 
 
-def test_prepare_batch_highres_mask_with_spatial_stride() -> None:
-    """spatial_stride > 1 时 highres_mask 应下采样到与编码特征对齐的分辨率。"""
+def test_prepare_batch_highres_mask_full_resolution() -> None:
+    """默认情况下 highres_mask 应保持与输入相同的空间分辨率。"""
     batch = {
         "patch_ids": ["p0"],
         "source_frames": {
@@ -208,12 +250,12 @@ def test_prepare_batch_highres_mask_with_spatial_stride() -> None:
     }
     target_heads: dict[str, dict] = {}
 
-    out = prepare_batch(batch, target_heads, spatial_stride=2)
+    out = prepare_batch(batch, target_heads)
 
     assert out["highres_frames"]["highres"].shape == (1, 3, 8, 8)
-    assert out["highres_masks"]["highres"].shape == (1, 1, 4, 4)
-    # 全部可用，下采样后掩码仍应为 1。
-    assert torch.equal(out["highres_masks"]["highres"], torch.ones(1, 1, 4, 4))
+    assert out["highres_masks"]["highres"].shape == (1, 1, 8, 8)
+    # 全部可用，掩码仍应为 1。
+    assert torch.equal(out["highres_masks"]["highres"], torch.ones(1, 1, 8, 8))
 
 
 def test_prepare_batch_missing_source() -> None:

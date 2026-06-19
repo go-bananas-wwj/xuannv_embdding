@@ -1,7 +1,7 @@
 _base_: base.yaml
 
 experiment:
-  name: harbin_128_v1
+  name: haidian_128_v1
 
 training:
   epochs: 10
@@ -21,10 +21,10 @@ model:
     num_heads: 8
 
 data:
-  region: harbin
-  root: /data/xuannv_embedding/processed/harbin
-  manifest_path: /data/xuannv_embedding/processed/harbin/manifest.json
-  statistics_dir: /data/xuannv_embedding/statistics/harbin
+  region: haidian
+  root: /data/xuannv_embedding/processed/haidian
+  manifest_path: /data/xuannv_embedding/processed/haidian/manifest.json
+  statistics_dir: /data/xuannv_embedding/statistics/haidian
   patch_size: 128
   num_samples: 0
   batch_size: 4

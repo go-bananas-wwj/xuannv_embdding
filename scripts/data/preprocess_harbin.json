@@ -1,10 +1,10 @@
 {
   "region": "harbin",
   "raw_root": "/data/xuannv_embedding/raw/harbin",
-  "output_root": "/data/xuannv_embedding/processed/harbin/scenes",
+  "output_root": "/data/xuannv_embedding/processed/harbin",
   "crs": "EPSG:32652",
-  "patch_size_m": 2560,
-  "patch_size_px": 256,
+  "patch_size_m": 1280,
+  "patch_size_px": 128,
   "sources": ["s2", "s1", "landsat"],
-  "fill_missing": "skip"
+  "fill_missing": "zero"
 }

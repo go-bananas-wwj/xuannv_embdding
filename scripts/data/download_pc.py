@@ -4,11 +4,21 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 
+# 降低 vsicurl 并发与增加 HTTP 重试，缓解大规模 stackstac 读取时的 DNS/连接失败。
+os.environ.setdefault("GDAL_HTTP_MAX_RETRY", "5")
+os.environ.setdefault("GDAL_HTTP_RETRY_DELAY", "10")
+os.environ.setdefault("GDAL_HTTP_TIMEOUT", "120")
+os.environ.setdefault("GDAL_HTTP_MULTIPLEX", "YES")
+os.environ.setdefault("GDAL_HTTP_CONCURRENCY", "4")
+os.environ.setdefault("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ".tif")
+
+import dask
 import geopandas as gpd
 import numpy as np
 import planetary_computer
@@ -174,6 +184,7 @@ def download_source(
     resolution: float | None = None,
     overwrite: bool = False,
     max_items: int | None = None,
+    workers: int = 12,
 ) -> Path | None:
     """下载指定区域、数据源、时间范围的 PC 影像，保存为 NetCDF。
 
@@ -187,6 +198,7 @@ def download_source(
         resolution: 输出分辨率（米），None 则使用默认值。
         overwrite: 是否覆盖已存在的 NetCDF 文件。
         max_items: 最多搜索的 item 数量，None 表示不限制。
+        workers: dask 线程数，控制读取与写入并发。
 
     返回:
         保存的 NetCDF 路径；若未搜索到有效 item 或文件已存在且不覆盖，则返回 None。
@@ -280,7 +292,21 @@ def download_source(
     if "time" in ds.coords:
         ds["time"] = ds["time"].astype("datetime64[s]")
 
-    logger.info("开始写入 NetCDF: %s", out_path)
+    _write_dataset(ds, out_path, num_workers=workers)
+    return out_path
+
+
+@_retry(max_retries=3, backoff=5.0)
+def _write_dataset(ds: Any, out_path: Path, num_workers: int = 12) -> None:
+    """将 xarray Dataset 写入 NetCDF。
+
+    先把 dask 数组物化到内存（``ds.load()``），再同步写入 NetCDF。
+    这样可以避免 ``to_netcdf`` 流式写入时 dask 图调度长时间不刷盘的问题。
+    本环境内存充足（>900 GB 可用），对哈尔滨/海淀这种尺度的 S2 季度/半年数据是安全的。
+    """
+    logger.info("开始物化并写入 NetCDF: %s (workers=%d)", out_path, num_workers)
+    with dask.config.set(scheduler="threads", num_workers=num_workers):
+        ds.load()
     ds.to_netcdf(
         out_path,
         encoding={
@@ -288,7 +314,6 @@ def download_source(
         },
     )
     logger.info("保存成功: %s", out_path)
-    return out_path
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -347,6 +372,12 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="限制搜索返回的最大 item 数量（调试用）",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="dask 线程并发数（默认 4）",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -360,6 +391,7 @@ def main(argv: list[str] | None = None) -> int:
             resolution=args.resolution,
             overwrite=args.overwrite,
             max_items=args.max_items,
+            workers=args.workers,
         )
     except ValueError as exc:
         logger.error("%s", exc)

@@ -131,7 +131,6 @@ def _build_loader(
     target_heads: dict[str, dict[str, Any]],
     split: str,
     is_distributed: bool,
-    spatial_stride: int = 1,
 ) -> DataLoader:
     """构造训练或验证 DataLoader，内置 ``prepare_batch`` 转换。"""
     dataset = MonthlyEmbeddingDataset(
@@ -151,7 +150,7 @@ def _build_loader(
 
     def training_collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
         collated = collate_fn(batch)
-        return prepare_batch(collated, target_heads, spatial_stride=spatial_stride)
+        return prepare_batch(collated, target_heads)
 
     shuffle = (split == "train") and (sampler is None)
     drop_last = split == "train"
@@ -197,7 +196,8 @@ def main() -> None:
         sensor_channels=cfg.model.sensor_channels,
         embed_dim=cfg.model.embed_dim,
         target_heads=aef_target_heads,
-        spatial_stride=cfg.model.spatial_stride,
+        stem_dim=cfg.model.stem_dim,
+        stp=cfg.model.stp,
     )
 
     # 构造 TotalLoss 所需的 target_cfg。
@@ -217,14 +217,12 @@ def main() -> None:
         cfg.model.target_heads,
         split="train",
         is_distributed=is_distributed,
-        spatial_stride=cfg.model.spatial_stride,
     )
     val_loader = _build_loader(
         cfg,
         cfg.model.target_heads,
         split="val",
         is_distributed=is_distributed,
-        spatial_stride=cfg.model.spatial_stride,
     )
 
     trainer = Trainer(
