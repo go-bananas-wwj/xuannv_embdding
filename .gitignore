@@ -30,3 +30,6 @@ tools/baidupcs/
 .baidupcs_session
 BaiduPCS-Go.ini
 fusion_result.json
+
+# Git worktrees
+.worktrees/
