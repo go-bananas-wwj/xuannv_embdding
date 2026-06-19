@@ -62,6 +62,37 @@ def _find_patches_for_patch_id(
     return candidates
 
 
+def _index_source_dir(
+    processed_dir: Path,
+    source: str,
+    rel_dir: str,
+) -> dict[str, list[Path]]:
+    """扫描 source 子目录，建立 patch_id -> 相对路径列表的索引。
+
+    跳过 *_mask.tif 掩膜文件，只保留数据影像。
+    """
+    index: dict[str, list[Path]] = {}
+    source_dir = processed_dir / rel_dir
+    if not source_dir.exists():
+        return index
+
+    for path in source_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in PATCH_EXTENSIONS:
+            continue
+        if path.stem.endswith("_mask"):
+            continue
+        patch_id = _extract_patch_id(path.stem, source)
+        if patch_id:
+            index.setdefault(patch_id, []).append(path.relative_to(processed_dir))
+
+    for patch_id in index:
+        index[patch_id].sort(key=lambda p: p.name)
+
+    return index
+
+
 def generate_manifest(
     processed_dir: Path,
     sources: list[str],
@@ -86,35 +117,27 @@ def generate_manifest(
         source_dirs = {s: s for s in sources}
 
     base_source = sources[0]
-    base_dir = processed_dir / source_dirs[base_source]
-
-    if not base_dir.exists():
-        logger.warning("基准 source 目录不存在: %s", base_dir)
+    if base_source not in source_dirs:
+        logger.warning("基准 source 缺少目录映射: %s", base_source)
         return []
 
-    # 按字母顺序遍历基准 source，提取 patch_id 并去重
-    seen: set[str] = set()
-    patch_ids: list[str] = []
-    for path in sorted(base_dir.iterdir()):
-        if not path.is_file():
-            continue
-        if path.suffix.lower() not in PATCH_EXTENSIONS:
-            continue
-        patch_id = _extract_patch_id(path.stem, base_source)
-        if patch_id and patch_id not in seen:
-            seen.add(patch_id)
-            patch_ids.append(patch_id)
+    # 为每个 source 建立 patch_id 索引，避免 O(N^2) 查找
+    indices: dict[str, dict[str, list[Path]]] = {}
+    for source in sources:
+        indices[source] = _index_source_dir(processed_dir, source, source_dirs[source])
+
+    if not indices[base_source]:
+        logger.warning("基准 source 目录为空或不存在: %s", source_dirs[base_source])
+        return []
+
+    patch_ids = sorted(indices[base_source].keys())
 
     manifest: list[dict[str, Any]] = []
     for patch_id in patch_ids:
         entry: dict[str, Any] = {"patch_id": patch_id}
         for source in sources:
-            source_dir = processed_dir / source_dirs[source]
-            patches = _find_patches_for_patch_id(source_dir, patch_id, source)
-            if patches is None:
-                entry[source] = None
-            else:
-                entry[source] = [p.relative_to(processed_dir) for p in patches]
+            paths = indices[source].get(patch_id)
+            entry[source] = paths if paths else None
         manifest.append(entry)
 
     return manifest

@@ -72,12 +72,15 @@ class _WelfordAccumulator:
 
 
 def _collect_tif_files(source_dir: Path, max_patches: int | None) -> list[Path]:
-    """收集 source 目录下的所有 .tif 文件，支持数量上限。"""
+    """收集 source 目录下的所有 .tif 文件（排除 *_mask.tif），支持数量上限。"""
     if not source_dir.exists():
         logger.warning("目录不存在，跳过：%s", source_dir)
         return []
 
-    files = sorted(source_dir.glob("*.tif"))
+    files = sorted(
+        p for p in source_dir.glob("*.tif")
+        if p.is_file() and not p.stem.endswith("_mask")
+    )
     if not files:
         logger.warning("未找到 .tif 文件：%s", source_dir)
         return []

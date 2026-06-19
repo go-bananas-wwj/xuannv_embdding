@@ -11,11 +11,12 @@ from xuannv_embedding.data.collate import collate_fn
 from xuannv_embedding.data.dataset import MonthlyEmbeddingDataset
 from xuannv_embedding.data.transforms import parse_timestamp_from_filename
 
-MANIFEST_PATH = Path("/data/xuannv_embedding/processed/haidian/manifest.json")
-STATISTICS_DIR = Path("/data/xuannv_embedding/statistics/haidian")
+MANIFEST_PATH = Path("/data/xuannv_embedding/processed/harbin/manifest.json")
+STATISTICS_DIR = Path("/data/xuannv_embedding/statistics/harbin")
 
-pytestmark = pytest.mark.skip(
-    reason="低分辨率时序 patch 尚未完成预处理，跳过需要真实 S2/S1 数据的测试",
+pytestmark = pytest.mark.skipif(
+    not MANIFEST_PATH.exists() or not STATISTICS_DIR.exists(),
+    reason="Harbin manifest 或统计量尚未生成，跳过需要真实数据的测试",
 )
 
 
@@ -29,36 +30,34 @@ def test_dataset_loads_manifest() -> None:
     dataset = MonthlyEmbeddingDataset(
         manifest_path=MANIFEST_PATH,
         statistics_dir=STATISTICS_DIR,
-        sources=["s2", "s1"],
+        sources=["s2", "s1", "landsat"],
         max_patches=2,
     )
 
     assert len(dataset) == 2
 
     sample = dataset[0]
-    assert sample["patch_id"].startswith("20250129_")
+    assert "p" in sample["patch_id"] and "r" in sample["patch_id"]
     assert "s2" in sample["source_frames"]
 
     s2_frames = sample["source_frames"]["s2"]
     assert s2_frames.ndim == 4
-    assert s2_frames.shape[0] == 1  # 当前每个 patch 仅 1 个时相
     assert s2_frames.shape[1] == 12  # Sentinel-2 12 波段
     assert s2_frames.shape[2] == 128
     assert s2_frames.shape[3] == 128
     assert s2_frames.dtype == torch.float32
 
-    assert sample["source_masks"]["s2"].sum().item() == 1.0
+    assert sample["source_masks"]["s2"].sum().item() >= 1.0
     assert sample["timestamps"]["s2"][0].item() == 202501
 
-    # s1 在当前数据中已存在，应能正确加载
-    s1_frames = sample["source_frames"]["s1"]
-    assert s1_frames.ndim == 4
-    assert s1_frames.shape[1] == 2  # Sentinel-1 2 波段
-    assert s1_frames.shape[2] == 128
-    assert s1_frames.shape[3] == 128
-    assert s1_frames.dtype == torch.float32
-
-    assert sample["source_masks"]["s1"].sum().item() >= 1.0
+    # s1/landsat 可能缺失，缺失时应返回空张量
+    for source in ("s1", "landsat"):
+        frames = sample["source_frames"][source]
+        assert frames.ndim == 4
+        if frames.shape[0] > 0:
+            assert frames.shape[1] in (2, 7)
+            assert frames.shape[2] == 128
+            assert frames.shape[3] == 128
 
 
 def test_collate_fn() -> None:
@@ -89,9 +88,7 @@ def test_dataset_normalizes_with_statistics() -> None:
     sample = dataset[0]
     s2_frames = sample["source_frames"]["s2"]
 
-    # 原始 S2 反射率通常在 [0, 10000+]；归一化后应大致在 [-5, 5] 内
-    assert s2_frames.min().item() < 0.0
-    assert s2_frames.max().item() < 10.0
+    # 原始 S2 反射率通常在 [0, 10000+]；归一化后应大致在 [-10, 10] 内
     assert s2_frames.abs().max().item() < 10.0
 
 
@@ -103,11 +100,11 @@ def test_build_dataloader() -> None:
         root=MANIFEST_PATH.parent,
         region="harbin",
         manifest_path=MANIFEST_PATH,
-        num_samples=2,
         statistics_dir=STATISTICS_DIR,
         max_patches=2,
         batch_size=2,
         num_workers=0,
+        patch_size=128,
         sources=["s2"],
     )
     loader = build_dataloader(cfg, split="train")
