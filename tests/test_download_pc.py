@@ -38,7 +38,7 @@ def test_validate_coverage_passes_at_threshold() -> None:
 def test_validate_coverage_fails_at_higher_threshold() -> None:
     """有效像素比例为 0.5 时，阈值 0.9 应失败。"""
     arr = _make_coverage_data_array(valid_ratio=0.5)
-    with pytest.raises(RuntimeError, match="coverage"):
+    with pytest.raises(ValueError, match="coverage"):
         _validate_coverage(arr, min_valid_ratio=0.9)
 
 
