@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_SOURCE_NAME = "worldcover"
 DEFAULT_DATE_STR = "20230101"
 DEFAULT_FILL_NODATA = 0
+MASTER_RES = 10.0
 
 # ESRI 2023 原始值 → 连续训练索引（0 为 ignore_index，10 Clouds 也 ignore）
 ESRI2023_REMAP = {
@@ -126,6 +128,16 @@ def preprocess_lulc(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     bounds = _aoi_bounds_in_crs(region_file, dst_crs)
+
+    # 将 AOI 边界向外吸附到 10 m 网格，确保与 preprocess.py 生成的 S2/S1/Landsat
+    # patch 网格严格一致。
+    left, bottom, right, top = bounds
+    left = math.floor(left / MASTER_RES) * MASTER_RES
+    bottom = math.floor(bottom / MASTER_RES) * MASTER_RES
+    right = math.ceil(right / MASTER_RES) * MASTER_RES
+    top = math.ceil(top / MASTER_RES) * MASTER_RES
+    bounds = (left, bottom, right, top)
+
     patches = make_patch_grid(bounds, patch_size_m)
     logger.info("%s: 生成 %d 个 patches", region, len(patches))
 
