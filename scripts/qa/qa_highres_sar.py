@@ -135,6 +135,13 @@ def main(argv: list[str] | None = None) -> int:
         if value_mins:
             date_report["value_min"] = float(np.min(value_mins))
             date_report["value_max"] = float(np.max(value_maxs))
+            date_report["value_min_list"] = [float(v) for v in value_mins]
+            date_report["value_max_list"] = [float(v) for v in value_maxs]
+            if all(m == 1.0 for m in value_mins) and all(m == 1.0 for m in value_maxs):
+                report["issues"].append(
+                    f"Date {date_str}: all sampled patches have value_min == value_max == 1.0 "
+                    "(likely clipped dB normalization)"
+                )
         report["dates"][date_str] = date_report
 
     # 与参考低分辨率 S2 patch 对齐检查

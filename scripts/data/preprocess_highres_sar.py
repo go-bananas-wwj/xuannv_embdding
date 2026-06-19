@@ -31,6 +31,7 @@ from typing import Any
 import geopandas as gpd
 import numpy as np
 import rasterio
+from rasterio import windows
 from rasterio.crs import CRS
 from rasterio.transform import from_bounds
 from rasterio.warp import Resampling, reproject, transform_bounds
@@ -51,12 +52,12 @@ MASTER_RES = 10.0
 SAR_RES = 3.0
 SAR_OUT_SIZE = 427  # ceil(1280 / 3)
 
-# 典型 dB 范围，用于归一化
-POL_RANGES = {
-    "VV": {"low": -25.0, "high": 0.0},
-    "HH": {"low": -25.0, "high": 0.0},
-    "VH": {"low": -35.0, "high": 0.0},
-    "HV": {"low": -35.0, "high": 0.0},
+# 典型 dB 范围，仅作为无法计算实际分布时的 fallback
+DEFAULT_POL_RANGES = {
+    "VV": (-25.0, 0.0),
+    "HH": (-25.0, 0.0),
+    "VH": (-35.0, 0.0),
+    "HV": (-35.0, 0.0),
 }
 
 
@@ -208,11 +209,47 @@ def sar_to_db(linear: np.ndarray) -> np.ndarray:
     return 10.0 * np.log10(np.maximum(linear, 0.0) + 1e-10)
 
 
-def normalize_sar(db: np.ndarray, pol: str) -> np.ndarray:
-    """将 dB 值按典型范围归一化到 [0, 1] 并 clip。"""
-    cfg = POL_RANGES.get(pol, POL_RANGES["VV"])
-    low, high = cfg["low"], cfg["high"]
-    return np.clip((db - low) / (high - low), 0.0, 1.0).astype(np.float32)
+def compute_source_db_range(tiff_path: Path, sample_stride: int = 100) -> tuple[float, float]:
+    """根据源影像实际分布计算 dB 的稳健归一化范围。
+
+    读取每隔 sample_stride 行的整行数据（控制内存占用），将非零有效值
+    转为 dB 后返回 1st / 99th 百分位数作为 (low, high)。
+    """
+    with rasterio.open(tiff_path) as src:
+        all_values: list[np.ndarray] = []
+        for r in range(0, src.height, sample_stride):
+            row = src.read(1, window=windows.Window(0, r, src.width, 1))
+            valid = np.isfinite(row) & (row != 0)
+            if valid.any():
+                all_values.append(row[valid])
+
+    if not all_values:
+        logger.warning("无法从 %s 采样到有效值，使用默认范围", tiff_path.name)
+        return DEFAULT_POL_RANGES["VV"]
+
+    values = np.concatenate(all_values).astype("float64")
+    if values.size == 0:
+        logger.warning("无法从 %s 采样到有效值，使用默认范围", tiff_path.name)
+        return DEFAULT_POL_RANGES["VV"]
+
+    db = 10.0 * np.log10(values + 1e-10)
+    finite_db = db[np.isfinite(db) & (db > -1e6)]
+    if finite_db.size == 0:
+        logger.warning("%s 采样值全为 0/负值，使用默认范围", tiff_path.name)
+        return DEFAULT_POL_RANGES["VV"]
+
+    low = float(np.nanpercentile(finite_db, 1.0))
+    high = float(np.nanpercentile(finite_db, 99.0))
+    # 防止退化分布
+    if high <= low:
+        high = low + 1.0
+    logger.info("源 %s dB 范围: %.2f ~ %.2f", tiff_path.name, low, high)
+    return low, high
+
+
+def normalize_sar(db: np.ndarray, low: float, high: float) -> np.ndarray:
+    """使用每源实际 dB 范围将 dB 值归一化到 [0, 1] 并 clip。"""
+    return np.clip((db - low) / (high - low + 1e-10), 0.0, 1.0).astype(np.float32)
 
 
 def _reproject_patch(
@@ -242,7 +279,7 @@ def _reproject_patch(
 
 def _process_patch(
     patch: dict[str, Any],
-    pol_files: dict[str, list[Path]],
+    pol_files: dict[str, list[tuple[Path, float, float]]],
     dst_crs: CRS,
 ) -> dict[str, Any] | None:
     """处理单个 patch：合并多 swath、转 dB、归一化、生成 mask。"""
@@ -253,15 +290,15 @@ def _process_patch(
     pol_masks: dict[str, np.ndarray] = {}
 
     for pol in ["VV", "VH"]:
-        files = pol_files.get(pol, [])
-        if not files:
+        entries = pol_files.get(pol, [])
+        if not entries:
             continue
 
         # 合并同一极化多景数据：逐源重投影后累加并计数
         sum_arr = np.zeros((SAR_OUT_SIZE, SAR_OUT_SIZE), dtype="float64")
         count_arr = np.zeros((SAR_OUT_SIZE, SAR_OUT_SIZE), dtype="uint8")
 
-        for src_path in files:
+        for src_path, db_low, db_high in entries:
             # 快速包围盒过滤
             with rasterio.open(src_path) as src:
                 src_bounds_dst = transform_bounds(src.crs, dst_crs, *src.bounds)
@@ -275,7 +312,7 @@ def _process_patch(
 
             raw_patch = _reproject_patch(src_path, bounds, dst_crs)
             db_patch = sar_to_db(raw_patch)
-            norm_patch = normalize_sar(db_patch, pol)
+            norm_patch = normalize_sar(db_patch, db_low, db_high)
 
             finite = np.isfinite(norm_patch)
             valid = finite & (norm_patch != NODATA)
@@ -397,16 +434,18 @@ def process_date(
     unpack_root = input_root / "_unpacked"
 
     # 解压并收集极化文件
-    pol_files: dict[str, list[Path]] = defaultdict(list)
+    pol_files: dict[str, list[tuple[Path, float, float]]] = defaultdict(list)
     for zf in zip_paths:
         unpack_dir = extract_zip(zf, unpack_root, overwrite)
         for tiff in unpack_dir.rglob("*.tif*"):
             pol = classify_polarization(tiff)
-            if pol:
-                pol_files[pol].append(tiff)
+            if not pol:
+                continue
+            db_low, db_high = compute_source_db_range(tiff)
+            pol_files[pol].append((tiff, db_low, db_high))
 
     for pol in pol_files:
-        pol_files[pol] = sorted(set(pol_files[pol]))
+        pol_files[pol] = sorted(set(pol_files[pol]), key=lambda x: x[0])
 
     if "VV" not in pol_files or not pol_files["VV"]:
         logger.warning("[%s] 未找到 VV 极化文件，跳过", date_str)
