@@ -5,20 +5,20 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
 import rasterio
+from rasterio.crs import CRS
 
 
-def _date_from_patch_name(name: str, source: str) -> str:
-    """从文件名解析日期，例如 s2_20250101_p000_r000 -> 20250101。"""
-    prefix = f"{source}_"
-    if not name.startswith(prefix):
-        return "unknown"
-    return name[len(prefix) : len(prefix) + 8]
+def _date_from_patch_name(name: str) -> str | None:
+    """从文件名中提取第一个 8 位连续数字作为日期。"""
+    match = re.search(r"\d{8}", name)
+    return match.group(0) if match else None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -35,6 +35,11 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         default=20,
         help="随机抽检 patch 数量",
+    )
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="QA 报告输出路径（默认：/data/xuannv_embedding/qa/qa_patch_extraction_{region}_{source}.json）",
     )
     args = parser.parse_args(argv)
 
@@ -53,13 +58,19 @@ def main(argv: list[str] | None = None) -> int:
         "mask_coverage": {},
         "sample_checks": [],
         "missing_masks": [],
+        "warnings": [],
         "issues": [],
         "ok": True,
     }
 
+    expected_crs: CRS | None = None
+
     counts_per_date: dict[str, int] = defaultdict(int)
     for p in patch_files:
-        date = _date_from_patch_name(p.stem, args.source)
+        date = _date_from_patch_name(p.stem)
+        if date is None:
+            report["warnings"].append(f"无法从文件名解析日期: {p.name}")
+            date = "unknown"
         counts_per_date[date] += 1
     report["counts_per_date"] = dict(counts_per_date)
 
@@ -82,13 +93,32 @@ def main(argv: list[str] | None = None) -> int:
             with rasterio.open(p) as src:
                 patch = src.read()
                 patch_nodata = src.nodata
+                patch_crs = src.crs
+                patch_shape = patch.shape[-2:]
 
             with rasterio.open(mask_path) as src:
                 mask = src.read(1)
+                mask_crs = src.crs
 
-            if mask.shape != patch.shape[-2:]:
+            # 记录期望 CRS
+            if expected_crs is None and patch_crs is not None:
+                expected_crs = patch_crs
+
+            if patch_shape != (128, 128):
                 check["ok"] = False
-                check["issues"].append(f"mask shape {mask.shape} != patch shape {patch.shape[-2:]}")
+                check["issues"].append(f"patch 尺寸 {patch_shape} 不是 128x128")
+
+            if mask.shape != patch_shape:
+                check["ok"] = False
+                check["issues"].append(f"mask shape {mask.shape} != patch shape {patch_shape}")
+
+            if patch_crs is not None and expected_crs is not None and patch_crs != expected_crs:
+                check["ok"] = False
+                check["issues"].append(f"patch CRS {patch_crs} 与期望 {expected_crs} 不一致")
+
+            if mask_crs is not None and expected_crs is not None and mask_crs != expected_crs:
+                check["ok"] = False
+                check["issues"].append(f"mask CRS {mask_crs} 与期望 {expected_crs} 不一致")
 
             valid_ratio = float(mask.mean())
             check["valid_ratio"] = valid_ratio
@@ -115,9 +145,13 @@ def main(argv: list[str] | None = None) -> int:
 
         report["sample_checks"].append(check)
 
-    out_path = (
-        Path("/data/xuannv_embedding/qa") / f"qa_patch_extraction_{args.region}_{args.source}.json"
-    )
+    if args.output is not None:
+        out_path = Path(args.output)
+    else:
+        out_path = (
+            Path("/data/xuannv_embedding/qa")
+            / f"qa_patch_extraction_{args.region}_{args.source}.json"
+        )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -126,6 +160,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"日期数: {len(report['counts_per_date'])}")
     print(f"抽检数: {len(report['sample_checks'])}")
     print(f"缺失掩膜: {len(report['missing_masks'])}")
+    print(f"警告数: {len(report['warnings'])}")
     print(f"问题数: {len(report['issues'])}")
     print(f"结果: {'PASS' if report['ok'] else 'FAIL'}")
     return 0 if report["ok"] else 1
