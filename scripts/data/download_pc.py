@@ -372,7 +372,10 @@ def _validate_coverage(ds: Any, min_valid_ratio: float = 0.05) -> None:
             )
 
 
-def _write_dataset(ds: Any, out_path: Path, num_workers: int = 12) -> None:
+@_retry_io(max_retries=3, backoff=5.0)
+def _write_dataset(
+    ds: Any, *, out_path: Path, num_workers: int = 12
+) -> None:
     """将 xarray Dataset 写入 NetCDF。
 
     先把 dask 数组物化到内存（``ds.load()``），再同步写入 NetCDF。
@@ -391,13 +394,15 @@ def _write_dataset(ds: Any, out_path: Path, num_workers: int = 12) -> None:
     logger.info("保存成功: %s", out_path)
 
 
-@_retry_io(max_retries=3, backoff=5.0)
 def _validate_and_write(
     ds: Any, out_path: Path, workers: int, min_valid_ratio: float = 0.05
 ) -> None:
-    """校验覆盖度并将 Dataset 写入 NetCDF，失败时支持清理后重试。"""
+    """校验覆盖度并将 Dataset 写入 NetCDF。
+
+    覆盖度校验在 IO 重试路径之外执行；只有写入操作会被 ``@_retry_io`` 重试。
+    """
     _validate_coverage(ds, min_valid_ratio=min_valid_ratio)
-    _write_dataset(ds, out_path, num_workers=workers)
+    _write_dataset(ds, out_path=out_path, num_workers=workers)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -469,6 +474,13 @@ def main(argv: list[str] | None = None) -> int:
         help="每个时间切片最小有效像素比例（默认 0.05）",
     )
     args = parser.parse_args(argv)
+
+    if args.min_valid_ratio < 0.0 or args.min_valid_ratio > 1.0:
+        logger.error(
+            "--min-valid-ratio 必须在 [0, 1] 范围内，收到: %s",
+            args.min_valid_ratio,
+        )
+        return 1
 
     try:
         download_source(
