@@ -16,7 +16,10 @@ os.environ.setdefault("GDAL_HTTP_RETRY_DELAY", "10")
 os.environ.setdefault("GDAL_HTTP_TIMEOUT", "120")
 os.environ.setdefault("GDAL_HTTP_MULTIPLEX", "YES")
 os.environ.setdefault("GDAL_HTTP_CONCURRENCY", "4")
-os.environ.setdefault("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ".tif")
+os.environ.setdefault(
+    "CPL_VSIL_CURL_ALLOWED_EXTENSIONS",
+    ".tif,.tiff,.TIF,.jp2",
+)
 
 import dask
 import geopandas as gpd
@@ -107,6 +110,7 @@ DEFAULT_ASSETS: dict[str, list[str] | None] = {
         "nir08",
         "swir16",
         "swir22",
+        "qa_pixel",
     ],
 }
 
@@ -137,6 +141,14 @@ def _extract_epsg(item: Any) -> int | None:
     if isinstance(epsg, int):
         return epsg
     return None
+
+
+def _get_aoi_utm_epsg(aoi: gpd.GeoDataFrame) -> int:
+    """返回 AOI 中心点所在 UTM 带的 EPSG 代码。"""
+    centroid = aoi.to_crs("EPSG:4326").geometry.unary_union.centroid
+    lon, lat = centroid.x, centroid.y
+    zone = int((lon + 180) // 6) + 1
+    return 32600 + zone if lat >= 0 else 32700 + zone
 
 
 def _load_aoi(region_file: Path) -> gpd.GeoDataFrame:
@@ -244,10 +256,9 @@ def download_source(
     res = resolution if resolution is not None else DEFAULT_RESOLUTION[source]
     logger.info("使用分辨率 %.1f 米进行 stack", res)
 
-    # 从首个 item 获取 EPSG 代码，避免某些 asset 缺少 CRS 导致 stack 失败
-    epsg = _extract_epsg(items[0])
-    if epsg is not None:
-        logger.info("使用参考 CRS: EPSG:%s", epsg)
+    # 使用 AOI 中心点所在 UTM 带作为固定投影，避免跨带数据 CRS 不一致
+    epsg = _get_aoi_utm_epsg(aoi)
+    logger.info("使用固定 UTM CRS: EPSG:%s", epsg)
 
     # 使用 stackstac 堆叠为 xarray Dataset；这里用 latlon bounds 裁剪到 AOI
     assets = DEFAULT_ASSETS.get(source)
@@ -258,9 +269,10 @@ def download_source(
         resolution=res,
         epsg=epsg,
         dtype="float32",
-        fill_value=np.float32(0.0),
+        fill_value=np.float32(np.nan),
         rescale=False,
         assets=assets,
+        errors_as_nodata=(),
     )
 
     logger.info("堆叠结果维度: %s", dict(ds.sizes))
@@ -292,8 +304,25 @@ def download_source(
     if "time" in ds.coords:
         ds["time"] = ds["time"].astype("datetime64[s]")
 
+    _validate_coverage(ds, min_valid_ratio=0.05)
     _write_dataset(ds, out_path, num_workers=workers)
     return out_path
+
+
+def _validate_coverage(ds: Any, min_valid_ratio: float = 0.05) -> None:
+    """校验每个时间切片有效像素比例，低于阈值时抛出 RuntimeError。"""
+    var = list(ds.data_vars)[0]
+    arr = ds[var]
+    for t in range(arr.sizes["time"]):
+        band0 = arr.isel(time=t, band=0)
+        # 有效 = 非 NaN 且非 0（覆盖 NaN fill 与原始 0 nodata）
+        values = band0.values
+        valid_mask = np.isfinite(values) & (values != 0)
+        valid = float(valid_mask.mean())
+        if valid < min_valid_ratio:
+            raise RuntimeError(
+                f"time {t} coverage {valid:.2%} < {min_valid_ratio:.2%}"
+            )
 
 
 @_retry(max_retries=3, backoff=5.0)
