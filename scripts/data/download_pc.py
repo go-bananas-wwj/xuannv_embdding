@@ -358,7 +358,7 @@ def download_source(
 
 
 def _validate_coverage(ds: Any, min_valid_ratio: float = 0.05) -> None:
-    """校验每个时间切片有效像素比例，低于阈值时抛出 RuntimeError。"""
+    """校验每个时间切片有效像素比例，低于阈值时抛出 ValueError。"""
     arr = ds[list(ds.data_vars)[0]] if hasattr(ds, "data_vars") else ds
     for t in range(arr.sizes["time"]):
         band0 = arr.isel(time=t, band=0)
@@ -367,14 +367,13 @@ def _validate_coverage(ds: Any, min_valid_ratio: float = 0.05) -> None:
         valid_mask = np.isfinite(values) & (values != 0)
         valid = float(valid_mask.mean())
         if valid < min_valid_ratio:
-            raise RuntimeError(
+            raise ValueError(
                 f"time {t} coverage {valid:.2%} < {min_valid_ratio:.2%}"
             )
 
 
-@_retry_io(max_retries=3, backoff=5.0)
 def _write_dataset(
-    ds: Any, *, out_path: Path, num_workers: int = 12
+    ds: Any, out_path: Path, num_workers: int = 12
 ) -> None:
     """将 xarray Dataset 写入 NetCDF。
 
@@ -394,15 +393,17 @@ def _write_dataset(
     logger.info("保存成功: %s", out_path)
 
 
+@_retry_io(max_retries=3, backoff=5.0)
 def _validate_and_write(
     ds: Any, out_path: Path, workers: int, min_valid_ratio: float = 0.05
 ) -> None:
-    """校验覆盖度并将 Dataset 写入 NetCDF。
+    """校验覆盖度并将 Dataset 写入 NetCDF，IO 错误时支持重试。
 
-    覆盖度校验在 IO 重试路径之外执行；只有写入操作会被 ``@_retry_io`` 重试。
+    覆盖率不足会抛出 ``ValueError``，不会被 ``@_retry_io`` 重试；
+    只有读取/写入阶段的 IO 错误会被重试。
     """
     _validate_coverage(ds, min_valid_ratio=min_valid_ratio)
-    _write_dataset(ds, out_path=out_path, num_workers=workers)
+    _write_dataset(ds, out_path, num_workers=workers)
 
 
 def main(argv: list[str] | None = None) -> int:
