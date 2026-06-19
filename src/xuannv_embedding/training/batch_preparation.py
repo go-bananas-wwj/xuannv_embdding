@@ -89,16 +89,6 @@ def prepare_batch(
     if not source_frames:
         raise ValueError("source_frames 不能为空字典")
 
-    # 取第一个 T > 0 的 source 的时间戳作为全局 timestamps。
-    global_timestamps: torch.Tensor | None = None
-    for source, frames in source_frames.items():
-        if frames.shape[1] > 0:
-            global_timestamps = source_timestamps[source]
-            break
-    if global_timestamps is None:
-        batch_size = next(iter(source_frames.values())).shape[0]
-        global_timestamps = torch.zeros(batch_size, 0, dtype=torch.long)
-
     # 为每个 target head 构造 target 与 target_mask。
     available_sources = set(source_frames.keys())
     targets: dict[str, torch.Tensor] = {}
@@ -161,6 +151,41 @@ def prepare_batch(
                 spatial_w,
                 dtype=torch.float32,
             )
+
+    # 对齐所有非高分辨率时序源的时间长度，确保模型能使用统一的全局 timestamps。
+    temporal_sources = [s for s in source_frames if not s.startswith("highres")]
+    if temporal_sources:
+        max_t = max(source_frames[s].shape[1] for s in temporal_sources)
+        base_source = next(
+            s for s in temporal_sources if source_frames[s].shape[1] == max_t
+        )
+        global_timestamps = source_timestamps[base_source]
+        for source in temporal_sources:
+            t = source_frames[source].shape[1]
+            if t == max_t:
+                continue
+            b, _, c, h, w = source_frames[source].shape
+            pad_t = max_t - t
+            pad_frames = torch.zeros(b, pad_t, c, h, w, dtype=torch.float32)
+            pad_masks = torch.zeros(b, pad_t, dtype=torch.float32)
+            pad_timestamps = torch.zeros(b, pad_t, dtype=torch.long)
+            if t == 0:
+                source_frames[source] = pad_frames
+                source_masks[source] = pad_masks
+                source_timestamps[source] = pad_timestamps
+            else:
+                source_frames[source] = torch.cat(
+                    [source_frames[source], pad_frames], dim=1
+                )
+                source_masks[source] = torch.cat(
+                    [source_masks[source], pad_masks], dim=1
+                )
+                source_timestamps[source] = torch.cat(
+                    [source_timestamps[source], pad_timestamps], dim=1
+                )
+    else:
+        batch_size = next(iter(source_frames.values())).shape[0]
+        global_timestamps = torch.zeros(batch_size, 0, dtype=torch.long)
 
     # 分离所有以 highres 开头的高分辨率数据源。
     highres_frames: dict[str, torch.Tensor] = {}

@@ -343,3 +343,41 @@ def test_prepare_batch_empty_source_frames() -> None:
 
     with pytest.raises(ValueError, match="source_frames 不能为空"):
         prepare_batch(batch, target_heads)
+
+
+def test_prepare_batch_aligns_temporal_lengths() -> None:
+    """不同 source 的时序长度应被对齐到统一的 T，短 source 用掩码 0 填充。"""
+    batch = {
+        "patch_ids": ["p0", "p1"],
+        "source_frames": {
+            "s2": torch.zeros(2, 1, 3, 4, 4),
+            "s1": torch.zeros(2, 3, 2, 4, 4),
+        },
+        "source_masks": {
+            "s2": torch.ones(2, 1),
+            "s1": torch.ones(2, 3),
+        },
+        "timestamps": {
+            "s2": torch.tensor([[202501], [202502]], dtype=torch.long),
+            "s1": torch.tensor(
+                [[202501, 202502, 202503], [202501, 202502, 202503]],
+                dtype=torch.long,
+            ),
+        },
+    }
+    target_heads: dict[str, dict] = {}
+
+    out = prepare_batch(batch, target_heads)
+
+    assert out["source_frames"]["s2"].shape == (2, 3, 3, 4, 4)
+    assert out["source_frames"]["s1"].shape == (2, 3, 2, 4, 4)
+    assert out["source_masks"]["s2"].shape == (2, 3)
+    assert out["source_masks"]["s2"][:, 1:].sum().item() == 0.0
+    assert out["timestamps"].shape == (2, 3)
+    assert torch.equal(
+        out["timestamps"],
+        torch.tensor(
+            [[202501, 202502, 202503], [202501, 202502, 202503]],
+            dtype=torch.long,
+        ),
+    )
