@@ -12,7 +12,7 @@
 - High-res optical: Harbin 0.5m DOM + Haidian PlanetScene.
 - High-res SAR: not skipped; use radiometrically-calibrated ORG products from ModelScope.
 - WorldCover: ignore Clouds (class 10) and NoData (class 0); remap remaining 8 valid classes to contiguous indices 1–8.
-- Temporal sampling: variable-length contiguous windows (2/3/6/12/17 months) within a fixed 17-month grid, masked inactive months.
+- Temporal sampling: variable-length contiguous windows (2/3/6/12 months) within a fixed 17-month grid, masked inactive months.
 - Execution: Subagent-Driven.
 
 ---
@@ -849,7 +849,7 @@ pytest tests/test_dataset.py tests/test_model.py tests/test_batch_preparation.py
 
 ```python
 class VariableWindowTemporalSampler:
-    def __init__(self, max_months=17, lengths=(2,3,6,12,17), probs=None, dropout=0.0):
+    def __init__(self, max_months=17, lengths=(2,3,6,12), probs=None, dropout=0.0):
         self.max_months = max_months
         self.lengths = lengths
         self.probs = probs or [0.15, 0.15, 0.2, 0.3, 0.2]
