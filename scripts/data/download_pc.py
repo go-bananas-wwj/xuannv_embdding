@@ -244,6 +244,7 @@ def download_source(
     overwrite: bool = False,
     max_items: int | None = None,
     workers: int = 12,
+    min_valid_ratio: float = 0.05,
 ) -> Path | None:
     """下载指定区域、数据源、时间范围的 PC 影像，保存为 NetCDF。
 
@@ -258,6 +259,7 @@ def download_source(
         overwrite: 是否覆盖已存在的 NetCDF 文件。
         max_items: 最多搜索的 item 数量，None 表示不限制。
         workers: dask 线程数，控制读取与写入并发。
+        min_valid_ratio: 每个时间切片有效像素比例阈值，低于则拒绝。
 
     返回:
         保存的 NetCDF 路径；若未搜索到有效 item 或文件已存在且不覆盖，则返回 None。
@@ -351,7 +353,7 @@ def download_source(
     if "time" in ds.coords:
         ds["time"] = ds["time"].astype("datetime64[s]")
 
-    _validate_and_write(ds, out_path, workers)
+    _validate_and_write(ds, out_path, workers, min_valid_ratio)
     return out_path
 
 
@@ -390,9 +392,11 @@ def _write_dataset(ds: Any, out_path: Path, num_workers: int = 12) -> None:
 
 
 @_retry_io(max_retries=3, backoff=5.0)
-def _validate_and_write(ds: Any, out_path: Path, workers: int) -> None:
+def _validate_and_write(
+    ds: Any, out_path: Path, workers: int, min_valid_ratio: float = 0.05
+) -> None:
     """校验覆盖度并将 Dataset 写入 NetCDF，失败时支持清理后重试。"""
-    _validate_coverage(ds, min_valid_ratio=0.05)
+    _validate_coverage(ds, min_valid_ratio=min_valid_ratio)
     _write_dataset(ds, out_path, num_workers=workers)
 
 
@@ -458,6 +462,12 @@ def main(argv: list[str] | None = None) -> int:
         default=4,
         help="dask 线程并发数（默认 4）",
     )
+    parser.add_argument(
+        "--min-valid-ratio",
+        type=float,
+        default=0.05,
+        help="每个时间切片最小有效像素比例（默认 0.05）",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -472,6 +482,7 @@ def main(argv: list[str] | None = None) -> int:
             overwrite=args.overwrite,
             max_items=args.max_items,
             workers=args.workers,
+            min_valid_ratio=args.min_valid_ratio,
         )
     except ValueError as exc:
         logger.error("%s", exc)
