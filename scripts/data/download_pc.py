@@ -26,6 +26,9 @@ import geopandas as gpd
 import numpy as np
 import planetary_computer
 import pystac_client
+import rasterio
+import rasterio._err
+import rasterio.errors
 import stackstac
 
 logging.basicConfig(
@@ -66,6 +69,50 @@ def _retry(
                             exc,
                         )
                         time.sleep(sleep_time)
+            raise last_exc  # type: ignore[misc]
+
+        return wrapper  # type: ignore[return-value]
+
+    return decorator
+
+
+def _retry_io(
+    max_retries: int = 3, backoff: float = 5.0
+) -> Callable[[F], F]:
+    """对 rasterio / stackstac 底层 IO 错误进行重试的装饰器。"""
+
+    def decorator(func: F) -> F:
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            last_exc: Exception | None = None
+            for attempt in range(max_retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                except (
+                    RuntimeError,
+                    rasterio.errors.RasterioIOError,
+                    rasterio._err.CPLE_AppDefinedError,
+                ) as exc:
+                    last_exc = exc
+                    if attempt < max_retries:
+                        sleep_time = backoff * (2**attempt)
+                        logger.warning(
+                            "%s 第 %d 次失败，%.1f 秒后重试: %s",
+                            func.__name__,
+                            attempt + 1,
+                            sleep_time,
+                            exc,
+                        )
+                        time.sleep(sleep_time)
+                        # 非最终尝试前清理可能存在的部分/损坏输出文件
+                        out_path = kwargs.get("out_path")
+                        if out_path is None and len(args) >= 2:
+                            out_path = args[1]
+                        if isinstance(out_path, Path) and out_path.exists():
+                            logger.warning(
+                                "删除部分/损坏输出文件: %s",
+                                out_path,
+                            )
+                            out_path.unlink()
             raise last_exc  # type: ignore[misc]
 
         return wrapper  # type: ignore[return-value]
@@ -304,8 +351,7 @@ def download_source(
     if "time" in ds.coords:
         ds["time"] = ds["time"].astype("datetime64[s]")
 
-    _validate_coverage(ds, min_valid_ratio=0.05)
-    _write_dataset(ds, out_path, num_workers=workers)
+    _validate_and_write(ds, out_path, workers)
     return out_path
 
 
@@ -324,7 +370,6 @@ def _validate_coverage(ds: Any, min_valid_ratio: float = 0.05) -> None:
             )
 
 
-@_retry(max_retries=3, backoff=5.0)
 def _write_dataset(ds: Any, out_path: Path, num_workers: int = 12) -> None:
     """将 xarray Dataset 写入 NetCDF。
 
@@ -342,6 +387,13 @@ def _write_dataset(ds: Any, out_path: Path, num_workers: int = 12) -> None:
         },
     )
     logger.info("保存成功: %s", out_path)
+
+
+@_retry_io(max_retries=3, backoff=5.0)
+def _validate_and_write(ds: Any, out_path: Path, workers: int) -> None:
+    """校验覆盖度并将 Dataset 写入 NetCDF，失败时支持清理后重试。"""
+    _validate_coverage(ds, min_valid_ratio=0.05)
+    _write_dataset(ds, out_path, num_workers=workers)
 
 
 def main(argv: list[str] | None = None) -> int:
