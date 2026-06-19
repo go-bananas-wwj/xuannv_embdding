@@ -6,5 +6,7 @@
   "patch_size_m": 1280,
   "patch_size_px": 128,
   "sources": ["s2", "s1", "landsat"],
-  "fill_missing": "zero"
+  "min_valid_ratio": 0.3,
+  "workers": 8,
+  "nodata": 0.0
 }
