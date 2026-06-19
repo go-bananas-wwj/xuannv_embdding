@@ -158,7 +158,8 @@ def _compute_valid_mask(slice_arr: np.ndarray, source: str, nodata: float) -> np
 
     if source == "s2":
         scl = slice_arr[-1]
-        valid = valid & np.isin(scl.astype(np.uint8), list(S2_VALID_SCL))
+        scl_uint8 = np.nan_to_num(scl, nan=0.0).astype(np.uint8)
+        valid = valid & np.isin(scl_uint8, list(S2_VALID_SCL))
     elif source == "landsat":
         qa = slice_arr[-1].astype(np.uint16)
         valid = valid & ((qa & 0b11111) == 0)
