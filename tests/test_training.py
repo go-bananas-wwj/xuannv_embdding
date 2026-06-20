@@ -821,3 +821,58 @@ def test_trainer_load_restores_best_state(tmp_path: Path) -> None:
     assert new_trainer.best_val_loss == 0.123
     assert new_trainer.best_epoch == 7
     assert new_trainer.epoch == 8  # epoch = saved_epoch + 1
+
+
+class _DecreasingDummyLoss(nn.Module):
+    """每次调用都返回递减损失的假损失，用于验证 best.pt 选择逻辑。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._call_count = 0
+
+    def forward(self, output: AEFOutput, targets: Any, masks: Any) -> dict[str, torch.Tensor]:
+        self._call_count += 1
+        loss_val = max(0.01, 1.0 - self._call_count * 0.01)
+        base = output.embedding.mean() * 0.0 + loss_val
+        return {
+            "total": base,
+            "recon": base * 0.8,
+            "uniformity": base * 0.2,
+            "recon_s2_recon": base * 0.8,
+        }
+
+
+def test_trainer_best_pt_when_save_and_eval_aligned(tmp_path: Path) -> None:
+    """当 save_every 与 eval_every 相同时，fit 应在保存点生成 best.pt。
+
+    此测试用于捕获 eval 使用 0-based、save 使用 1-based 导致保存点无 val_metrics、
+    从而 best.pt 从未生成的调度不对齐 bug。
+    """
+    cfg = _make_trainer_cfg(
+        epochs=6,
+        save_every=2,
+        eval_every=2,
+        experiment_name="test_trainer_best_aligned",
+    )
+    cfg.experiment.output_dir = tmp_path
+
+    model = _DummyAEFModel(embed_dim=8)
+    dataset = _DummyDataset(size=2)
+    loader = DataLoader(dataset, batch_size=2, collate_fn=_dummy_collate)
+
+    trainer = Trainer(
+        cfg=cfg,
+        model=model,
+        train_loader=loader,
+        val_loader=loader,
+        device="cpu",
+        criterion=_DecreasingDummyLoss(),
+    )
+
+    trainer.fit()
+
+    best_path = tmp_path / "best.pt"
+    assert best_path.exists(), "best.pt 应在保存点存在"
+    state = torch.load(best_path, weights_only=True)
+    # 最后一个保存点 epoch index 5（1-based epoch 6）损失最低。
+    assert state["epoch"] == 5

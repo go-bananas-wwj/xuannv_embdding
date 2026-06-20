@@ -320,7 +320,8 @@ class Trainer:
             return None
 
         eval_every = getattr(self.cfg.training, "eval_every", 1)
-        if eval_every <= 0 or self.epoch % eval_every != 0:
+        # 与 _should_save_checkpoint 保持一致，使用 1-based epoch 编号。
+        if eval_every <= 0 or (self.epoch + 1) % eval_every != 0:
             return None
 
         self.model.eval()
