@@ -67,7 +67,7 @@ class Trainer:
         # DDP 包装：仅在分布式已初始化时进行；CPU 后端不传递 device_ids。
         if dist.is_initialized():
             device_index = self.device.index if self.device.index is not None else 0
-            ddp_kwargs: dict[str, Any] = {}
+            ddp_kwargs: dict[str, Any] = {"find_unused_parameters": True}
             if self.device.type in ("cuda", "npu"):
                 ddp_kwargs["device_ids"] = [device_index]
             self.model = DDP(self.model, **ddp_kwargs)
