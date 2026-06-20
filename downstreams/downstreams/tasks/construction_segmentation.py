@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 import torch
@@ -10,8 +9,6 @@ from torch.utils.data import DataLoader
 from downstreams.heads.segmentation_head import build_segmentation_head
 from downstreams.metrics.segmentation import compute_segmentation_metrics
 from downstreams.tasks.base import BaseTask
-
-logger = logging.getLogger(__name__)
 
 
 def _dice_loss(pred: torch.Tensor, target: torch.Tensor, smooth: float = 1e-6) -> torch.Tensor:
@@ -68,7 +65,7 @@ class ConstructionSegmentationTask(BaseTask):
         device: torch.device,
     ) -> float:
         model.train()
-        loss_fn = self.build_loss()
+        loss_fn = self.build_loss().to(device)
         total_loss = 0.0
         for batch in loader:
             emb = batch["embedding_map"].to(device)
