@@ -35,11 +35,13 @@ def create_stratified_folds(
     val_ratio: float = 0.1,
     seed: int = 42,
 ) -> dict[str, Any]:
-    """按 mask 正像素比例分层，生成 5-fold。
+    """按 mask 正像素比例分层，生成 n_folds-fold。
 
     每 fold：4 folds 训练，1 fold 测试；训练集内部再切 val_ratio 做验证。
     """
     mask_paths = sorted(mask_dir.glob("*.tif"))
+    if not mask_paths:
+        raise ValueError(f"mask_dir 中不存在 *.tif 文件: {mask_dir}")
     patch_ids = [p.stem for p in mask_paths]
     ratios = np.array([_positive_ratio(p) for p in mask_paths])
     pid_to_idx = {pid: i for i, pid in enumerate(patch_ids)}
