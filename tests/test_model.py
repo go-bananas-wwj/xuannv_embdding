@@ -131,8 +131,8 @@ def test_vmf_bottleneck_log_kappa_is_learnable() -> None:
     assert "log_kappa" in params
 
 
-def test_vmf_bottleneck_kappa_backward_compat() -> None:
-    """传入固定 kappa 时，log_kappa 应初始化为 log(kappa)，且不保留冲突的 self.kappa。"""
+def test_vmf_bottleneck_kappa_initializes_log_kappa() -> None:
+    """显式传入 kappa 时，log_kappa 应初始化为 log(kappa)，且不保留冲突的 self.kappa。"""
     bottleneck = VMFBottleneck(16, 8, kappa=100.0)
 
     assert torch.allclose(bottleneck.log_kappa, torch.log(torch.tensor(100.0)), atol=1e-6)
@@ -146,15 +146,20 @@ def test_vmf_bottleneck_noise_std_inverse_to_exp_log_kappa() -> None:
 
     bottleneck = VMFBottleneck(in_dim, out_dim)
 
-    # 低 kappa（高温度）：噪声标准差大。
-    bottleneck.log_kappa.data.fill_(torch.log(torch.tensor(1.0)).item())
-    torch.manual_seed(0)
-    z_low = bottleneck(x)
+    # 保存并恢复 RNG 状态，避免影响其它测试。
+    rng_state = torch.get_rng_state()
+    try:
+        # 低 kappa（高温度）：噪声标准差大。
+        bottleneck.log_kappa.data.fill_(torch.log(torch.tensor(1.0)).item())
+        torch.manual_seed(0)
+        z_low = bottleneck(x)
 
-    # 高 kappa（低温度）：噪声标准差小。
-    bottleneck.log_kappa.data.fill_(torch.log(torch.tensor(100.0)).item())
-    torch.manual_seed(0)
-    z_high = bottleneck(x)
+        # 高 kappa（低温度）：噪声标准差小。
+        bottleneck.log_kappa.data.fill_(torch.log(torch.tensor(100.0)).item())
+        torch.manual_seed(0)
+        z_high = bottleneck(x)
+    finally:
+        torch.set_rng_state(rng_state)
 
     # 使用同一组投影权重计算无噪声归一化结果。
     z_clean = F.normalize(bottleneck.proj(x), dim=1).detach()
