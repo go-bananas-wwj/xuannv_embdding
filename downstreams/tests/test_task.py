@@ -9,6 +9,8 @@ from downstreams.utils.config import load_config
 from torch import nn
 from torch.utils.data import DataLoader
 
+CONFIG_PATH = Path(__file__).parents[1] / "configs" / "construction_segmentation.yaml"
+
 
 class DummyDataset:
     def __init__(self, n: int) -> None:
@@ -35,7 +37,7 @@ class DummyHead(nn.Module):
 
 
 def test_task_build() -> None:
-    cfg = load_config(Path("downstreams/configs/construction_segmentation.yaml"))
+    cfg = load_config(CONFIG_PATH)
     assert cfg["experiment"]["seed"] == 42
     assert cfg["training"]["epochs"] == 100
     assert cfg["data"]["embed_dim"] == 64
