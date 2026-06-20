@@ -19,7 +19,10 @@ from xuannv_embedding.models.blocks import (
 from xuannv_embedding.models.bottleneck import VMFBottleneck
 from xuannv_embedding.models.decoders import CategoricalDecoder, ContinuousDecoder
 from xuannv_embedding.models.highres_fusion import AvailabilityAwareFusion
-from xuannv_embedding.models.sensor_encoders import SensorEncoderBank
+from xuannv_embedding.models.sensor_encoders import (
+    NativeResolutionHighResEncoder,
+    SensorEncoderBank,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +104,12 @@ class AEFModel(nn.Module):
 
         self.temporal_source_order = list(temporal_channels.keys())
         self.temporal_stem_bank = SensorEncoderBank(temporal_channels, stem_dim)
-        self.highres_encoder_bank = SensorEncoderBank(highres_channels, embed_dim)
+        self.highres_encoders = nn.ModuleDict(
+            {
+                source: NativeResolutionHighResEncoder(in_ch, embed_dim)
+                for source, in_ch in highres_channels.items()
+            }
+        )
 
         total_stem_channels = stem_dim * len(temporal_channels)
         self.total_stem_channels = total_stem_channels
@@ -256,7 +264,9 @@ class AEFModel(nn.Module):
                 highres_mask = highres_masks.get(source)
                 if highres_mask is None:
                     raise KeyError(f"缺少 highres_mask: {source!r}")
-                highres_feat = self.highres_encoder_bank(highres_frame, source)  # (B, D, H, W)
+                highres_feat = self.highres_encoders[source](
+                    highres_frame, target_size=input_size
+                )  # (B, D, H, W)
                 highres_feat_rep = (
                     highres_feat.unsqueeze(1)
                     .expand(-1, M, -1, -1, -1)

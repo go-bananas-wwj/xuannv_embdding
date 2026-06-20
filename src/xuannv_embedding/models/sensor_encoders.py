@@ -111,8 +111,9 @@ class NativeResolutionHighResEncoder(nn.Module):
     """原生分辨率高分数据源编码器（阶段二使用）。
 
     对来自不同传感器、不同原生分辨率与 GSD 的高分辨率影像，先通过 3 层 stride=2
-    卷积逐步下采样并扩展感受野，最后通过 ``AdaptiveAvgPool2d`` 统一到与低分辨率
-    基础特征相同的空间尺寸，输出通道数为 ``out_channels``。
+    卷积（每层后接 GroupNorm + GELU）逐步下采样并扩展感受野，最后通过
+    ``AdaptiveAvgPool2d`` 统一到与低分辨率基础特征相同的空间尺寸，输出通道数为
+    ``out_channels``。
     """
 
     def __init__(
@@ -126,7 +127,8 @@ class NativeResolutionHighResEncoder(nn.Module):
         Args:
             in_channels: 高分数据源输入通道数。
             out_channels: 输出通道数，通常等于基础模型 embed_dim。
-            target_size: 目标空间分辨率，默认与 128×128 patch 一致。
+            target_size: 默认目标空间分辨率，默认与 128×128 patch 一致；
+                调用 ``forward`` 时可覆盖。
         """
         super().__init__()
         self.in_channels = in_channels
@@ -138,22 +140,28 @@ class NativeResolutionHighResEncoder(nn.Module):
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1)
         self.conv3 = nn.Conv2d(64, out_channels, kernel_size=3, stride=2, padding=1)
 
+        # GroupNorm 要求 num_channels 能被 num_groups 整除；
+        # 当通道数小于 8 时，回退到逐通道 group。
+        self.norm1 = nn.GroupNorm(min(32, 32) if 32 % 32 == 0 else 32, 32)
+        self.norm2 = nn.GroupNorm(min(32, 64) if 64 % 32 == 0 else 64, 64)
         num_groups = 8 if out_channels % 8 == 0 else out_channels
         self.norm3 = nn.GroupNorm(num_groups, out_channels)
 
-        self.pool = nn.AdaptiveAvgPool2d(target_size)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, target_size: tuple[int, int] | None = None
+    ) -> torch.Tensor:
         """前向传播。
 
         Args:
             x: 输入张量，形状 ``(B, in_channels, H_native, W_native)``。
+            target_size: 可选覆盖目标空间分辨率；为 ``None`` 时使用构造默认值。
 
         Returns:
-            输出张量，形状 ``(B, out_channels, *target_size)``。
+            输出张量，形状 ``(B, out_channels, H_target, W_target)``。
         """
-        x = F.gelu(self.conv1(x))
-        x = F.gelu(self.conv2(x))
+        x = F.gelu(self.norm1(self.conv1(x)))
+        x = F.gelu(self.norm2(self.conv2(x)))
         x = F.gelu(self.norm3(self.conv3(x)))
-        x = self.pool(x)
+        target_size = target_size if target_size is not None else self.target_size
+        x = F.adaptive_avg_pool2d(x, target_size)
         return x

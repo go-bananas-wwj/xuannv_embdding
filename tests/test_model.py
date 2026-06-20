@@ -120,6 +120,36 @@ def test_native_resolution_highres_encoder() -> None:
 
     assert y.shape == (batch_size, out_channels, *target_size)
 
+    # 每个 stride=2 卷积后都应有 GroupNorm。
+    assert isinstance(encoder.norm1, nn.GroupNorm)
+    assert isinstance(encoder.norm2, nn.GroupNorm)
+    assert isinstance(encoder.norm3, nn.GroupNorm)
+
+
+def test_aef_model_uses_native_resolution_highres_encoder() -> None:
+    """AEFModel 应为每个高分辨率源使用独立的 NativeResolutionHighResEncoder。"""
+    sensor_channels = {
+        "s2": 10,
+        "highres_optical_haidian": 4,
+        "highres_sar_haidian": 1,
+    }
+    embed_dim = 16
+    model = AEFModel(
+        sensor_channels,
+        embed_dim,
+        target_heads={"s2_recon": ("continuous", 10)},
+        num_space_heads=2,
+    )
+
+    assert hasattr(model, "highres_encoders")
+    assert set(model.highres_encoders.keys()) == {
+        "highres_optical_haidian",
+        "highres_sar_haidian",
+    }
+    for encoder in model.highres_encoders.values():
+        assert isinstance(encoder, NativeResolutionHighResEncoder)
+        assert encoder.out_channels == embed_dim
+
 
 def test_vmf_bottleneck() -> None:
     """VMFBottleneck 应保持 (B, C, H, W) 形状并将输出约束到单位球面。"""
