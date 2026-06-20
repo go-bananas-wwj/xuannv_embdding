@@ -123,7 +123,7 @@ def test_embedding_augment_sync(tmp_path: Path) -> None:
     # 构造左右、上下不对称的 embedding 和 mask
     emb = torch.zeros(1, 16, 16)
     emb[:, :, :8] = 1.0
-    emb[:, :8, :] = emb[:, :8, :] + 2.0  # 左上=3, 右上=1, 左下=2, 右下=0
+    emb[:, :8, :] = emb[:, :8, :] + 2.0  # 左上=3, 右上=2, 左下=1, 右下=0
     torch.save(emb, emb_root / patch_id / "202604_embedding_map.pt")
 
     mask = np.zeros((16, 16), dtype=np.uint8)
