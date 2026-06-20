@@ -18,6 +18,7 @@ def save_checkpoint(
     scheduler: _LRScheduler | None,
     epoch: int,
     metrics: dict[str, Any],
+    trainer_state: dict[str, Any] | None = None,
 ) -> None:
     """保存训练状态到 checkpoint 文件。
 
@@ -28,6 +29,7 @@ def save_checkpoint(
         scheduler: 学习率调度器实例，可选。
         epoch: 当前 epoch 编号。
         metrics: 需要一起保存的指标字典。
+        trainer_state: Trainer 内部状态（如 best_val_loss/best_epoch），可选。
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -38,6 +40,7 @@ def save_checkpoint(
         "optimizer": optimizer.state_dict(),
         "scheduler": scheduler.state_dict() if scheduler is not None else None,
         "metrics": metrics,
+        "trainer_state": trainer_state if trainer_state is not None else {},
     }
     torch.save(state, path)
 

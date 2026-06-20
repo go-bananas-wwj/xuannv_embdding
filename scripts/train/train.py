@@ -54,14 +54,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def setup_distributed() -> bool:
+def setup_distributed() -> tuple[bool, int]:
     """若由 ``torchrun`` 启动，则初始化分布式进程组。
 
     返回:
-        是否进入分布式模式。
+        (是否进入分布式模式, local_rank)。
     """
     if "RANK" not in os.environ:
-        return False
+        return False, 0
 
     rank = int(os.environ["RANK"])
     world_size = int(os.environ.get("WORLD_SIZE", 1))
@@ -87,7 +87,7 @@ def setup_distributed() -> bool:
     elif torch.cuda.is_available():
         torch.cuda.set_device(local_rank)
 
-    return True
+    return True, local_rank
 
 
 def _set_seed(seed: int) -> None:
@@ -171,12 +171,14 @@ def _build_loader(
 def main() -> None:
     """训练入口主函数。"""
     args = parse_args()
-    is_distributed = setup_distributed()
+    is_distributed, local_rank = setup_distributed()
 
     cfg = Config.from_yaml(args.config)
     _set_seed(cfg.experiment.seed)
 
     device = _resolve_device(args.device, is_distributed)
+    if is_distributed and device.type == "cuda":
+        torch.cuda.set_device(local_rank)
 
     if not is_distributed or dist.get_rank() == 0:
         logging.basicConfig(
@@ -228,6 +230,12 @@ def main() -> None:
         is_distributed=is_distributed,
     )
 
+    train_sampler = (
+        train_loader.sampler
+        if isinstance(train_loader.sampler, DistributedSampler)
+        else None
+    )
+
     trainer = Trainer(
         cfg=cfg,
         model=model,
@@ -235,6 +243,7 @@ def main() -> None:
         val_loader=val_loader,
         device=device,
         criterion=criterion,
+        train_sampler=train_sampler,
     )
 
     if args.resume is not None:
