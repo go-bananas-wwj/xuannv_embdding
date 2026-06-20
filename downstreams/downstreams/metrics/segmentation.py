@@ -4,7 +4,7 @@ from typing import Any
 
 import numpy as np
 import torch
-from sklearn.metrics import auc, precision_recall_curve
+from sklearn.metrics import auc, average_precision_score, precision_recall_curve
 
 
 def _ensure_numpy(x: torch.Tensor | np.ndarray) -> np.ndarray:
@@ -42,7 +42,7 @@ def compute_segmentation_metrics(
 
     intersection = tp
     union = tp + fp + fn
-    iou = intersection / union if union > 0 else 0.0
+    iou = intersection / union if union > 0 else 1.0
 
     # PR 曲线 / AP / AUPRC
     y_true = (target[valid] == 1).astype(np.int32)
@@ -56,8 +56,6 @@ def compute_segmentation_metrics(
         p_arr, r_arr, _ = precision_recall_curve(y_true, y_score)
         auprc = auc(r_arr, p_arr)
         # AP via sklearn average_precision_score 更稳
-        from sklearn.metrics import average_precision_score
-
         ap = average_precision_score(y_true, y_score)
         f1s = 2 * p_arr * r_arr / (p_arr + r_arr + 1e-8)
         best_f1 = float(f1s.max())
