@@ -40,7 +40,7 @@ def test_reconstruction_loss_l1() -> None:
 
 
 def test_reconstruction_loss_ce() -> None:
-    """验证 CE 掩码重建损失计算正确。"""
+    """验证 CE 掩码重建损失计算正确，且 class-0 像素被忽略。"""
     batch_size, num_classes, height, width = 2, 5, 4, 4
     pred = torch.randn(batch_size, num_classes, height, width)
     target = torch.randint(0, num_classes, (batch_size, height, width))
@@ -49,10 +49,33 @@ def test_reconstruction_loss_ce() -> None:
 
     loss = reconstruction_loss(pred, target, mask, loss_type="ce")
 
-    expected = torch.nn.functional.cross_entropy(pred, target, reduction="none")
-    expected_masked_sum = (expected * mask).sum()
-    expected_count = mask.sum()
+    expected = torch.nn.functional.cross_entropy(
+        pred, target, ignore_index=0, reduction="none"
+    )
+    effective_mask = mask * (target != 0).float()
+    expected_masked_sum = (expected * effective_mask).sum()
+    expected_count = effective_mask.sum()
     expected_loss = expected_masked_sum / expected_count
+
+    assert torch.allclose(loss, expected_loss)
+
+
+def test_reconstruction_loss_ce_ignores_class_zero() -> None:
+    """当 mask 全为 1 时，class-0 像素仍不应影响 CE 重建损失。"""
+    batch_size, num_classes, height, width = 1, 3, 4, 4
+    pred = torch.randn(batch_size, num_classes, height, width)
+    target = torch.randint(0, num_classes, (batch_size, height, width))
+    # 确保存在 class-0 像素。
+    target[0, 0, 0] = 0
+    target[0, 1, 1] = 0
+    mask = torch.ones(batch_size, height, width)
+
+    loss = reconstruction_loss(pred, target, mask, loss_type="ce")
+
+    expected = torch.nn.functional.cross_entropy(
+        pred, target, ignore_index=0, reduction="none"
+    )
+    expected_loss = expected.sum() / (target != 0).float().sum()
 
     assert torch.allclose(loss, expected_loss)
 
