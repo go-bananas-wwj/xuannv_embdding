@@ -16,9 +16,7 @@ class ClassificationHead(TaskHead):
             nn.Linear(hidden_dim, num_classes),
         )
 
-    def forward(
-        self, embedding_map: torch.Tensor, scene_emb: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, embedding_map: torch.Tensor, scene_emb: torch.Tensor) -> torch.Tensor:
         if scene_emb is None:
             raise ValueError("ClassificationHead 需要 scene_emb")
         return self.mlp(scene_emb)

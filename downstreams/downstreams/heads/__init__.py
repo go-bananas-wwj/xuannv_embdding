@@ -1,8 +1,5 @@
 from downstreams.heads.base import TaskHead
-from downstreams.heads.change_detection_head import (
-    ChangeDetectionDiffHead,
-    ChangeDetectionHead,
-)
+from downstreams.heads.change_detection_head import ChangeDetectionHead
 from downstreams.heads.classification_head import ClassificationHead
 from downstreams.heads.linear_probe import LinearProbeHead
 from downstreams.heads.segmentation_head import (
@@ -21,5 +18,4 @@ __all__ = [
     "build_segmentation_head",
     "ClassificationHead",
     "ChangeDetectionHead",
-    "ChangeDetectionDiffHead",
 ]

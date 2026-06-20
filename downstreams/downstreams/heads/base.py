@@ -12,5 +12,4 @@ class TaskHead(nn.Module):
         self,
         embedding_map: torch.Tensor,
         scene_emb: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        ...
+    ) -> torch.Tensor: ...
