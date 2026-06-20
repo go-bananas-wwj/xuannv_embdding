@@ -74,12 +74,46 @@ def load_config(path: Path) -> dict[str, Any]:
     return config
 
 
+def _generate_patch_grid_from_json(
+    patch_grid_path: Path,
+) -> list[dict[str, Any]]:
+    """从 patches_meta JSON 加载预定义 patch 列表。"""
+    with open(patch_grid_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    patches = data if isinstance(data, list) else data.get("patches", [])
+
+    out: list[dict[str, Any]] = []
+    for p in patches:
+        patch_id = p["patch_id"]
+        pbounds = tuple(p["bounds"])
+        cm = re.match(r"p(\d{3})_r(\d{3})", patch_id)
+        if cm:
+            col = int(cm.group(1))
+            row = int(cm.group(2))
+        else:
+            idx_match = re.search(r"(\d+)", patch_id)
+            col = row = int(idx_match.group(1)) if idx_match else 0
+        out.append({"patch_id": patch_id, "bounds": pbounds, "col": col, "row": row})
+    return out
+
+
 def generate_patch_grid(
-    aoi_path: str | Path,
+    aoi_path: str | Path | None,
     patch_size_m: float,
     crs: str | CRS,
+    patch_grid_path: str | Path | None = None,
 ) -> list[dict[str, Any]]:
-    """基于 AOI 生成与低分辨率 patch 严格一致的网格。"""
+    """生成与低分辨率 patch 严格一致的网格。
+
+    若提供 ``patch_grid_path``，则使用预定义 patch 列表；否则从 AOI 生成规则网格。
+    """
+    if patch_grid_path is not None:
+        logger.info("使用 patches_meta JSON 作为参考网格: %s", patch_grid_path)
+        return _generate_patch_grid_from_json(Path(patch_grid_path))
+
+    if aoi_path is None:
+        raise ValueError("必须提供 aoi_path 或 patch_grid_path 之一")
+
     aoi = gpd.read_file(aoi_path)
     crs_obj = CRS.from_string(crs) if isinstance(crs, str) else crs
     aoi = aoi.to_crs(crs_obj)
@@ -92,7 +126,12 @@ def generate_patch_grid(
     right = math.ceil(right / MASTER_RES) * MASTER_RES
     top = math.ceil(top / MASTER_RES) * MASTER_RES
 
+    # 向右/上扩展至完整 patch_size_m 倍数，避免边缘出现非正方形像素的小 patch。
+    n_cols = int(np.ceil((right - left) / patch_size_m))
     n_rows = int(np.ceil((top - bottom) / patch_size_m))
+    right = left + n_cols * patch_size_m
+    top = bottom + n_rows * patch_size_m
+
     patches: list[dict[str, Any]] = []
     for idx, pbounds in enumerate(
         make_patch_grid((left, bottom, right, top), patch_size_m)
@@ -205,6 +244,7 @@ def _read_source_strip(
     bounds: tuple[float, float, float, float],
     dst_crs: CRS,
     src_nodata: float = NODATA,
+    indexes: list[int] | None = None,
 ) -> tuple[np.ndarray, rasterio.Affine, CRS, list[str]]:
     """读取覆盖指定目标范围的一整条源数据到内存。"""
     with rasterio.open(src_path) as src:
@@ -223,9 +263,13 @@ def _read_source_strip(
             src_bounds[3] + buf_y,
         )
         win = window_from_bounds(*src_bounds_buf, transform=src.transform)
-        src_array = src.read(window=win, boundless=True, fill_value=src_nodata)
+        src_array = src.read(
+            indexes=indexes, window=win, boundless=True, fill_value=src_nodata
+        )
         win_transform = src.window_transform(win)
         band_descriptions = list(src.descriptions)
+        if indexes is not None:
+            band_descriptions = [band_descriptions[i - 1] for i in indexes]
     return src_array, win_transform, src_crs, band_descriptions
 
 
@@ -353,7 +397,11 @@ def process_row(
 
     # 一次性读取一整行所需源数据，避免对未分块大文件重复全宽读取
     src_strip, src_transform, src_crs, band_descriptions = _read_source_strip(
-        sr_mosaic, (left, bottom, right, top), dst_crs, src_nodata=NODATA
+        sr_mosaic,
+        (left, bottom, right, top),
+        dst_crs,
+        src_nodata=NODATA,
+        indexes=[1, 2, 3],
     )
 
     if mask_mosaic and Path(mask_mosaic).exists():
@@ -487,12 +535,18 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("Input root does not exist: %s", input_root)
         return 1
 
-    aoi_path = Path(cfg["aoi_path"])
-    if not aoi_path.exists():
+    patch_grid_path = cfg.get("patch_grid_path")
+    if patch_grid_path is None:
+        default_path = Path(f"configs/regions/{region}_patches.json")
+        if default_path.exists():
+            patch_grid_path = str(default_path)
+
+    aoi_path = Path(cfg["aoi_path"]) if patch_grid_path is None else None
+    if aoi_path is not None and not aoi_path.exists():
         logger.error("AOI GeoJSON not found: %s", aoi_path)
         return 1
 
-    patches = generate_patch_grid(aoi_path, float(cfg["patch_size_m"]), dst_crs)
+    patches = generate_patch_grid(aoi_path, float(cfg["patch_size_m"]), dst_crs, patch_grid_path)
     if args.max_patches or args.patch_offset:
         start = args.patch_offset
         end = start + args.max_patches if args.max_patches else len(patches)
@@ -531,7 +585,7 @@ def main(argv: list[str] | None = None) -> int:
             date_str = f"{month_key}01"
             logger.info("Processing month %s (%s)", month_key, date_str)
 
-            # 构建 SR mosaic
+            # 构建 SR mosaic（统一输出 RGB 3 波段）
             sr_files = files["sr"]
             if len(sr_files) == 1 and region == "harbin":
                 sr_mosaic = sr_files[0]
@@ -541,6 +595,7 @@ def main(argv: list[str] | None = None) -> int:
                     sr_files,
                     sr_mosaic,
                     resampling=Resampling.bilinear,
+                    indexes=[1, 2, 3],
                 )
 
             # 构建掩膜 mosaic（如可用）

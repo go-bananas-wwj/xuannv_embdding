@@ -22,7 +22,7 @@ pytestmark = pytest.mark.skipif(
 
 def test_parse_timestamp_from_filename() -> None:
     """文件名解析应返回 ``YYYYMM`` 整数。"""
-    assert parse_timestamp_from_filename("s2_20250129_p000_r000.tif") == 202501
+    assert parse_timestamp_from_filename("s2_20250129_patch_000000.tif") == 202501
 
 
 def test_dataset_loads_manifest() -> None:
@@ -37,7 +37,7 @@ def test_dataset_loads_manifest() -> None:
     assert len(dataset) == 2
 
     sample = dataset[0]
-    assert "p" in sample["patch_id"] and "r" in sample["patch_id"]
+    assert sample["patch_id"].startswith("patch_")
     assert "s2" in sample["source_frames"]
 
     s2_frames = sample["source_frames"]["s2"]
@@ -71,9 +71,10 @@ def test_collate_fn() -> None:
     batch = [dataset[0], dataset[1]]
     collated = collate_fn(batch)
 
-    assert collated["source_frames"]["s2"].shape == (2, 1, 12, 128, 128)
-    assert collated["source_masks"]["s2"].shape == (2, 1)
-    assert collated["timestamps"]["s2"].shape == (2, 1)
+    max_t = max(len(sample["timestamps"]["s2"]) for sample in batch)
+    assert collated["source_frames"]["s2"].shape == (2, max_t, 12, 128, 128)
+    assert collated["source_masks"]["s2"].shape == (2, max_t)
+    assert collated["timestamps"]["s2"].shape == (2, max_t)
     assert len(collated["patch_ids"]) == 2
 
 
@@ -110,6 +111,10 @@ def test_build_dataloader() -> None:
     loader = build_dataloader(cfg, split="train")
     batch = next(iter(loader))
 
-    assert batch["source_frames"]["s2"].shape == (2, 1, 12, 128, 128)
-    assert batch["source_masks"]["s2"].shape == (2, 1)
-    assert batch["timestamps"]["s2"].shape == (2, 1)
+    assert batch["source_frames"]["s2"].shape[0] == 2
+    assert batch["source_frames"]["s2"].shape[2] == 12
+    assert batch["source_frames"]["s2"].shape[3] == 128
+    assert batch["source_frames"]["s2"].shape[4] == 128
+    t = batch["source_frames"]["s2"].shape[1]
+    assert batch["source_masks"]["s2"].shape == (2, t)
+    assert batch["timestamps"]["s2"].shape == (2, t)

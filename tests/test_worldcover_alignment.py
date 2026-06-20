@@ -17,6 +17,10 @@ TOL_M = 0.05  # 半分米级容差，远小于 10 m 分辨率
 
 
 def _grid_key(name: str) -> str | None:
+    # 支持参考项目格式 patch_000000 与旧格式 pXXX_rXXX
+    m = re.search(r"(patch_\d{6})\.", name)
+    if m:
+        return m.group(1)
     m = re.search(r"(p\d{3}_r\d{3})\.", name)
     return m.group(1) if m else None
 

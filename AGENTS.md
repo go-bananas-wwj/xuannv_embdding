@@ -44,7 +44,7 @@
 - 使用 **PyTorch + torch_npu**，目标硬件为 **6 张 Ascend NPU**。
 - 禁止使用 `einops`，所有 reshape 使用 PyTorch 原生操作。
 - 模型输出必须保持 **128×128 空间分辨率**（patch 尺寸 1280 m × 1280 m，10 m 等效分辨率）。
-- 不使用 L2 归一化作为 bottleneck 输出约束。
+- 一般情况下不使用 L2 归一化作为 bottleneck 输出约束；**VMF（von Mises-Fisher）bottleneck 例外**，允许通过 L2 归一化将 embedding 约束到单位球面。
 - 支持多源时序数据（S2、S1、Landsat）与稀疏高分辨率数据（光学、SAR）作为独立模态。
 
 ## 3. 联系方式

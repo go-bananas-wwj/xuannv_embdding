@@ -86,7 +86,12 @@ def _generate_patch_grid_from_aoi(
     right = math.ceil(right / MASTER_RES) * MASTER_RES
     top = math.ceil(top / MASTER_RES) * MASTER_RES
 
+    # 向右/上扩展至完整 patch_size_m 倍数，避免边缘出现非正方形像素的小 patch。
+    n_cols = int(np.ceil((right - left) / patch_size_m))
     n_rows = int(np.ceil((top - bottom) / patch_size_m))
+    right = left + n_cols * patch_size_m
+    top = bottom + n_rows * patch_size_m
+
     patches: list[dict[str, Any]] = []
     for idx, pbounds in enumerate(
         make_patch_grid((left, bottom, right, top), patch_size_m)
@@ -96,6 +101,30 @@ def _generate_patch_grid_from_aoi(
         patch_id = f"p{col:03d}_r{row:03d}"
         patches.append({"patch_id": patch_id, "bounds": pbounds, "col": col, "row": row})
     return patches
+
+
+def _generate_patch_grid_from_json(
+    patch_grid_path: Path,
+) -> list[dict[str, Any]]:
+    """从 patches_meta JSON 加载预定义 patch 列表。"""
+    with open(patch_grid_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    patches = data if isinstance(data, list) else data.get("patches", [])
+
+    out: list[dict[str, Any]] = []
+    for p in patches:
+        patch_id = p["patch_id"]
+        pbounds = tuple(p["bounds"])
+        # 支持旧 pXXX_rXXX 与 reference patch_000000 两种 id
+        cm = re.match(r"p(\d{3})_r(\d{3})", patch_id)
+        if cm:
+            col = int(cm.group(1))
+            row = int(cm.group(2))
+        else:
+            idx_match = re.search(r"(\d+)", patch_id)
+            col = row = int(idx_match.group(1)) if idx_match else 0
+        out.append({"patch_id": patch_id, "bounds": pbounds, "col": col, "row": row})
+    return out
 
 
 def _generate_patch_grid_from_s2_patches(
@@ -138,7 +167,17 @@ def generate_patch_grid(
     dst_crs: CRS,
     output_root: Path,
 ) -> list[dict[str, Any]]:
-    """生成 patch 网格，优先使用已存在的 S2 patches 作为参考。"""
+    """生成 patch 网格，优先级：patches_meta JSON > S2 patches > AOI。"""
+    patch_grid_path = config.get("patch_grid_path")
+    if patch_grid_path is None:
+        default_path = Path(f"configs/regions/{config['region']}_patches.json")
+        if default_path.exists():
+            patch_grid_path = str(default_path)
+
+    if patch_grid_path is not None:
+        logger.info("使用 patches_meta JSON 作为参考网格: %s", patch_grid_path)
+        return _generate_patch_grid_from_json(Path(patch_grid_path))
+
     s2_patch_dir = output_root / "patches" / "s2"
     if s2_patch_dir.exists() and any(s2_patch_dir.glob("s2_*.tif")):
         logger.info("使用 S2 patches 作为参考网格: %s", s2_patch_dir)

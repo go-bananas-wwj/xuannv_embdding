@@ -16,7 +16,7 @@ model:
     s1: 2
     landsat: 7
     highres_optical: 3
-    highres_sar: 2
+    highres_sar: 1
   target_heads:
     s2_recon:
       loss_type: continuous
