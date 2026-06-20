@@ -25,8 +25,16 @@ dependencies = [
     "fire",
 ]
 
+[project.optional-dependencies]
+downstream = [
+    "matplotlib>=3.7",
+    "seaborn>=0.12",
+    "scikit-image>=0.21",
+    "shapely>=2.0",
+]
+
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["src", "downstreams"]
 
 [tool.black]
 line-length = 100
