@@ -21,20 +21,22 @@ logger = logging.getLogger(__name__)
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--config", type=Path, required=True)
-    p.add_argument("--checkpoint", type=Path, default=None)
     p.add_argument("--regions", nargs="+", required=True)
     p.add_argument("--output-root", type=Path, required=True)
-    p.add_argument("--split", default="all")
     p.add_argument("--suffix", default="")
-    p.add_argument(
+    init_group = p.add_mutually_exclusive_group(required=True)
+    init_group.add_argument("--checkpoint", type=Path, default=None)
+    init_group.add_argument(
         "--random-init",
         action="store_true",
         help="随机初始化 backbone，生成 random-init 基线 embedding",
     )
     args = p.parse_args()
 
-    if not args.random_init and args.checkpoint is None:
-        p.error("--checkpoint 或 --random-init 至少指定一个")
+    if not args.config.exists():
+        p.error(f"config 不存在: {args.config}")
+    if args.checkpoint is not None and not args.checkpoint.exists():
+        p.error(f"checkpoint 不存在: {args.checkpoint}")
 
     model, cfg, device = load_model_for_inference(
         args.config, args.checkpoint, random_init=args.random_init
@@ -49,7 +51,7 @@ def main() -> None:
 
     for region in args.regions:
         logger.info("生成 %s embedding", region)
-        loader = build_inference_loader(cfg, region, split=args.split)
+        loader = build_inference_loader(cfg, region)
         region_dir = out_root / region
         precompute_embeddings(model, loader, device, region_dir)
 

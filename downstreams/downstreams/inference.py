@@ -3,6 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import subprocess
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +57,7 @@ def load_model_for_inference(
     return model, cfg, device
 
 
-def build_inference_loader(cfg: Config, region: str, split: str = "all") -> DataLoader:
+def build_inference_loader(cfg: Config, region: str) -> DataLoader:
     manifest_path = Path(cfg.data.root).parent / region / "manifest.json"
     statistics_dir = Path(cfg.data.root).parent / "statistics" / region
     dataset = MonthlyEmbeddingDataset(
@@ -126,6 +129,7 @@ def precompute_embeddings(
                 patch_dir.mkdir(parents=True, exist_ok=True)
                 for m in range(emb_map.shape[1]):
                     month_int = int(ts[b, m].item())
+                    assert 190000 < month_int < 210000, f"timestamp {month_int} 不是 YYYYMM 格式"
                     torch.save(emb_map[b, m], patch_dir / f"{month_int}_embedding_map.pt")
                     torch.save(scene_emb[b, m], patch_dir / f"{month_int}_scene_embedding.pt")
 
@@ -136,10 +140,6 @@ def write_meta_json(
     config_path: Path,
     command_line: str,
 ) -> None:
-    import subprocess
-    import sys
-    from datetime import datetime, timezone
-
     if checkpoint_path is not None:
         sha = hashlib.sha256(checkpoint_path.read_bytes()).hexdigest()[:16]
     else:
@@ -147,6 +147,8 @@ def write_meta_json(
     commit = subprocess.run(
         ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False
     ).stdout.strip()
+    if commit == "":
+        logger.warning("无法获取 git commit")
     dirty = (
         subprocess.run(
             ["git", "status", "--porcelain"], capture_output=True, text=True, check=False
