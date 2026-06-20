@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+from pathlib import Path
+
+import numpy as np
+import rasterio
+import torch
+from downstreams.data.embedding_dataset import EmbeddingDataset, collate_embeddings
+from downstreams.data.split import create_stratified_folds
+from downstreams.tasks.construction_segmentation import ConstructionSegmentationTask
+from downstreams.utils.config import load_config
+from downstreams.utils.device import get_downstream_device
+from downstreams.utils.reproducibility import set_seed
+from torch import nn
+from torch.utils.data import DataLoader
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
+
+
+def save_test_predictions(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    pred_dir: Path,
+    mask_dir: Path,
+) -> None:
+    """将测试集概率图保存为 GeoTIFF，便于后续可视化与溯源。"""
+    model.eval()
+    pred_dir.mkdir(parents=True, exist_ok=True)
+    with torch.no_grad():
+        for batch in loader:
+            emb = batch["embedding_map"].to(device)
+            patch_ids = batch["patch_ids"]
+            logits = model(emb)[:, 1]
+            probs = torch.sigmoid(logits).cpu().numpy()
+            for b, patch_id in enumerate(patch_ids):
+                mask_path = mask_dir / f"{patch_id}.tif"
+                with rasterio.open(mask_path) as src:
+                    profile = src.profile.copy()
+                profile.update(
+                    dtype=rasterio.float32,
+                    count=1,
+                    compress="lzw",
+                    nodata=None,
+                )
+                out_path = pred_dir / f"{patch_id}_prob.tif"
+                with rasterio.open(out_path, "w", **profile) as dst:
+                    dst.write(probs[b].astype(np.float32), 1)
+
+
+def main() -> None:
+    p = argparse.ArgumentParser()
+    p.add_argument("--task", default="construction_segmentation")
+    p.add_argument("--config", type=Path, required=True)
+    p.add_argument("--embedding-root", type=Path, required=True)
+    p.add_argument("--label-root", type=Path, required=True)
+    p.add_argument(
+        "--region",
+        type=str,
+        default=None,
+        help="embedding 子目录名；默认从 label-root 父目录推断",
+    )
+    p.add_argument("--output-root", type=Path, required=True)
+    p.add_argument("--fold", type=int, default=None, help="只跑单个 fold 调试")
+    p.add_argument("--fraction", type=float, default=None)
+    args = p.parse_args()
+
+    cfg = load_config(args.config)
+    set_seed(cfg["experiment"]["seed"])
+    device = get_downstream_device(cfg["experiment"].get("device", "auto"))
+
+    region = args.region if args.region else args.label_root.parent.name
+    emb_region_root = args.embedding_root / region
+    mask_dir = args.label_root / "masks"
+    split_path = args.label_root / "split_5fold.json"
+    if not split_path.exists():
+        logger.info("split_5fold.json 不存在，自动生成")
+        split = create_stratified_folds(mask_dir, seed=cfg["experiment"]["seed"])
+        with open(split_path, "w", encoding="utf-8") as f:
+            json.dump(split, f, ensure_ascii=False, indent=2)
+    else:
+        with open(split_path, "r", encoding="utf-8") as f:
+            split = json.load(f)
+
+    task = ConstructionSegmentationTask(cfg)
+    folds = [split["folds"][args.fold]] if args.fold is not None else split["folds"]
+
+    summary = []
+    for fold_info in folds:
+        fold_idx = fold_info["fold"]
+        logger.info("===== Fold %d =====", fold_idx)
+        out_dir = args.output_root / f"fold_{fold_idx}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        train_ids = fold_info["train"]
+        if args.fraction is not None:
+            frac_str = str(args.fraction)
+            train_ids = split["fractions"][frac_str][f"fold_{fold_idx}"]
+
+        train_ds = EmbeddingDataset(
+            emb_region_root,
+            args.label_root,
+            train_ids,
+            month=cfg["training"]["month"],
+            augment=True,
+        )
+        val_ds = EmbeddingDataset(
+            emb_region_root,
+            args.label_root,
+            fold_info["val"],
+            month=cfg["training"]["month"],
+        )
+        test_ds = EmbeddingDataset(
+            emb_region_root,
+            args.label_root,
+            fold_info["test"],
+            month=cfg["training"]["month"],
+        )
+
+        train_loader = DataLoader(
+            train_ds,
+            batch_size=cfg["training"]["batch_size"],
+            shuffle=True,
+            num_workers=cfg["training"].get("num_workers", 0),
+            collate_fn=collate_embeddings,
+        )
+        val_loader = DataLoader(
+            val_ds,
+            batch_size=cfg["training"]["batch_size"],
+            shuffle=False,
+            num_workers=cfg["training"].get("num_workers", 0),
+            collate_fn=collate_embeddings,
+        )
+        test_loader = DataLoader(
+            test_ds,
+            batch_size=cfg["training"]["batch_size"],
+            shuffle=False,
+            num_workers=cfg["training"].get("num_workers", 0),
+            collate_fn=collate_embeddings,
+        )
+
+        model = task.build_head().to(device)
+        optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=cfg["training"]["lr"],
+            weight_decay=cfg["training"]["weight_decay"],
+        )
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=cfg["training"]["epochs"]
+        )
+        loss_fn = task.build_loss()
+
+        best_miou = -1.0
+        patience_counter = 0
+        best_state: dict[str, torch.Tensor] | None = None
+        for epoch in range(cfg["training"]["epochs"]):
+            model.train()
+            train_loss = 0.0
+            for batch in train_loader:
+                emb = batch["embedding_map"].to(device)
+                mask = batch["mask"].to(device)
+                optimizer.zero_grad()
+                logits = model(emb)[:, 1]
+                loss = loss_fn(logits, mask.float())
+                loss.backward()
+                optimizer.step()
+                train_loss += loss.item()
+            scheduler.step()
+            train_loss /= len(train_loader)
+
+            val_metrics = task.evaluate(model, val_loader, device)
+            logger.info(
+                "Epoch %d train_loss=%.4f val_miou=%.4f",
+                epoch,
+                train_loss,
+                val_metrics["miou"],
+            )
+
+            if val_metrics["miou"] > best_miou:
+                best_miou = val_metrics["miou"]
+                patience_counter = 0
+                best_state = model.state_dict()
+                (out_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
+                torch.save(best_state, out_dir / "checkpoints" / "best.pt")
+            else:
+                patience_counter += 1
+                if patience_counter >= cfg["training"]["early_stop_patience"]:
+                    logger.info("早停于 epoch %d", epoch)
+                    break
+
+        # 测试
+        assert best_state is not None
+        model.load_state_dict(best_state)
+        test_metrics = task.evaluate(model, test_loader, device)
+        test_metrics["fold"] = fold_idx
+        test_metrics["best_epoch"] = epoch - patience_counter
+        test_metrics["region"] = region
+        test_metrics["fraction"] = args.fraction
+        summary.append(test_metrics)
+        with open(out_dir / "metrics.json", "w", encoding="utf-8") as f:
+            json.dump(test_metrics, f, ensure_ascii=False, indent=2)
+
+        # 保存测试集概率图
+        save_test_predictions(model, test_loader, device, out_dir / "predictions", mask_dir)
+
+    # 汇总
+    with open(args.output_root / "summary_5fold.json", "w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2)
+    logger.info("5-fold 汇总：%s", args.output_root / "summary_5fold.json")
+
+
+if __name__ == "__main__":
+    main()
