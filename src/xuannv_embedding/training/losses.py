@@ -46,6 +46,15 @@ def reconstruction_loss(
             mask = mask.reshape(B * T, *mask.shape[2:])
         elif mask.dim() == 4 and mask.shape[1] == T:
             mask = mask.reshape(B * T, *mask.shape[2:])
+        elif mask.dim() == 3:
+            if mask.shape == (B, T, 1):
+                mask = mask.reshape(B * T, 1, 1).expand(B * T, H, W)
+            else:
+                # (B, T, H, W) 已在 reshape 分支处理，其它形状保留供 expand_as 处理。
+                pass
+        elif mask.dim() == 2:
+            # (B, T) 时间掩码，应用到所有空间位置。
+            mask = mask.reshape(B * T, 1, 1).expand(B * T, H, W)
 
     if loss_type == "l1":
         # 逐元素 L1，然后在通道维度取平均，得到 [B, H, W]。

@@ -95,11 +95,12 @@ def test_mini_e2e_forward_and_loss() -> None:
             assert torch.isfinite(losses["total"]), "总损失应为有限值"
             assert output.embedding_map.shape == (
                 cfg.batch_size,
+                17,
                 16,
                 cfg.patch_size,
                 cfg.patch_size,
             )
-            assert output.embedding.shape == (cfg.batch_size, 16)
+            assert output.embedding.shape == (cfg.batch_size, 17, 16)
 
             num_batches += 1
             if num_batches >= 2:

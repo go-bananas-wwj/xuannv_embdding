@@ -35,6 +35,7 @@ def build_dataloader(
         sources=cfg.sources,
         patch_size=cfg.patch_size,
         max_patches=cfg.max_patches,
+        num_months=cfg.num_months,
     )
 
     shuffle = split == "train"

@@ -139,6 +139,7 @@ def _build_loader(
         sources=cfg.data.sources,
         patch_size=cfg.data.patch_size,
         max_patches=cfg.data.max_patches,
+        num_months=cfg.model.num_months,
     )
 
     sampler = None

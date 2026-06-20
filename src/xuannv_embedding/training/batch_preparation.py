@@ -64,11 +64,11 @@ def prepare_batch(
     ``Trainer._move_batch_to_device`` 统一完成，避免职责重复。
 
     主要转换:
-        - 从第一个有效的 source 提取全局 ``timestamps``（``[B, T]``）。
+        - ``timestamps`` 已由 ``collate_fn`` 合并为单一全局 ``(B, T_month)`` 张量。
+        - 为每个 target head 构造逐月 ``targets`` 与 ``target_masks``。
         - 若存在名称以 ``highres`` 开头的高分辨率 source，将其各自聚合为单帧与
           可用性掩码并从时序源中移除。
-        - 为每个 target head 构造 ``targets`` 与 ``target_masks``，均与输入保持
-          相同空间分辨率。
+        - 将 ``worldcover`` 等 target-only 源从喂给模型的 ``source_frames`` 中移除。
 
     参数:
         batch: ``collate_fn`` 输出，包含 ``patch_ids``、``source_frames``、
@@ -83,24 +83,38 @@ def prepare_batch(
     """
     source_frames = dict(batch["source_frames"])
     source_masks = dict(batch["source_masks"])
-    source_timestamps = dict(batch["timestamps"])
+    global_timestamps = batch["timestamps"]
     patch_ids = batch["patch_ids"]
 
     if not source_frames:
         raise ValueError("source_frames 不能为空字典")
 
-    # 为每个 target head 构造 target 与 target_mask。
+    if not isinstance(global_timestamps, torch.Tensor):
+        raise TypeError("collate_fn 应返回单一全局 timestamps 张量")
+
+    batch_size = global_timestamps.shape[0]
+    num_months = global_timestamps.shape[1]
+
+    # 使用第一个非高分辨率、非 target-only source 的空间尺寸作为参考分辨率。
+    ref_source = next(
+        (
+            s
+            for s in source_frames
+            if not s.startswith("highres") and s != "worldcover"
+        ),
+        None,
+    )
+    if ref_source is None:
+        # 仅有高分辨率或 worldcover 时，取第一个可用 source。
+        ref_source = next(iter(source_frames))
+    ref_frames = source_frames[ref_source]
+    spatial_h = ref_frames.shape[-2]
+    spatial_w = ref_frames.shape[-1]
+
+    # 为每个 target head 构造逐月 target 与 target_mask。
     available_sources = set(source_frames.keys())
     targets: dict[str, torch.Tensor] = {}
     target_masks: dict[str, torch.Tensor] = {}
-
-    # 使用第一个非高分辨率 source 的空间尺寸作为参考分辨率。
-    base_sources = [s for s in source_frames if not s.startswith("highres")]
-    ref_source = base_sources[0] if base_sources else next(iter(source_frames))
-    ref_frames = source_frames[ref_source]
-    batch_size = ref_frames.shape[0]
-    spatial_h = ref_frames.shape[-2]
-    spatial_w = ref_frames.shape[-1]
 
     for head_name, head_cfg in target_heads.items():
         source_name = _head_source_name(head_name, head_cfg, available_sources)
@@ -114,25 +128,48 @@ def prepare_batch(
         ):
             frames = source_frames[source_name]
             masks = source_masks[source_name]
-            agg = _weighted_temporal_mean(frames, masks)
+            t_in = frames.shape[1]
+
             if loss_type == "continuous":
-                target = agg
-                target_mask = torch.ones(batch_size, *target.shape[-2:], dtype=torch.float32)
+                # continuous head 直接使用逐月源帧作为目标。
+                target = frames
+                target_mask = masks
+                if target.shape[1] != num_months:
+                    raise ValueError(
+                        f"continuous head {head_name!r} 的目标时间维度 "
+                        f"{target.shape[1]} 与 num_months {num_months} 不一致"
+                    )
             else:  # categorical
-                # 单通道标签图直接取首通道；多通道 one-hot 取 argmax。
-                if agg.shape[1] == 1:
-                    label = agg[:, 0].long()
+                # 将 one-hot / 单通道标签转换为类别索引，形状 (B, T_in, H, W)。
+                if frames.shape[2] == 1:
+                    label = frames[:, :, 0].long()
                 else:
-                    label = agg.argmax(dim=1).long()
+                    label = frames.argmax(dim=2).long()
+
+                # 静态标签（单时间步）复制到所有月份。
+                if t_in == 1 and num_months > 1:
+                    label = label.expand(-1, num_months, -1, -1)
+                    target_mask = masks.expand(-1, num_months)
+                else:
+                    target_mask = masks
+
+                if label.shape[1] != num_months:
+                    raise ValueError(
+                        f"categorical head {head_name!r} 的目标时间维度 "
+                        f"{label.shape[1]} 与 num_months {num_months} 不一致"
+                    )
+
                 target = label
                 # 以 0 作为 nodata/背景，不参与损失计算。
-                target_mask = (label != 0).float()
+                target_mask = target_mask.unsqueeze(-1).unsqueeze(-1) * (target != 0).float()
+
             targets[head_name] = target
             target_masks[head_name] = target_mask
         else:
             if loss_type == "continuous":
                 targets[head_name] = torch.zeros(
                     batch_size,
+                    num_months,
                     channels,
                     spatial_h,
                     spatial_w,
@@ -141,51 +178,16 @@ def prepare_batch(
             else:
                 targets[head_name] = torch.zeros(
                     batch_size,
+                    num_months,
                     spatial_h,
                     spatial_w,
                     dtype=torch.long,
                 )
             target_masks[head_name] = torch.zeros(
                 batch_size,
-                spatial_h,
-                spatial_w,
+                num_months,
                 dtype=torch.float32,
             )
-
-    # 对齐所有非高分辨率时序源的时间长度，确保模型能使用统一的全局 timestamps。
-    temporal_sources = [s for s in source_frames if not s.startswith("highres")]
-    if temporal_sources:
-        max_t = max(source_frames[s].shape[1] for s in temporal_sources)
-        base_source = next(
-            s for s in temporal_sources if source_frames[s].shape[1] == max_t
-        )
-        global_timestamps = source_timestamps[base_source]
-        for source in temporal_sources:
-            t = source_frames[source].shape[1]
-            if t == max_t:
-                continue
-            b, _, c, h, w = source_frames[source].shape
-            pad_t = max_t - t
-            pad_frames = torch.zeros(b, pad_t, c, h, w, dtype=torch.float32)
-            pad_masks = torch.zeros(b, pad_t, dtype=torch.float32)
-            pad_timestamps = torch.zeros(b, pad_t, dtype=torch.long)
-            if t == 0:
-                source_frames[source] = pad_frames
-                source_masks[source] = pad_masks
-                source_timestamps[source] = pad_timestamps
-            else:
-                source_frames[source] = torch.cat(
-                    [source_frames[source], pad_frames], dim=1
-                )
-                source_masks[source] = torch.cat(
-                    [source_masks[source], pad_masks], dim=1
-                )
-                source_timestamps[source] = torch.cat(
-                    [source_timestamps[source], pad_timestamps], dim=1
-                )
-    else:
-        batch_size = next(iter(source_frames.values())).shape[0]
-        global_timestamps = torch.zeros(batch_size, 0, dtype=torch.long)
 
     # 分离所有以 highres 开头的高分辨率数据源。
     highres_frames: dict[str, torch.Tensor] = {}
@@ -194,7 +196,6 @@ def prepare_batch(
     for source in highres_sources:
         hr_frames = source_frames.pop(source)
         hr_masks = source_masks.pop(source)
-        source_timestamps.pop(source, None)
         if hr_frames.shape[1] > 0:
             highres_frame = _weighted_temporal_mean(hr_frames, hr_masks)
             _, _, height, width = highres_frame.shape
@@ -202,6 +203,12 @@ def prepare_batch(
             highres_mask = avail[:, None, None, None].expand(-1, 1, height, width)
             highres_frames[source] = highres_frame
             highres_masks[source] = highres_mask
+
+    # 将 worldcover 等 target-only 源从模型输入中移除（模型不会注册它们）。
+    for source in list(source_frames.keys()):
+        if source == "worldcover":
+            source_frames.pop(source)
+            source_masks.pop(source)
 
     return {
         "patch_ids": patch_ids,

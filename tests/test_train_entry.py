@@ -6,62 +6,70 @@ import torch
 
 from xuannv_embedding.training.batch_preparation import _head_source_name, prepare_batch
 
+NUM_MONTHS = 17
+
+
+def _month_tensor() -> torch.Tensor:
+    """返回阶段一 2025-01 至 2026-05 的 YYYYMM 月度列表。"""
+    year, month = 2025, 1
+    values = []
+    for _ in range(NUM_MONTHS):
+        values.append(year * 100 + month)
+        month += 1
+        if month > 12:
+            month = 1
+            year += 1
+    return torch.tensor(values, dtype=torch.long)
+
+
+MONTH_TENSOR = _month_tensor()
+
 
 def test_prepare_batch_global_timestamps() -> None:
-    """应从第一个有效 source 提取全局 timestamps。"""
+    """应从所有非高分辨率 source 提取统一的全局 timestamps。"""
     batch = {
         "patch_ids": ["p0", "p1"],
         "source_frames": {
-            "s2": torch.zeros(2, 0, 3, 4, 4),
-            "s1": torch.zeros(2, 3, 2, 4, 4),
+            "s2": torch.zeros(2, NUM_MONTHS, 3, 4, 4),
+            "s1": torch.zeros(2, NUM_MONTHS, 2, 4, 4),
         },
         "source_masks": {
-            "s2": torch.zeros(2, 0),
-            "s1": torch.ones(2, 3),
+            "s2": torch.ones(2, NUM_MONTHS),
+            "s1": torch.ones(2, NUM_MONTHS),
         },
-        "timestamps": {
-            "s2": torch.zeros(2, 0, dtype=torch.long),
-            "s1": torch.tensor([[202501, 202502, 202503], [202501, 202502, 202503]]),
-        },
+        "timestamps": MONTH_TENSOR.unsqueeze(0).expand(2, -1),
     }
     target_heads: dict[str, dict] = {}
 
     out = prepare_batch(batch, target_heads)
 
     assert "timestamps" in out
-    assert out["timestamps"].shape == (2, 3)
-    assert torch.equal(
-        out["timestamps"],
-        torch.tensor([[202501, 202502, 202503], [202501, 202502, 202503]]),
-    )
+    assert out["timestamps"].shape == (2, NUM_MONTHS)
+    assert torch.equal(out["timestamps"], MONTH_TENSOR.unsqueeze(0).expand(2, -1))
 
 
 def test_prepare_batch_continuous_target() -> None:
-    """continuous head 应生成时间加权平均 target 与全 1 target_mask。"""
+    """continuous head 应生成逐月 target 与逐月 target_mask。"""
+    frames = torch.tensor(
+        [
+            [
+                [[[1.0, 2.0], [3.0, 4.0]]],
+                [[[5.0, 6.0], [7.0, 8.0]]],
+            ]
+        ]
+    ).float()
+    # (B=1, T=2, C=1, H=2, W=2) -> 补齐到 NUM_MONTHS
+    frames = torch.cat(
+        [frames, torch.zeros(1, NUM_MONTHS - 2, 1, 2, 2)], dim=1
+    )
     batch = {
         "patch_ids": ["p0"],
-        "source_frames": {
-            "s2": torch.tensor(
-                [
-                    [
-                        [[1.0, 2.0], [3.0, 4.0]],
-                        [[5.0, 6.0], [7.0, 8.0]],
-                    ]
-                ]
-            )
-            .float()
-            .unsqueeze(0),
-        },
+        "source_frames": {"s2": frames},
         "source_masks": {
-            "s2": torch.tensor([[1.0, 1.0]]),
+            "s2": torch.cat([torch.ones(1, 2), torch.zeros(1, NUM_MONTHS - 2)], dim=1),
         },
-        "timestamps": {
-            "s2": torch.tensor([[202501, 202502]], dtype=torch.long),
-        },
+        "timestamps": MONTH_TENSOR.unsqueeze(0),
     }
-    # 修正 batch 维度为 [B=1, T=2, C=1, H=2, W=2]
-    batch["source_frames"]["s2"] = batch["source_frames"]["s2"].reshape(1, 2, 1, 2, 2)
-
     target_heads = {
         "s2_recon": {
             "loss_type": "continuous",
@@ -74,41 +82,30 @@ def test_prepare_batch_continuous_target() -> None:
 
     assert "targets" in out
     assert "target_masks" in out
-    expected = torch.tensor([[[3.0, 4.0], [5.0, 6.0]]]).float().unsqueeze(1)
-    assert torch.allclose(out["targets"]["s2_recon"], expected)
+    assert out["targets"]["s2_recon"].shape == (1, NUM_MONTHS, 1, 2, 2)
+    assert torch.allclose(out["targets"]["s2_recon"], frames)
+    assert out["target_masks"]["s2_recon"].shape == (1, NUM_MONTHS)
     assert torch.equal(
         out["target_masks"]["s2_recon"],
-        torch.ones(1, 2, 2),
+        torch.cat([torch.ones(1, 2), torch.zeros(1, NUM_MONTHS - 2)], dim=1),
     )
 
 
 def test_prepare_batch_categorical_target() -> None:
-    """categorical head 应通过 argmax 生成 [B, H, W] 的 target。"""
+    """categorical head 应通过 argmax 生成逐月 (B, T, H, W) target 与空间掩码。"""
+    # (B=1, T=NUM_MONTHS, C=3, H=2, W=2)
+    worldcover = torch.zeros(1, NUM_MONTHS, 3, 2, 2)
+    worldcover[0, 0, 1, 0, 1] = 1.0
+    worldcover[0, 0, 0, 1, 0] = 1.0
+    worldcover[0, 0, 2, 1, 1] = 1.0
+    worldcover[0, 1, 1, 0, 0] = 1.0
+
     batch = {
         "patch_ids": ["p0"],
-        "source_frames": {
-            "worldcover": torch.tensor(
-                [
-                    [
-                        [[0.1, 0.9], [0.8, 0.2]],
-                        [[0.7, 0.3], [0.4, 0.6]],
-                        [[0.2, 0.1], [0.1, 0.7]],
-                    ]
-                ]
-            ).float(),
-        },
-        "source_masks": {
-            "worldcover": torch.ones(1, 1),
-        },
-        "timestamps": {
-            "worldcover": torch.tensor([[202501]], dtype=torch.long),
-        },
+        "source_frames": {"worldcover": worldcover},
+        "source_masks": {"worldcover": torch.ones(1, NUM_MONTHS)},
+        "timestamps": MONTH_TENSOR.unsqueeze(0),
     }
-    # 维度修正为 [B=1, T=1, C=3, H=2, W=2]
-    batch["source_frames"]["worldcover"] = batch["source_frames"]["worldcover"].reshape(
-        1, 1, 3, 2, 2
-    )
-
     target_heads = {
         "worldcover": {
             "loss_type": "categorical",
@@ -120,20 +117,21 @@ def test_prepare_batch_categorical_target() -> None:
     out = prepare_batch(batch, target_heads)
 
     assert "targets" in out
-    assert out["targets"]["worldcover"].shape == (1, 2, 2)
-    expected = torch.tensor([[[1, 0], [0, 2]]]).long()
-    assert torch.equal(out["targets"]["worldcover"], expected)
+    assert out["targets"]["worldcover"].shape == (1, NUM_MONTHS, 2, 2)
+    assert out["target_masks"]["worldcover"].shape == (1, NUM_MONTHS, 2, 2)
+    assert out["target_masks"]["worldcover"][0, 0, 0, 1].item() == 1.0
+    assert out["target_masks"]["worldcover"][0, 0, 0, 0].item() == 0.0
 
 
-def test_prepare_batch_categorical_single_channel() -> None:
-    """categorical head 对单通道标签图应直接取首通道，并将 0 作为 nodata 屏蔽。"""
+def test_prepare_batch_categorical_static_replicated() -> None:
+    """静态 worldcover 单帧应被复制到所有月份。"""
     batch = {
         "patch_ids": ["p0"],
         "source_frames": {
             "worldcover": torch.tensor(
                 [
                     [
-                        [[0, 1], [2, 0]],
+                        [[[0, 1], [2, 0]]],
                     ]
                 ]
             ).float(),
@@ -141,9 +139,7 @@ def test_prepare_batch_categorical_single_channel() -> None:
         "source_masks": {
             "worldcover": torch.ones(1, 1),
         },
-        "timestamps": {
-            "worldcover": torch.tensor([[202301]], dtype=torch.long),
-        },
+        "timestamps": MONTH_TENSOR.unsqueeze(0),
     }
     # 维度修正为 [B=1, T=1, C=1, H=2, W=2]
     batch["source_frames"]["worldcover"] = batch["source_frames"]["worldcover"].reshape(
@@ -160,11 +156,13 @@ def test_prepare_batch_categorical_single_channel() -> None:
 
     out = prepare_batch(batch, target_heads)
 
-    assert out["targets"]["worldcover"].shape == (1, 2, 2)
-    expected_label = torch.tensor([[[0, 1], [2, 0]]]).long()
-    assert torch.equal(out["targets"]["worldcover"], expected_label)
-    expected_mask = torch.tensor([[[0.0, 1.0], [1.0, 0.0]]])
-    assert torch.equal(out["target_masks"]["worldcover"], expected_mask)
+    assert out["targets"]["worldcover"].shape == (1, NUM_MONTHS, 2, 2)
+    expected_label = torch.tensor([[0, 1], [2, 0]]).long()
+    for t in range(NUM_MONTHS):
+        assert torch.equal(out["targets"]["worldcover"][0, t], expected_label)
+    expected_mask = torch.tensor([[0.0, 1.0], [1.0, 0.0]])
+    for t in range(NUM_MONTHS):
+        assert torch.equal(out["target_masks"]["worldcover"][0, t], expected_mask)
 
 
 def test_prepare_batch_highres_separation() -> None:
@@ -172,17 +170,14 @@ def test_prepare_batch_highres_separation() -> None:
     batch = {
         "patch_ids": ["p0", "p1"],
         "source_frames": {
-            "s2": torch.zeros(2, 1, 3, 4, 4),
+            "s2": torch.zeros(2, NUM_MONTHS, 3, 4, 4),
             "highres": torch.ones(2, 2, 3, 4, 4),
         },
         "source_masks": {
-            "s2": torch.ones(2, 1),
+            "s2": torch.ones(2, NUM_MONTHS),
             "highres": torch.tensor([[1.0, 1.0], [1.0, 0.0]]),
         },
-        "timestamps": {
-            "s2": torch.tensor([[202501], [202501]], dtype=torch.long),
-            "highres": torch.tensor([[202501, 202502], [202501, 202502]], dtype=torch.long),
-        },
+        "timestamps": MONTH_TENSOR.unsqueeze(0).expand(2, -1),
     }
     target_heads: dict[str, dict] = {}
 
@@ -203,20 +198,16 @@ def test_prepare_batch_multiple_highres_sources() -> None:
     batch = {
         "patch_ids": ["p0", "p1"],
         "source_frames": {
-            "s2": torch.zeros(2, 1, 3, 4, 4),
+            "s2": torch.zeros(2, NUM_MONTHS, 3, 4, 4),
             "highres": torch.ones(2, 2, 3, 4, 4),
             "highres_sar": torch.ones(2, 1, 1, 4, 4) * 2.0,
         },
         "source_masks": {
-            "s2": torch.ones(2, 1),
+            "s2": torch.ones(2, NUM_MONTHS),
             "highres": torch.tensor([[1.0, 1.0], [1.0, 0.0]]),
             "highres_sar": torch.ones(2, 1),
         },
-        "timestamps": {
-            "s2": torch.tensor([[202501], [202501]], dtype=torch.long),
-            "highres": torch.tensor([[202501, 202502], [202501, 202502]], dtype=torch.long),
-            "highres_sar": torch.tensor([[202501], [202501]], dtype=torch.long),
-        },
+        "timestamps": MONTH_TENSOR.unsqueeze(0).expand(2, -1),
     }
     target_heads: dict[str, dict] = {}
 
@@ -236,17 +227,14 @@ def test_prepare_batch_highres_mask_full_resolution() -> None:
     batch = {
         "patch_ids": ["p0"],
         "source_frames": {
-            "s2": torch.zeros(1, 1, 3, 8, 8),
+            "s2": torch.zeros(1, NUM_MONTHS, 3, 8, 8),
             "highres": torch.ones(1, 1, 3, 8, 8),
         },
         "source_masks": {
-            "s2": torch.ones(1, 1),
+            "s2": torch.ones(1, NUM_MONTHS),
             "highres": torch.ones(1, 1),
         },
-        "timestamps": {
-            "s2": torch.tensor([[202501]], dtype=torch.long),
-            "highres": torch.tensor([[202501]], dtype=torch.long),
-        },
+        "timestamps": MONTH_TENSOR.unsqueeze(0),
     }
     target_heads: dict[str, dict] = {}
 
@@ -263,27 +251,25 @@ def test_prepare_batch_missing_source() -> None:
     batch = {
         "patch_ids": ["p0"],
         "source_frames": {
-            "s2": torch.zeros(1, 0, 3, 4, 4),
+            "s2": torch.zeros(1, NUM_MONTHS, 3, 4, 4),
         },
         "source_masks": {
-            "s2": torch.zeros(1, 0),
+            "s2": torch.zeros(1, NUM_MONTHS),
         },
-        "timestamps": {
-            "s2": torch.zeros(1, 0, dtype=torch.long),
-        },
+        "timestamps": MONTH_TENSOR.unsqueeze(0),
     }
     target_heads = {
-        "s2_recon": {
+        "s1_recon": {
             "loss_type": "continuous",
-            "channels": 3,
+            "channels": 2,
             "weight": 1.0,
         }
     }
 
     out = prepare_batch(batch, target_heads)
 
-    assert torch.equal(out["targets"]["s2_recon"], torch.zeros(1, 3, 4, 4))
-    assert torch.equal(out["target_masks"]["s2_recon"], torch.zeros(1, 4, 4))
+    assert torch.equal(out["targets"]["s1_recon"], torch.zeros(1, NUM_MONTHS, 2, 4, 4))
+    assert torch.equal(out["target_masks"]["s1_recon"], torch.zeros(1, NUM_MONTHS))
 
 
 def test_head_source_name_priority() -> None:
@@ -337,7 +323,7 @@ def test_prepare_batch_empty_source_frames() -> None:
         "patch_ids": ["p0"],
         "source_frames": {},
         "source_masks": {},
-        "timestamps": {},
+        "timestamps": torch.zeros(1, 0, dtype=torch.long),
     }
     target_heads: dict[str, dict] = {}
 
@@ -345,39 +331,25 @@ def test_prepare_batch_empty_source_frames() -> None:
         prepare_batch(batch, target_heads)
 
 
-def test_prepare_batch_aligns_temporal_lengths() -> None:
-    """不同 source 的时序长度应被对齐到统一的 T，短 source 用掩码 0 填充。"""
+def test_prepare_batch_temporal_sources_aligned() -> None:
+    """所有时序 source 应共享统一的月度时间长度与时间戳。"""
     batch = {
         "patch_ids": ["p0", "p1"],
         "source_frames": {
-            "s2": torch.zeros(2, 1, 3, 4, 4),
-            "s1": torch.zeros(2, 3, 2, 4, 4),
+            "s2": torch.zeros(2, NUM_MONTHS, 3, 4, 4),
+            "s1": torch.zeros(2, NUM_MONTHS, 2, 4, 4),
         },
         "source_masks": {
-            "s2": torch.ones(2, 1),
-            "s1": torch.ones(2, 3),
+            "s2": torch.ones(2, NUM_MONTHS),
+            "s1": torch.ones(2, NUM_MONTHS),
         },
-        "timestamps": {
-            "s2": torch.tensor([[202501], [202502]], dtype=torch.long),
-            "s1": torch.tensor(
-                [[202501, 202502, 202503], [202501, 202502, 202503]],
-                dtype=torch.long,
-            ),
-        },
+        "timestamps": MONTH_TENSOR.unsqueeze(0).expand(2, -1),
     }
     target_heads: dict[str, dict] = {}
 
     out = prepare_batch(batch, target_heads)
 
-    assert out["source_frames"]["s2"].shape == (2, 3, 3, 4, 4)
-    assert out["source_frames"]["s1"].shape == (2, 3, 2, 4, 4)
-    assert out["source_masks"]["s2"].shape == (2, 3)
-    assert out["source_masks"]["s2"][:, 1:].sum().item() == 0.0
-    assert out["timestamps"].shape == (2, 3)
-    assert torch.equal(
-        out["timestamps"],
-        torch.tensor(
-            [[202501, 202502, 202503], [202501, 202502, 202503]],
-            dtype=torch.long,
-        ),
-    )
+    assert out["source_frames"]["s2"].shape == (2, NUM_MONTHS, 3, 4, 4)
+    assert out["source_frames"]["s1"].shape == (2, NUM_MONTHS, 2, 4, 4)
+    assert out["timestamps"].shape == (2, NUM_MONTHS)
+    assert torch.equal(out["timestamps"], MONTH_TENSOR.unsqueeze(0).expand(2, -1))
