@@ -23,6 +23,7 @@ out/
 
 # Logs
 *.log
+wandb/
 
 # Tools / sessions
 tools/baidupcs/

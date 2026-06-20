@@ -58,7 +58,7 @@ data:
   patch_size: 128
   num_samples: 0
   batch_size: 4
-  num_workers: 8
+  num_workers: 0   # 高分影像 2560×2560 占用共享内存极大，关闭 worker 进程避免 /dev/shm 耗尽
   sources:
     - s2
     - s1
