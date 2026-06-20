@@ -33,6 +33,9 @@ class MonthlyEmbeddingDataset(Dataset):
         sources: list[str],
         patch_size: int = 256,
         max_patches: int | None = None,
+        num_months: int = 17,
+        ref_year: int = 2025,
+        ref_month: int = 1,
     ) -> None:
         """初始化 Dataset。
 
@@ -42,12 +45,19 @@ class MonthlyEmbeddingDataset(Dataset):
             sources: 需要加载的数据源列表。
             patch_size: 缺失 source 时用于构造空张量的默认空间尺寸。
             max_patches: 最大样本数限制，主要用于快速测试。
+            num_months: 月度 bin 数量，阶段一默认为 17（2025-01 至 2026-05）。
+            ref_year: 月度 bin 起始年份。
+            ref_month: 月度 bin 起始月份。
         """
         self.manifest_path = Path(manifest_path)
         self.statistics_dir = Path(statistics_dir)
         self.sources = list(sources)
         self.patch_size = patch_size
         self.max_patches = max_patches
+        self.num_months = num_months
+        self.ref_year = ref_year
+        self.ref_month = ref_month
+        self.month_bins = self._generate_month_bins()
 
         self.root_dir = self.manifest_path.parent
         self.manifest: list[dict[str, Any]] = self._load_manifest()
@@ -61,6 +71,24 @@ class MonthlyEmbeddingDataset(Dataset):
         # 记录每个 source 的空间尺寸，缺失时用于构造空张量
         self.source_hw: dict[str, tuple[int, int]] = {}
         self._infer_geometry()
+
+    def _generate_month_bins(self) -> list[int]:
+        """生成 ``num_months`` 个月度 bin 对应的 ``YYYYMM`` 列表。"""
+        year, month = self.ref_year, self.ref_month
+        bins: list[int] = []
+        for _ in range(self.num_months):
+            bins.append(year * 100 + month)
+            month += 1
+            if month > 12:
+                month = 1
+                year += 1
+        return bins
+
+    def _yyyymm_to_index(self, timestamp: int) -> int:
+        """将 ``YYYYMM`` 整数时间戳映射到以 ``ref_year/ref_month`` 为 0 的月度索引。"""
+        year = timestamp // 100
+        month = timestamp % 100
+        return (year - self.ref_year) * 12 + (month - self.ref_month)
 
     def _load_manifest(self) -> list[dict[str, Any]]:
         """加载 manifest 并将路径字符串转换为 ``Path``。"""
@@ -133,22 +161,34 @@ class MonthlyEmbeddingDataset(Dataset):
             "timestamps": {},
         }
 
+        month_timestamps = torch.tensor(self.month_bins, dtype=torch.long)
+
         for source in self.sources:
             paths = entry.get(source)
+            channels = self.source_channels[source]
+            height, width = self.source_hw[source]
+
             if not paths:
-                # 缺失 source：构造空张量，保持维度一致
-                channels = self.source_channels[source]
-                height, width = self.source_hw[source]
-                sample["source_frames"][source] = torch.zeros(
-                    (0, channels, height, width),
-                    dtype=torch.float32,
-                )
-                sample["source_masks"][source] = torch.zeros((0,), dtype=torch.float32)
-                sample["timestamps"][source] = torch.zeros((0,), dtype=torch.long)
+                # 缺失 source：按月度 bin 构造空张量，保持维度一致
+                if source.startswith("highres"):
+                    sample["source_frames"][source] = torch.zeros(
+                        (0, channels, height, width),
+                        dtype=torch.float32,
+                    )
+                    sample["source_masks"][source] = torch.zeros((0,), dtype=torch.float32)
+                    sample["timestamps"][source] = torch.zeros((0,), dtype=torch.long)
+                else:
+                    sample["source_frames"][source] = torch.zeros(
+                        (self.num_months, channels, height, width),
+                        dtype=torch.float32,
+                    )
+                    sample["source_masks"][source] = torch.zeros(
+                        (self.num_months,), dtype=torch.float32
+                    )
+                    sample["timestamps"][source] = month_timestamps
                 continue
 
             frame_list: list[torch.Tensor] = []
-            mask_list: list[float] = []
             timestamp_list: list[int] = []
 
             for path in paths:
@@ -162,23 +202,58 @@ class MonthlyEmbeddingDataset(Dataset):
                     array = normalize(array, stats["mean"], stats["std"])
 
                 frame_list.append(torch.from_numpy(array))
-                mask_list.append(1.0)
                 timestamp_list.append(parse_timestamp_from_filename(path.name))
 
             # 按时间戳排序，保证时序顺序
             order = np.argsort(timestamp_list)
             frames = torch.stack([frame_list[i] for i in order])
-            masks = torch.tensor(
-                [mask_list[i] for i in order],
-                dtype=torch.float32,
-            )
             timestamps = torch.tensor(
                 [timestamp_list[i] for i in order],
                 dtype=torch.long,
             )
 
-            sample["source_frames"][source] = frames
-            sample["source_masks"][source] = masks
-            sample["timestamps"][source] = timestamps
+            if source.startswith("highres"):
+                # 高分辨率 source 不参与月度 binning，保留原始时序。
+                sample["source_frames"][source] = frames
+                sample["source_masks"][source] = torch.ones(
+                    (frames.shape[0],), dtype=torch.float32
+                )
+                sample["timestamps"][source] = timestamps
+                continue
+
+            if source == "worldcover":
+                # WorldCover 是静态 target-only 标签，直接在时间维度取平均后
+                # 复制到所有月度 bin，便于下游 prepare_batch 构造逐月目标。
+                static_frame = frames.mean(dim=0, keepdim=True)  # (1, C, H, W)
+                binned_frames = static_frame.expand(self.num_months, -1, -1, -1).clone()
+                sample["source_frames"][source] = binned_frames
+                sample["source_masks"][source] = torch.ones(
+                    (self.num_months,), dtype=torch.float32
+                )
+                sample["timestamps"][source] = month_timestamps
+                continue
+
+            # 普通时序 source：按 ``YYYYMM`` 归入月度 bin，同 bin 多帧取平均。
+            binned_frames = torch.zeros(
+                (self.num_months, channels, height, width),
+                dtype=torch.float32,
+            )
+            binned_masks = torch.zeros((self.num_months,), dtype=torch.float32)
+
+            month_indices = torch.tensor(
+                [self._yyyymm_to_index(ts.item()) for ts in timestamps],
+                dtype=torch.long,
+            )
+            in_range = (month_indices >= 0) & (month_indices < self.num_months)
+
+            for m in range(self.num_months):
+                matches = (month_indices == m) & in_range
+                if matches.any():
+                    binned_frames[m] = frames[matches].mean(dim=0)
+                    binned_masks[m] = 1.0
+
+            sample["source_frames"][source] = binned_frames
+            sample["source_masks"][source] = binned_masks
+            sample["timestamps"][source] = month_timestamps
 
         return sample
