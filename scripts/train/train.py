@@ -43,7 +43,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--resume",
         type=str,
         default=None,
-        help="待恢复的 checkpoint 路径",
+        help="待恢复的 checkpoint 路径（恢复 optimizer/scheduler/epoch）",
+    )
+    parser.add_argument(
+        "--init-from",
+        dest="init_from",
+        type=str,
+        default=None,
+        help="仅加载模型权重的 checkpoint 路径（用于阶段二从阶段一初始化）",
     )
     parser.add_argument(
         "--device",
@@ -168,6 +175,26 @@ def _build_loader(
     )
 
 
+def _init_model_from_checkpoint(
+    model: nn.Module,
+    init_from: str,
+    is_main_process: bool,
+) -> None:
+    """仅加载模型权重，用于阶段二从阶段一 checkpoint 初始化。
+
+    不恢复 optimizer、scheduler 与 epoch；阶段二使用全新的训练状态。
+    """
+    state = torch.load(init_from, map_location="cpu", weights_only=True)
+    missing, unexpected = model.load_state_dict(state["model"], strict=False)
+
+    if is_main_process:
+        logger.info("从 %s 初始化模型权重", init_from)
+        if missing:
+            logger.info("缺失 keys (%d): %s ...", len(missing), missing[:5])
+        if unexpected:
+            logger.info("多余 keys (%d): %s ...", len(unexpected), unexpected[:5])
+
+
 def main() -> None:
     """训练入口主函数。"""
     args = parse_args()
@@ -204,6 +231,13 @@ def main() -> None:
         stp=cfg.model.stp,
         gradient_checkpointing=cfg.training.gradient_checkpointing,
     )
+
+    if args.resume is not None and args.init_from is not None:
+        raise ValueError("--resume 与 --init-from 不能同时使用")
+
+    is_main = not is_distributed or dist.get_rank() == 0
+    if args.init_from is not None:
+        _init_model_from_checkpoint(model, args.init_from, is_main)
 
     # 构造 TotalLoss 所需的 target_cfg。
     loss_type_map = {"continuous": "l1", "categorical": "ce"}

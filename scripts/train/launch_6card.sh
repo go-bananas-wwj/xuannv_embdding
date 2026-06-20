@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 6× Ascend NPU DDP 训练启动脚本（阶段一，Harbin 128）。
+# 6× Ascend NPU DDP 训练启动脚本（Harbin 128）。
 set -euo pipefail
 
 if [[ -z "${WANDB_API_KEY:-}" ]]; then
@@ -9,17 +9,20 @@ if [[ -z "${WANDB_API_KEY:-}" ]]; then
 fi
 
 CONFIG="${1:-configs/harbin_128.yaml}"
+shift || true
 NNODES="${NNODES:-1}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-6}"
 
 cd "$(dirname "$0")/../.."
 
-echo "Launching stage-1 training on ${NNODES} node(s) x ${NPROC_PER_NODE} NPUs"
+echo "Launching training on ${NNODES} node(s) x ${NPROC_PER_NODE} NPUs"
 echo "Config: ${CONFIG}"
+echo "Extra args: $*"
 
 exec torchrun \
     --nnodes "${NNODES}" \
     --nproc-per-node "${NPROC_PER_NODE}" \
     --standalone \
     scripts/train/train.py \
-    --config "${CONFIG}"
+    --config "${CONFIG}" \
+    "$@"

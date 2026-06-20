@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 
 
 def _head_source_name(
@@ -131,14 +132,28 @@ def prepare_batch(
             t_in = frames.shape[1]
 
             if loss_type == "continuous":
-                # continuous head 直接使用逐月源帧作为目标。
-                target = frames
-                target_mask = masks
-                if target.shape[1] != num_months:
-                    raise ValueError(
-                        f"continuous head {head_name!r} 的目标时间维度 "
-                        f"{target.shape[1]} 与 num_months {num_months} 不一致"
-                    )
+                if source_name.startswith("highres"):
+                    # 高分辨率 source 的观测不按月组织：先按时间掩码聚合为单帧，
+                    # 下采样到与模型输出一致的空间尺寸，再复制到所有月度 bin；
+                    # target_mask 反映该样本是否存在高分辨率观测。
+                    highres_frame = _weighted_temporal_mean(frames, masks)  # (B, C, H_hr, W_hr)
+                    target_frame = F.adaptive_avg_pool2d(
+                        highres_frame, (spatial_h, spatial_w)
+                    )  # (B, C, H, W)
+                    target = target_frame.unsqueeze(1).expand(
+                        -1, num_months, -1, -1, -1
+                    ).clone()
+                    sample_avail = (masks.sum(dim=1) > 0).float()  # (B,)
+                    target_mask = sample_avail[:, None].expand(-1, num_months).clone()
+                else:
+                    # continuous head 直接使用逐月源帧作为目标。
+                    target = frames
+                    target_mask = masks
+                    if target.shape[1] != num_months:
+                        raise ValueError(
+                            f"continuous head {head_name!r} 的目标时间维度 "
+                            f"{target.shape[1]} 与 num_months {num_months} 不一致"
+                        )
             else:  # categorical
                 # 将 one-hot / 单通道标签转换为类别索引，形状 (B, T_in, H, W)。
                 if frames.shape[2] == 1:
@@ -198,9 +213,12 @@ def prepare_batch(
         hr_masks = source_masks.pop(source)
         if hr_frames.shape[1] > 0:
             highres_frame = _weighted_temporal_mean(hr_frames, hr_masks)
-            _, _, height, width = highres_frame.shape
             avail = (hr_masks.sum(dim=1) > 0).float()
-            highres_mask = avail[:, None, None, None].expand(-1, 1, height, width)
+            # 高分辨率 mask 最终会与编码到 (H, W) 的低分辨率特征融合，
+            # 因此直接使用低分辨率参考尺寸即可；有高分数据时该空间掩码全 1。
+            highres_mask = avail[:, None, None, None].expand(
+                -1, 1, spatial_h, spatial_w
+            )
             highres_frames[source] = highres_frame
             highres_masks[source] = highres_mask
 
