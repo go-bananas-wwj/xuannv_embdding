@@ -12,11 +12,7 @@ def test_import_downstreams():
     """
     project_root = Path(__file__).resolve().parents[2]
     original_path = sys.path[:]
-    sys.path = [
-        p
-        for p in sys.path
-        if p != "" and Path(p).resolve() != project_root
-    ]
+    sys.path = [p for p in sys.path if p != "" and Path(p).resolve() != project_root]
     try:
         import downstreams
 
@@ -29,7 +25,13 @@ def test_import_downstreams():
         import downstreams.tasks
         import downstreams.utils
 
-        for sub in (downstreams.data, downstreams.heads, downstreams.metrics, downstreams.tasks, downstreams.utils):
+        for sub in (
+            downstreams.data,
+            downstreams.heads,
+            downstreams.metrics,
+            downstreams.tasks,
+            downstreams.utils,
+        ):
             assert sub.__file__ is not None
     finally:
         sys.path[:] = original_path
