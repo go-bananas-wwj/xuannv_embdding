@@ -500,9 +500,10 @@ class STPPrecisionOperator(nn.Module):
         """
         super().__init__()
         self.dim = dim
-        num_groups = min(32, dim // 4) if dim >= 4 else 1
-        self.norm1 = nn.GroupNorm(num_groups, dim)
-        self.norm2 = nn.GroupNorm(num_groups, dim * 4)
+        num_groups1 = 8 if dim % 8 == 0 else dim
+        num_groups2 = 8 if (dim * 4) % 8 == 0 else dim * 4
+        self.norm1 = nn.GroupNorm(num_groups1, dim)
+        self.norm2 = nn.GroupNorm(num_groups2, dim * 4)
         self.conv1 = nn.Conv2d(dim, dim * 4, kernel_size=3, padding=1)
         self.conv2 = nn.Conv2d(dim * 4, dim, kernel_size=3, padding=1)
 
