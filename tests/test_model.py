@@ -525,8 +525,8 @@ def test_aef_model_missing_months_no_nan() -> None:
     assert out.embedding_map.shape == (batch_size, num_months, embed_dim, height, width)
 
 
-def test_aef_model_per_source_timestamps() -> None:
-    """AEFModel 应支持以 dict 形式传入每 source 的时间戳。"""
+def test_aef_model_global_timestamps_tensor() -> None:
+    """AEFModel 应接受单一全局 timestamps 张量并输出月度结果。"""
     num_months = 3
     sensor_channels = {"s2": 10, "s1": 2}
     embed_dim = 16
@@ -546,13 +546,11 @@ def test_aef_model_per_source_timestamps() -> None:
         "s1": torch.randn(batch_size, time_steps, 2, height, width),
     }
     source_masks = {k: torch.ones(batch_size, time_steps) for k in source_frames}
-    timestamps = {
-        "s2": _make_yyyymm_timestamps(batch_size, time_steps, start=202501),
-        "s1": _make_yyyymm_timestamps(batch_size, time_steps, start=202501),
-    }
+    timestamps = _make_yyyymm_timestamps(batch_size, time_steps, start=202501)
 
     out = model(source_frames, source_masks, timestamps)
     assert out.embedding_map.shape == (batch_size, num_months, embed_dim, height, width)
+    assert out.embedding.shape == (batch_size, num_months, embed_dim)
 
 
 def test_stp_space_operator() -> None:

@@ -145,7 +145,7 @@ class AEFModel(nn.Module):
         self,
         source_frames: dict[str, torch.Tensor],
         source_masks: dict[str, torch.Tensor],
-        timestamps: torch.Tensor | dict[str, torch.Tensor],
+        timestamps: torch.Tensor,
         highres_frames: dict[str, torch.Tensor] | None = None,
         highres_masks: dict[str, torch.Tensor] | None = None,
     ) -> AEFOutput:
@@ -154,8 +154,7 @@ class AEFModel(nn.Module):
         Args:
             source_frames: 各时序数据源的输入，格式 ``{source: (B, T, C, H, W)}``。
             source_masks: 各时序数据源的时间有效掩码，格式 ``{source: (B, T)}``。
-            timestamps: 时间戳。可以是全局张量 ``(B, T)``（用于所有 source），
-                也可以是按 source 组织的字典 ``{source: (B, T)}``。推荐格式为
+            timestamps: 全局时间戳，形状 ``(B, T)``，用于所有时序 source。推荐格式为
                 ``YYYYMM`` 整数，例如 ``202501``。
             highres_frames: 可选的高分辨率单帧输入字典，格式 ``{source: (B, C, H, W)}``。
             highres_masks: 高分辨率可用性掩码字典，格式 ``{source: (B, 1, H, W)}``；
@@ -180,25 +179,7 @@ class AEFModel(nn.Module):
         if not temporal_sources:
             raise ValueError("source_frames 中至少需要一个有效的时序数据源")
 
-        # 处理 timestamps：统一为 per-source 字典，同时保留一个全局时间戳给 STP/月度模块。
-        if isinstance(timestamps, torch.Tensor):
-            global_timestamps = timestamps
-            source_timestamps: dict[str, torch.Tensor] = {
-                source: timestamps for source in temporal_sources
-            }
-        elif isinstance(timestamps, dict):
-            source_timestamps = {
-                source: timestamps[source]
-                for source in temporal_sources
-                if source in timestamps
-            }
-            if not source_timestamps:
-                raise ValueError("timestamps 字典中未包含任何有效时序 source")
-            global_timestamps = next(iter(source_timestamps.values()))
-        else:
-            raise TypeError(
-                f"timestamps 必须是 torch.Tensor 或 dict，当前类型: {type(timestamps)}"
-            )
+        global_timestamps = timestamps
 
         # 第一个 source 用于确定 batch/time/space 维度。
         first_source = temporal_sources[0]
