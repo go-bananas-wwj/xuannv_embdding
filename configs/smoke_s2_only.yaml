@@ -1,0 +1,41 @@
+_base_: base.yaml
+
+experiment:
+  name: smoke_s2_only
+  use_wandb: false
+
+training:
+  epochs: 5
+  lr: 1.0e-4
+  weight_decay: 0.05
+  warmup_epochs: 1
+  gradient_accumulation_steps: 1
+  save_every: 3
+  eval_every: 3
+  amp: false
+  gradient_checkpointing: false
+  log_every: 1
+
+model:
+  num_months: 17
+  sensor_channels:
+    s2: 12
+  stp:
+    space_dim: 128
+    time_dim: 64
+    precision_dim: 32
+    num_blocks: 2
+    num_heads: 4
+
+data:
+  region: harbin
+  root: /data/xuannv_embedding/processed/harbin
+  manifest_path: /data/xuannv_embedding/processed/harbin/manifest.json
+  statistics_dir: /data/xuannv_embedding/statistics/harbin
+  patch_size: 128
+  num_samples: 0
+  batch_size: 2
+  max_patches: 4
+  num_workers: 0
+  sources:
+    - s2

@@ -1,0 +1,48 @@
+_base_: base.yaml
+
+experiment:
+  name: smoke_tiny
+  use_wandb: false
+
+training:
+  epochs: 1
+  lr: 1.0e-4
+  weight_decay: 0.05
+  warmup_epochs: 0
+  gradient_accumulation_steps: 1
+  save_every: 1
+  eval_every: 1
+  amp: false
+  gradient_checkpointing: false
+  log_every: 1
+
+model:
+  num_months: 17
+  embed_dim: 16
+  stem_dim: 8
+  sensor_channels:
+    s2: 12
+  stp:
+    space_dim: 32
+    time_dim: 16
+    precision_dim: 8
+    num_blocks: 1
+    num_heads: 2
+  target_heads:
+    s2_recon:
+      loss_type: continuous
+      channels: 12
+      weight: 1.0
+
+data:
+  region: harbin
+  root: /data/xuannv_embedding/processed/harbin
+  manifest_path: /data/xuannv_embedding/processed/harbin/manifest.json
+  statistics_dir: /data/xuannv_embedding/statistics/harbin
+  patch_size: 128
+  num_samples: 0
+  batch_size: 2
+  max_patches: 2
+  num_workers: 0
+  sources:
+    - s2
