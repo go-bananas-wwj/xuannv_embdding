@@ -60,8 +60,10 @@ def reconstruction_loss(
         # 逐元素 L1，然后在通道维度取平均，得到 [B, H, W]。
         loss = F.l1_loss(pred, target, reduction="none").mean(dim=1)
     elif loss_type == "ce":
-        # cross_entropy 输出 [B, H, W]。
-        loss = F.cross_entropy(pred, target, reduction="none")
+        # cross_entropy 输出 [B, H, W]；以 0 作为 nodata/背景类别，不参与损失。
+        loss = F.cross_entropy(pred, target, ignore_index=0, reduction="none")
+        # 即使外部 mask 未显式屏蔽 class-0 像素，也确保其不进入平均 denominator。
+        mask = mask * (target != 0).float()
     else:
         raise ValueError(f"不支持的 loss_type: {loss_type!r}，仅支持 'l1' 或 'ce'")
 
