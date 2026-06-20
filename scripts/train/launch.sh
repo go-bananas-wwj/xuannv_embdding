@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-CONFIG=${1:-configs/harbin_monthly.yaml}
+CONFIG=${1:-configs/harbin_128.yaml}
 GPUS=${2:-4}
 
 # 根据 GPUS 数量动态导出可见 NPU 设备，例如 GPUS=2 时导出 0,1。
