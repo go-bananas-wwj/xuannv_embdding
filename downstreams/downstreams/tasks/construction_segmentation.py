@@ -39,19 +39,22 @@ class ConstructionSegmentationTask(BaseTask):
         self._loss: nn.Module | None = None
 
     def build_head(self) -> nn.Module:
+        head_type = self.config["training"]["head_type"]
+        embed_dim = self.config["data"]["embed_dim"]
+        num_classes = self.config["data"]["num_classes"]
         return build_segmentation_head(
-            self.config["head_type"],
-            self.config["embed_dim"],
-            self.config["num_classes"],
+            head_type,
+            embed_dim,
+            num_classes,
         )
 
     def build_loss(self) -> nn.Module:
         if self._loss is None:
-            loss_name = self.config.get("loss", "focal_dice").lower()
+            loss_name = self.config["training"].get("loss", "focal_dice").lower()
             if loss_name == "focal_dice":
                 self._loss = FocalDiceLoss()
             elif loss_name == "bce":
-                pos_weight = torch.tensor(self.config.get("pos_weight", 1.0))
+                pos_weight = torch.tensor(self.config["training"].get("pos_weight", 1.0))
                 self._loss = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
             else:
                 raise ValueError(f"未知 loss: {loss_name}")
