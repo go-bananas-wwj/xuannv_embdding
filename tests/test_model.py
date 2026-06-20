@@ -3,6 +3,8 @@ from __future__ import annotations
 # 模型模块单元测试。
 import pytest
 import torch
+import torch.nn.functional as F
+from torch import nn
 
 from xuannv_embedding.models.blocks import (
     EmbeddingUpsampleHead,
@@ -114,6 +116,79 @@ def test_vmf_bottleneck() -> None:
     # 每个空间位置的 L2 范数应接近 1。
     norms = z.norm(dim=1)
     assert torch.allclose(norms, torch.ones_like(norms), atol=1e-6)
+
+
+def test_vmf_bottleneck_log_kappa_is_learnable() -> None:
+    """log_kappa 应是 nn.Parameter，默认初始化为 log(10.0)，并能被优化器收集。"""
+    bottleneck = VMFBottleneck(16, 8)
+
+    assert hasattr(bottleneck, "log_kappa")
+    assert isinstance(bottleneck.log_kappa, nn.Parameter)
+    assert bottleneck.log_kappa.shape == ()
+    assert torch.allclose(bottleneck.log_kappa, torch.log(torch.tensor(10.0)), atol=1e-6)
+
+    params = {name for name, _ in bottleneck.named_parameters()}
+    assert "log_kappa" in params
+
+
+def test_vmf_bottleneck_kappa_backward_compat() -> None:
+    """传入固定 kappa 时，log_kappa 应初始化为 log(kappa)，且不保留冲突的 self.kappa。"""
+    bottleneck = VMFBottleneck(16, 8, kappa=100.0)
+
+    assert torch.allclose(bottleneck.log_kappa, torch.log(torch.tensor(100.0)), atol=1e-6)
+    assert not hasattr(bottleneck, "kappa")
+
+
+def test_vmf_bottleneck_noise_std_inverse_to_exp_log_kappa() -> None:
+    """训练时噪声标准差应为 1 / exp(log_kappa)，且随 log_kappa 增大而减小。"""
+    in_dim, out_dim, height, width = 16, 8, 8, 8
+    x = torch.randn(2, in_dim, height, width)
+
+    bottleneck = VMFBottleneck(in_dim, out_dim)
+
+    # 低 kappa（高温度）：噪声标准差大。
+    bottleneck.log_kappa.data.fill_(torch.log(torch.tensor(1.0)).item())
+    torch.manual_seed(0)
+    z_low = bottleneck(x)
+
+    # 高 kappa（低温度）：噪声标准差小。
+    bottleneck.log_kappa.data.fill_(torch.log(torch.tensor(100.0)).item())
+    torch.manual_seed(0)
+    z_high = bottleneck(x)
+
+    # 使用同一组投影权重计算无噪声归一化结果。
+    z_clean = F.normalize(bottleneck.proj(x), dim=1).detach()
+    diff_low = (z_low - z_clean).norm(dim=1).mean().item()
+    diff_high = (z_high - z_clean).norm(dim=1).mean().item()
+    assert diff_low > diff_high
+
+
+def test_vmf_bottleneck_eval_disables_noise() -> None:
+    """推理模式下不应注入切空间噪声，输出仅由 L2 归一化决定。"""
+    in_dim, out_dim, height, width = 16, 8, 8, 8
+    bottleneck = VMFBottleneck(in_dim, out_dim)
+    x = torch.randn(2, in_dim, height, width)
+
+    bottleneck.eval()
+    z1 = bottleneck(x)
+    z2 = bottleneck(x)
+
+    assert torch.allclose(z1, z2, atol=0.0)
+
+    expected = F.normalize(bottleneck.proj(x), dim=1)
+    assert torch.allclose(z1, expected, atol=1e-6)
+
+
+def test_vmf_bottleneck_log_kappa_grad_flows() -> None:
+    """log_kappa 应能接收梯度，说明噪声幅度是可通过训练调整的。"""
+    bottleneck = VMFBottleneck(16, 8)
+    x = torch.randn(2, 16, 8, 8)
+    z = bottleneck(x)
+    loss = z.sum()
+    loss.backward()
+
+    assert bottleneck.log_kappa.grad is not None
+    assert not torch.isnan(bottleneck.log_kappa.grad)
 
 
 def test_continuous_decoder() -> None:
