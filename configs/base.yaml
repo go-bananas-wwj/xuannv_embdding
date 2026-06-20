@@ -57,6 +57,7 @@ data:
   statistics_dir: /data/xuannv_embedding/statistics
   num_samples: 0
   batch_size: 4
+  num_workers: 8
   patch_size: 256
   months:
     - "2025-01"

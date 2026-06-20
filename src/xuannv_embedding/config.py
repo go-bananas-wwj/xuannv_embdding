@@ -23,7 +23,7 @@ class DataConfig:
     statistics_dir: Path | None = None
     max_patches: int | None = None
     batch_size: int = 4
-    num_workers: int = 4
+    num_workers: int = 8
     patch_size: int = 256
     num_months: int = 17
     months: list[str] = field(default_factory=lambda: [])
@@ -182,7 +182,7 @@ class Config:
                 statistics_dir=statistics_dir,
                 max_patches=data_cfg.get("max_patches"),
                 batch_size=data_cfg.get("batch_size", 4),
-                num_workers=data_cfg.get("num_workers", 4),
+                num_workers=data_cfg.get("num_workers", 8),
                 patch_size=data_cfg.get("patch_size", 256),
                 num_months=data_cfg.get("num_months", 17),
                 months=data_cfg.get("months", []),

@@ -4,13 +4,13 @@ experiment:
   name: harbin_128_v1
 
 training:
-  epochs: 10
+  epochs: 100
   lr: 1.0e-4
   weight_decay: 0.05
-  warmup_epochs: 1
+  warmup_epochs: 5
   gradient_accumulation_steps: 1
-  save_every: 5
-  eval_every: 5
+  save_every: 10
+  eval_every: 10
   amp: true
   gradient_checkpointing: true
   log_every: 0
@@ -36,6 +36,7 @@ data:
   patch_size: 128
   num_samples: 0
   batch_size: 4
+  num_workers: 8
   sources:
     - s2
     - s1
