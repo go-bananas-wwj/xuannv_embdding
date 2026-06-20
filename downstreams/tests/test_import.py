@@ -12,7 +12,12 @@ def test_import_downstreams():
     """
     project_root = Path(__file__).resolve().parents[2]
     original_path = sys.path[:]
+    original_modules = dict(sys.modules)
     sys.path = [p for p in sys.path if p != "" and Path(p).resolve() != project_root]
+    # Remove any cached downstreams namespace modules so the editable install is used.
+    for name in list(sys.modules):
+        if name == "downstreams" or name.startswith("downstreams."):
+            del sys.modules[name]
     try:
         import downstreams
 
@@ -35,3 +40,5 @@ def test_import_downstreams():
             assert sub.__file__ is not None
     finally:
         sys.path[:] = original_path
+        sys.modules.clear()
+        sys.modules.update(original_modules)
