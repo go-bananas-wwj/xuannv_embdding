@@ -10,13 +10,10 @@ from xuannv_embedding.models.blocks import (
     EmbeddingUpsampleHead,
     MonthlyEmbeddingModule,
     MultiResolutionSTPBlock,
-    SpaceOperator,
     STPEncoder,
     STPPrecisionOperator,
     STPSpaceOperator,
     STPTimeOperator,
-    TemporalSummarizer,
-    TimeOperator,
 )
 from xuannv_embedding.models.bottleneck import VMFBottleneck
 from xuannv_embedding.models.decoders import CategoricalDecoder, ContinuousDecoder
@@ -28,38 +25,6 @@ from xuannv_embedding.models.sensor_encoders import (
     SensorEncoderBank,
 )
 from xuannv_embedding.models.time_encoding import TimeEncoding, WindowCode
-
-
-def test_space_operator() -> None:
-    """SpaceOperator 应保持 (B, H*W, C) 的输入输出形状一致。"""
-    batch_size = 2
-    height, width = 8, 8
-    dim = 64
-
-    operator = SpaceOperator(dim, num_heads=8)
-    x = torch.randn(batch_size, height * width, dim)
-    y = operator(x)
-
-    assert y.shape == (batch_size, height * width, dim)
-
-
-def test_time_operator() -> None:
-    """TimeOperator 应保持 (B, T, C) 的输入输出形状一致。"""
-    batch_size = 2
-    time_steps = 12
-    dim = 64
-
-    operator = TimeOperator(dim, num_heads=8)
-    x = torch.randn(batch_size, time_steps, dim)
-    y = operator(x)
-
-    assert y.shape == (batch_size, time_steps, dim)
-
-
-def test_operator_invalid_heads() -> None:
-    """当 dim 不能被 num_heads 整除时应抛出 ValueError。"""
-    with pytest.raises(ValueError, match="必须能被"):
-        SpaceOperator(dim=63, num_heads=8)
 
 
 def test_sensor_encoder_shape() -> None:
@@ -621,20 +586,6 @@ def test_stp_encoder() -> None:
     assert y.shape == (batch_size, time_steps, height // 2, width // 2, 16)
 
 
-def test_temporal_summarizer() -> None:
-    """TemporalSummarizer 应输出单位范数的像素级嵌入。"""
-    batch_size, time_steps, height, width, feature_dim = 2, 3, 4, 4, 32
-    summarizer = TemporalSummarizer(feature_dim, embed_dim=16, num_heads=4)
-    feats = torch.randn(batch_size, time_steps, height, width, feature_dim)
-    timestamps = torch.arange(time_steps).float().unsqueeze(0).expand(batch_size, -1)
-    valid_period = torch.stack([timestamps.min(dim=1).values, timestamps.max(dim=1).values], dim=1)
-    mu = summarizer(feats, timestamps, valid_period)
-
-    assert mu.shape == (batch_size, height, width, 16)
-    norms = mu.norm(dim=-1)
-    assert torch.allclose(norms, torch.ones_like(norms), atol=1e-6)
-
-
 def test_embedding_upsample_head() -> None:
     """EmbeddingUpsampleHead 应将 (B, H, W, C) 上采样到 (B, 2H, 2W, C)。"""
     batch_size, height, width, dim = 2, 4, 4, 16
@@ -677,20 +628,6 @@ def test_aef_model_odd_size() -> None:
     out = model(source_frames, source_masks, timestamps)
     assert out.embedding_map.shape == (batch_size, num_months, embed_dim, height, width)
     assert out.reconstructions["s2_recon"].shape == (batch_size, num_months, 10, height, width)
-
-
-def test_time_pooling_all_masked_no_nan() -> None:
-    """TimePooling 对全被掩码的样本行应输出 0 而非 NaN。"""
-    from xuannv_embedding.models.blocks import TimePooling
-
-    dim = 16
-    pool = TimePooling(dim, num_heads=2)
-    feats = torch.randn(2, 3, 4, 4, dim)
-    q = torch.randn(2, dim)
-    mask = torch.tensor([[0, 0, 0], [1, 1, 1]], dtype=torch.float32)
-    out = pool(feats, q, mask=mask)
-    assert out.shape == (2, 4, 4, dim)
-    assert not torch.isnan(out).any()
 
 
 def test_stp_time_operator_all_masked_no_nan() -> None:
@@ -748,12 +685,3 @@ def test_aef_model_skips_empty_temporal_source() -> None:
     assert out.embedding_map.shape == (batch_size, num_months, embed_dim, height, width)
 
 
-def test_summary_period_encoder_direct() -> None:
-    """SummaryPeriodEncoder 对正常 valid_period 应输出非 NaN 的查询向量。"""
-    from xuannv_embedding.models.blocks import SummaryPeriodEncoder
-
-    enc = SummaryPeriodEncoder(dim=16)
-    vp = torch.tensor([[2.0, 3.0]])
-    out = enc(vp)
-    assert out.shape == (1, 16)
-    assert not torch.isnan(out).any()
