@@ -15,9 +15,7 @@ class FCNHead(TaskHead):
         self.bn1 = nn.BatchNorm2d(hidden_dim)
         self.conv2 = nn.Conv2d(hidden_dim, num_classes, kernel_size=1)
 
-    def forward(
-        self, x: torch.Tensor, scene_emb: torch.Tensor | None = None
-    ) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, scene_emb: torch.Tensor | None = None) -> torch.Tensor:
         x = F.relu(self.bn1(self.conv1(x)))
         return self.conv2(x)
 
@@ -44,9 +42,7 @@ class UNetHead(TaskHead):
     def _upsample_skip(self, x: torch.Tensor, scale: int) -> torch.Tensor:
         return F.interpolate(x, scale_factor=scale, mode="bilinear", align_corners=False)
 
-    def forward(
-        self, x: torch.Tensor, scene_emb: torch.Tensor | None = None
-    ) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, scene_emb: torch.Tensor | None = None) -> torch.Tensor:
         # x: (B, D, H, W)
         x1 = self.up1(x)  # (B, D/2, 2H, 2W)
         x1 = self.conv1(torch.cat([x1, self._upsample_skip(x, 2)], dim=1))
@@ -86,24 +82,18 @@ class UperNetHead(TaskHead):
         )
         self.classifier = nn.Conv2d(embed_dim, num_classes, kernel_size=1)
 
-    def forward(
-        self, x: torch.Tensor, scene_emb: torch.Tensor | None = None
-    ) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, scene_emb: torch.Tensor | None = None) -> torch.Tensor:
         feats = [x]
         for module in self.psp_modules:
             pooled = module(x)
-            pooled = F.interpolate(
-                pooled, size=x.shape[-2:], mode="bilinear", align_corners=False
-            )
+            pooled = F.interpolate(pooled, size=x.shape[-2:], mode="bilinear", align_corners=False)
             feats.append(pooled)
         fused = torch.cat(feats, dim=1)
         fused = self.fusion(fused)
         return self.classifier(fused)
 
 
-def build_segmentation_head(
-    head_type: str, embed_dim: int, num_classes: int
-) -> TaskHead:
+def build_segmentation_head(head_type: str, embed_dim: int, num_classes: int) -> TaskHead:
     head_type = head_type.lower()
     if head_type == "linear" or head_type == "linear_probe":
         return LinearProbeHead(embed_dim, num_classes)

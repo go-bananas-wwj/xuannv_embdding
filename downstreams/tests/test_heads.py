@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 import torch
 from downstreams.heads import (
-    ChangeDetectionDiffHead,
     ChangeDetectionHead,
     ClassificationHead,
     FCNHead,
@@ -85,22 +84,16 @@ def test_classification_head_requires_scene_emb(scene_emb: torch.Tensor) -> None
         head(dummy_map, None)
 
 
-def test_change_detection_head() -> None:
-    x = torch.randn(2, 128, 16, 16)  # 2 * 64
-    head = ChangeDetectionHead(embed_dim=64, num_classes=2)
-    out = head(x)
-    assert out.shape == (2, 2, 16, 16)
+def test_change_detection_head_forward_two() -> None:
+    emb_t1 = torch.randn(2, 64, 16, 16)
+    emb_t2 = torch.randn(2, 64, 16, 16)
+    head = ChangeDetectionHead(embed_dim=64, hidden_dim=256)
+    out = head.forward_two(emb_t1, emb_t2)
+    assert out.shape == (2, 1, 16, 16)
 
 
-def test_change_detection_diff_head() -> None:
-    x = torch.randn(2, 128, 16, 16)  # 2 * 64
-    head = ChangeDetectionDiffHead(embed_dim=64, num_classes=2)
-    out = head(x)
-    assert out.shape == (2, 2, 16, 16)
-
-
-def test_change_detection_diff_head_requires_even_channels() -> None:
-    x = torch.randn(2, 63, 16, 16)
-    head = ChangeDetectionDiffHead(embed_dim=64, num_classes=2)
-    with pytest.raises(ValueError, match=r"2\*embed_dim"):
+def test_change_detection_head_forward_raises() -> None:
+    head = ChangeDetectionHead(embed_dim=64, hidden_dim=256)
+    x = torch.randn(2, 128, 16, 16)
+    with pytest.raises(NotImplementedError):
         head(x)
