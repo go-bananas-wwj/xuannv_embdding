@@ -14,10 +14,10 @@ class DummyDataset:
     def __init__(self, n: int) -> None:
         self.n = n
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.n
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         return {
             "embedding_map": torch.randn(2, 16, 16),
             "mask": torch.randint(0, 2, (16, 16)),
@@ -36,6 +36,9 @@ class DummyHead(nn.Module):
 
 def test_task_build() -> None:
     cfg = load_config(Path("downstreams/configs/construction_segmentation.yaml"))
+    assert cfg["experiment"]["seed"] == 42
+    assert cfg["training"]["epochs"] == 100
+    assert cfg["data"]["embed_dim"] == 64
     task = ConstructionSegmentationTask(cfg)
     head = task.build_head()
     assert head is not None
