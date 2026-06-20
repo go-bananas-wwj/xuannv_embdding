@@ -200,6 +200,7 @@ def main() -> None:
         stem_dim=cfg.model.stem_dim,
         num_months=cfg.model.num_months,
         stp=cfg.model.stp,
+        gradient_checkpointing=cfg.training.gradient_checkpointing,
     )
 
     # 构造 TotalLoss 所需的 target_cfg。

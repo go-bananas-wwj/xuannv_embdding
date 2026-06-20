@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 # 训练模块单元测试。
+import shutil
 import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -309,33 +312,70 @@ def _dummy_collate(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tens
     return result
 
 
+# 模块级最小配置类，避免在函数内部定义 dataclass 时捕获外部变量失败。
+
+
+@dataclass
+class _TrainingConfig:
+    epochs: int = 1
+    lr: float = 1e-3
+    weight_decay: float = 0.0
+    warmup_epochs: int = 0
+    gradient_accumulation_steps: int = 1
+    save_every: int = 1
+    eval_every: int = 1
+    amp: bool = False
+    gradient_checkpointing: bool = False
+    log_every: int = 0
+
+
+@dataclass
+class _ExperimentConfig:
+    name: str = "test_trainer"
+    use_wandb: bool = False
+    wandb_project: str = "test-project"
+    wandb_run_name: str | None = None
+    output_dir: Path | None = None
+
+
+@dataclass
+class _Config:
+    experiment: _ExperimentConfig = field(default_factory=_ExperimentConfig)
+    training: _TrainingConfig = field(default_factory=_TrainingConfig)
+
+
+def _make_trainer_cfg(
+    *,
+    epochs: int = 1,
+    save_every: int = 1,
+    eval_every: int = 1,
+    amp: bool = False,
+    gradient_checkpointing: bool = False,
+    log_every: int = 0,
+    use_wandb: bool = False,
+    experiment_name: str = "test_trainer",
+    output_dir: Path | None = None,
+) -> Any:
+    """构造 Trainer 测试用的最小配置对象。"""
+    training = _TrainingConfig()
+    training.epochs = epochs
+    training.save_every = save_every
+    training.eval_every = eval_every
+    training.amp = amp
+    training.gradient_checkpointing = gradient_checkpointing
+    training.log_every = log_every
+
+    experiment = _ExperimentConfig()
+    experiment.name = experiment_name
+    experiment.use_wandb = use_wandb
+    experiment.output_dir = output_dir
+
+    return _Config(experiment=experiment, training=training)
+
+
 def test_trainer_single_epoch() -> None:
     """验证 Trainer 能在 CPU 上用模拟数据跑完 1 个 epoch。"""
-    from dataclasses import dataclass
-
-    @dataclass
-    class _TrainingConfig:
-        epochs: int = 1
-        lr: float = 1e-3
-        weight_decay: float = 0.0
-        warmup_epochs: int = 0
-        gradient_accumulation_steps: int = 1
-        save_every: int = 1
-        eval_every: int = 1
-
-    @dataclass
-    class _ExperimentConfig:
-        name: str = "test_trainer_single_epoch"
-
-    @dataclass
-    class _Config:
-        experiment: _ExperimentConfig
-        training: _TrainingConfig
-
-    cfg = _Config(
-        experiment=_ExperimentConfig(),
-        training=_TrainingConfig(),
-    )
+    cfg = _make_trainer_cfg(experiment_name="test_trainer_single_epoch")
 
     model = _DummyAEFModel(embed_dim=16)
     dataset = _DummyDataset(size=4)
@@ -356,6 +396,9 @@ def test_trainer_single_epoch() -> None:
         criterion=criterion,
     )
 
+    assert trainer.amp_enabled is False
+    assert trainer.scaler is not None
+
     metrics = trainer.train_epoch()
     assert "train_loss" in metrics
     assert "total" in metrics
@@ -369,3 +412,204 @@ def test_trainer_single_epoch() -> None:
     trainer.fit()
     ckpt_files = list(trainer.output_dir.glob("epoch_*.pt"))
     assert len(ckpt_files) == 1
+
+
+def test_trainer_amp_noop_scaler() -> None:
+    """AMP 关闭时应使用 no-op scaler，训练仍能正常收敛。"""
+    cfg = _make_trainer_cfg(
+        epochs=1,
+        amp=False,
+        experiment_name="test_trainer_amp_noop",
+    )
+
+    model = _DummyAEFModel(embed_dim=8)
+    dataset = _DummyDataset(size=2)
+    loader = DataLoader(dataset, batch_size=2, collate_fn=_dummy_collate)
+
+    target_cfg = {"s2_recon": {"loss_type": "l1", "channels": 10, "weight": 1.0}}
+    criterion = TotalLoss(target_cfg)
+
+    trainer = Trainer(
+        cfg=cfg,
+        model=model,
+        train_loader=loader,
+        val_loader=None,
+        device="cpu",
+        criterion=criterion,
+    )
+
+    from xuannv_embedding.training.amp_utils import _NoOpScaler
+
+    assert isinstance(trainer.scaler, _NoOpScaler)
+
+    before = {name: p.clone() for name, p in model.named_parameters()}
+    trainer.train_epoch()
+    after = {name: p.clone() for name, p in model.named_parameters()}
+
+    changed = any(not torch.allclose(before[name], after[name]) for name in before)
+    assert changed, "AMP 关闭时参数应被更新"
+
+
+def test_trainer_wandb_logging(monkeypatch) -> None:
+    """验证 use_wandb=True 时会按预期调用 wandb.log。"""
+    logged: list[dict[str, Any]] = []
+    init_calls: list[dict[str, Any]] = []
+
+    class _FakeRun:
+        def __init__(self, **kwargs: Any) -> None:
+            init_calls.append(kwargs)
+
+        def log(self, metrics: dict[str, Any], step: int | None = None) -> None:
+            logged.append({"metrics": metrics, "step": step})
+
+        def finish(self) -> None:
+            pass
+
+    fake_wandb = type("FakeWandb", (), {"init": _FakeRun})
+
+    cfg = _make_trainer_cfg(
+        epochs=1,
+        log_every=1,
+        use_wandb=True,
+        experiment_name="test_trainer_wandb",
+    )
+
+    model = _DummyAEFModel(embed_dim=8)
+    dataset = _DummyDataset(size=2)
+    loader = DataLoader(dataset, batch_size=2, collate_fn=_dummy_collate)
+
+    target_cfg = {"s2_recon": {"loss_type": "l1", "channels": 10, "weight": 1.0}}
+    criterion = TotalLoss(target_cfg)
+
+    # 通过 monkeypatch 直接替换 sys.modules 中的 wandb。
+    import sys
+
+    monkeypatch.setitem(sys.modules, "wandb", fake_wandb)
+
+    trainer = Trainer(
+        cfg=cfg,
+        model=model,
+        train_loader=loader,
+        val_loader=None,
+        device="cpu",
+        criterion=criterion,
+    )
+
+    trainer.train_epoch()
+
+    assert len(init_calls) == 1
+    assert init_calls[0]["project"] == "test-project"
+    assert any("train/loss_total" in entry["metrics"] for entry in logged)
+    assert any("train/loss_recon" in entry["metrics"] for entry in logged)
+    assert any("train/loss_uniformity" in entry["metrics"] for entry in logged)
+    assert any("train/lr" in entry["metrics"] for entry in logged)
+
+
+def test_stp_encoder_gradient_checkpointing() -> None:
+    """验证 STPEncoder 在 gradient_checkpointing=True 时仍能完成前向/反向传播。"""
+    from xuannv_embedding.models.blocks import STPEncoder
+
+    enc = STPEncoder(
+        input_channels=16,
+        space_dim=64,
+        time_dim=32,
+        precision_dim=16,
+        num_blocks=2,
+        num_heads=4,
+        gradient_checkpointing=True,
+    )
+    enc.train()
+    x = torch.randn(1, 2, 32, 32, 16, requires_grad=True)
+    timestamps = torch.tensor([[202501, 202502]])
+    out, _ = enc(x, timestamps)
+    loss = out.sum()
+    loss.backward()
+    assert x.grad is not None
+    assert not torch.isnan(x.grad).any()
+
+
+def test_trainer_checkpoint_best_and_latest3(tmp_path: Path) -> None:
+    """验证仅保存 save_every 倍数的 epoch，并保留 best.pt 与最近 3 个 epoch 权重。"""
+    cfg = _make_trainer_cfg(
+        epochs=6,
+        save_every=2,
+        eval_every=1,
+        experiment_name="test_trainer_ckpt",
+    )
+
+    class _DummyLossWithControl(nn.Module):
+        """可控制损失值的假损失，用于构造最佳 epoch；损失依赖模型输出保证可梯度。"""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self._val_loss = 1.0
+
+        def set_val_loss(self, value: float) -> None:
+            self._val_loss = value
+
+        def forward(self, output: AEFOutput, targets: Any, masks: Any) -> dict[str, torch.Tensor]:
+            base = output.embedding.mean() * 0.0 + self._val_loss
+            return {
+                "total": base,
+                "recon": base * 0.8,
+                "uniformity": base * 0.2,
+                "recon_s2_recon": base * 0.8,
+            }
+
+    model = _DummyAEFModel(embed_dim=8)
+    dataset = _DummyDataset(size=2)
+    loader = DataLoader(dataset, batch_size=2, collate_fn=_dummy_collate)
+
+    criterion = _DummyLossWithControl()
+
+    # 覆盖输出目录到 tmp_path，避免污染数据盘。
+    cfg.experiment.output_dir = tmp_path
+
+    trainer = Trainer(
+        cfg=cfg,
+        model=model,
+        train_loader=loader,
+        val_loader=loader,
+        device="cpu",
+        criterion=criterion,
+    )
+
+    for epoch in range(6):
+        criterion.set_val_loss(1.0 - epoch * 0.1)  # 损失递减，最后 epoch 最佳。
+        trainer.train_epoch()
+        trainer.val_epoch()
+        if trainer._is_main_process() and trainer._should_save_checkpoint(epoch, 6):
+            epoch_path = trainer.output_dir / f"epoch_{epoch}.pt"
+            save_checkpoint(
+                epoch_path,
+                trainer._unwrap_model(),
+                trainer.optimizer,
+                trainer.scheduler,
+                epoch,
+                {"train": {"train_loss": 0.0}, "val": {"val_loss": 1.0 - epoch * 0.1}},
+            )
+            current_loss = 1.0 - epoch * 0.1
+            if current_loss < trainer.best_val_loss:
+                trainer.best_val_loss = current_loss
+                trainer.best_epoch = epoch
+                shutil.copy2(epoch_path, trainer.output_dir / "best.pt")
+            trainer._cleanup_old_checkpoints(keep_last=3)
+
+    epoch_files = sorted(trainer.output_dir.glob("epoch_*.pt"))
+    epoch_names = {p.name for p in epoch_files}
+
+    # save_every=2，epochs=0..5，保存 epoch_0, epoch_2, epoch_4 与最后 epoch_5。
+    # 经过 keep_last=3 清理后，仅保留最近的 3 个：epoch_2, epoch_4, epoch_5。
+    assert "epoch_2.pt" in epoch_names
+    assert "epoch_4.pt" in epoch_names
+    assert "epoch_5.pt" in epoch_names
+    assert "epoch_0.pt" not in epoch_names
+    assert "epoch_1.pt" not in epoch_names
+    assert "epoch_3.pt" not in epoch_names
+    assert len(epoch_files) == 3
+
+    # best.pt 必须存在且指向损失最小的 epoch_5。
+    best_path = trainer.output_dir / "best.pt"
+    assert best_path.exists()
+    state = torch.load(best_path, weights_only=True)
+    assert state["epoch"] == 5

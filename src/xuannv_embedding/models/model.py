@@ -54,6 +54,7 @@ class AEFModel(nn.Module):
         stp: dict[str, Any] | None = None,
         num_space_heads: int = 8,
         num_months: int = 17,
+        gradient_checkpointing: bool = False,
     ) -> None:
         """初始化 AEFModel。
 
@@ -71,6 +72,7 @@ class AEFModel(nn.Module):
                 ``precision_dim``、``num_blocks``、``num_heads``。缺失项使用默认值。
             num_space_heads: ``stp["num_heads"]`` 的默认值。
             num_months: 月度 bin 数量，阶段一默认为 17（2025-01 至 2026-05）。
+            gradient_checkpointing: 是否启用 STP 编码器的梯度检查点。
         """
         super().__init__()
         self.sensor_channels = sensor_channels
@@ -89,6 +91,7 @@ class AEFModel(nn.Module):
         }
         for key, value in stp_defaults.items():
             stp_cfg.setdefault(key, value)
+        stp_cfg.setdefault("gradient_checkpointing", gradient_checkpointing)
         self.stp_cfg = stp_cfg
 
         temporal_channels = {
@@ -120,6 +123,7 @@ class AEFModel(nn.Module):
             precision_dim=stp_cfg["precision_dim"],
             num_blocks=stp_cfg["num_blocks"],
             num_heads=stp_cfg["num_heads"],
+            gradient_checkpointing=stp_cfg["gradient_checkpointing"],
         )
 
         self.monthly_embed = MonthlyEmbeddingModule(

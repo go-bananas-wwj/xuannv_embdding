@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -10,19 +11,21 @@ from torch import nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 
+from xuannv_embedding.training.amp_utils import get_autocast, get_grad_scaler
 from xuannv_embedding.training.checkpoint import load_checkpoint, save_checkpoint
 from xuannv_embedding.training.optimizer import build_optimizer, build_scheduler
 from xuannv_embedding.utils.device import get_device
 
 logger = logging.getLogger(__name__)
 
-# DDP 训练器：支持单卡/多卡训练、checkpoint 保存与自动保留最近 3 个。
+# DDP 训练器：支持单卡/多卡训练、AMP、梯度检查点、WANDB 监控与 checkpoint 管理。
 
 
 class Trainer:
     """AEF 模型训练器。
 
-    负责训练循环、优化器/scheduler 管理、DDP 包装以及 checkpoint 保存。
+    负责训练循环、优化器/scheduler 管理、DDP 包装、AMP、梯度检查点、
+    WANDB 监控以及 best/latest-3 checkpoint 保存。
     """
 
     def __init__(
@@ -37,7 +40,7 @@ class Trainer:
         """初始化 Trainer。
 
         参数:
-            cfg: 顶层配置对象，需包含 ``experiment.name`` 与 ``training`` 字段。
+            cfg: 顶层配置对象，需包含 ``experiment`` 与 ``training`` 字段。
             model: 待训练模型。
             train_loader: 训练数据加载器。
             val_loader: 验证数据加载器，可选。
@@ -84,6 +87,47 @@ class Trainer:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
+        # AMP 设置。
+        self.amp_enabled = getattr(cfg.training, "amp", True)
+        self.autocast = get_autocast(self.device, self.amp_enabled)
+        self.scaler = get_grad_scaler(self.device, self.amp_enabled)
+
+        # WANDB 设置。
+        self.use_wandb = getattr(cfg.experiment, "use_wandb", True)
+        self.wandb_project = getattr(
+            cfg.experiment, "wandb_project", "xuannv-embedding-stage1"
+        )
+        self.wandb_run_name = getattr(cfg.experiment, "wandb_run_name", None)
+        self._wandb_run: Any = None
+        if self.use_wandb and self._is_main_process():
+            self._init_wandb()
+
+        # 最佳验证指标跟踪。
+        self.best_val_loss = float("inf")
+        self.best_epoch = -1
+
+    def _init_wandb(self) -> None:
+        """在主进程初始化 WANDB run；未安装或未认证时不中断训练。"""
+        try:
+            import wandb
+        except ImportError:
+            logger.warning("wandb 未安装，跳过 WANDB 初始化")
+            return
+
+        try:
+            config_dict: dict[str, Any] | None = None
+            if hasattr(self.cfg, "to_dict"):
+                config_dict = self.cfg.to_dict()
+            self._wandb_run = wandb.init(
+                project=self.wandb_project,
+                name=self.wandb_run_name,
+                config=config_dict,
+            )
+            logger.info("WANDB 已初始化: project=%s", self.wandb_project)
+        except Exception as exc:
+            logger.warning("WANDB 初始化失败: %s", exc)
+            self._wandb_run = None
+
     def _unwrap_model(self) -> nn.Module:
         """获取未包装 DDP 的原始模型。"""
         if isinstance(self.model, DDP):
@@ -120,6 +164,26 @@ class Trainer:
             highres_masks=highres_masks,
         )
 
+    def _log_to_wandb(self, metrics: dict[str, float], step: int | None = None) -> None:
+        """在主进程向 WANDB 发送指标。"""
+        if self._wandb_run is None:
+            return
+        try:
+            self._wandb_run.log(metrics, step=step)
+        except Exception as exc:
+            logger.warning("WANDB log 失败: %s", exc)
+
+    def _get_memory_mb(self) -> float | None:
+        """获取当前设备的已分配显存/NPU 内存（MB）。"""
+        try:
+            if self.device.type == "npu":
+                return torch.npu.memory_allocated(self.device) / 1e6
+            if self.device.type == "cuda":
+                return torch.cuda.memory_allocated(self.device) / 1e6
+        except Exception:
+            pass
+        return None
+
     def train_epoch(self) -> dict[str, float]:
         """执行一个训练 epoch。
 
@@ -131,25 +195,29 @@ class Trainer:
         total_loss = 0.0
         metric_sums: dict[str, float] = {}
         num_batches = 0
+        log_every = getattr(self.cfg.training, "log_every", 0)
 
         for batch_idx, batch in enumerate(self.train_loader):
             batch = self._move_batch_to_device(batch)
-            output = self._forward(batch)
-            losses = self.criterion(
-                output,
-                batch["targets"],
-                batch["target_masks"],
-            )
+
+            with self.autocast:
+                output = self._forward(batch)
+                losses = self.criterion(
+                    output,
+                    batch["targets"],
+                    batch["target_masks"],
+                )
             loss = losses["total"]
 
             # 梯度累积：按累积步数缩放损失。
             if self.gradient_accumulation_steps > 1:
                 loss = loss / self.gradient_accumulation_steps
 
-            loss.backward()
+            self.scaler.scale(loss).backward()
 
             if (batch_idx + 1) % self.gradient_accumulation_steps == 0:
-                self.optimizer.step()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
                 self.optimizer.zero_grad(set_to_none=True)
                 self.global_step += 1
 
@@ -161,9 +229,31 @@ class Trainer:
                 metric_sums.setdefault(name, 0.0)
                 metric_sums[name] += value.item()
 
+            # 按 step 记录 WANDB 训练指标。
+            if (
+                log_every > 0
+                and self.global_step > 0
+                and self.global_step % log_every == 0
+                and (batch_idx + 1) % self.gradient_accumulation_steps == 0
+            ):
+                step_metrics: dict[str, float] = {
+                    "train/loss_total": losses["total"].item(),
+                    "train/loss_recon": losses["recon"].item(),
+                    "train/loss_uniformity": losses["uniformity"].item(),
+                    "train/lr": self.optimizer.param_groups[0]["lr"],
+                }
+                for name, value in losses.items():
+                    if name.startswith("recon_"):
+                        step_metrics[f"train/{name}"] = value.item()
+                memory_mb = self._get_memory_mb()
+                if memory_mb is not None:
+                    step_metrics["system/npu_memory_allocated_MB"] = memory_mb
+                self._log_to_wandb(step_metrics, step=self.global_step)
+
         # 处理最后未满一个累积步数的梯度。
         if (len(self.train_loader) % self.gradient_accumulation_steps) != 0:
-            self.optimizer.step()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
             self.optimizer.zero_grad(set_to_none=True)
             self.global_step += 1
 
@@ -173,6 +263,23 @@ class Trainer:
             name: value / num_batches for name, value in metric_sums.items()
         }
         metrics["train_loss"] = total_loss / num_batches
+
+        # 每轮结束时在主进程记录 epoch 级训练指标。
+        if self._is_main_process():
+            epoch_metrics: dict[str, float] = {
+                "train/loss_total": metrics["total"],
+                "train/loss_recon": metrics["recon"],
+                "train/loss_uniformity": metrics["uniformity"],
+                "train/lr": self.optimizer.param_groups[0]["lr"],
+            }
+            for name, value in metrics.items():
+                if name.startswith("recon_"):
+                    epoch_metrics[f"train/{name}"] = value
+            memory_mb = self._get_memory_mb()
+            if memory_mb is not None:
+                epoch_metrics["system/npu_memory_allocated_MB"] = memory_mb
+            self._log_to_wandb(epoch_metrics, step=self.epoch)
+
         return metrics
 
     @torch.no_grad()
@@ -180,9 +287,13 @@ class Trainer:
         """执行一个验证 epoch。
 
         返回:
-            验证指标字典；若未提供 ``val_loader`` 则返回 ``None``。
+            验证指标字典；若非评估 epoch 或 ``val_loader`` 未提供则返回 ``None``。
         """
         if self.val_loader is None:
+            return None
+
+        eval_every = getattr(self.cfg.training, "eval_every", 1)
+        if eval_every <= 0 or self.epoch % eval_every != 0:
             return None
 
         self.model.eval()
@@ -191,12 +302,14 @@ class Trainer:
 
         for batch in self.val_loader:
             batch = self._move_batch_to_device(batch)
-            output = self._forward(batch)
-            losses = self.criterion(
-                output,
-                batch["targets"],
-                batch["target_masks"],
-            )
+
+            with self.autocast:
+                output = self._forward(batch)
+                losses = self.criterion(
+                    output,
+                    batch["targets"],
+                    batch["target_masks"],
+                )
             for name, value in losses.items():
                 metric_sums.setdefault(name, 0.0)
                 metric_sums[name] += value.item()
@@ -206,45 +319,96 @@ class Trainer:
             name: value / num_batches for name, value in metric_sums.items()
         }
         metrics["val_loss"] = metrics.get("total", 0.0)
+
+        if self._is_main_process():
+            val_metrics: dict[str, float] = {"val/loss_total": metrics["val_loss"]}
+            for name, value in metrics.items():
+                if name.startswith("recon_"):
+                    val_metrics[f"val/{name}"] = value
+            self._log_to_wandb(val_metrics, step=self.epoch)
+
         return metrics
 
     def _cleanup_old_checkpoints(self, keep_last: int = 3) -> None:
-        """仅保留最近的 ``keep_last`` 个 epoch checkpoint。"""
+        """仅保留最近的 ``keep_last`` 个 epoch checkpoint，不删除 best.pt。"""
         checkpoints = sorted(self.output_dir.glob("epoch_*.pt"))
         if len(checkpoints) <= keep_last:
             return
         for old_ckpt in checkpoints[:-keep_last]:
+            if old_ckpt.name == "best.pt":
+                continue
             old_ckpt.unlink()
 
     def _is_main_process(self) -> bool:
         """判断当前是否为分布式环境下的主进程。"""
         return not dist.is_initialized() or dist.get_rank() == 0
 
+    def _should_save_checkpoint(self, epoch: int, total_epochs: int) -> bool:
+        """判断是否应在当前 epoch 保存 checkpoint。"""
+        save_every = getattr(self.cfg.training, "save_every", 1)
+        is_save_epoch = save_every > 0 and (epoch % save_every == 0)
+        is_last_epoch = epoch == total_epochs - 1
+        return is_save_epoch or is_last_epoch
+
     def fit(self) -> None:
         """执行完整训练循环。"""
         total_epochs = self.cfg.training.epochs
 
-        for epoch in range(self.epoch, total_epochs):
-            self.epoch = epoch
-            train_metrics = self.train_epoch()
-            val_metrics = self.val_epoch()
+        try:
+            for epoch in range(self.epoch, total_epochs):
+                self.epoch = epoch
+                train_metrics = self.train_epoch()
+                val_metrics = self.val_epoch()
 
-            if self._is_main_process():
-                log_msg = f"epoch {epoch}: train_loss={train_metrics['train_loss']:.6f}"
-                if val_metrics is not None:
-                    log_msg += f", val_loss={val_metrics['val_loss']:.6f}"
-                logger.info(log_msg)
+                if self._is_main_process():
+                    log_msg = f"epoch {epoch}: train_loss={train_metrics['train_loss']:.6f}"
+                    if val_metrics is not None:
+                        log_msg += f", val_loss={val_metrics['val_loss']:.6f}"
+                    logger.info(log_msg)
 
-                # 保存 checkpoint。
-                save_checkpoint(
-                    self.output_dir / f"epoch_{epoch}.pt",
-                    self._unwrap_model(),
-                    self.optimizer,
-                    self.scheduler,
-                    epoch,
-                    {"train": train_metrics, "val": val_metrics},
-                )
-                self._cleanup_old_checkpoints(keep_last=3)
+                    # 保存 checkpoint。
+                    if self._should_save_checkpoint(epoch, total_epochs):
+                        epoch_path = self.output_dir / f"epoch_{epoch}.pt"
+                        save_checkpoint(
+                            epoch_path,
+                            self._unwrap_model(),
+                            self.optimizer,
+                            self.scheduler,
+                            epoch,
+                            {"train": train_metrics, "val": val_metrics},
+                        )
+
+                        # 更新 best.pt。
+                        current_loss: float | None = None
+                        if val_metrics is not None:
+                            current_loss = val_metrics["val_loss"]
+                        elif self.val_loader is None:
+                            current_loss = train_metrics["train_loss"]
+
+                        if current_loss is not None and current_loss < self.best_val_loss:
+                            self.best_val_loss = current_loss
+                            self.best_epoch = epoch
+                            best_path = self.output_dir / "best.pt"
+                            shutil.copy2(epoch_path, best_path)
+                            logger.info(
+                                "新的最佳 checkpoint: epoch=%d, loss=%.6f", epoch, current_loss
+                            )
+
+                        self._cleanup_old_checkpoints(keep_last=3)
+        finally:
+            self._finish_wandb()
+
+    def _finish_wandb(self) -> None:
+        """在主进程结束 WANDB run。"""
+        if self._wandb_run is None:
+            return
+        if not self._is_main_process():
+            return
+        try:
+            self._wandb_run.finish()
+        except Exception as exc:
+            logger.warning("WANDB finish 失败: %s", exc)
+        self._wandb_run = None
 
     def save(self, path: str | Path) -> None:
         """手动保存 checkpoint。"""
