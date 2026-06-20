@@ -36,8 +36,7 @@ class DummyHead(nn.Module):
 
 def test_task_build() -> None:
     cfg = load_config(Path("downstreams/configs/construction_segmentation.yaml"))
-    task_cfg = {**cfg["training"], **cfg["data"]}
-    task = ConstructionSegmentationTask(task_cfg)
+    task = ConstructionSegmentationTask(cfg)
     head = task.build_head()
     assert head is not None
 
@@ -54,11 +53,8 @@ def test_focal_dice_loss() -> None:
 
 def test_build_loss_bce() -> None:
     cfg = {
-        "head_type": "linear",
-        "embed_dim": 64,
-        "num_classes": 2,
-        "loss": "bce",
-        "pos_weight": 10.0,
+        "training": {"head_type": "linear", "loss": "bce", "pos_weight": 10.0},
+        "data": {"embed_dim": 64, "num_classes": 2},
     }
     task = ConstructionSegmentationTask(cfg)
     loss_fn = task.build_loss()
@@ -66,14 +62,20 @@ def test_build_loss_bce() -> None:
 
 
 def test_build_loss_unknown() -> None:
-    cfg = {"head_type": "linear", "embed_dim": 64, "num_classes": 2, "loss": "foo"}
+    cfg = {
+        "training": {"head_type": "linear", "loss": "foo"},
+        "data": {"embed_dim": 64, "num_classes": 2},
+    }
     task = ConstructionSegmentationTask(cfg)
     with pytest.raises(ValueError):
         task.build_loss()
 
 
 def test_train_one_epoch() -> None:
-    cfg = {"head_type": "linear", "embed_dim": 64, "num_classes": 2, "loss": "focal_dice"}
+    cfg = {
+        "training": {"head_type": "linear", "loss": "focal_dice"},
+        "data": {"embed_dim": 64, "num_classes": 2},
+    }
     task = ConstructionSegmentationTask(cfg)
     model = DummyHead()
     loader = DataLoader(DummyDataset(4), batch_size=2)
@@ -83,7 +85,10 @@ def test_train_one_epoch() -> None:
 
 
 def test_evaluate() -> None:
-    cfg = {"head_type": "linear", "embed_dim": 64, "num_classes": 2, "loss": "focal_dice"}
+    cfg = {
+        "training": {"head_type": "linear", "loss": "focal_dice"},
+        "data": {"embed_dim": 64, "num_classes": 2},
+    }
     task = ConstructionSegmentationTask(cfg)
     model = DummyHead()
     loader = DataLoader(DummyDataset(4), batch_size=2)
