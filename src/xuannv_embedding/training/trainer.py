@@ -184,6 +184,19 @@ class Trainer:
             pass
         return None
 
+    def _get_utilization(self) -> tuple[str, float] | None:
+        """获取当前设备的利用率，返回 (metric_name, value) 或 None。"""
+        try:
+            if self.device.type == "npu":
+                util = torch.npu.utilization(self.device)
+                return ("system/npu_utilization", float(util))
+            if self.device.type == "cuda":
+                util = torch.cuda.utilization(self.device)
+                return ("system/gpu_utilization", float(util))
+        except Exception:
+            pass
+        return None
+
     def train_epoch(self) -> dict[str, float]:
         """执行一个训练 epoch。
 
@@ -248,6 +261,9 @@ class Trainer:
                 memory_mb = self._get_memory_mb()
                 if memory_mb is not None:
                     step_metrics["system/npu_memory_allocated_MB"] = memory_mb
+                util_info = self._get_utilization()
+                if util_info is not None:
+                    step_metrics[util_info[0]] = util_info[1]
                 self._log_to_wandb(step_metrics, step=self.global_step)
 
         # 处理最后未满一个累积步数的梯度。
@@ -278,6 +294,9 @@ class Trainer:
             memory_mb = self._get_memory_mb()
             if memory_mb is not None:
                 epoch_metrics["system/npu_memory_allocated_MB"] = memory_mb
+            util_info = self._get_utilization()
+            if util_info is not None:
+                epoch_metrics[util_info[0]] = util_info[1]
             self._log_to_wandb(epoch_metrics, step=self.epoch)
 
         return metrics
@@ -330,10 +349,19 @@ class Trainer:
         return metrics
 
     def _cleanup_old_checkpoints(self, keep_last: int = 3) -> None:
-        """仅保留最近的 ``keep_last`` 个 epoch checkpoint，不删除 best.pt。"""
-        checkpoints = sorted(self.output_dir.glob("epoch_*.pt"))
+        """仅保留 1-based epoch 编号最大的 ``keep_last`` 个 checkpoint，不删除 best.pt。"""
+        checkpoints = list(self.output_dir.glob("epoch_*.pt"))
         if len(checkpoints) <= keep_last:
             return
+
+        def _epoch_number(path: Path) -> int:
+            name = path.stem  # e.g., "epoch_10"
+            try:
+                return int(name.split("_")[-1])
+            except ValueError:
+                return -1
+
+        checkpoints.sort(key=_epoch_number)
         for old_ckpt in checkpoints[:-keep_last]:
             if old_ckpt.name == "best.pt":
                 continue
@@ -344,9 +372,10 @@ class Trainer:
         return not dist.is_initialized() or dist.get_rank() == 0
 
     def _should_save_checkpoint(self, epoch: int, total_epochs: int) -> bool:
-        """判断是否应在当前 epoch 保存 checkpoint。"""
+        """判断是否应在当前 epoch 保存 checkpoint；使用 1-based epoch 编号。"""
         save_every = getattr(self.cfg.training, "save_every", 1)
-        is_save_epoch = save_every > 0 and (epoch % save_every == 0)
+        one_based_epoch = epoch + 1
+        is_save_epoch = save_every > 0 and (one_based_epoch % save_every == 0)
         is_last_epoch = epoch == total_epochs - 1
         return is_save_epoch or is_last_epoch
 
@@ -368,7 +397,8 @@ class Trainer:
 
                     # 保存 checkpoint。
                     if self._should_save_checkpoint(epoch, total_epochs):
-                        epoch_path = self.output_dir / f"epoch_{epoch}.pt"
+                        one_based_epoch = epoch + 1
+                        epoch_path = self.output_dir / f"epoch_{one_based_epoch}.pt"
                         save_checkpoint(
                             epoch_path,
                             self._unwrap_model(),

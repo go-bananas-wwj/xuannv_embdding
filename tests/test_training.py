@@ -373,9 +373,12 @@ def _make_trainer_cfg(
     return _Config(experiment=experiment, training=training)
 
 
-def test_trainer_single_epoch() -> None:
+def test_trainer_single_epoch(tmp_path: Path) -> None:
     """验证 Trainer 能在 CPU 上用模拟数据跑完 1 个 epoch。"""
-    cfg = _make_trainer_cfg(experiment_name="test_trainer_single_epoch")
+    cfg = _make_trainer_cfg(
+        experiment_name="test_trainer_single_epoch",
+        output_dir=tmp_path,
+    )
 
     model = _DummyAEFModel(embed_dim=16)
     dataset = _DummyDataset(size=4)
@@ -408,10 +411,11 @@ def test_trainer_single_epoch() -> None:
     assert val_metrics is not None
     assert "val_loss" in val_metrics
 
-    # 验证 fit 能跑完配置的 1 个 epoch 并保存 checkpoint。
+    # 验证 fit 能跑完配置的 1 个 epoch 并保存 1-based checkpoint。
     trainer.fit()
     ckpt_files = list(trainer.output_dir.glob("epoch_*.pt"))
     assert len(ckpt_files) == 1
+    assert ckpt_files[0].name == "epoch_1.pt"
 
 
 def test_trainer_amp_noop_scaler() -> None:
@@ -505,6 +509,55 @@ def test_trainer_wandb_logging(monkeypatch) -> None:
     assert any("train/lr" in entry["metrics"] for entry in logged)
 
 
+def test_trainer_utilization_logging(monkeypatch) -> None:
+    """验证设备利用率指标会被正确命名并记录到 WANDB。"""
+    logged: list[dict[str, Any]] = []
+
+    class _FakeRun:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        def log(self, metrics: dict[str, Any], step: int | None = None) -> None:
+            logged.append(metrics)
+
+        def finish(self) -> None:
+            pass
+
+    fake_wandb = type("FakeWandb", (), {"init": _FakeRun})
+
+    cfg = _make_trainer_cfg(
+        epochs=1,
+        use_wandb=True,
+        experiment_name="test_trainer_util",
+    )
+
+    model = _DummyAEFModel(embed_dim=8)
+    dataset = _DummyDataset(size=2)
+    loader = DataLoader(dataset, batch_size=2, collate_fn=_dummy_collate)
+    target_cfg = {"s2_recon": {"loss_type": "l1", "channels": 10, "weight": 1.0}}
+    criterion = TotalLoss(target_cfg)
+
+    import sys
+
+    monkeypatch.setitem(sys.modules, "wandb", fake_wandb)
+
+    trainer = Trainer(
+        cfg=cfg,
+        model=model,
+        train_loader=loader,
+        val_loader=None,
+        device="cpu",
+        criterion=criterion,
+    )
+
+    # 模拟 CPU 上不可用的利用率返回 None；通过 monkeypatch 模拟 NPU/CUDA 返回值。
+    monkeypatch.setattr(trainer, "_get_utilization", lambda: ("system/npu_utilization", 42.0))
+    trainer.train_epoch()
+
+    assert any("system/npu_utilization" in entry for entry in logged)
+    assert any(entry.get("system/npu_utilization") == 42.0 for entry in logged)
+
+
 def test_stp_encoder_gradient_checkpointing() -> None:
     """验证 STPEncoder 在 gradient_checkpointing=True 时仍能完成前向/反向传播。"""
     from xuannv_embedding.models.blocks import STPEncoder
@@ -579,7 +632,8 @@ def test_trainer_checkpoint_best_and_latest3(tmp_path: Path) -> None:
         trainer.train_epoch()
         trainer.val_epoch()
         if trainer._is_main_process() and trainer._should_save_checkpoint(epoch, 6):
-            epoch_path = trainer.output_dir / f"epoch_{epoch}.pt"
+            one_based = epoch + 1
+            epoch_path = trainer.output_dir / f"epoch_{one_based}.pt"
             save_checkpoint(
                 epoch_path,
                 trainer._unwrap_model(),
@@ -598,17 +652,17 @@ def test_trainer_checkpoint_best_and_latest3(tmp_path: Path) -> None:
     epoch_files = sorted(trainer.output_dir.glob("epoch_*.pt"))
     epoch_names = {p.name for p in epoch_files}
 
-    # save_every=2，epochs=0..5，保存 epoch_0, epoch_2, epoch_4 与最后 epoch_5。
-    # 经过 keep_last=3 清理后，仅保留最近的 3 个：epoch_2, epoch_4, epoch_5。
+    # save_every=2，1-based epochs 1..6，保存 epoch_2, epoch_4, epoch_6（最后 epoch）。
+    # 经过 keep_last=3 清理后全部保留。
     assert "epoch_2.pt" in epoch_names
     assert "epoch_4.pt" in epoch_names
-    assert "epoch_5.pt" in epoch_names
-    assert "epoch_0.pt" not in epoch_names
+    assert "epoch_6.pt" in epoch_names
     assert "epoch_1.pt" not in epoch_names
     assert "epoch_3.pt" not in epoch_names
+    assert "epoch_5.pt" not in epoch_names
     assert len(epoch_files) == 3
 
-    # best.pt 必须存在且指向损失最小的 epoch_5。
+    # best.pt 必须存在且指向损失最小的 epoch_6（原始 epoch index 5）。
     best_path = trainer.output_dir / "best.pt"
     assert best_path.exists()
     state = torch.load(best_path, weights_only=True)
