@@ -1,7 +1,5 @@
 # xuannv_embedding downstream tasks
 
-> 注意：以下命令为框架全部完成后的使用示例。当前 Task 1 仅完成目录与依赖搭建，具体脚本与配置将在后续 Task 中逐步实现。
-
 本目录存放预训练 `AEFModel` 的下游任务评测框架。
 
 ## 安装
@@ -52,3 +50,49 @@ python downstreams/scripts/visualize_results.py \
   --label-root /data/xuannv_embedding/downstream/labels/haidian/construction_site \
   --rgb-source /data/xuannv_embedding/processed/haidian/patches/s2
 ```
+
+## 目录结构
+
+```
+downstreams/
+├── downstreams/          # Python 包
+│   ├── data/             # label loaders / split / EmbeddingDataset
+│   ├── heads/            # 任务头（linear / FCN / UNet / UperNet / classification / change-detection stub）
+│   ├── metrics/          # 指标与可视化
+│   ├── tasks/            # BaseTask / ConstructionSegmentationTask
+│   └── utils/            # device / reproducibility
+├── scripts/              # CLI
+├── configs/              # 下游任务配置
+└── tests/                # 单元测试
+```
+
+## Mask 规范
+
+- 格式：单波段 `uint8` GeoTIFF，与参考影像同尺寸、同 CRS、同 Affine。
+- 像素值：`0`=背景，`1`=建筑工地（`jiazhudongdi`）。
+- 命名：`{patch_id}.tif`，例如 `patch_000002.tif`。
+
+## Random-init 基线
+
+```bash
+python downstreams/scripts/precompute_embeddings.py \
+  --config configs/harbin_128_stage2.yaml \
+  --random-init \
+  --regions haidian \
+  --output-root /data/xuannv_embedding/embeddings
+
+python downstreams/scripts/train_task.py \
+  --config downstreams/configs/construction_segmentation.yaml \
+  --embedding-root /data/xuannv_embedding/embeddings/YYYYMMDD_xxx_random \
+  --label-root /data/xuannv_embedding/downstream/labels/haidian/construction_site \
+  --output-root /data/xuannv_embedding/outputs/downstream/construction_site_haidian_random
+```
+
+## 常见问题
+
+| 问题 | 原因 | 解决 |
+|---|---|---|
+| `embedding 不存在` | 月份不匹配 | 确认 `--month` 与预生成目录名一致 |
+| `split_5fold.json` 不存在 | 首次运行 | 脚本会自动按正像素比例分层生成 |
+| mIoU 接近 0 | 类别极度不平衡 | 检查 `pos_weight` 与 Focal loss 配置 |
+

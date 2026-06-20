@@ -72,3 +72,9 @@
 | 统计量 | `/data/xuannv_embedding/statistics/harbin` | `/data/xuannv_embedding/statistics/haidian` |
 | 训练配置 | `configs/harbin_128.yaml` | `configs/haidian_128.yaml` |
 | 下载日志 | `logs/download_pc_retry.log`、`logs/download_baidu.log` | 同上 |
+
+## 下游任务与 Embedding 产物
+
+- **`downstream/labels/<region>/<task>/`**：labelme 原始标注、对齐后的 mask、`split_5fold.json`、`label_meta.json`。
+- **`embeddings/YYYYMMDD_<exp>_<sha>/`**：预生成 embedding，含 per-patch `{month}_embedding_map.pt`、`{month}_scene_embedding.pt` 与 `meta.json`。
+- **`outputs/downstream/<task>_<region>_<date>_<suffix>/`**：下游训练输出，含 `fold_*/{metrics.json,predictions/,checkpoints/,visualizations/}` 与 `summary_5fold.json`。
