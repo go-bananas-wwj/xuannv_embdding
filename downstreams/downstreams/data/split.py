@@ -38,10 +38,9 @@ def create_stratified_folds(
     bins = np.percentile(ratios, [0, 25, 50, 75, 100])
     strata = np.digitize(ratios, bins[:-1]) - 1
 
-    # 若样本太少或比例过于集中导致唯一 strata 不足 n_folds，或任一 strata 样本数不足 n_folds，
-    # 则退化为非分层 KFold
-    unique_strata, counts = np.unique(strata, return_counts=True)
-    use_stratified = len(unique_strata) >= n_folds and counts.min() >= n_folds
+    # 若任一 stratum 样本数不足 n_folds，则无法按 strata 分层，退化为非分层 KFold
+    _, counts = np.unique(strata, return_counts=True)
+    use_stratified = counts.min() >= n_folds
 
     if use_stratified:
         splitter = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed)
@@ -55,9 +54,9 @@ def create_stratified_folds(
         train_val_ids = [patch_ids[i] for i in train_val_idx]
         test_ids = [patch_ids[i] for i in test_idx]
 
-        np.random.seed(seed + fold_idx)
+        rng = np.random.default_rng(seed + fold_idx)
         n_val = max(1, int(len(train_val_ids) * val_ratio))
-        val_indices = np.random.choice(len(train_val_ids), size=n_val, replace=False)
+        val_indices = rng.choice(len(train_val_ids), size=n_val, replace=False)
         train_indices = np.setdiff1d(np.arange(len(train_val_ids)), val_indices)
 
         train_ids = [train_val_ids[i] for i in train_indices]
