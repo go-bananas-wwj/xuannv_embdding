@@ -140,10 +140,9 @@ class NativeResolutionHighResEncoder(nn.Module):
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1)
         self.conv3 = nn.Conv2d(64, out_channels, kernel_size=3, stride=2, padding=1)
 
-        # GroupNorm 要求 num_channels 能被 num_groups 整除；
-        # 当通道数小于 8 时，回退到逐通道 group。
-        self.norm1 = nn.GroupNorm(min(32, 32) if 32 % 32 == 0 else 32, 32)
-        self.norm2 = nn.GroupNorm(min(32, 64) if 64 % 32 == 0 else 64, 64)
+        # 每层 stride=2 卷积后接 GroupNorm + GELU。
+        self.norm1 = nn.GroupNorm(32, 32)
+        self.norm2 = nn.GroupNorm(32, 64)
         num_groups = 8 if out_channels % 8 == 0 else out_channels
         self.norm3 = nn.GroupNorm(num_groups, out_channels)
 

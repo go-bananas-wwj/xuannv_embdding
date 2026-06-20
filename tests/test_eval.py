@@ -152,7 +152,7 @@ def test_extract_embeddings_end_to_end(tmp_path: Path, monkeypatch: pytest.Monke
     npz = np.load(output_path, allow_pickle=True)
     assert "embeddings" in npz
     assert "patch_ids" in npz
-    assert npz["embeddings"].shape == (4, 8)
+    assert npz["embeddings"].shape == (4, 17, 8)
     assert npz["embeddings"].dtype == np.float32
     assert len(npz["patch_ids"]) == 4
 
@@ -220,7 +220,7 @@ def test_extract_embeddings_end_to_end_with_highres(
     npz = np.load(output_path, allow_pickle=True)
     assert "embeddings" in npz
     assert "patch_ids" in npz
-    assert npz["embeddings"].shape == (4, 8)
+    assert npz["embeddings"].shape == (4, 17, 8)
     assert npz["embeddings"].dtype == np.float32
     assert len(npz["patch_ids"]) == 4
 

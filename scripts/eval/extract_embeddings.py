@@ -119,6 +119,7 @@ def main() -> None:
         embed_dim=cfg.model.embed_dim,
         target_heads=aef_target_heads,
         stem_dim=cfg.model.stem_dim,
+        num_months=cfg.model.num_months,
         stp=cfg.model.stp,
     )
 
