@@ -35,6 +35,7 @@ downstream = [
 
 [tool.setuptools.packages.find]
 where = ["src", "downstreams"]
+include = ["xuannv_embedding*", "downstreams*"]
 
 [tool.black]
 line-length = 100
