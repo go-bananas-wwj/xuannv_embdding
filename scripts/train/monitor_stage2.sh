@@ -3,7 +3,7 @@
 # 由 cron 定期调用：检查进程是否存活，若因非 OOM/共享内存原因中断则自动恢复。
 set -euo pipefail
 
-WORKDIR="/root/workspace/xuannv/.worktrees/feat-data-and-model-rework"
+WORKDIR="/root/workspace/xuannv"
 CONFIG="configs/harbin_128_stage2.yaml"
 LOG="/data/xuannv_embedding/outputs/stage2_harbin_128.log"
 OUTDIR="/data/xuannv_embedding/outputs/harbin_128_stage2_v1"
