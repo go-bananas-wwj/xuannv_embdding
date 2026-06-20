@@ -13,8 +13,10 @@ training:
 model:
   sensor_channels:
     s2: 12
+    s1: 2
   target_heads:
     s2_recon:
+      loss_type: continuous
       channels: 12
 
 data:
