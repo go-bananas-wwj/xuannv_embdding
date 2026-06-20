@@ -1,4 +1,5 @@
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -112,7 +113,6 @@ def test_embedding_shape_mismatch(tmp_path: Path) -> None:
 
 
 def test_embedding_augment_sync(tmp_path: Path) -> None:
-    """augment=True 时 embedding 与 mask 执行相同翻转。"""
     emb_root = tmp_path / "embeddings"
     label_root = tmp_path / "labels"
     mask_dir = label_root / "masks"
@@ -120,11 +120,14 @@ def test_embedding_augment_sync(tmp_path: Path) -> None:
     patch_id = "patch_000000"
     (emb_root / patch_id).mkdir(parents=True)
 
-    emb = torch.randn(64, 16, 16)
+    # 构造左右、上下不对称的 embedding 和 mask
+    emb = torch.zeros(1, 16, 16)
+    emb[:, :, :8] = 1.0
+    emb[:, :8, :] = emb[:, :8, :] + 2.0  # 左上=3, 右上=1, 左下=2, 右下=0
     torch.save(emb, emb_root / patch_id / "202604_embedding_map.pt")
 
     mask = np.zeros((16, 16), dtype=np.uint8)
-    mask[:, :8] = 1
+    mask[:8, :8] = 1
     with rasterio.open(
         mask_dir / f"{patch_id}.tif",
         "w",
@@ -139,13 +142,17 @@ def test_embedding_augment_sync(tmp_path: Path) -> None:
         dst.write(mask, 1)
 
     ds = EmbeddingDataset(emb_root, label_root, [patch_id], month=202604, augment=True)
-    # 固定随机种子，确保可复现
-    torch.manual_seed(42)
-    sample = ds[0]
+    emb_orig = emb.clone()
+    mask_orig = torch.from_numpy(mask).long()
 
-    # 通过检查 mask 的左右分布判断水平翻转是否发生
-    left_sum = sample["mask"][:, :8].sum().item()
-    right_sum = sample["mask"][:, 8:].sum().item()
-    # 原始 mask 左侧为 1，翻转后右侧为 1
-    assert left_sum == 0 or right_sum == 0
-    assert left_sum + right_sum == 16 * 8
+    # 水平翻转，不垂直翻转
+    with patch("torch.rand", side_effect=[torch.tensor(0.6), torch.tensor(0.3)]):
+        sample = ds[0]
+    assert torch.equal(sample["mask"], torch.flip(mask_orig, dims=[-1]))
+    assert torch.equal(sample["embedding_map"], torch.flip(emb_orig, dims=[-1]))
+
+    # 不水平翻转，垂直翻转
+    with patch("torch.rand", side_effect=[torch.tensor(0.3), torch.tensor(0.6)]):
+        sample = ds[0]
+    assert torch.equal(sample["mask"], torch.flip(mask_orig, dims=[-2]))
+    assert torch.equal(sample["embedding_map"], torch.flip(emb_orig, dims=[-2]))
