@@ -40,17 +40,17 @@ class ConstructionSegmentationTask(BaseTask):
 
     def build_head(self) -> nn.Module:
         if "training" not in self.config:
-            raise KeyError(f"配置缺少 training 段: {self.config}")
+            raise KeyError("配置缺少 training 段")
         if "data" not in self.config:
-            raise KeyError(f"配置缺少 data 段: {self.config}")
+            raise KeyError("配置缺少 data 段")
         training = self.config["training"]
         data = self.config["data"]
         if "head_type" not in training:
-            raise KeyError(f"配置缺少 training.head_type: {self.config}")
+            raise KeyError("配置缺少 training.head_type")
         if "embed_dim" not in data:
-            raise KeyError(f"配置缺少 data.embed_dim: {self.config}")
+            raise KeyError("配置缺少 data.embed_dim")
         if "num_classes" not in data:
-            raise KeyError(f"配置缺少 data.num_classes: {self.config}")
+            raise KeyError("配置缺少 data.num_classes")
         head_type = training["head_type"]
         embed_dim = data["embed_dim"]
         num_classes = data["num_classes"]
@@ -63,7 +63,7 @@ class ConstructionSegmentationTask(BaseTask):
     def build_loss(self) -> nn.Module:
         if self._loss is None:
             if "training" not in self.config:
-                raise KeyError(f"配置缺少 training 段: {self.config}")
+                raise KeyError("配置缺少 training 段")
             training = self.config["training"]
             loss_name = training.get("loss", "focal_dice").lower()
             if loss_name == "focal_dice":
@@ -72,7 +72,7 @@ class ConstructionSegmentationTask(BaseTask):
                 pos_weight = torch.tensor(training.get("pos_weight", 1.0))
                 self._loss = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
             else:
-                raise ValueError(f"未知 loss: {loss_name}")
+                raise ValueError(f"未知 loss 类型: {loss_name}")
         return self._loss
 
     def train_one_epoch(
