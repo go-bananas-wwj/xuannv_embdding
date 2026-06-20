@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import Any
 
 import rasterio
 import torch
 from torch.utils.data import Dataset
-
-logger = logging.getLogger(__name__)
 
 
 class EmbeddingDataset(Dataset):
