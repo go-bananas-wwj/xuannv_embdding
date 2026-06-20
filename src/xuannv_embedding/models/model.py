@@ -1,36 +1,36 @@
+# AEF 主模型：多源时序遥感数据 -> 多分辨率 STP 编码器 -> 月度嵌入 ->
+# 嵌入上采样 -> 可选高分辨率融合（逐月）-> vMF 瓶颈 -> 解码器。
+
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
-import logging
-
 import torch
+import torch.nn.functional as F
 from torch import nn
-
-logger = logging.getLogger(__name__)
 
 from xuannv_embedding.models.blocks import (
     EmbeddingUpsampleHead,
+    MonthlyEmbeddingModule,
     STPEncoder,
-    TemporalSummarizer,
 )
 from xuannv_embedding.models.bottleneck import VMFBottleneck
 from xuannv_embedding.models.decoders import CategoricalDecoder, ContinuousDecoder
 from xuannv_embedding.models.highres_fusion import AvailabilityAwareFusion
 from xuannv_embedding.models.sensor_encoders import SensorEncoderBank
 
-# AEF 主模型：多源时序遥感数据 -> 多分辨率 STP 编码器 -> 时序摘要 ->
-# 嵌入上采样 -> 可选高分辨率融合 -> vMF 瓶颈 -> 解码器。
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class AEFOutput:
     """AEFModel 前向输出容器。"""
 
-    embedding_map: torch.Tensor  # [B, D, H, W]，与输入相同空间分辨率
-    embedding: torch.Tensor  # [B, D]
-    reconstructions: dict[str, torch.Tensor]
+    embedding_map: torch.Tensor  # [B, T_month, D, H, W]，与输入相同空间分辨率
+    embedding: torch.Tensor  # [B, T_month, D]
+    reconstructions: dict[str, torch.Tensor]  # [B, T_month, C_out, H, W]
 
 
 class AEFModel(nn.Module):
@@ -38,8 +38,8 @@ class AEFModel(nn.Module):
 
     输入支持多源时序遥感数据（如 S2/S1/Landsat），以及可选的稀疏高分辨率
     数据。模型通过 per-sensor stem、多分辨率 Space-Time-Precision 编码器、
-    时序摘要器、嵌入上采样头、vMF 瓶颈生成单位球面上的像素级与场景级嵌入，
-    并解码回各目标模态。输出 ``embedding_map`` 与输入保持相同空间分辨率。
+    月度嵌入模块、嵌入上采样头、vMF 瓶颈生成单位球面上的逐月像素级与场景级
+    嵌入，并解码回各目标模态。输出 ``embedding_map`` 与输入保持相同空间分辨率。
     """
 
     def __init__(
@@ -50,12 +50,14 @@ class AEFModel(nn.Module):
         stem_dim: int = 32,
         stp: dict[str, Any] | None = None,
         num_space_heads: int = 8,
+        num_months: int = 17,
     ) -> None:
         """初始化 AEFModel。
 
         Args:
             sensor_channels: 数据源到输入通道数的映射，例如
-                ``{"s2": 13, "s1": 2, "landsat": 11, "highres": 3, "highres_sar": 1}``。
+                ``{"s2": 12, "s1": 2, "landsat": 7,
+                "highres_optical_haidian": 4, "highres_sar_haidian": 1}``。
                 若使用高分辨率融合，需要为每个以 ``"highres"`` 开头的 source
                 注册对应的通道数。
             embed_dim: 统一嵌入维度，也是最终 embedding_map 的通道数。
@@ -65,12 +67,14 @@ class AEFModel(nn.Module):
             stp: STP 编码器配置字典，可包含 ``space_dim``、``time_dim``、
                 ``precision_dim``、``num_blocks``、``num_heads``。缺失项使用默认值。
             num_space_heads: ``stp["num_heads"]`` 的默认值。
+            num_months: 月度 bin 数量，阶段一默认为 17（2025-01 至 2026-05）。
         """
         super().__init__()
         self.sensor_channels = sensor_channels
         self.embed_dim = embed_dim
         self.target_heads = target_heads
         self.stem_dim = stem_dim
+        self.num_months = num_months
 
         stp_cfg = dict(stp) if stp is not None else {}
         stp_defaults = {
@@ -110,10 +114,10 @@ class AEFModel(nn.Module):
             num_heads=stp_cfg["num_heads"],
         )
 
-        self.temporal_summarizer = TemporalSummarizer(
-            feature_dim=stp_cfg["precision_dim"],
+        self.monthly_embed = MonthlyEmbeddingModule(
+            in_channels=stp_cfg["precision_dim"],
             embed_dim=embed_dim,
-            num_heads=stp_cfg["num_heads"],
+            num_months=num_months,
         )
         self.upsample_head = EmbeddingUpsampleHead(embed_dim, embed_dim)
         self.highres_fusion = AvailabilityAwareFusion(embed_dim)
@@ -133,7 +137,7 @@ class AEFModel(nn.Module):
         self,
         source_frames: dict[str, torch.Tensor],
         source_masks: dict[str, torch.Tensor],
-        timestamps: torch.Tensor,
+        timestamps: torch.Tensor | dict[str, torch.Tensor],
         highres_frames: dict[str, torch.Tensor] | None = None,
         highres_masks: dict[str, torch.Tensor] | None = None,
     ) -> AEFOutput:
@@ -142,18 +146,18 @@ class AEFModel(nn.Module):
         Args:
             source_frames: 各时序数据源的输入，格式 ``{source: (B, T, C, H, W)}``。
             source_masks: 各时序数据源的时间有效掩码，格式 ``{source: (B, T)}``。
-            timestamps: 时间戳，形状 ``(B, T)``。
+            timestamps: 时间戳。可以是全局张量 ``(B, T)``（用于所有 source），
+                也可以是按 source 组织的字典 ``{source: (B, T)}``。推荐格式为
+                ``YYYYMM`` 整数，例如 ``202501``。
             highres_frames: 可选的高分辨率单帧输入字典，格式 ``{source: (B, C, H, W)}``。
             highres_masks: 高分辨率可用性掩码字典，格式 ``{source: (B, 1, H, W)}``；
                 提供 ``highres_frames`` 时也必须提供，且 key 需与 ``highres_frames`` 一致。
 
         Returns:
-            AEFOutput，包含与输入同分辨率的 embedding_map、embedding 与 reconstructions。
+            AEFOutput，包含月度 embedding_map、embedding 与 reconstructions。
         """
         if not source_frames:
             raise ValueError("source_frames 不能为空字典")
-
-        timestamps = timestamps.float()
 
         # 1) 编码每个时序数据源到 stem 维度，并屏蔽缺失时间步。
         # 跳过时间维度为 0 或未在 sensor_channels 中注册的 source
@@ -168,8 +172,29 @@ class AEFModel(nn.Module):
         if not temporal_sources:
             raise ValueError("source_frames 中至少需要一个有效的时序数据源")
 
+        # 处理 timestamps：统一为 per-source 字典，同时保留一个全局时间戳给 STP/月度模块。
+        if isinstance(timestamps, torch.Tensor):
+            global_timestamps = timestamps
+            source_timestamps: dict[str, torch.Tensor] = {
+                source: timestamps for source in temporal_sources
+            }
+        elif isinstance(timestamps, dict):
+            source_timestamps = {
+                source: timestamps[source]
+                for source in temporal_sources
+                if source in timestamps
+            }
+            if not source_timestamps:
+                raise ValueError("timestamps 字典中未包含任何有效时序 source")
+            global_timestamps = next(iter(source_timestamps.values()))
+        else:
+            raise TypeError(
+                f"timestamps 必须是 torch.Tensor 或 dict，当前类型: {type(timestamps)}"
+            )
+
         # 第一个 source 用于确定 batch/time/space 维度。
-        first_x = source_frames[temporal_sources[0]]
+        first_source = temporal_sources[0]
+        first_x = source_frames[first_source]
         B, T, _, H, W = first_x.shape
         input_size = (H, W)
         temporal_input = torch.zeros(
@@ -201,32 +226,28 @@ class AEFModel(nn.Module):
 
         # 3) STP 编码器输出 1/2L 精度特征，同时拿回原始输入尺寸。
         feats, _ = self.stp_encoder(
-            temporal_input, timestamps, mask=combined_mask
+            temporal_input, global_timestamps, mask=combined_mask
         )  # (B, T, H//2, W//2, precision_dim)
 
-        # 4) 时序摘要：每个像素生成 embed_dim 维单位向量。
-        # 只使用有效时间步计算 min/max，避免 padding 0 污染 valid_period。
-        masked_ts_min = timestamps.masked_fill(combined_mask == 0, float("inf"))
-        masked_ts_max = timestamps.masked_fill(combined_mask == 0, float("-inf"))
-        t_min = masked_ts_min.min(dim=1).values
-        t_max = masked_ts_max.max(dim=1).values
-        empty_period = combined_mask.sum(dim=1) == 0
-        t_min = torch.where(empty_period, torch.zeros_like(t_min), t_min)
-        t_max = torch.where(empty_period, torch.zeros_like(t_max), t_max)
-        valid_period = torch.stack([t_min, t_max], dim=1)
+        # 4) 月度嵌入：按 YYYYMM 分 bin，缺失月份用 missing_token。
+        monthly_feats, monthly_mask = self.monthly_embed(
+            feats, global_timestamps, combined_mask
+        )  # (B, T_month, H//2, W//2, embed_dim), (B, T_month)
 
-        mu = self.temporal_summarizer(
-            feats, timestamps, valid_period, mask=combined_mask
-        )  # (B, H//2, W//2, embed_dim)
+        # 5) 逐月上采样回原始分辨率；奇数尺寸时使用 target_size 兜底。
+        Bm, M, Hh, Wh, D = monthly_feats.shape
+        monthly_feats_flat = monthly_feats.reshape(Bm * M, Hh, Wh, D)
+        mu_up_flat = self.upsample_head(
+            monthly_feats_flat, target_size=input_size
+        )  # (B*T_month, H, W, embed_dim)
+        mu_up = mu_up_flat.view(Bm, M, H, W, D)
+        embedding_map = mu_up.permute(0, 1, 4, 2, 3)  # (B, T_month, D, H, W)
 
-        # 5) 上采样回原始分辨率；奇数尺寸时使用 target_size 兜底。
-        mu_up = self.upsample_head(mu, target_size=input_size)  # (B, H, W, embed_dim)
-        base_feat = mu_up.permute(0, 3, 1, 2)  # (B, embed_dim, H, W)
-
-        # 6) 可选高分辨率 availability-aware 融合。
+        # 6) 可选高分辨率 availability-aware 融合（逐月重复同一高分辨率特征）。
         if highres_frames:
             if highres_masks is None:
                 raise ValueError("提供 highres_frames 时必须同时提供 highres_masks")
+            base_feat = embedding_map.reshape(Bm * M, D, H, W)
             for source, highres_frame in highres_frames.items():
                 if source not in self.sensor_channels:
                     raise KeyError(
@@ -235,16 +256,38 @@ class AEFModel(nn.Module):
                 highres_mask = highres_masks.get(source)
                 if highres_mask is None:
                     raise KeyError(f"缺少 highres_mask: {source!r}")
-                highres_feat = self.highres_encoder_bank(highres_frame, source)
-                base_feat = self.highres_fusion(base_feat, highres_feat, highres_mask)
+                highres_feat = self.highres_encoder_bank(highres_frame, source)  # (B, D, H, W)
+                highres_feat_rep = (
+                    highres_feat.unsqueeze(1)
+                    .expand(-1, M, -1, -1, -1)
+                    .reshape(Bm * M, D, H, W)
+                )
+                highres_mask_rep = (
+                    highres_mask.unsqueeze(1)
+                    .expand(-1, M, -1, -1, -1)
+                    .reshape(Bm * M, 1, H, W)
+                )
+                base_feat = self.highres_fusion(
+                    base_feat, highres_feat_rep, highres_mask_rep
+                )
+            embedding_map = base_feat.view(Bm, M, D, H, W)
 
-        # 7) vMF 瓶颈：输出位于单位球面。
-        emb_map = self.bottleneck(base_feat)  # (B, embed_dim, H, W)
+        # 7) vMF 瓶颈：输出位于单位球面（逐月）。
+        emb_map_flat = self.bottleneck(
+            embedding_map.reshape(Bm * M, D, H, W)
+        )  # (B*T_month, D, H, W)
+        emb_map = emb_map_flat.view(Bm, M, D, H, W)
 
-        # 8) 全局平均池化得到场景级嵌入。
-        emb = emb_map.mean(dim=[2, 3])  # (B, embed_dim)
+        # 8) 每个场景/月份平均池化得到场景级嵌入并 L2 归一化。
+        emb = emb_map.mean(dim=[3, 4])  # (B, T_month, D)
+        emb = F.normalize(emb, p=2, dim=-1)
 
-        # 9) 解码器重建目标模态。
-        reconstructions = {name: decoder(emb_map) for name, decoder in self.decoders.items()}
+        # 9) 解码器重建目标模态（逐月）。
+        emb_map_dec = emb_map.reshape(Bm * M, D, H, W)
+        reconstructions: dict[str, torch.Tensor] = {}
+        for name, decoder in self.decoders.items():
+            out = decoder(emb_map_dec)  # (B*T_month, C_out, H, W)
+            _, C_out, _, _ = out.shape
+            reconstructions[name] = out.view(Bm, M, C_out, H, W)
 
         return AEFOutput(embedding_map=emb_map, embedding=emb, reconstructions=reconstructions)

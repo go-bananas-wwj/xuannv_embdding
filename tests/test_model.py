@@ -8,6 +8,7 @@ from torch import nn
 
 from xuannv_embedding.models.blocks import (
     EmbeddingUpsampleHead,
+    MonthlyEmbeddingModule,
     MultiResolutionSTPBlock,
     SpaceOperator,
     STPEncoder,
@@ -21,7 +22,11 @@ from xuannv_embedding.models.bottleneck import VMFBottleneck
 from xuannv_embedding.models.decoders import CategoricalDecoder, ContinuousDecoder
 from xuannv_embedding.models.highres_fusion import AvailabilityAwareFusion
 from xuannv_embedding.models.model import AEFModel, AEFOutput
-from xuannv_embedding.models.sensor_encoders import SensorEncoder, SensorEncoderBank
+from xuannv_embedding.models.sensor_encoders import (
+    NativeResolutionHighResEncoder,
+    SensorEncoder,
+    SensorEncoderBank,
+)
 from xuannv_embedding.models.time_encoding import TimeEncoding, WindowCode
 
 
@@ -98,6 +103,22 @@ def test_sensor_encoder_bank_unknown_source() -> None:
 
     with pytest.raises(KeyError, match="未知数据源"):
         bank(x, source="landsat")
+
+
+def test_native_resolution_highres_encoder() -> None:
+    """NativeResolutionHighResEncoder 应将任意输入下采样并池化到目标分辨率。"""
+    batch_size = 2
+    in_channels = 4
+    out_channels = 16
+    target_size = (8, 8)
+
+    encoder = NativeResolutionHighResEncoder(
+        in_channels, out_channels, target_size=target_size
+    )
+    x = torch.randn(batch_size, in_channels, 64, 64)
+    y = encoder(x)
+
+    assert y.shape == (batch_size, out_channels, *target_size)
 
 
 def test_vmf_bottleneck() -> None:
@@ -245,6 +266,17 @@ def test_availability_aware_fusion() -> None:
     assert not torch.allclose(out_zero, out_one)
 
 
+def test_availability_aware_fusion_rejects_size_mismatch() -> None:
+    """AvailabilityAwareFusion 在输入尺寸不一致时应抛出断言错误。"""
+    fusion = AvailabilityAwareFusion(16)
+    base_feat = torch.randn(1, 16, 8, 8)
+    highres_feat = torch.randn(1, 16, 4, 4)
+    mask = torch.ones(1, 1, 8, 8)
+
+    with pytest.raises(AssertionError):
+        fusion(base_feat, highres_feat, mask)
+
+
 def test_time_encoding() -> None:
     """TimeEncoding 应将时间戳编码为 (B, T, embed_dim)。"""
     batch_size, time_steps, embed_dim = 2, 6, 16
@@ -268,20 +300,93 @@ def test_window_code() -> None:
     assert out.shape == (batch_size, embed_dim)
 
 
+def _make_yyyymm_timestamps(batch_size: int, time_steps: int, start: int = 202501) -> torch.Tensor:
+    """生成 YYYYMM 格式时间戳，超出单个月份后自动进位到下个月。"""
+    year = start // 100
+    month = start % 100
+    values = []
+    for _ in range(time_steps):
+        values.append(year * 100 + month)
+        month += 1
+        if month > 12:
+            month = 1
+            year += 1
+    return torch.tensor(values, dtype=torch.long).unsqueeze(0).expand(batch_size, -1)
+
+
+def test_monthly_embedding_module_shape_and_mask() -> None:
+    """MonthlyEmbeddingModule 应输出正确的月度特征与月度掩码。"""
+    batch_size, time_steps, height, width, in_channels = 2, 4, 4, 4, 8
+    embed_dim = 16
+    num_months = 6
+
+    module = MonthlyEmbeddingModule(in_channels, embed_dim, num_months)
+    feats = torch.randn(batch_size, time_steps, height, width, in_channels)
+    timestamps = _make_yyyymm_timestamps(batch_size, time_steps, start=202501)
+    mask = torch.ones(batch_size, time_steps)
+    mask[0, 1] = 0.0
+
+    monthly_feats, monthly_mask = module(feats, timestamps, mask)
+
+    assert monthly_feats.shape == (batch_size, num_months, height, width, embed_dim)
+    assert monthly_mask.shape == (batch_size, num_months)
+    # 202501, 202502, 202503, 202504 四个月份有观测。
+    assert monthly_mask[0, 0].item() == 1.0
+    assert monthly_mask[0, 1].item() == 0.0
+    assert monthly_mask[0, 2].item() == 1.0
+    assert monthly_mask[0, 5].item() == 0.0
+    assert not torch.isnan(monthly_feats).any()
+
+
+def test_monthly_embedding_module_missing_token_used() -> None:
+    """缺失月份的特征应接近可学习 missing_token，而有观测月份应与之不同。"""
+    batch_size, time_steps, height, width, in_channels = 1, 2, 4, 4, 8
+    embed_dim = 16
+    num_months = 4
+
+    module = MonthlyEmbeddingModule(in_channels, embed_dim, num_months)
+    # 固定输入以便复现。
+    torch.manual_seed(0)
+    feats = torch.randn(batch_size, time_steps, height, width, in_channels)
+    timestamps = torch.tensor([[202501, 202503]], dtype=torch.long)
+    mask = torch.ones(batch_size, time_steps)
+
+    monthly_feats, monthly_mask = module(feats, timestamps, mask)
+
+    missing_token = module.missing_token
+    # 月份 1（202502）与 3（202504）缺失，应使用 missing_token。
+    assert torch.allclose(monthly_feats[0, 1], missing_token.squeeze(0), atol=1e-6)
+    assert torch.allclose(monthly_feats[0, 3], missing_token.squeeze(0), atol=1e-6)
+    # 月份 0 与 2 有观测，不应等于 missing_token。
+    assert not torch.allclose(monthly_feats[0, 0], missing_token.squeeze(0), atol=1e-6)
+    assert not torch.allclose(monthly_feats[0, 2], missing_token.squeeze(0), atol=1e-6)
+    assert monthly_mask[0, 0].item() == 1.0
+    assert monthly_mask[0, 1].item() == 0.0
+
+
 def test_aef_model_forward() -> None:
-    """AEFModel 应能前向传播并返回正确形状的输出（含高分辨率数据）。"""
-    sensor_channels = {"s2": 10, "s1": 2, "landsat": 6, "highres": 3, "highres_sar": 1}
+    """AEFModel 应能前向传播并返回月度正确形状的输出（含高分辨率数据）。"""
+    num_months = 4
+    sensor_channels = {
+        "s2": 10,
+        "s1": 2,
+        "landsat": 6,
+        "highres_optical_haidian": 4,
+        "highres_sar_haidian": 1,
+    }
     embed_dim = 16
     target_heads = {
         "s2_recon": ("continuous", 10),
         "s1_recon": ("continuous", 2),
-        "worldcover": ("categorical", 11),
+        "landsat_recon": ("continuous", 6),
+        "worldcover": ("categorical", 9),
     }
     model = AEFModel(
         sensor_channels,
         embed_dim,
         target_heads,
         num_space_heads=2,
+        num_months=num_months,
     )
 
     batch_size, time_steps, height, width = 2, 4, 16, 16
@@ -291,14 +396,14 @@ def test_aef_model_forward() -> None:
         "landsat": torch.randn(batch_size, time_steps, 6, height, width),
     }
     source_masks = {k: torch.ones(batch_size, time_steps) for k in source_frames}
-    timestamps = torch.arange(time_steps).float().unsqueeze(0).expand(batch_size, -1)
+    timestamps = _make_yyyymm_timestamps(batch_size, time_steps, start=202501)
     highres_frames = {
-        "highres": torch.randn(batch_size, 3, height, width),
-        "highres_sar": torch.randn(batch_size, 1, height, width),
+        "highres_optical_haidian": torch.randn(batch_size, 4, height, width),
+        "highres_sar_haidian": torch.randn(batch_size, 1, height, width),
     }
     highres_masks = {
-        "highres": torch.ones(batch_size, 1, height, width),
-        "highres_sar": torch.ones(batch_size, 1, height, width),
+        "highres_optical_haidian": torch.ones(batch_size, 1, height, width),
+        "highres_sar_haidian": torch.ones(batch_size, 1, height, width),
     }
 
     out = model(
@@ -310,20 +415,26 @@ def test_aef_model_forward() -> None:
     )
 
     assert isinstance(out, AEFOutput)
-    assert out.embedding.shape == (batch_size, embed_dim)
-    assert out.embedding_map.shape == (batch_size, embed_dim, height, width)
+    assert out.embedding.shape == (batch_size, num_months, embed_dim)
+    assert out.embedding_map.shape == (batch_size, num_months, embed_dim, height, width)
     assert set(out.reconstructions.keys()) == set(target_heads.keys())
-    assert out.reconstructions["s2_recon"].shape == (batch_size, 10, height, width)
-    assert out.reconstructions["s1_recon"].shape == (batch_size, 2, height, width)
-    assert out.reconstructions["worldcover"].shape == (batch_size, 11, height, width)
+    assert out.reconstructions["s2_recon"].shape == (batch_size, num_months, 10, height, width)
+    assert out.reconstructions["s1_recon"].shape == (batch_size, num_months, 2, height, width)
+    assert out.reconstructions["landsat_recon"].shape == (batch_size, num_months, 6, height, width)
+    assert out.reconstructions["worldcover"].shape == (batch_size, num_months, 9, height, width)
 
     # embedding_map 应位于单位球面上。
-    norms = out.embedding_map.norm(dim=1)
+    norms = out.embedding_map.norm(dim=2)
     assert torch.allclose(norms, torch.ones_like(norms), atol=1e-6)
+
+    # 场景级 embedding 也应是单位向量。
+    emb_norms = out.embedding.norm(dim=-1)
+    assert torch.allclose(emb_norms, torch.ones_like(emb_norms), atol=1e-6)
 
 
 def test_aef_model_without_highres() -> None:
     """AEFModel 在没有高分辨率数据时也应能正常前向传播。"""
+    num_months = 3
     sensor_channels = {"s2": 10, "s1": 2, "landsat": 6}
     embed_dim = 16
     target_heads = {"s2_recon": ("continuous", 10)}
@@ -332,6 +443,7 @@ def test_aef_model_without_highres() -> None:
         embed_dim,
         target_heads,
         num_space_heads=2,
+        num_months=num_months,
     )
 
     batch_size, time_steps, height, width = 2, 3, 16, 16
@@ -341,16 +453,76 @@ def test_aef_model_without_highres() -> None:
         "landsat": torch.randn(batch_size, time_steps, 6, height, width),
     }
     source_masks = {k: torch.ones(batch_size, time_steps) for k in source_frames}
-    timestamps = torch.arange(time_steps).float().unsqueeze(0).expand(batch_size, -1)
+    timestamps = _make_yyyymm_timestamps(batch_size, time_steps, start=202501)
 
     out = model(source_frames, source_masks, timestamps)
 
     assert isinstance(out, AEFOutput)
-    assert out.embedding.shape == (batch_size, embed_dim)
-    assert out.embedding_map.shape == (batch_size, embed_dim, height, width)
+    assert out.embedding.shape == (batch_size, num_months, embed_dim)
+    assert out.embedding_map.shape == (batch_size, num_months, embed_dim, height, width)
     assert "s2_recon" in out.reconstructions
-    assert out.reconstructions["s2_recon"].shape == (batch_size, 10, height, width)
+    assert out.reconstructions["s2_recon"].shape == (batch_size, num_months, 10, height, width)
 
+
+def test_aef_model_missing_months_no_nan() -> None:
+    """当部分月份无观测时，AEFModel 输出不应出现 NaN。"""
+    num_months = 6
+    sensor_channels = {"s2": 10}
+    embed_dim = 16
+    target_heads = {"s2_recon": ("continuous", 10)}
+    model = AEFModel(
+        sensor_channels,
+        embed_dim,
+        target_heads,
+        stem_dim=16,
+        stp={"space_dim": 64, "time_dim": 32, "precision_dim": 32, "num_blocks": 2, "num_heads": 2},
+        num_months=num_months,
+    )
+
+    batch_size, time_steps, height, width = 1, 2, 16, 16
+    source_frames = {
+        "s2": torch.randn(batch_size, time_steps, 10, height, width),
+    }
+    source_masks = {"s2": torch.ones(batch_size, time_steps)}
+    # 只有 202501 与 202503 有数据。
+    timestamps = torch.tensor([[202501, 202503]], dtype=torch.long)
+
+    out = model(source_frames, source_masks, timestamps)
+
+    assert not torch.isnan(out.embedding_map).any()
+    assert not torch.isnan(out.embedding).any()
+    assert not torch.isnan(out.reconstructions["s2_recon"]).any()
+    assert out.embedding_map.shape == (batch_size, num_months, embed_dim, height, width)
+
+
+def test_aef_model_per_source_timestamps() -> None:
+    """AEFModel 应支持以 dict 形式传入每 source 的时间戳。"""
+    num_months = 3
+    sensor_channels = {"s2": 10, "s1": 2}
+    embed_dim = 16
+    target_heads = {"s2_recon": ("continuous", 10)}
+    model = AEFModel(
+        sensor_channels,
+        embed_dim,
+        target_heads,
+        stem_dim=16,
+        stp={"space_dim": 64, "time_dim": 32, "precision_dim": 32, "num_blocks": 2, "num_heads": 2},
+        num_months=num_months,
+    )
+
+    batch_size, time_steps, height, width = 1, 3, 16, 16
+    source_frames = {
+        "s2": torch.randn(batch_size, time_steps, 10, height, width),
+        "s1": torch.randn(batch_size, time_steps, 2, height, width),
+    }
+    source_masks = {k: torch.ones(batch_size, time_steps) for k in source_frames}
+    timestamps = {
+        "s2": _make_yyyymm_timestamps(batch_size, time_steps, start=202501),
+        "s1": _make_yyyymm_timestamps(batch_size, time_steps, start=202501),
+    }
+
+    out = model(source_frames, source_masks, timestamps)
+    assert out.embedding_map.shape == (batch_size, num_months, embed_dim, height, width)
 
 
 def test_stp_space_operator() -> None:
@@ -444,9 +616,18 @@ def test_embedding_upsample_head() -> None:
     assert y.shape == (batch_size, height * 2, width * 2, dim)
 
 
+def test_embedding_upsample_head_temporal_reshape() -> None:
+    """EmbeddingUpsampleHead 应支持将 (B*T, H, W, C) 整体处理后恢复形状。"""
+    batch_size, time_steps, height, width, dim = 2, 3, 4, 4, 16
+    head = EmbeddingUpsampleHead(dim)
+    x = torch.randn(batch_size * time_steps, height, width, dim)
+    y = head(x)
+    assert y.shape == (batch_size * time_steps, height * 2, width * 2, dim)
+
 
 def test_aef_model_odd_size() -> None:
-    """AEFModel 在奇数输入尺寸下应输出与输入相同空间分辨率的 embedding_map。"""
+    """AEFModel 在奇数输入尺寸下应输出与输入相同空间分辨率的月度 embedding_map。"""
+    num_months = 2
     sensor_channels = {"s2": 10, "s1": 2}
     embed_dim = 16
     target_heads = {"s2_recon": ("continuous", 10)}
@@ -456,6 +637,7 @@ def test_aef_model_odd_size() -> None:
         target_heads,
         stem_dim=16,
         stp={"space_dim": 64, "time_dim": 32, "precision_dim": 32, "num_blocks": 2, "num_heads": 2},
+        num_months=num_months,
     )
     batch_size, time_steps, height, width = 1, 2, 17, 17
     source_frames = {
@@ -463,10 +645,10 @@ def test_aef_model_odd_size() -> None:
         "s1": torch.randn(batch_size, time_steps, 2, height, width),
     }
     source_masks = {k: torch.ones(batch_size, time_steps) for k in source_frames}
-    timestamps = torch.arange(time_steps).float().unsqueeze(0).expand(batch_size, -1)
+    timestamps = _make_yyyymm_timestamps(batch_size, time_steps, start=202501)
     out = model(source_frames, source_masks, timestamps)
-    assert out.embedding_map.shape == (batch_size, embed_dim, height, width)
-    assert out.reconstructions["s2_recon"].shape == (batch_size, 10, height, width)
+    assert out.embedding_map.shape == (batch_size, num_months, embed_dim, height, width)
+    assert out.reconstructions["s2_recon"].shape == (batch_size, num_months, 10, height, width)
 
 
 def test_time_pooling_all_masked_no_nan() -> None:
@@ -515,6 +697,7 @@ def test_stp_encoder_rejects_too_small_input() -> None:
 
 def test_aef_model_skips_empty_temporal_source() -> None:
     """AEFModel 应安全跳过时间维度为 0 的 source。"""
+    num_months = 2
     sensor_channels = {"s2": 10, "s1": 2}
     embed_dim = 16
     target_heads = {"s2_recon": ("continuous", 10)}
@@ -524,6 +707,7 @@ def test_aef_model_skips_empty_temporal_source() -> None:
         target_heads,
         stem_dim=16,
         stp={"space_dim": 64, "time_dim": 32, "precision_dim": 32, "num_blocks": 2, "num_heads": 2},
+        num_months=num_months,
     )
     batch_size, height, width = 1, 16, 16
     source_frames = {
@@ -531,9 +715,9 @@ def test_aef_model_skips_empty_temporal_source() -> None:
         "s1": torch.randn(batch_size, 2, 2, height, width),
     }
     source_masks = {"s2": torch.zeros(batch_size, 0), "s1": torch.ones(batch_size, 2)}
-    timestamps = torch.arange(2).float().unsqueeze(0).expand(batch_size, -1)
+    timestamps = _make_yyyymm_timestamps(batch_size, 2, start=202501)
     out = model(source_frames, source_masks, timestamps)
-    assert out.embedding_map.shape == (batch_size, embed_dim, height, width)
+    assert out.embedding_map.shape == (batch_size, num_months, embed_dim, height, width)
 
 
 def test_summary_period_encoder_direct() -> None:

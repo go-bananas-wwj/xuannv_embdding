@@ -13,6 +13,11 @@ training:
   eval_every: 5
 
 model:
+  num_months: 17
+  sensor_channels:
+    s2: 12
+    s1: 2
+    landsat: 7
   stp:
     space_dim: 512
     time_dim: 256

@@ -46,6 +46,7 @@ class ModelConfig:
     sensor_channels: dict[str, int]
     target_heads: dict[str, dict[str, Any]]
     stem_dim: int = 32
+    num_months: int = 17
     stp: dict[str, Any] = field(default_factory=dict)
 
 
@@ -162,6 +163,7 @@ class Config:
                 sensor_channels=model_cfg["sensor_channels"],
                 target_heads=model_cfg["target_heads"],
                 stem_dim=model_cfg.get("stem_dim", 32),
+                num_months=model_cfg.get("num_months", 17),
                 stp=stp_cfg,
             ),
             training=TrainingConfig(

@@ -124,7 +124,7 @@ def test_get_device_invalid_preference() -> None:
 
 
 def test_model_forward_from_config() -> None:
-    """从真实配置文件构造 AEFModel 并完成一次前向传播。"""
+    """从真实配置文件构造 AEFModel 并完成一次月度前向传播。"""
     cfg = Config.from_yaml(Path(__file__).parent.parent / "configs" / "smoke.yaml")
 
     aef_target_heads = {
@@ -135,6 +135,7 @@ def test_model_forward_from_config() -> None:
         sensor_channels=cfg.model.sensor_channels,
         embed_dim=cfg.model.embed_dim,
         target_heads=aef_target_heads,
+        num_months=cfg.model.num_months,
     )
 
     batch_size = 2
@@ -148,7 +149,8 @@ def test_model_forward_from_config() -> None:
         source_frames[source] = torch.randn(batch_size, time_steps, channels, height, width)
         source_masks[source] = torch.ones(batch_size, time_steps)
 
-    timestamps = torch.arange(time_steps).float().unsqueeze(0).expand(batch_size, -1)
+    # 月度模型使用 YYYYMM 整数时间戳。
+    timestamps = torch.tensor([[202501, 202502], [202501, 202502]], dtype=torch.long)
 
     highres_frames: dict[str, torch.Tensor] | None = None
     highres_masks: dict[str, torch.Tensor] | None = None
@@ -171,8 +173,14 @@ def test_model_forward_from_config() -> None:
     )
 
     assert isinstance(output, AEFOutput)
-    assert output.embedding.shape == (batch_size, cfg.model.embed_dim)
-    assert output.embedding_map.shape == (batch_size, cfg.model.embed_dim, height, width)
+    assert output.embedding.shape == (batch_size, cfg.model.num_months, cfg.model.embed_dim)
+    assert output.embedding_map.shape == (
+        batch_size,
+        cfg.model.num_months,
+        cfg.model.embed_dim,
+        height,
+        width,
+    )
     assert set(output.reconstructions.keys()) == set(cfg.model.target_heads.keys())
 
 

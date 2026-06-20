@@ -919,3 +919,124 @@ class EmbeddingUpsampleHead(nn.Module):
         if target_size is not None and x.shape[2:] != target_size:
             x = F.interpolate(x, size=target_size, mode="bilinear", align_corners=False)
         return x.permute(0, 2, 3, 1)
+
+
+class MonthlyEmbeddingModule(nn.Module):
+    """月度嵌入模块。
+
+    将时序特征按 ``YYYYMM`` 时间戳分配到固定月度 bin，对每个 bin 内的有效
+    观测做空间位置级别的加权平均；无观测的月份/位置使用可学习 ``missing_token``
+    填充，保证输出形状固定且不会出现 NaN。
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        embed_dim: int,
+        num_months: int,
+        ref_year: int = 2025,
+        ref_month: int = 1,
+        missing_token_init: float = 0.02,
+    ) -> None:
+        """初始化 MonthlyEmbeddingModule。
+
+        Args:
+            in_channels: 输入特征通道数（STP 精度路径维度）。
+            embed_dim: 输出月度嵌入维度。
+            num_months: 固定月度 bin 数量。
+            ref_year: 月度 bin 起始年份。
+            ref_month: 月度 bin 起始月份。
+            missing_token_init: ``missing_token`` 的初始值。
+        """
+        super().__init__()
+        self.in_channels = in_channels
+        self.embed_dim = embed_dim
+        self.num_months = num_months
+        self.ref_year = ref_year
+        self.ref_month = ref_month
+
+        self.proj = nn.Linear(in_channels, embed_dim)
+        self.missing_token = nn.Parameter(
+            torch.full((1, 1, 1, 1, embed_dim), missing_token_init)
+        )
+
+    def _yyyymm_to_index(self, timestamps: torch.Tensor) -> torch.Tensor:
+        """将 ``YYYYMM`` 整数时间戳映射到以 ``ref_year/ref_month`` 为 0 的月度索引。
+
+        Args:
+            timestamps: 形状 ``(B, T)`` 的整数时间戳。
+
+        Returns:
+            形状 ``(B, T)`` 的月度索引，越界值为负数或大于等于 ``num_months``。
+        """
+        years = timestamps // 100
+        months = timestamps % 100
+        return (years - self.ref_year) * 12 + (months - self.ref_month)
+
+    def forward(
+        self,
+        feats: torch.Tensor,
+        timestamps: torch.Tensor,
+        mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """前向传播。
+
+        Args:
+            feats: 输入特征，形状 ``(B, T_obs, H, W, C)``。
+            timestamps: 时间戳，形状 ``(B, T_obs)``，应为 ``YYYYMM`` 整数格式。
+            mask: 可选时间有效掩码，形状 ``(B, T_obs)``；为 None 时视为全 1。
+
+        Returns:
+            ``(monthly_feats, monthly_mask)`` 元组：
+            - monthly_feats: ``(B, num_months, H, W, embed_dim)``。
+            - monthly_mask: ``(B, num_months)``，1 表示该月份至少有一个有效观测。
+        """
+        B, T, H, W, C = feats.shape
+        M = self.num_months
+        device = feats.device
+
+        z = self.proj(feats)  # (B, T, H, W, embed_dim)
+
+        month_index = self._yyyymm_to_index(timestamps)  # (B, T)
+        in_range = (month_index >= 0) & (month_index < M)
+
+        if mask is None:
+            valid = in_range
+        else:
+            valid = mask.bool() & in_range
+
+        # 构建 scatter_add 所需的线性索引。
+        b_idx = torch.arange(B, device=device).view(B, 1, 1, 1).expand(B, T, H, W).reshape(-1)
+        m_idx = month_index.view(B, T, 1, 1).expand(B, T, H, W).reshape(-1)
+        h_idx = torch.arange(H, device=device).view(1, 1, H, 1).expand(B, T, H, W).reshape(-1)
+        w_idx = torch.arange(W, device=device).view(1, 1, 1, W).expand(B, T, H, W).reshape(-1)
+
+        valid_flat = valid.view(B, T, 1, 1).expand(B, T, H, W).reshape(-1)
+        flat_index = ((b_idx * M + m_idx) * H + h_idx) * W + w_idx
+
+        z_flat = z.reshape(B * T * H * W, self.embed_dim)
+
+        acc = torch.zeros(B * M * H * W, self.embed_dim, device=device, dtype=z.dtype)
+        acc.scatter_add_(
+            0,
+            flat_index[valid_flat].unsqueeze(-1).expand(-1, self.embed_dim),
+            z_flat[valid_flat],
+        )
+
+        count = torch.zeros(B * M * H * W, device=device, dtype=z.dtype)
+        count.scatter_add_(
+            0,
+            flat_index[valid_flat],
+            torch.ones(valid_flat.sum(), device=device, dtype=z.dtype),
+        )
+
+        acc = acc.view(B, M, H, W, self.embed_dim)
+        count = count.view(B, M, H, W)
+
+        count_safe = count.clamp(min=1.0).unsqueeze(-1)
+        avg = acc / count_safe
+        has_obs = (count > 0).float().unsqueeze(-1)
+        monthly_feats = has_obs * avg + (1 - has_obs) * self.missing_token
+
+        monthly_mask = (count.view(B, M, H * W).sum(-1) > 0).float()
+        return monthly_feats, monthly_mask

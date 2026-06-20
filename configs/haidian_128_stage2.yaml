@@ -1,0 +1,69 @@
+_base_: base.yaml
+
+experiment:
+  name: haidian_128_stage2_v1
+
+training:
+  epochs: 10
+  lr: 1.0e-4
+  weight_decay: 0.05
+  warmup_epochs: 1
+  gradient_accumulation_steps: 1
+  save_every: 5
+  eval_every: 5
+
+model:
+  num_months: 17
+  sensor_channels:
+    s2: 12
+    s1: 2
+    landsat: 7
+    highres_optical_haidian: 4
+    highres_sar_haidian: 1
+  stp:
+    space_dim: 512
+    time_dim: 256
+    precision_dim: 128
+    num_blocks: 6
+    num_heads: 8
+  target_heads:
+    s2_recon:
+      loss_type: continuous
+      channels: 12
+      weight: 1.0
+    s1_recon:
+      loss_type: continuous
+      channels: 2
+      weight: 1.0
+    landsat_recon:
+      loss_type: continuous
+      channels: 7
+      weight: 1.0
+    worldcover:
+      loss_type: categorical
+      channels: 9
+      weight: 0.5
+    highres_optical_haidian_recon:
+      loss_type: continuous
+      channels: 4
+      weight: 1.0
+    highres_sar_haidian_recon:
+      loss_type: continuous
+      channels: 1
+      weight: 1.0
+
+data:
+  region: haidian
+  root: /data/xuannv_embedding/processed/haidian
+  manifest_path: /data/xuannv_embedding/processed/haidian/manifest.json
+  statistics_dir: /data/xuannv_embedding/statistics/haidian
+  patch_size: 128
+  num_samples: 0
+  batch_size: 4
+  sources:
+    - s2
+    - s1
+    - landsat
+    - worldcover
+    - highres_optical_haidian
+    - highres_sar_haidian

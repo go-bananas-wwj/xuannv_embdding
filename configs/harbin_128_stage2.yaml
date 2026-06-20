@@ -1,7 +1,7 @@
 _base_: base.yaml
 
 experiment:
-  name: harbin_128_v1
+  name: harbin_128_stage2_v1
 
 training:
   epochs: 10
@@ -18,12 +18,34 @@ model:
     s2: 12
     s1: 2
     landsat: 7
+    highres_optical_harbin: 3
   stp:
     space_dim: 512
     time_dim: 256
     precision_dim: 128
     num_blocks: 6
     num_heads: 8
+  target_heads:
+    s2_recon:
+      loss_type: continuous
+      channels: 12
+      weight: 1.0
+    s1_recon:
+      loss_type: continuous
+      channels: 2
+      weight: 1.0
+    landsat_recon:
+      loss_type: continuous
+      channels: 7
+      weight: 1.0
+    worldcover:
+      loss_type: categorical
+      channels: 9
+      weight: 0.5
+    highres_optical_harbin_recon:
+      loss_type: continuous
+      channels: 3
+      weight: 1.0
 
 data:
   region: harbin
@@ -38,3 +60,4 @@ data:
     - s1
     - landsat
     - worldcover
+    - highres_optical_harbin
