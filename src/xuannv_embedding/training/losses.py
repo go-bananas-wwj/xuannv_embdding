@@ -16,17 +16,37 @@ def reconstruction_loss(
 ) -> torch.Tensor:
     """计算带掩码的重建损失。
 
+    支持非月度输入 ``[B, C, H, W]`` 与月度输入 ``[B, T, C, H, W]``（或 CE 的
+    ``[B, T, H, W]`` target）。对于月度输入，时间维度会与 batch 维度合并后计算。
+
     Args:
-        pred: 预测值。L1 时为 ``[B, C, H, W]``；CE 时为 logits ``[B, C, H, W]``。
-        target: 目标值。L1 时为 ``[B, C, H, W]``；CE 时为类别索引 ``[B, H, W]`` (int64)。
-        mask: 空间有效掩码，形状可为 ``[H, W]``、``[B, H, W]`` 或 ``[B, 1, H, W]``。
-            1 表示有效，0 表示缺失。
+        pred: 预测值。L1 时为 ``[B, C, H, W]`` 或 ``[B, T, C, H, W]``；
+            CE 时为 logits ``[B, C, H, W]`` 或 ``[B, T, C, H, W]``。
+        target: 目标值。L1 时为 ``[B, C, H, W]`` 或 ``[B, T, C, H, W]``；
+            CE 时为类别索引 ``[B, H, W]`` 或 ``[B, T, H, W]`` (int64)。
+        mask: 空间有效掩码，形状可为 ``[H, W]``、``[B, H, W]``、``[B, 1, H, W]``、
+            ``[B, T, H, W]`` 或 ``[B, T, 1, H, W]``。
         loss_type: ``"l1"`` 或 ``"ce"``。
         eps: 防止除零的小常数。
 
     Returns:
         标量张量，表示掩码平均后的损失。
     """
+    is_temporal = pred.dim() == 5
+
+    if is_temporal:
+        B, T, C, H, W = pred.shape
+        pred = pred.reshape(B * T, C, H, W)
+        if target.dim() == 5:
+            target = target.reshape(B * T, C, H, W)
+        elif target.dim() == 4:
+            # CE target: (B, T, H, W)
+            target = target.reshape(B * T, H, W)
+        if mask.dim() == 5:
+            mask = mask.reshape(B * T, *mask.shape[2:])
+        elif mask.dim() == 4 and mask.shape[1] == T:
+            mask = mask.reshape(B * T, *mask.shape[2:])
+
     if loss_type == "l1":
         # 逐元素 L1，然后在通道维度取平均，得到 [B, H, W]。
         loss = F.l1_loss(pred, target, reduction="none").mean(dim=1)
@@ -50,11 +70,15 @@ def batch_uniformity_loss(emb: torch.Tensor) -> torch.Tensor:
     非对角均值。值越大表示嵌入在球面上分布越分散。
 
     Args:
-        emb: 场景级嵌入，形状 ``[B, D]``。
+        emb: 场景级嵌入，形状 ``[B, D]`` 或月度 ``[B, T, D]``。
 
     Returns:
         标量张量，表示均匀性损失。
     """
+    # 月度输出合并为 (B*T, D)。
+    if emb.dim() == 3:
+        emb = emb.reshape(-1, emb.shape[-1])
+
     # L2 归一化，避免除零。
     emb = F.normalize(emb, p=2, dim=1)
     batch_size = emb.shape[0]

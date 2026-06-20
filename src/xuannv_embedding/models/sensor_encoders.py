@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 # 多源遥感数据 stem encoder：为每个数据源提供独立的浅层卷积编码器。
@@ -104,3 +105,55 @@ class SensorEncoderBank(nn.Module):
         if source not in self.encoders:
             raise KeyError(f"未知数据源: {source!r}，可用数据源: {list(self.encoders.keys())}")
         return self.encoders[source](x)
+
+
+class NativeResolutionHighResEncoder(nn.Module):
+    """原生分辨率高分数据源编码器（阶段二使用）。
+
+    对来自不同传感器、不同原生分辨率与 GSD 的高分辨率影像，先通过 3 层 stride=2
+    卷积逐步下采样并扩展感受野，最后通过 ``AdaptiveAvgPool2d`` 统一到与低分辨率
+    基础特征相同的空间尺寸，输出通道数为 ``out_channels``。
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        target_size: tuple[int, int] = (128, 128),
+    ) -> None:
+        """初始化 NativeResolutionHighResEncoder。
+
+        Args:
+            in_channels: 高分数据源输入通道数。
+            out_channels: 输出通道数，通常等于基础模型 embed_dim。
+            target_size: 目标空间分辨率，默认与 128×128 patch 一致。
+        """
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.target_size = target_size
+
+        # 3 层 stride=2 下采样：2^3 = 8 倍下采样。
+        self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=3, stride=2, padding=1)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1)
+        self.conv3 = nn.Conv2d(64, out_channels, kernel_size=3, stride=2, padding=1)
+
+        num_groups = 8 if out_channels % 8 == 0 else out_channels
+        self.norm3 = nn.GroupNorm(num_groups, out_channels)
+
+        self.pool = nn.AdaptiveAvgPool2d(target_size)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """前向传播。
+
+        Args:
+            x: 输入张量，形状 ``(B, in_channels, H_native, W_native)``。
+
+        Returns:
+            输出张量，形状 ``(B, out_channels, *target_size)``。
+        """
+        x = F.gelu(self.conv1(x))
+        x = F.gelu(self.conv2(x))
+        x = F.gelu(self.norm3(self.conv3(x)))
+        x = self.pool(x)
+        return x

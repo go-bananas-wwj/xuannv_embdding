@@ -74,31 +74,31 @@ def test_batch_uniformity_loss() -> None:
 
 
 def test_total_loss() -> None:
-    """验证 TotalLoss 返回正确的各字段。"""
-    batch_size, embed_dim, height, width = 2, 16, 8, 8
+    """验证 TotalLoss 返回正确的各字段（月度输出格式）。"""
+    batch_size, num_months, embed_dim, height, width = 2, 3, 16, 8, 8
 
     reconstructions = {
-        "s2_recon": torch.randn(batch_size, 10, height, width),
-        "worldcover": torch.randn(batch_size, 11, height, width),
+        "s2_recon": torch.randn(batch_size, num_months, 10, height, width),
+        "worldcover": torch.randn(batch_size, num_months, 9, height, width),
     }
     output = AEFOutput(
-        embedding_map=torch.randn(batch_size, embed_dim, height, width),
-        embedding=torch.randn(batch_size, embed_dim),
+        embedding_map=torch.randn(batch_size, num_months, embed_dim, height, width),
+        embedding=torch.randn(batch_size, num_months, embed_dim),
         reconstructions=reconstructions,
     )
 
     targets = {
-        "s2_recon": torch.randn(batch_size, 10, height, width),
-        "worldcover": torch.randint(0, 11, (batch_size, height, width)),
+        "s2_recon": torch.randn(batch_size, num_months, 10, height, width),
+        "worldcover": torch.randint(0, 9, (batch_size, num_months, height, width)),
     }
     masks = {
-        "s2_recon": torch.ones(batch_size, height, width),
-        "worldcover": torch.ones(batch_size, height, width),
+        "s2_recon": torch.ones(batch_size, num_months, height, width),
+        "worldcover": torch.ones(batch_size, num_months, height, width),
     }
 
     target_cfg = {
         "s2_recon": {"loss_type": "l1", "channels": 10, "weight": 1.0},
-        "worldcover": {"loss_type": "ce", "channels": 11, "weight": 0.5},
+        "worldcover": {"loss_type": "ce", "channels": 9, "weight": 0.5},
     }
 
     criterion = TotalLoss(target_cfg)
@@ -116,6 +116,39 @@ def test_total_loss() -> None:
     # recon 应为加权求和。
     expected_recon = 1.0 * losses["recon_s2_recon"] + 0.5 * losses["recon_worldcover"]
     assert torch.allclose(losses["recon"], expected_recon)
+
+
+def test_reconstruction_loss_temporal() -> None:
+    """验证月度 (B, T, C, H, W) 输入下的掩码重建损失计算正确。"""
+    batch_size, time_steps, channels, height, width = 2, 3, 4, 4, 4
+    pred = torch.randn(batch_size, time_steps, channels, height, width)
+    target = torch.randn(batch_size, time_steps, channels, height, width)
+    mask = torch.ones(batch_size, time_steps, height, width)
+    mask[0, 0, :2, :] = 0.0
+
+    loss = reconstruction_loss(pred, target, mask, loss_type="l1")
+
+    # 手动按时间维度展开后计算。
+    pred_flat = pred.reshape(batch_size * time_steps, channels, height, width)
+    target_flat = target.reshape(batch_size * time_steps, channels, height, width)
+    mask_flat = mask.reshape(batch_size * time_steps, height, width)
+    expected = F.l1_loss(pred_flat, target_flat, reduction="none").mean(dim=1)
+    expected_loss = (expected * mask_flat).sum() / mask_flat.sum()
+
+    assert torch.allclose(loss, expected_loss)
+
+
+def test_batch_uniformity_loss_temporal() -> None:
+    """验证月度 (B, T, D) embedding 的均匀性损失计算正确。"""
+    emb_same = torch.ones(2, 4, 8)
+    loss_same = batch_uniformity_loss(emb_same)
+
+    torch.manual_seed(42)
+    emb_random = torch.randn(2, 4, 8)
+    loss_random = batch_uniformity_loss(emb_random)
+
+    assert loss_same < loss_random
+    assert torch.allclose(loss_same, torch.tensor(0.0), atol=1e-6)
 
 
 def test_checkpoint_save_load() -> None:

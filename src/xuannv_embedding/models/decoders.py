@@ -9,6 +9,8 @@ class ContinuousDecoder(nn.Module):
     """连续值解码器，将 VMF 嵌入映射到连续输出（如归一化后的遥感反射率）。
 
     结构为逐像素 1x1 卷积 MLP，不引入额外空间上下文。
+    在月度模型中，调用方会将 ``(B, T, D, H, W)`` 折叠为 ``(B*T, D, H, W)``
+    后传入，本模块本身不处理时间维度。
     """
 
     def __init__(self, embed_dim: int, out_channels: int) -> None:
@@ -30,6 +32,8 @@ class CategoricalDecoder(nn.Module):
     """分类解码器，将 VMF 嵌入映射到类别 logits。
 
     通过 1x1 卷积在每个空间位置独立预测类别分数。
+    在月度模型中，调用方会将 ``(B, T, D, H, W)`` 折叠为 ``(B*T, D, H, W)``
+    后传入，本模块本身不处理时间维度。
     """
 
     def __init__(self, embed_dim: int, num_classes: int) -> None:
