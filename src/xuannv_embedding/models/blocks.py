@@ -6,6 +6,7 @@ from typing import Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils.checkpoint as checkpoint
 
 # 空间/时间 Transformer 算子：在 patch 序列或时间序列上做自注意力。
 
@@ -699,6 +700,7 @@ class STPEncoder(nn.Module):
         precision_dim: int = 128,
         num_blocks: int = 6,
         num_heads: int = 8,
+        gradient_checkpointing: bool = False,
     ) -> None:
         """初始化 STPEncoder。
 
@@ -709,11 +711,13 @@ class STPEncoder(nn.Module):
             precision_dim: 精度路径通道数。
             num_blocks: STP 块数量。
             num_heads: 注意力头数。
+            gradient_checkpointing: 是否启用梯度检查点以节省显存。
         """
         super().__init__()
         self.space_dim = space_dim
         self.time_dim = time_dim
         self.precision_dim = precision_dim
+        self.gradient_checkpointing = gradient_checkpointing
 
         self.input_projection = nn.Linear(input_channels, precision_dim)
         self.space_projection = nn.Linear(precision_dim, space_dim)
@@ -801,9 +805,31 @@ class STPEncoder(nn.Module):
         ).permute(0, 1, 3, 4, 2)
 
         for block in self.blocks:
-            space_features, time_features, precision_features = block(
-                space_features, time_features, precision_features, timestamps, mask=mask
-            )
+            if self.gradient_checkpointing and self.training:
+                try:
+                    space_features, time_features, precision_features = checkpoint.checkpoint(
+                        block,
+                        space_features,
+                        time_features,
+                        precision_features,
+                        timestamps,
+                        mask,
+                        use_reentrant=False,
+                    )
+                except TypeError:
+                    # 旧版 PyTorch 不支持 use_reentrant 参数，回退默认行为。
+                    space_features, time_features, precision_features = checkpoint.checkpoint(
+                        block,
+                        space_features,
+                        time_features,
+                        precision_features,
+                        timestamps,
+                        mask,
+                    )
+            else:
+                space_features, time_features, precision_features = block(
+                    space_features, time_features, precision_features, timestamps, mask=mask
+                )
 
         # 将各路径 reshape 为 (BT, C, H, W) 以便重采样
         space_2d = space_features.permute(0, 1, 4, 2, 3).reshape(

@@ -11,6 +11,9 @@ training:
   gradient_accumulation_steps: 1
   save_every: 5
   eval_every: 5
+  amp: true
+  gradient_checkpointing: true
+  log_every: 0
 
 model:
   num_months: 17

@@ -37,6 +37,9 @@ class ExperimentConfig:
     name: str
     seed: int = 42
     output_dir: Path | None = None
+    use_wandb: bool = True
+    wandb_project: str = "xuannv-embedding-stage1"
+    wandb_run_name: str | None = None
 
 
 @dataclass
@@ -62,6 +65,9 @@ class TrainingConfig:
     gradient_accumulation_steps: int
     save_every: int
     eval_every: int
+    amp: bool = True
+    gradient_checkpointing: bool = True
+    log_every: int = 0
 
 
 @dataclass
@@ -72,6 +78,27 @@ class Config:
     experiment: ExperimentConfig
     model: ModelConfig
     training: TrainingConfig
+
+    def to_dict(self) -> dict[str, Any]:
+        """将配置递归转换为字典，便于 WANDB 等外部工具记录。"""
+
+        def _convert(value: Any) -> Any:
+            if isinstance(value, Path):
+                return str(value)
+            if isinstance(value, dict):
+                return {k: _convert(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [_convert(v) for v in value]
+            return value
+
+        result: dict[str, Any] = {}
+        for section_name in ("data", "experiment", "model", "training"):
+            section = getattr(self, section_name)
+            result[section_name] = {
+                field.name: _convert(getattr(section, field.name))
+                for field in section.__dataclass_fields__.values()
+            }
+        return result
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "Config":
@@ -129,6 +156,14 @@ class Config:
         )
         _validate_required_keys(experiment_cfg, ["name"], path, "experiment")
 
+        data_num_months = data_cfg.get("num_months", 17)
+        model_num_months = model_cfg.get("num_months", 17)
+        if data_num_months != model_num_months:
+            raise ConfigError(
+                f"配置 {path} 中 data.num_months ({data_num_months}) 与 "
+                f"model.num_months ({model_num_months}) 不一致，必须相等"
+            )
+
         root = Path(data_cfg["root"])
         region = data_cfg["region"]
         statistics_dir = data_cfg.get("statistics_dir")
@@ -159,6 +194,9 @@ class Config:
                 output_dir=(
                     Path(experiment_cfg["output_dir"]) if experiment_cfg.get("output_dir") else None
                 ),
+                use_wandb=experiment_cfg.get("use_wandb", True),
+                wandb_project=experiment_cfg.get("wandb_project", "xuannv-embedding-stage1"),
+                wandb_run_name=experiment_cfg.get("wandb_run_name"),
             ),
             model=ModelConfig(
                 embed_dim=model_cfg["embed_dim"],
@@ -176,6 +214,9 @@ class Config:
                 gradient_accumulation_steps=training_cfg["gradient_accumulation_steps"],
                 save_every=training_cfg["save_every"],
                 eval_every=training_cfg["eval_every"],
+                amp=training_cfg.get("amp", True),
+                gradient_checkpointing=training_cfg.get("gradient_checkpointing", True),
+                log_every=training_cfg.get("log_every", 0),
             ),
         )
 

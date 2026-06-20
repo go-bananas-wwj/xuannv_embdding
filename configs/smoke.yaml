@@ -2,6 +2,7 @@ _base_: base.yaml
 
 experiment:
   name: smoke_test
+  use_wandb: false
 
 training:
   epochs: 1
@@ -9,6 +10,9 @@ training:
   warmup_epochs: 0
   save_every: 1
   eval_every: 1
+  amp: false
+  gradient_checkpointing: false
+  log_every: 0
 
 model:
   sensor_channels:
