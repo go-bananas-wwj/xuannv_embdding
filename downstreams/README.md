@@ -1,5 +1,7 @@
 # xuannv_embedding downstream tasks
 
+> 注意：以下命令为框架全部完成后的使用示例。当前 Task 1 仅完成目录与依赖搭建，具体脚本与配置将在后续 Task 中逐步实现。
+
 本目录存放预训练 `AEFModel` 的下游任务评测框架。
 
 ## 安装
