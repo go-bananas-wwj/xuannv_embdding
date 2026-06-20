@@ -20,7 +20,7 @@ def parse_patch_id_from_labelme_name(path: Path) -> str:
     """
     name = path.stem
     parts = name.split("_")
-    if len(parts) < 2 or not parts[0].startswith("patch"):
+    if len(parts) < 2 or parts[0] != "patch" or not parts[1]:
         raise ValueError(f"无法解析 patch id: {path}")
     return f"{parts[0]}_{parts[1]}"
 
@@ -76,4 +76,11 @@ def get_reference_patch_path(patch_dir: Path, patch_id: str) -> Path | None:
     candidates = sorted(patch_dir.glob(f"*_{patch_id}.tif"))
     if not candidates:
         return None
+    if len(candidates) > 1:
+        logger.warning(
+            "patch %s 存在 %d 个候选参考影像，使用第一个: %s",
+            patch_id,
+            len(candidates),
+            candidates,
+        )
     return candidates[0]

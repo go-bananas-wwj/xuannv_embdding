@@ -33,7 +33,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    class_map = json.loads(args.class_map)
+    try:
+        class_map = json.loads(args.class_map)
+    except json.JSONDecodeError as exc:
+        logger.error("--class-map 必须是合法 JSON，例如 '{\"jiazhudongdi\": 1}'")
+        raise SystemExit(1) from exc
 
     out_dir = args.out_dir
     raw_dir = out_dir / "labelme_raw"
@@ -41,8 +45,9 @@ def main() -> None:
     raw_dir.mkdir(parents=True, exist_ok=True)
     mask_dir.mkdir(parents=True, exist_ok=True)
 
-    crs: Any = None
-    transform: list[float] | None = None
+    ref_crs: Any = None
+    ref_transform: list[float] | None = None
+    per_patch: list[dict[str, Any]] = []
 
     # 解压 rar
     logger.info("解压 %s -> %s", args.labelme_rar, raw_dir)
@@ -70,24 +75,46 @@ def main() -> None:
 
         with rasterio.open(ref_path) as src:
             height, width = src.height, src.width
-            crs = src.crs.to_string() if src.crs else None
-            transform = list(src.transform)
+            crs_obj = src.crs.to_string() if src.crs else None
+            transform_obj = list(src.transform)
 
-        mask = rasterize_labelme(label_path, (height, width), class_map)
-        out_mask = mask_dir / f"{patch_id}.tif"
-        with rasterio.open(
-            out_mask,
-            "w",
-            driver="GTiff",
-            height=height,
-            width=width,
-            count=1,
-            dtype=mask.dtype,
-            crs=src.crs,
-            transform=src.transform,
-        ) as dst:
-            dst.write(mask, 1)
+            mask = rasterize_labelme(label_path, (height, width), class_map)
+            out_mask = mask_dir / f"{patch_id}.tif"
+            with rasterio.open(
+                out_mask,
+                "w",
+                driver="GTiff",
+                height=height,
+                width=width,
+                count=1,
+                dtype=mask.dtype,
+                crs=src.crs,
+                transform=src.transform,
+            ) as dst:
+                dst.write(mask, 1)
+
+        if processed == 0:
+            ref_crs = crs_obj
+            ref_transform = transform_obj
+        elif crs_obj != ref_crs or transform_obj != ref_transform:
+            logger.warning(
+                "%s 的 crs/transform 与第一张 patch 不一致",
+                patch_id,
+            )
+
+        per_patch.append(
+            {
+                "patch_id": patch_id,
+                "crs": crs_obj,
+                "transform": transform_obj,
+                "height": height,
+                "width": width,
+            }
+        )
         processed += 1
+
+    if processed == 0:
+        logger.warning("未处理任何 patch，请检查 labelme 文件名、class-map 与 patch_dir")
 
     label_meta = {
         "task": args.task,
@@ -97,8 +124,9 @@ def main() -> None:
         "class_map": class_map,
         "num_patches": processed,
         "mask_dir": str(mask_dir),
-        "crs": crs,
-        "transform": transform,
+        "crs": ref_crs,
+        "transform": ref_transform,
+        "per_patch": per_patch,
     }
     with open(out_dir / "label_meta.json", "w", encoding="utf-8") as f:
         json.dump(label_meta, f, ensure_ascii=False, indent=2)
