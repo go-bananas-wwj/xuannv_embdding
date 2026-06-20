@@ -24,12 +24,19 @@ os.environ.setdefault(
 import dask
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import planetary_computer
 import pystac_client
 import rasterio
 import rasterio._err
 import rasterio.errors
 import stackstac
+import xarray as xr
+from rasterio.crs import CRS
+from rasterio.transform import from_bounds as rio_transform_from_bounds
+from rasterio.warp import Resampling, reproject, transform_bounds
+from rasterio.windows import from_bounds as window_from_bounds
+from rasterio.windows import transform as window_transform
 
 logging.basicConfig(
     level=logging.INFO,
@@ -118,6 +125,135 @@ def _retry_io(
         return wrapper  # type: ignore[return-value]
 
     return decorator
+
+
+def _parse_time(value: Any) -> pd.Timestamp:
+    """将 numpy/xarray 时间值统一转换为 pandas Timestamp。"""
+    if isinstance(value, pd.Timestamp):
+        return value
+    if isinstance(value, np.datetime64):
+        return pd.Timestamp(value)
+    if hasattr(value, "to_pydatetime"):
+        return pd.Timestamp(value.to_pydatetime())
+    raise ValueError(f"无法解析时间值: {value} ({type(value)})")
+
+
+def _monthly_composite_s1(da: xr.DataArray) -> xr.DataArray:
+    """将 S1 同一月份内的多次采集合成为单月均值影像。
+
+    S1 RTC 产品以 0 作为 nodata；合成时把 0 与 NaN 统一视为无效，
+    沿 time 维度做 nanmean，可提升月度覆盖范围并避免单次采集覆盖不足
+    导致整月下載失败。
+    """
+    if da.sizes["time"] <= 1:
+        return da
+    valid = np.isfinite(da) & (da != 0)
+    masked = da.where(valid)
+    comp = masked.mean(dim="time", skipna=True)
+    t0 = _parse_time(da.time.values[0])
+    month_start = np.datetime64(f"{t0.year:04d}-{t0.month:02d}-01")
+    comp = comp.expand_dims("time")
+    comp["time"] = [month_start]
+    return comp
+
+
+def _build_target_grid(
+    aoi: gpd.GeoDataFrame,
+    epsg: int,
+    resolution: float,
+) -> tuple[CRS, Affine, tuple[int, int], tuple[float, float, float, float]]:
+    """根据 AOI 与目标 CRS/分辨率生成规则网格。"""
+    aoi_dst = aoi.to_crs(f"EPSG:{epsg}")
+    left, bottom, right, top = aoi_dst.total_bounds.tolist()
+    width = int(np.ceil((right - left) / resolution))
+    height = int(np.ceil((top - bottom) / resolution))
+    dst_transform = rio_transform_from_bounds(
+        left, bottom, right, top, width=width, height=height
+    )
+    dst_crs = CRS.from_epsg(epsg)
+    return dst_crs, dst_transform, (height, width), (left, bottom, right, top)
+
+
+def _reproject_asset_to_grid(
+    href: str,
+    dst_crs: CRS,
+    dst_transform: Affine,
+    dst_shape: tuple[int, int],
+    aoi_bounds: tuple[float, float, float, float],
+) -> np.ndarray:
+    """用 rasterio 将单个 asset 的 AOI 窗口重投影到目标网格，返回 (1, H, W) 数组。"""
+    with rasterio.open(href) as src:
+        # 先读取 AOI 在源坐标系下的窗口，避免 reproject 拉取整景大文件。
+        win = window_from_bounds(*aoi_bounds, transform=src.transform)
+        src_array = src.read(1, window=win)
+        src_transform = window_transform(win, src.transform)
+        src_crs = src.crs
+        src_nodata = src.nodata
+
+        dst_array = np.empty((1, dst_shape[0], dst_shape[1]), dtype=np.float32)
+        reproject(
+            source=src_array,
+            destination=dst_array,
+            src_transform=src_transform,
+            src_crs=src_crs,
+            dst_transform=dst_transform,
+            dst_crs=dst_crs,
+            resampling=Resampling.bilinear,
+            src_nodata=src_nodata,
+            dst_nodata=np.nan,
+        )
+    # 将 nodata/0 统一为 NaN
+    invalid = ~np.isfinite(dst_array) | (dst_array == 0)
+    dst_array[invalid] = np.nan
+    return dst_array
+
+
+def _stack_s1_manual(
+    items: list[Any],
+    aoi: gpd.GeoDataFrame,
+    epsg: int,
+    resolution: float,
+    assets: list[str],
+) -> xr.Dataset:
+    """当 stackstac 读取 S1 RTC 失败时，逐景手工重投影到统一网格。
+
+    Sentinel-1 RTC 在 Planetary Computer 上偶发 WarpedVRT 块级读取失败，
+    但直接用 rasterio 读取 AOI 窗口通常正常。本函数绕过 stackstac，
+    为每个 item 的每个 asset 做重投影并堆叠成 xarray Dataset。
+    """
+    dst_crs, dst_transform, (height, width), aoi_bounds = _build_target_grid(
+        aoi, epsg, resolution
+    )
+    x_coords = np.arange(width) * dst_transform.a + dst_transform.c + dst_transform.a / 2
+    y_coords = np.arange(height) * dst_transform.e + dst_transform.f + dst_transform.e / 2
+
+    times: list[pd.Timestamp] = []
+    stacked: list[np.ndarray] = []
+    for item in items:
+        times.append(pd.Timestamp(item.datetime))
+        item_arrays: list[np.ndarray] = []
+        for asset in assets:
+            href = planetary_computer.sign(item.assets[asset].href)
+            arr = _reproject_asset_to_grid(
+                href, dst_crs, dst_transform, (height, width), aoi_bounds
+            )
+            item_arrays.append(arr[0])
+        stacked.append(np.stack(item_arrays, axis=0))
+
+    data = np.stack(stacked, axis=0).astype(np.float32)
+    da = xr.DataArray(
+        data,
+        dims=("time", "band", "y", "x"),
+        coords={
+            "time": np.array([pd.Timestamp(t).tz_localize(None) for t in times], dtype="datetime64[s]"),
+            "band": list(assets),
+            "y": y_coords,
+            "x": x_coords,
+        },
+        name="stackstac",
+    )
+    da = da.assign_coords(epsg=epsg)
+    return da.to_dataset(name="stackstac")
 
 
 COLLECTIONS: dict[str, str] = {
@@ -312,36 +448,50 @@ def download_source(
     # 使用 stackstac 堆叠为 xarray Dataset；这里用 latlon bounds 裁剪到 AOI
     assets = DEFAULT_ASSETS.get(source)
     logger.info("读取 assets: %s", assets)
-    ds = _retry()(stackstac.stack)(
-        items,
-        bounds_latlon=bbox,
-        resolution=res,
-        epsg=epsg,
-        dtype="float32",
-        fill_value=np.float32(np.nan),
-        rescale=False,
-        assets=assets,
-        errors_as_nodata=(),
-    )
+    if source == "s1":
+        # S1 RTC 在 PC 端偶发 WarpedVRT 块级读取失败，逐景手工重投影更稳定。
+        ds = _stack_s1_manual(items, aoi, epsg, res, assets or ["vv", "vh"])
+    else:
+        ds = _retry()(stackstac.stack)(
+            items,
+            bounds_latlon=bbox,
+            resolution=res,
+            epsg=epsg,
+            dtype="float32",
+            fill_value=np.float32(np.nan),
+            rescale=False,
+            assets=assets,
+            errors_as_nodata=(),
+        )
 
     logger.info("堆叠结果维度: %s", dict(ds.sizes))
 
-    # 清理无法序列化为 NetCDF 的 stackstac 内部属性
-    ds.attrs.pop("spec", None)
-    for attr_key in list(ds.attrs.keys()):
-        try:
-            _ = str(ds.attrs[attr_key])
-        except Exception:
-            ds.attrs.pop(attr_key, None)
+    # stackstac.stack 返回 DataArray，统一转换为 Dataset 以便后续处理
+    if isinstance(ds, xr.DataArray):
+        ds = ds.to_dataset(name="stackstac")
 
-    # 清理坐标上的非序列化属性
-    for coord in ds.coords.values():
-        for attr_key in list(coord.attrs.keys()):
-            val = coord.attrs[attr_key]
-            if isinstance(val, (list, tuple, dict, set)) or not isinstance(
-                val, (str, int, float, np.generic)
-            ):
-                coord.attrs.pop(attr_key, None)
+    # S1 同一月份通常有多景数据，部分单次采集覆盖不足会导致按时间切片
+    # 校验失败；将其合成为月度均值影像，可提升覆盖并统一时间步长。
+    if source == "s1" and ds.sizes["time"] > 1:
+        data_var = list(ds.data_vars)[0]
+        logger.info("S1 合成月度均值影像: %s", data_var)
+        comp = _monthly_composite_s1(ds[data_var])
+        # 用新的单时间步 DataArray 重建 Dataset，避免旧 time 坐标对齐导致全 NaN。
+        ds = comp.to_dataset(name=data_var)
+
+    # 清理无法序列化为 NetCDF 的 stackstac 内部属性
+    # stackstac 会在 Dataset / 坐标 / 变量上留下 RasterSpec 等对象，netCDF 写入时会失败
+    _allowed_attr_types = (str, int, float, np.generic, list, tuple, np.ndarray, bytes)
+    for obj in [ds, *ds.coords.values(), *ds.data_vars.values()]:
+        for attr_key in list(obj.attrs.keys()):
+            val = obj.attrs[attr_key]
+            if attr_key == "spec" or not isinstance(val, _allowed_attr_types):
+                obj.attrs.pop(attr_key, None)
+            else:
+                try:
+                    _ = str(val)
+                except Exception:
+                    obj.attrs.pop(attr_key, None)
 
     # 丢弃 object 类型坐标（如 proj:bbox / proj:transform 为 set/list，无法序列化为 NetCDF）
     drop_coords = [name for name, coord in ds.coords.items() if coord.dtype == object]

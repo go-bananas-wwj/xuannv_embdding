@@ -81,6 +81,16 @@ def _aoi_bounds_in_crs(region_file: Path, dst_crs: CRS) -> tuple[float, float, f
     return tuple(aoi_dst.total_bounds)  # type: ignore[return-value]
 
 
+def _load_patch_grid(
+    patch_grid_path: Path,
+) -> list[tuple[str, tuple[float, float, float, float]]]:
+    """从 patches_meta JSON 加载预定义 patch 列表。"""
+    with open(patch_grid_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    patches = data if isinstance(data, list) else data.get("patches", [])
+    return [(p["patch_id"], tuple(p["bounds"])) for p in patches]
+
+
 def _read_patch(
     src: rasterio.DatasetReader,
     patch_bounds: tuple[float, float, float, float],
@@ -122,33 +132,37 @@ def preprocess_lulc(
     source_name: str = DEFAULT_SOURCE_NAME,
     date_str: str = DEFAULT_DATE_STR,
     overwrite: bool = False,
+    patch_grid_path: Path | None = None,
 ) -> int:
     """切分 LULC 标签图并返回写入的 patch 数量。"""
     output_dir = output_root / "labels" / source_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    bounds = _aoi_bounds_in_crs(region_file, dst_crs)
-
-    # 将 AOI 边界向外吸附到 10 m 网格，确保与 preprocess.py 生成的 S2/S1/Landsat
-    # patch 网格严格一致。
-    left, bottom, right, top = bounds
-    left = math.floor(left / MASTER_RES) * MASTER_RES
-    bottom = math.floor(bottom / MASTER_RES) * MASTER_RES
-    right = math.ceil(right / MASTER_RES) * MASTER_RES
-    top = math.ceil(top / MASTER_RES) * MASTER_RES
-    bounds = (left, bottom, right, top)
-
-    patches = make_patch_grid(bounds, patch_size_m)
-    logger.info("%s: 生成 %d 个 patches", region, len(patches))
-
-    n_rows = int(np.ceil((bounds[3] - bounds[1]) / patch_size_m))
-
-    with rasterio.open(input_tiff) as src:
-        written = 0
-        for idx, pbounds in enumerate(tqdm(patches, desc=f"{region} LULC")):
+    if patch_grid_path is not None:
+        patches = _load_patch_grid(patch_grid_path)
+    else:
+        bounds = _aoi_bounds_in_crs(region_file, dst_crs)
+        left, bottom, right, top = bounds
+        left = math.floor(left / MASTER_RES) * MASTER_RES
+        bottom = math.floor(bottom / MASTER_RES) * MASTER_RES
+        right = math.ceil(right / MASTER_RES) * MASTER_RES
+        top = math.ceil(top / MASTER_RES) * MASTER_RES
+        bounds = (left, bottom, right, top)
+        raw_patches = make_patch_grid(bounds, patch_size_m)
+        n_rows = int(np.ceil((bounds[3] - bounds[1]) / patch_size_m))
+        patches = []
+        for idx, pbounds in enumerate(raw_patches):
             col = idx // n_rows
             row = idx % n_rows
             patch_id = f"p{col:03d}_r{row:03d}"
+            patches.append((patch_id, pbounds))
+        logger.info("%s: 从 AOI 生成 %d 个 patches", region, len(patches))
+
+    logger.info("%s: 处理 %d 个 patches", region, len(patches))
+
+    with rasterio.open(input_tiff) as src:
+        written = 0
+        for patch_id, pbounds in tqdm(patches, desc=f"{region} LULC"):
             out_path = output_dir / f"{source_name}_{date_str}_{patch_id}.tif"
             if out_path.exists() and not overwrite:
                 continue
@@ -198,6 +212,12 @@ def main(argv: list[str] | None = None) -> int:
     source_name = cfg.get("source_name", DEFAULT_SOURCE_NAME)
     date_str = cfg.get("date_str", DEFAULT_DATE_STR)
 
+    patch_grid_path = cfg.get("patch_grid_path")
+    if patch_grid_path is None:
+        default_path = Path(f"configs/regions/{region}_patches.json")
+        if default_path.exists():
+            patch_grid_path = default_path
+
     preprocess_lulc(
         region=region,
         region_file=region_file,
@@ -209,6 +229,7 @@ def main(argv: list[str] | None = None) -> int:
         source_name=source_name,
         date_str=date_str,
         overwrite=args.overwrite,
+        patch_grid_path=patch_grid_path,
     )
     return 0
 
