@@ -2,6 +2,7 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 import rasterio
 from downstreams.data.split import _stratified_sample, create_stratified_folds
 
@@ -63,10 +64,26 @@ def test_fractions_are_subsets(tmp_path: Path) -> None:
             selected = frac_dict[f"fold_{fold['fold']}"]
             assert set(selected) <= train_set
             frac = float(frac_str)
-            expected_max = max(1, int(len(fold["train"]) * frac)) + 2
-            assert len(selected) <= expected_max
-            if frac >= 1.0:
-                assert len(selected) == len(fold["train"])
+            expected = min(max(1, int(len(fold["train"]) * frac)), len(fold["train"]))
+            assert len(selected) == expected
+
+
+def test_reproducible_fractions(tmp_path: Path) -> None:
+    mask_dir = _make_mask_dir(tmp_path, 30, lambda i: 0.0625 if i % 2 == 0 else 0.0)
+    split1 = create_stratified_folds(mask_dir, n_folds=5, seed=42)
+    split2 = create_stratified_folds(mask_dir, n_folds=5, seed=42)
+    for frac_str in split1["fractions"]:
+        for fold_key in split1["fractions"][frac_str]:
+            sel1 = split1["fractions"][frac_str][fold_key]
+            sel2 = split2["fractions"][frac_str][fold_key]
+            assert sel1 == sel2
+
+
+def test_stratified_sample_duplicate_ids() -> None:
+    ids = ["a", "a", "b", "b"]
+    strata = np.array([0, 0, 1, 1])
+    with pytest.raises(AssertionError):
+        _stratified_sample(ids, strata, n=2, seed=0)
 
 
 def test_stratified_sample_n_smaller_than_strata() -> None:
@@ -91,3 +108,5 @@ def test_kfold_fallback(tmp_path: Path) -> None:
     for fold in split["folds"]:
         assert set(fold["train"]) | set(fold["val"]) | set(fold["test"]) == all_ids
         assert set(fold["train"]) & set(fold["test"]) == set()
+        assert set(fold["train"]) & set(fold["val"]) == set()
+        assert set(fold["val"]) & set(fold["test"]) == set()
