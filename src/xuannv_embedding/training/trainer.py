@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -9,7 +10,7 @@ import torch
 import torch.distributed as dist
 from torch import nn
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, DistributedSampler
 
 from xuannv_embedding.training.amp_utils import get_autocast, get_grad_scaler
 from xuannv_embedding.training.checkpoint import load_checkpoint, save_checkpoint
@@ -36,6 +37,7 @@ class Trainer:
         val_loader: DataLoader | None,
         device: torch.device | str | None,
         criterion: nn.Module,
+        train_sampler: DistributedSampler | None = None,
     ) -> None:
         """初始化 Trainer。
 
@@ -46,12 +48,15 @@ class Trainer:
             val_loader: 验证数据加载器，可选。
             device: 训练设备；为 ``None`` 时自动选择。
             criterion: 损失函数模块。
+            train_sampler: 训练集的 DistributedSampler；提供时每个 epoch 调用
+                ``set_epoch`` 以保证打乱顺序的正确性。
         """
         self.cfg = cfg
         self.model = model
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.criterion = criterion
+        self.train_sampler = train_sampler
 
         if device is None:
             device = get_device()
@@ -59,10 +64,13 @@ class Trainer:
 
         self.model = self.model.to(self.device)
 
-        # DDP 包装：仅在分布式已初始化时进行。
+        # DDP 包装：仅在分布式已初始化时进行；CPU 后端不传递 device_ids。
         if dist.is_initialized():
             device_index = self.device.index if self.device.index is not None else 0
-            self.model = DDP(self.model, device_ids=[device_index])
+            ddp_kwargs: dict[str, Any] = {}
+            if self.device.type in ("cuda", "npu"):
+                ddp_kwargs["device_ids"] = [device_index]
+            self.model = DDP(self.model, **ddp_kwargs)
 
         self.optimizer = build_optimizer(
             self._unwrap_model(),
@@ -348,21 +356,22 @@ class Trainer:
 
         return metrics
 
+    _EPOCH_FILE_RE = re.compile(r"^epoch_(\d+)\.pt$")
+
     def _cleanup_old_checkpoints(self, keep_last: int = 3) -> None:
         """仅保留 1-based epoch 编号最大的 ``keep_last`` 个 checkpoint，不删除 best.pt。"""
-        checkpoints = list(self.output_dir.glob("epoch_*.pt"))
+        checkpoints: list[tuple[int, Path]] = []
+        for path in self.output_dir.glob("epoch_*.pt"):
+            match = self._EPOCH_FILE_RE.match(path.name)
+            if not match:
+                continue
+            checkpoints.append((int(match.group(1)), path))
+
         if len(checkpoints) <= keep_last:
             return
 
-        def _epoch_number(path: Path) -> int:
-            name = path.stem  # e.g., "epoch_10"
-            try:
-                return int(name.split("_")[-1])
-            except ValueError:
-                return -1
-
-        checkpoints.sort(key=_epoch_number)
-        for old_ckpt in checkpoints[:-keep_last]:
+        checkpoints.sort(key=lambda item: item[0])
+        for _, old_ckpt in checkpoints[:-keep_last]:
             if old_ckpt.name == "best.pt":
                 continue
             old_ckpt.unlink()
@@ -386,6 +395,8 @@ class Trainer:
         try:
             for epoch in range(self.epoch, total_epochs):
                 self.epoch = epoch
+                if self.train_sampler is not None:
+                    self.train_sampler.set_epoch(epoch)
                 train_metrics = self.train_epoch()
                 val_metrics = self.val_epoch()
 
@@ -406,6 +417,10 @@ class Trainer:
                             self.scheduler,
                             epoch,
                             {"train": train_metrics, "val": val_metrics},
+                            trainer_state={
+                                "best_val_loss": self.best_val_loss,
+                                "best_epoch": self.best_epoch,
+                            },
                         )
 
                         # 更新 best.pt。
@@ -449,6 +464,10 @@ class Trainer:
             self.scheduler,
             self.epoch,
             {},
+            trainer_state={
+                "best_val_loss": self.best_val_loss,
+                "best_epoch": self.best_epoch,
+            },
         )
 
     def load(self, path: str | Path) -> dict[str, Any]:
@@ -461,4 +480,7 @@ class Trainer:
             device=self.device,
         )
         self.epoch = state.get("epoch", 0) + 1
+        trainer_state = state.get("trainer_state", {}) or {}
+        self.best_val_loss = trainer_state.get("best_val_loss", float("inf"))
+        self.best_epoch = trainer_state.get("best_epoch", -1)
         return state

@@ -7,11 +7,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import pytest
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
+from xuannv_embedding.config import Config, ConfigError
 from xuannv_embedding.models.model import AEFOutput
 from xuannv_embedding.training.checkpoint import load_checkpoint, save_checkpoint
 from xuannv_embedding.training.losses import (
@@ -21,6 +23,53 @@ from xuannv_embedding.training.losses import (
 )
 from xuannv_embedding.training.optimizer import build_optimizer, build_scheduler
 from xuannv_embedding.training.trainer import Trainer
+
+
+def test_config_num_months_mismatch(tmp_path: Path) -> None:
+    """验证 data.num_months 与 model.num_months 不一致时抛出 ConfigError。"""
+    base = tmp_path / "base.yaml"
+    derived = tmp_path / "derived.yaml"
+
+    base.write_text(
+        """
+experiment:
+  name: mismatch_test
+data:
+  root: /data/xuannv_embedding/processed/base
+  region: base
+  manifest_path: /data/xuannv_embedding/processed/base/manifest.json
+model:
+  embed_dim: 64
+  sensor_channels:
+    s2: 12
+  target_heads:
+    s2_recon:
+      loss_type: continuous
+      channels: 12
+training:
+  epochs: 1
+  lr: 1.0e-4
+  weight_decay: 0.05
+  warmup_epochs: 0
+  gradient_accumulation_steps: 1
+  save_every: 1
+  eval_every: 1
+""",
+        encoding="utf-8",
+    )
+    derived.write_text(
+        """
+_base_: base.yaml
+data:
+  num_months: 12
+model:
+  num_months: 17
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="num_months"):
+        Config.from_yaml(derived)
 
 
 def test_reconstruction_loss_l1() -> None:
@@ -192,7 +241,16 @@ def test_checkpoint_save_load() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         ckpt_path = Path(tmpdir) / "checkpoints" / "epoch_0.pt"
         metrics = {"loss": 0.123}
-        save_checkpoint(ckpt_path, model, optimizer, scheduler, epoch=3, metrics=metrics)
+        trainer_state = {"best_val_loss": 0.456, "best_epoch": 9}
+        save_checkpoint(
+            ckpt_path,
+            model,
+            optimizer,
+            scheduler,
+            epoch=3,
+            metrics=metrics,
+            trainer_state=trainer_state,
+        )
         assert ckpt_path.exists()
 
         # 新实例加载 checkpoint。
@@ -204,6 +262,7 @@ def test_checkpoint_save_load() -> None:
 
         assert state["epoch"] == 3
         assert state["metrics"] == metrics
+        assert state["trainer_state"] == trainer_state
 
         for old_param, new_param in zip(model.parameters(), new_model.parameters()):
             assert torch.allclose(old_param, new_param)
@@ -418,12 +477,13 @@ def test_trainer_single_epoch(tmp_path: Path) -> None:
     assert ckpt_files[0].name == "epoch_1.pt"
 
 
-def test_trainer_amp_noop_scaler() -> None:
+def test_trainer_amp_noop_scaler(tmp_path: Path) -> None:
     """AMP 关闭时应使用 no-op scaler，训练仍能正常收敛。"""
     cfg = _make_trainer_cfg(
         epochs=1,
         amp=False,
         experiment_name="test_trainer_amp_noop",
+        output_dir=tmp_path,
     )
 
     model = _DummyAEFModel(embed_dim=8)
@@ -454,7 +514,7 @@ def test_trainer_amp_noop_scaler() -> None:
     assert changed, "AMP 关闭时参数应被更新"
 
 
-def test_trainer_wandb_logging(monkeypatch) -> None:
+def test_trainer_wandb_logging(monkeypatch, tmp_path: Path) -> None:
     """验证 use_wandb=True 时会按预期调用 wandb.log。"""
     logged: list[dict[str, Any]] = []
     init_calls: list[dict[str, Any]] = []
@@ -476,6 +536,7 @@ def test_trainer_wandb_logging(monkeypatch) -> None:
         log_every=1,
         use_wandb=True,
         experiment_name="test_trainer_wandb",
+        output_dir=tmp_path,
     )
 
     model = _DummyAEFModel(embed_dim=8)
@@ -509,7 +570,7 @@ def test_trainer_wandb_logging(monkeypatch) -> None:
     assert any("train/lr" in entry["metrics"] for entry in logged)
 
 
-def test_trainer_utilization_logging(monkeypatch) -> None:
+def test_trainer_utilization_logging(monkeypatch, tmp_path: Path) -> None:
     """验证设备利用率指标会被正确命名并记录到 WANDB。"""
     logged: list[dict[str, Any]] = []
 
@@ -529,6 +590,7 @@ def test_trainer_utilization_logging(monkeypatch) -> None:
         epochs=1,
         use_wandb=True,
         experiment_name="test_trainer_util",
+        output_dir=tmp_path,
     )
 
     model = _DummyAEFModel(embed_dim=8)
@@ -667,3 +729,95 @@ def test_trainer_checkpoint_best_and_latest3(tmp_path: Path) -> None:
     assert best_path.exists()
     state = torch.load(best_path, weights_only=True)
     assert state["epoch"] == 5
+
+
+def test_cleanup_old_checkpoints_ignores_malformed_names(tmp_path: Path) -> None:
+    """验证 _cleanup_old_checkpoints 严格匹配 epoch_N.pt，忽略畸形文件名。"""
+    cfg = _make_trainer_cfg(
+        epochs=1,
+        experiment_name="test_cleanup_regex",
+        output_dir=tmp_path,
+    )
+
+    model = _DummyAEFModel(embed_dim=4)
+    dataset = _DummyDataset(size=1)
+    loader = DataLoader(dataset, batch_size=1, collate_fn=_dummy_collate)
+    target_cfg = {"s2_recon": {"loss_type": "l1", "channels": 10, "weight": 1.0}}
+    criterion = TotalLoss(target_cfg)
+
+    trainer = Trainer(
+        cfg=cfg,
+        model=model,
+        train_loader=loader,
+        val_loader=None,
+        device="cpu",
+        criterion=criterion,
+    )
+
+    # 创建符合与不符合命名规则的文件。
+    (tmp_path / "epoch_1.pt").touch()
+    (tmp_path / "epoch_2.pt").touch()
+    (tmp_path / "epoch_3.pt").touch()
+    (tmp_path / "epoch_10.pt").touch()
+    (tmp_path / "epoch_.pt").touch()
+    (tmp_path / "epoch_not_a_number.pt").touch()
+    (tmp_path / "best.pt").touch()
+
+    trainer._cleanup_old_checkpoints(keep_last=3)
+
+    remaining = {p.name for p in tmp_path.glob("*.pt")}
+    # 严格匹配 epoch_N.pt 的文件按编号保留最近 3 个；畸形文件名被跳过（不删除也不计入）。
+    assert "epoch_1.pt" not in remaining
+    assert "epoch_2.pt" in remaining
+    assert "epoch_3.pt" in remaining
+    assert "epoch_10.pt" in remaining
+    assert "best.pt" in remaining
+    assert "epoch_.pt" in remaining
+    assert "epoch_not_a_number.pt" in remaining
+
+
+def test_trainer_load_restores_best_state(tmp_path: Path) -> None:
+    """验证 Trainer.load() 能恢复 best_val_loss 与 best_epoch。"""
+    cfg = _make_trainer_cfg(
+        epochs=1,
+        experiment_name="test_trainer_resume",
+        output_dir=tmp_path,
+    )
+
+    model = _DummyAEFModel(embed_dim=8)
+    dataset = _DummyDataset(size=2)
+    loader = DataLoader(dataset, batch_size=2, collate_fn=_dummy_collate)
+    target_cfg = {"s2_recon": {"loss_type": "l1", "channels": 10, "weight": 1.0}}
+    criterion = TotalLoss(target_cfg)
+
+    trainer = Trainer(
+        cfg=cfg,
+        model=model,
+        train_loader=loader,
+        val_loader=None,
+        device="cpu",
+        criterion=criterion,
+    )
+
+    # 手动设置并保存最佳状态与 epoch。
+    trainer.epoch = 7
+    trainer.best_val_loss = 0.123
+    trainer.best_epoch = 7
+    ckpt_path = tmp_path / "resume.pt"
+    trainer.save(ckpt_path)
+
+    # 新 Trainer 实例加载后应恢复该状态。
+    new_model = _DummyAEFModel(embed_dim=8)
+    new_trainer = Trainer(
+        cfg=cfg,
+        model=new_model,
+        train_loader=loader,
+        val_loader=None,
+        device="cpu",
+        criterion=criterion,
+    )
+    new_trainer.load(ckpt_path)
+
+    assert new_trainer.best_val_loss == 0.123
+    assert new_trainer.best_epoch == 7
+    assert new_trainer.epoch == 8  # epoch = saved_epoch + 1

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 # AMP 工具：屏蔽 NPU / CUDA / CPU 的 autocast 与 GradScaler 差异。
-from contextlib import contextmanager, nullcontext
-from typing import Any, Iterator
+from contextlib import nullcontext
+from typing import Any
 
 import torch
 
@@ -60,13 +60,6 @@ def get_autocast(device: torch.device, enabled: bool) -> Any:
         return torch.autocast(device_type=device.type, enabled=True)
     except Exception:
         return nullcontext()
-
-
-@contextmanager
-def _autocast_ctx(enabled: bool, device_type: str) -> Iterator[None]:
-    """在 ``get_autocast`` 返回 torch.autocast 时使用的兼容上下文。"""
-    with torch.autocast(device_type=device_type, enabled=enabled):
-        yield
 
 
 def get_grad_scaler(device: torch.device, enabled: bool) -> Any:
