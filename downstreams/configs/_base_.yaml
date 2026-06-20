@@ -1,0 +1,21 @@
+experiment:
+  name: downstream_construction_segmentation
+  seed: 42
+  device: auto
+
+training:
+  epochs: 100
+  lr: 1.0e-4
+  weight_decay: 1.0e-2
+  batch_size: 8
+  num_workers: 0
+  early_stop_patience: 10
+  head_type: upernet
+  loss: focal_dice
+  pos_weight: 10.0
+  label_fraction: 1.0
+  month: 202604
+
+data:
+  embed_dim: 64
+  num_classes: 2

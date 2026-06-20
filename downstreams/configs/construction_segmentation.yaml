@@ -1,0 +1,9 @@
+_base_: _base_.yaml
+
+experiment:
+  name: construction_site_haidian
+
+training:
+  head_type: upernet
+  loss: focal_dice
+  lr: 1.0e-4
