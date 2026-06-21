@@ -1,0 +1,13 @@
+_base_: v1.1_distill_quick.yaml
+
+experiment:
+  name: v1.1_distill_long_stable
+  wandb_run_name: "v1.1_distill_long_stable_100ep"
+
+training:
+  epochs: 100
+  save_every: 10
+  eval_every: 5
+  log_every: 10
+  amp: false
+  gradient_checkpointing: false
