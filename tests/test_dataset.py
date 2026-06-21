@@ -315,3 +315,24 @@ def test_dataset_caches_samples(tmp_path: Path) -> None:
     assert call_count[0] == 0, "second access should not call _load_sample"
     assert sample1["patch_id"] == sample2["patch_id"]
     assert torch.equal(sample1["source_frames"]["s2"], sample2["source_frames"]["s2"])
+
+
+def test_build_dataloader_with_cache_dir(tmp_path: Path) -> None:
+    from xuannv_embedding.config import DataConfig
+
+    cfg = DataConfig(
+        root=MANIFEST_PATH.parent,
+        region="harbin",
+        manifest_path=MANIFEST_PATH,
+        statistics_dir=STATISTICS_DIR,
+        max_patches=1,
+        batch_size=1,
+        num_workers=0,
+        patch_size=128,
+        sources=["s2"],
+        cache_dir=tmp_path / "cache",
+    )
+    loader = build_dataloader(cfg, split="train")
+    batch = next(iter(loader))
+    assert batch["source_frames"]["s2"].shape == (1, 17, 12, 128, 128)
+    assert (tmp_path / "cache").exists()
