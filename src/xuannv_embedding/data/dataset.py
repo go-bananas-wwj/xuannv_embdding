@@ -38,6 +38,7 @@ class MonthlyEmbeddingDataset(Dataset):
         ref_month: int = 1,
         teacher_embedding_root: Path | None = None,
         region: str | None = None,
+        cache_dir: Path | None = None,
     ) -> None:
         """初始化 Dataset。
 
@@ -53,6 +54,7 @@ class MonthlyEmbeddingDataset(Dataset):
             teacher_embedding_root: 教师 embedding 根目录，
                 按 ``{region}/{patch_id}/202512_embedding_map.pt`` 组织。
             region: 当前 dataset 的默认 region；manifest 条目中的 ``region`` 字段优先级更高。
+            cache_dir: 预处理后样本缓存目录；None 表示禁用缓存。
         """
         self.manifest_path = Path(manifest_path)
         self.statistics_dir = Path(statistics_dir)
@@ -66,6 +68,7 @@ class MonthlyEmbeddingDataset(Dataset):
             Path(teacher_embedding_root) if teacher_embedding_root else None
         )
         self.region = region
+        self.cache_dir = Path(cache_dir) if cache_dir else None
         self.month_bins = self._generate_month_bins()
 
         self.root_dir = self.manifest_path.parent
@@ -76,6 +79,7 @@ class MonthlyEmbeddingDataset(Dataset):
         self.statistics: dict[tuple[str, str], dict[str, Any]] = {}
         self.source_channels: dict[str, int] = {}
         self._load_statistics()
+        self._ensure_cache_valid()
 
         # 记录每个 source 的空间尺寸，缺失时用于构造空张量
         self.source_hw: dict[str, tuple[int, int]] = {}
@@ -171,16 +175,67 @@ class MonthlyEmbeddingDataset(Dataset):
             self.source_channels[source] = inferred_channels
             self.source_hw[source] = inferred_hw or (self.patch_size, self.patch_size)
 
+    def _cache_dir_for_patch(self, entry: dict[str, Any]) -> Path:
+        assert self.cache_dir is not None
+        region = entry.get("region", self.region or "")
+        return self.cache_dir / f"preprocessed_{self.patch_size}" / str(region)
+
+    def _cache_file_for(self, entry: dict[str, Any]) -> Path:
+        return self._cache_dir_for_patch(entry) / f"{entry['patch_id']}.pt"
+
+    def _compute_stats_hash(self) -> str:
+        import hashlib
+
+        h = hashlib.sha256()
+        for key in sorted(self.statistics.keys()):
+            stats = self.statistics[key]
+            h.update(json.dumps(stats, sort_keys=True).encode("utf-8"))
+        return h.hexdigest()[:16]
+
+    def _cache_meta(self) -> dict[str, Any]:
+        return {
+            "patch_size": self.patch_size,
+            "num_months": self.num_months,
+            "sources": sorted(self.sources),
+            "statistics_hash": self._compute_stats_hash(),
+            "teacher_embedding_root": (
+                str(self.teacher_embedding_root) if self.teacher_embedding_root else None
+            ),
+            "version": "1.0",
+        }
+
+    def _ensure_cache_valid(self) -> None:
+        if self.cache_dir is None:
+            return
+
+        preproc_dir = self.cache_dir / f"preprocessed_{self.patch_size}"
+        meta_path = preproc_dir / "cache_meta.json"
+        current_meta = self._cache_meta()
+
+        if meta_path.exists():
+            try:
+                old_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                if old_meta == current_meta:
+                    return
+                logger.info("Cache meta changed, clearing %s", preproc_dir)
+            except Exception as exc:
+                logger.warning("Failed to read cache meta %s: %s", meta_path, exc)
+
+        if preproc_dir.exists():
+            import shutil
+
+            shutil.rmtree(preproc_dir)
+        preproc_dir.mkdir(parents=True, exist_ok=True)
+        meta_path.write_text(
+            json.dumps(current_meta, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+
     def __len__(self) -> int:
         return len(self.manifest)
 
-    def __getitem__(self, idx: int) -> dict[str, Any]:
-        """获取单个样本。
-
-        返回:
-            包含 ``patch_id``、``source_frames``、``source_masks``、``timestamps`` 的字典。
-            其中 ``timestamps`` 按 source 组织，便于处理不同 source 的时序差异。
-        """
+    def _load_sample(self, idx: int) -> dict[str, Any]:
+        """从磁盘加载并预处理一个样本（不含缓存）。"""
         entry = self.manifest[idx]
         patch_id: str = entry["patch_id"]
 
@@ -307,5 +362,33 @@ class MonthlyEmbeddingDataset(Dataset):
                 sample["teacher_embedding_map"] = torch.zeros(64, *ref_hw, dtype=torch.float32)
         else:
             sample["teacher_embedding_map"] = torch.zeros(64, *ref_hw, dtype=torch.float32)
+
+        return sample
+
+    def __getitem__(self, idx: int) -> dict[str, Any]:
+        """获取单个样本；优先返回磁盘缓存。"""
+        entry = self.manifest[idx]
+
+        if self.cache_dir is not None:
+            cache_file = self._cache_file_for(entry)
+            if cache_file.exists():
+                try:
+                    return torch.load(cache_file, map_location="cpu", weights_only=False)
+                except Exception as exc:
+                    logger.warning("Failed to load cache %s: %s", cache_file, exc)
+                    cache_file.unlink(missing_ok=True)
+
+        sample = self._load_sample(idx)
+
+        if self.cache_dir is not None:
+            cache_file = self._cache_file_for(entry)
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            tmp = cache_file.with_suffix(".tmp")
+            try:
+                torch.save(sample, tmp)
+                tmp.replace(cache_file)
+            except Exception as exc:
+                logger.warning("Failed to save cache %s: %s", cache_file, exc)
+                tmp.unlink(missing_ok=True)
 
         return sample

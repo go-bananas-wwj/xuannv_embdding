@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 # Dataset、collate 与 transforms 的单元测试
+import json
 from pathlib import Path
 
 import numpy as np
@@ -262,3 +263,44 @@ data:
     )
     cfg = Config.from_yaml(yaml_path)
     assert cfg.data.cache_dir == Path("/tmp/cache")
+
+
+def test_dataset_caches_samples(tmp_path: Path) -> None:
+    root = tmp_path / "processed" / "test"
+    root.mkdir(parents=True)
+    stats_dir = tmp_path / "statistics" / "test"
+    stats_dir.mkdir(parents=True)
+
+    s2_dir = root / "patches" / "s2"
+    _write_tiff(
+        s2_dir / "s2_20250102_patch_000000.tif",
+        np.full((1, 4, 4), 3.0, dtype=np.float32),
+    )
+
+    manifest = [
+        {
+            "patch_id": "patch_000000",
+            "s2": ["patches/s2/s2_20250102_patch_000000.tif"],
+        }
+    ]
+    manifest_path = root / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    cache_dir = tmp_path / "cache"
+    dataset = MonthlyEmbeddingDataset(
+        manifest_path=manifest_path,
+        statistics_dir=stats_dir,
+        sources=["s2"],
+        num_months=1,
+        patch_size=4,
+        region="test",
+        cache_dir=cache_dir,
+    )
+
+    sample1 = dataset[0]
+    cache_file = cache_dir / "preprocessed_4" / "test" / "patch_000000.pt"
+    assert cache_file.exists()
+
+    sample2 = dataset[0]
+    assert sample1["patch_id"] == sample2["patch_id"]
+    assert torch.equal(sample1["source_frames"]["s2"], sample2["source_frames"]["s2"])
