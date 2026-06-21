@@ -237,4 +237,5 @@ def prepare_batch(
         "highres_masks": highres_masks,
         "targets": targets,
         "target_masks": target_masks,
+        "teacher_embedding_map": batch.get("teacher_embedding_map"),
     }

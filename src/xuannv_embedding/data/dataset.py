@@ -36,6 +36,8 @@ class MonthlyEmbeddingDataset(Dataset):
         num_months: int = 17,
         ref_year: int = 2025,
         ref_month: int = 1,
+        teacher_embedding_root: Path | None = None,
+        region: str | None = None,
     ) -> None:
         """初始化 Dataset。
 
@@ -48,6 +50,9 @@ class MonthlyEmbeddingDataset(Dataset):
             num_months: 月度 bin 数量，阶段一默认为 17（2025-01 至 2026-05）。
             ref_year: 月度 bin 起始年份。
             ref_month: 月度 bin 起始月份。
+            teacher_embedding_root: 教师 embedding 根目录，
+                按 ``{region}/{patch_id}/202512_embedding_map.pt`` 组织。
+            region: 当前 dataset 的默认 region；manifest 条目中的 ``region`` 字段优先级更高。
         """
         self.manifest_path = Path(manifest_path)
         self.statistics_dir = Path(statistics_dir)
@@ -57,6 +62,10 @@ class MonthlyEmbeddingDataset(Dataset):
         self.num_months = num_months
         self.ref_year = ref_year
         self.ref_month = ref_month
+        self.teacher_embedding_root = (
+            Path(teacher_embedding_root) if teacher_embedding_root else None
+        )
+        self.region = region
         self.month_bins = self._generate_month_bins()
 
         self.root_dir = self.manifest_path.parent
@@ -64,7 +73,7 @@ class MonthlyEmbeddingDataset(Dataset):
         if self.max_patches is not None:
             self.manifest = self.manifest[: self.max_patches]
 
-        self.statistics: dict[str, dict[str, Any]] = {}
+        self.statistics: dict[tuple[str, str], dict[str, Any]] = {}
         self.source_channels: dict[str, int] = {}
         self._load_statistics()
 
@@ -108,16 +117,37 @@ class MonthlyEmbeddingDataset(Dataset):
         return manifest
 
     def _load_statistics(self) -> None:
-        """加载各 source 的 mean/std 统计量，并记录波段数。"""
-        for source in self.sources:
-            stat_path = self.statistics_dir / f"{source}_stats.json"
-            if stat_path.exists():
-                with stat_path.open("r", encoding="utf-8") as f:
-                    stats: dict[str, Any] = json.load(f)
-                self.statistics[source] = stats
-                self.source_channels[source] = len(stats.get("mean", []))
-            else:
-                logger.warning("统计量文件不存在: %s，将跳过该 source 归一化", stat_path)
+        """加载各 (region, source) 的 mean/std 统计量，并记录波段数。
+
+        优先读取 ``statistics_dir/{region}/{source}_stats.json``，
+        不存在时回退到 ``statistics_dir/{source}_stats.json``。
+        """
+        regions: set[str] = set()
+        for entry in self.manifest:
+            regions.add(entry.get("region", self.region or ""))
+        if "" in regions and self.region:
+            regions.discard("")
+            regions.add(self.region)
+
+        for region in regions:
+            for source in self.sources:
+                candidates = [self.statistics_dir / f"{source}_stats.json"]
+                if region:
+                    candidates.insert(0, self.statistics_dir / region / f"{source}_stats.json")
+                for stat_path in candidates:
+                    if stat_path.exists():
+                        with stat_path.open("r", encoding="utf-8") as f:
+                            stats: dict[str, Any] = json.load(f)
+                        self.statistics[(region, source)] = stats
+                        self.source_channels[source] = len(stats.get("mean", []))
+                        break
+                else:
+                    logger.warning(
+                        "统计量文件不存在: %s，将跳过 region=%s source=%s 归一化",
+                        candidates,
+                        region,
+                        source,
+                    )
 
     def _infer_geometry(self) -> None:
         """推断每个 source 的通道数与空间尺寸。"""
@@ -197,8 +227,10 @@ class MonthlyEmbeddingDataset(Dataset):
                 # 将影像中的 NaN/Inf 填充为 0；有效性由独立的 source_masks 控制。
                 if np.issubdtype(array.dtype, np.floating):
                     array = np.nan_to_num(array, nan=0.0, posinf=0.0, neginf=0.0)
-                if source in self.statistics:
-                    stats = self.statistics[source]
+                region = entry.get("region", self.region or "")
+                stats_key = (region, source)
+                if stats_key in self.statistics:
+                    stats = self.statistics[stats_key]
                     array = normalize(array, stats["mean"], stats["std"])
 
                 frame_list.append(torch.from_numpy(array))
@@ -255,5 +287,25 @@ class MonthlyEmbeddingDataset(Dataset):
             sample["source_frames"][source] = binned_frames
             sample["source_masks"][source] = binned_masks
             sample["timestamps"][source] = month_timestamps
+
+        # 加载教师 embedding；缺失时用零占位，保证 collate 可拼接。
+        region = entry.get("region", self.region or "")
+        temporal_sources = [s for s in self.sources if not s.startswith("highres")]
+        if temporal_sources:
+            ref_hw = self.source_hw.get(temporal_sources[0], (self.patch_size, self.patch_size))
+        else:
+            ref_hw = (self.patch_size, self.patch_size)
+
+        if self.teacher_embedding_root is not None and region:
+            teacher_path = (
+                self.teacher_embedding_root / region / patch_id / "202512_embedding_map.pt"
+            )
+            if teacher_path.exists():
+                sample["teacher_embedding_map"] = torch.load(teacher_path, map_location="cpu")
+            else:
+                logger.warning("Teacher embedding missing: %s", teacher_path)
+                sample["teacher_embedding_map"] = torch.zeros(64, *ref_hw, dtype=torch.float32)
+        else:
+            sample["teacher_embedding_map"] = torch.zeros(64, *ref_hw, dtype=torch.float32)
 
         return sample
