@@ -1,11 +1,45 @@
-_base_: base.yaml
-
 experiment:
   name: haidian_128_v1
-
+  seed: 42
+  use_wandb: true
+  wandb_project: xuannv-embedding-stage1
+model:
+  embed_dim: 64
+  stem_dim: 32
+  stp:
+    space_dim: 512
+    time_dim: 256
+    precision_dim: 128
+    num_blocks: 6
+    num_heads: 8
+  sensor_channels:
+    s2: 12
+    s1: 2
+    landsat: 7
+    highres_optical_haidian: 4
+    highres_optical_harbin: 3
+    highres_sar_haidian: 1
+  target_heads:
+    s2_recon:
+      loss_type: continuous
+      channels: 12
+      weight: 1.0
+    s1_recon:
+      loss_type: continuous
+      channels: 2
+      weight: 1.0
+    landsat_recon:
+      loss_type: continuous
+      channels: 7
+      weight: 1.0
+    worldcover:
+      loss_type: categorical
+      channels: 9
+      weight: 0.5
+  num_months: 17
 training:
   epochs: 100
-  lr: 1.0e-4
+  lr: 0.0001
   weight_decay: 0.05
   warmup_epochs: 5
   gradient_accumulation_steps: 1
@@ -14,31 +48,35 @@ training:
   amp: true
   gradient_checkpointing: true
   log_every: 0
-
-model:
-  num_months: 17
-  sensor_channels:
-    s2: 12
-    s1: 2
-    landsat: 7
-  stp:
-    space_dim: 512
-    time_dim: 256
-    precision_dim: 128
-    num_blocks: 6
-    num_heads: 8
-
 data:
-  region: haidian
   root: /data/xuannv_embedding/processed/haidian
+  region: haidian
   manifest_path: /data/xuannv_embedding/processed/haidian/manifest.json
   statistics_dir: /data/xuannv_embedding/statistics/haidian
-  patch_size: 128
   num_samples: 0
   batch_size: 4
   num_workers: 2
+  patch_size: 128
+  months:
+  - 2025-01
+  - 2025-02
+  - 2025-03
+  - 2025-04
+  - 2025-05
+  - 2025-06
+  - 2025-07
+  - 2025-08
+  - 2025-09
+  - 2025-10
+  - 2025-11
+  - 2025-12
+  - 2026-01
+  - 2026-02
+  - 2026-03
+  - 2026-04
+  - 2026-05
   sources:
-    - s2
-    - s1
-    - landsat
-    - worldcover
+  - s2
+  - s1
+  - landsat
+  - worldcover
