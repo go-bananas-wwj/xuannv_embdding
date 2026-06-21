@@ -240,12 +240,7 @@ def generate_version_comparison_grid(patch_id: str) -> Path:
 
 
 def main() -> None:
-    # 1. 每个版本每个 patch 生成 comprehensive 图
-    for patch_id in SELECTED_PATCHES:
-        for version_name, cfg in VERSIONS.items():
-            generate_comprehensive(patch_id, version_name, cfg["emb_root"], cfg["month"], cfg["pred_dirs"])
-
-    # 2. 每个 patch 生成版本对比汇总图
+    # 为每个 patch 生成版本对比汇总图（包含各版本 Embedding PCA 与下游 Prediction）
     for patch_id in SELECTED_PATCHES:
         generate_version_comparison_grid(patch_id)
 
