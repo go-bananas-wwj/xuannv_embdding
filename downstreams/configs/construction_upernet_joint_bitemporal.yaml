@@ -1,7 +1,7 @@
 _base_: _base_.yaml
 
 experiment:
-  name: construction_harbin_bitemporal_upernet_v2
+  name: construction_haidian_harbin_joint_bitemporal_upernet_v2
 
 training:
   head_type: upernet
