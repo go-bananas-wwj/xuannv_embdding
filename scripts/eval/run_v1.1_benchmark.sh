@@ -2,10 +2,10 @@
 set -e
 
 # Run full 5-task × 5-fold benchmark for a trained v1.1 checkpoint.
-# Usage: scripts/eval/run_v1.1_benchmark.sh <checkpoint_path> [output_root]
+# Usage: scripts/eval/run_v1.1_benchmark.sh [checkpoint_path] [output_root]
 
-CHECKPOINT="$1"
-OUTPUT_ROOT="${2:-/data/xuannv_embedding/experiments/v1.1_benchmark}"
+CHECKPOINT="${1:-}"
+OUTPUT_ROOT="${2:-/data/xuannv_embedding/experiments/v1.1_distill_long_stable_50ep_benchmark}"
 EMB_ROOT="/data/xuannv_embedding/embeddings/v1.1_labeled"
 
 WORKTREE="/root/workspace/xuannv/.worktrees/feat-multitask-downstream"
@@ -14,9 +14,13 @@ cd "$WORKTREE"
 mkdir -p "$OUTPUT_ROOT"
 
 echo "==> Extracting v1.1 embeddings for all labeled patches ..."
+CKPT_ARGS=""
+if [[ -n "$CHECKPOINT" ]]; then
+  CKPT_ARGS="--checkpoint $CHECKPOINT"
+fi
 python downstreams/scripts/precompute_embeddings.py \
   --config configs/v1.1_extract_labeled_all.yaml \
-  --checkpoint "$CHECKPOINT" \
+  $CKPT_ARGS \
   --regions harbin haidian \
   --output-root "$EMB_ROOT"
 
