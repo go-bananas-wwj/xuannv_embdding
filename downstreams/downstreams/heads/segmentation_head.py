@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -8,12 +9,28 @@ from downstreams.heads.base import TaskHead
 from downstreams.heads.linear_probe import LinearProbeHead
 
 
+def _init_foreground_bias(module: nn.Module, pos_prior: float | None, fg_index: int = 1) -> None:
+    """根据前景先验初始化二分类输出层的 foreground bias。"""
+    if pos_prior is None or pos_prior <= 0 or pos_prior >= 1:
+        return
+    if hasattr(module, "bias") and module.bias is not None:
+        with torch.no_grad():
+            module.bias[fg_index].fill_(float(np.log(pos_prior / (1.0 - pos_prior))))
+
+
 class FCNHead(TaskHead):
-    def __init__(self, embed_dim: int, num_classes: int, hidden_dim: int = 256) -> None:
+    def __init__(
+        self,
+        embed_dim: int,
+        num_classes: int,
+        hidden_dim: int = 256,
+        pos_prior: float | None = None,
+    ) -> None:
         super().__init__()
         self.conv1 = nn.Conv2d(embed_dim, hidden_dim, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm2d(hidden_dim)
         self.conv2 = nn.Conv2d(hidden_dim, num_classes, kernel_size=1)
+        _init_foreground_bias(self.conv2, pos_prior)
 
     def forward(self, x: torch.Tensor, scene_emb: torch.Tensor | None = None) -> torch.Tensor:
         x = F.relu(self.bn1(self.conv1(x)))
@@ -23,7 +40,12 @@ class FCNHead(TaskHead):
 class UNetHead(TaskHead):
     """轻量 UNet decoder，只有两层，skip 来自输入本身。"""
 
-    def __init__(self, embed_dim: int, num_classes: int) -> None:
+    def __init__(
+        self,
+        embed_dim: int,
+        num_classes: int,
+        pos_prior: float | None = None,
+    ) -> None:
         super().__init__()
         self.up1 = nn.ConvTranspose2d(embed_dim, embed_dim // 2, kernel_size=2, stride=2)
         self.conv1 = nn.Sequential(
@@ -38,6 +60,7 @@ class UNetHead(TaskHead):
             nn.ReLU(inplace=True),
         )
         self.final = nn.Conv2d(embed_dim // 4, num_classes, kernel_size=1)
+        _init_foreground_bias(self.final, pos_prior)
 
     def _upsample_skip(self, x: torch.Tensor, scale: int) -> torch.Tensor:
         return F.interpolate(x, scale_factor=scale, mode="bilinear", align_corners=False)
@@ -61,6 +84,7 @@ class UperNetHead(TaskHead):
         embed_dim: int,
         num_classes: int,
         pool_scales: tuple[int, ...] = (1, 2, 3, 6),
+        pos_prior: float | None = None,
     ) -> None:
         super().__init__()
         self.pool_scales = pool_scales
@@ -81,6 +105,7 @@ class UperNetHead(TaskHead):
             nn.Dropout(0.1),
         )
         self.classifier = nn.Conv2d(embed_dim, num_classes, kernel_size=1)
+        _init_foreground_bias(self.classifier, pos_prior)
 
     def forward(self, x: torch.Tensor, scene_emb: torch.Tensor | None = None) -> torch.Tensor:
         feats = [x]
@@ -93,14 +118,27 @@ class UperNetHead(TaskHead):
         return self.classifier(fused)
 
 
-def build_segmentation_head(head_type: str, embed_dim: int, num_classes: int) -> TaskHead:
+def build_segmentation_head(
+    head_type: str,
+    embed_dim: int,
+    num_classes: int,
+    pos_prior: float | None = None,
+) -> TaskHead:
     head_type = head_type.lower()
     if head_type == "linear" or head_type == "linear_probe":
         return LinearProbeHead(embed_dim, num_classes)
     if head_type == "fcn":
-        return FCNHead(embed_dim, num_classes)
+        return FCNHead(embed_dim, num_classes, pos_prior=pos_prior)
     if head_type == "unet":
-        return UNetHead(embed_dim, num_classes)
+        return UNetHead(embed_dim, num_classes, pos_prior=pos_prior)
     if head_type == "upernet":
-        return UperNetHead(embed_dim, num_classes)
+        return UperNetHead(embed_dim, num_classes, pos_prior=pos_prior)
+    if head_type == "mlp":
+        from downstreams.heads.mlp_head import MLPHead
+
+        return MLPHead(embed_dim, num_classes, pos_prior=pos_prior)
+    if head_type == "diff_unet":
+        from downstreams.heads.diff_head import DiffUNetHead
+
+        return DiffUNetHead(embed_dim, num_classes, pos_prior=pos_prior)
     raise ValueError(f"未知 head 类型: {head_type}")
