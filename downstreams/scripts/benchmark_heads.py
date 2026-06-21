@@ -145,7 +145,7 @@ def main() -> None:
     if args.regions:
         emb_region_root = args.embedding_root
         mask_dirs = {
-            r: args.label_root.parent.parent / r / "labels" / args.task / "masks"
+            r: args.label_root / r / "labels" / args.task / "masks"
             for r in args.regions
         }
         region = "joint"
