@@ -16,6 +16,7 @@ training:
   eval_every: 5
   amp: true
   gradient_checkpointing: false
+  amp: false
   log_every: 10
   distill_weight: 0.1
   distill_months: 12
