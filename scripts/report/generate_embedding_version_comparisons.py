@@ -25,9 +25,9 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 HARBIN_DATA = Path("/data/xuannv_embedding/processed/harbin")
 HARBIN_MASK = Path("/data/xuannv_embedding/processed/harbin/labels/construction/masks")
 
-# 选定用于对比的 patch：必须在四个版本 embedding 中均存在。
-# patch_000086 / patch_000066 有 GT；其余选取不同地物类型的常见 patch。
-SELECTED_PATCHES = ["patch_000086", "patch_000066", "patch_000007", "patch_000019", "patch_000027", "patch_000042"]
+# 选定用于对比的 patch：必须在 Stage2_V1 / V1.1_Quick / AEF_Official embedding 中均存在，
+# 且有 construction 标注（GT > 0）。
+SELECTED_PATCHES = ["patch_000087", "patch_000086", "patch_000066"]
 
 VERSIONS = {
     "Stage2_V1": {
@@ -43,11 +43,6 @@ VERSIONS = {
     "AEF_Official": {
         "emb_root": Path("/data/xuannv_embedding/embeddings/aef_official_2025_annual/harbin"),
         "pred_dirs": [Path(f"/data/xuannv_embedding/experiments/aef_benchmark/construction/fold_{i}/predictions") for i in range(5)],
-        "month": "202512",
-    },
-    "AEF_Teacher": {
-        "emb_root": Path("/data/xuannv_embedding/embeddings/aef_teacher_2025_annual/harbin"),
-        "pred_dirs": [],  # 无对应下游预测，仅展示 embedding
         "month": "202512",
     },
 }

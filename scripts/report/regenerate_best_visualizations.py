@@ -9,11 +9,11 @@ mask_dir = Path("/data/xuannv_embedding/processed/haidian/labels/construction/ma
 out_dir = Path("/root/workspace/report/assets")
 out_dir.mkdir(parents=True, exist_ok=True)
 
-# Map each patch to the fold containing its prediction
+# 仅使用有标注的 patch，选取 GT 面积最大的前 3 个示例
 patch_fold_map = {
-    "patch_000002": "fold_0",
-    "patch_000027": "fold_4",
-    "patch_000069": "fold_4",
+    "patch_000198": "fold_1",
+    "patch_000090": "fold_1",
+    "patch_000209": "fold_2",
 }
 
 for patch_id, fold in patch_fold_map.items():
@@ -31,9 +31,16 @@ for patch_id, fold in patch_fold_map.items():
         "--out-dir", str(out_dir),
         "--month", "202604",
     ]
-    print(f"Generating visualization for patch_{patch_id} using {fold}...")
+    print(f"Generating visualization for {patch_id} using {fold}...")
     subprocess.run(cmd, check=True)
 
+    # visualize_patches.py 输出为 {patch_id}_visualization.png，重命名为 comprehensive_patch_NNN.png
+    src = out_dir / f"{patch_id}_visualization.png"
+    dst = out_dir / f"comprehensive_{patch_id}.png"
+    if src.exists():
+        src.rename(dst)
+        print(f"Renamed to {dst}")
+
 print("Done. Output files:")
-for p in sorted(out_dir.glob("patch_*_visualization.png")):
+for p in sorted(out_dir.glob("comprehensive_patch_*.png")):
     print(p)
