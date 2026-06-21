@@ -584,7 +584,7 @@ def main() -> None:
         emb_region_root = args.embedding_root
         split_path = label_root / "split_joint_5fold.json"
         mask_dirs = {
-            r: args.label_root.parent.parent / r / "labels" / args.task / "masks"
+            r: args.label_root / r / "labels" / args.task / "masks"
             for r in args.regions
         }
     else:
