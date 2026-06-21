@@ -7,6 +7,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from downstreams.heads.segmentation_head import build_segmentation_head
+from downstreams.losses.segmentation_losses import FocalTverskyLoss
 from downstreams.metrics.segmentation import compute_segmentation_metrics
 from downstreams.tasks.base import BaseTask
 
@@ -68,6 +69,12 @@ class ConstructionSegmentationTask(BaseTask):
             loss_name = training.get("loss", "focal_dice").lower()
             if loss_name == "focal_dice":
                 self._loss = FocalDiceLoss()
+            elif loss_name == "focal_tversky":
+                self._loss = FocalTverskyLoss(
+                    alpha=training.get("tversky_alpha", 0.3),
+                    beta=training.get("tversky_beta", 0.7),
+                    gamma=training.get("focal_gamma", 1.33),
+                )
             elif loss_name == "bce":
                 pos_weight = torch.tensor(training.get("pos_weight", 1.0))
                 self._loss = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
