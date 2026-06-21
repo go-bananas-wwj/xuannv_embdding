@@ -1,0 +1,8 @@
+_base_: v1.1_distill_long_stable.yaml
+
+experiment:
+  name: v1.1_distill_long_stable_50ep
+  wandb_run_name: "v1.1_distill_long_stable_50ep"
+
+training:
+  epochs: 50
