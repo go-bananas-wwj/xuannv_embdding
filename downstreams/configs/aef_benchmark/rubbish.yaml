@@ -1,28 +1,30 @@
 experiment:
-  name: construction_harbin_bitemporal_diff_unet_focal_tversky_v1
+  name: aef_rubbish_harbin_2025_diff_unet
   seed: 42
   device: auto
 training:
   epochs: 200
-  lr: 0.0001
+  lr: 3.0e-05
   weight_decay: 0.01
   batch_size: 8
   num_workers: 0
   early_stop_patience: 30
   head_type: diff_unet
-  loss: focal_tversky
-  pos_weight: 50.0
+  loss: bce_dice_tversky
+  pos_weight: 2000.0
   label_fraction: 1.0
   months:
   - 202512
-  - 202605
-  tversky_alpha: 0.3
-  tversky_beta: 0.7
-  focal_gamma: 2.0
+  tversky_beta: 0.9
+  tversky_weight: 2.0
+  bce_weight: 1.0
+  dice_weight: 2.0
   early_stop_metric: f1_best
   use_weighted_sampler: true
+  sampler_weight_strategy: binary
   use_threshold_tuning: true
-  pos_prior: 0.1
+  pos_prior: 0.0008
+  crop_size: 96
 data:
   embed_dim: 64
   num_classes: 2
