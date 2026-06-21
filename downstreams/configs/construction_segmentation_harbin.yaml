@@ -1,5 +1,5 @@
 experiment:
-  name: construction_site_haidian_v3
+  name: construction_site_harbin_v1
   seed: 42
   device: auto
 training:
@@ -11,9 +11,9 @@ training:
   early_stop_patience: 20
   head_type: unet
   loss: bce_dice_tversky
-  pos_weight: 150.0
+  pos_weight: 200.0
   label_fraction: 1.0
-  month: 202604
+  month: 202605
   tversky_beta: 0.7
   early_stop_metric: f1_best
   use_weighted_sampler: true
@@ -23,7 +23,7 @@ training:
   warmup_epochs: 5
   scheduler: cosine
   grad_clip: 1.0
-  pos_prior: 0.04
+  pos_prior: 0.015
 data:
   embed_dim: 64
   num_classes: 2
