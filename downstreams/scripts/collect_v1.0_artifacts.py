@@ -23,7 +23,8 @@ SUMMARY_JSON = V1_ROOT / "all_tasks_summary_final.json"
 HEADS_DIR = V1_ROOT / "heads"
 CONFIGS_DIR = V1_ROOT / "configs"
 
-REPO_ROOT = Path("/root/workspace/xuannv/.worktrees/feat-multitask-downstream")
+# Two parents: scripts/ -> downstreams/ -> repository root.
+REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_SEARCH_DIR = REPO_ROOT / "downstreams" / "configs"
 
 STOPWORDS = {
@@ -113,11 +114,7 @@ def discover_config(task_dir: Path, task: str) -> Path | None:
     if not CONFIG_SEARCH_DIR.exists():
         return None
 
-    config_files = [
-        p
-        for p in CONFIG_SEARCH_DIR.glob("*.yaml")
-        if p.name != "_base_.yaml"
-    ]
+    config_files = [p for p in CONFIG_SEARCH_DIR.glob("*.yaml") if p.name != "_base_.yaml"]
     if not config_files:
         return None
 
@@ -209,11 +206,25 @@ def main() -> int:
             all_ok = False
         print()
 
-    # Verification
+    # Verification: ensure every task has exactly one config and one head.
+    expected = len(summary)
+    verification_ok = True
+    for task in summary:
+        config_path = CONFIGS_DIR / f"{task}.yaml"
+        if not config_path.exists():
+            print(f"ERROR: missing config for {task}", file=sys.stderr)
+            verification_ok = False
+        heads = list(HEADS_DIR.glob(f"{task}_fold*_best.pt"))
+        if len(heads) != 1:
+            print(
+                f"ERROR: expected exactly one head for {task}, found {len(heads)}",
+                file=sys.stderr,
+            )
+            verification_ok = False
+
     n_heads = len(list(HEADS_DIR.glob("*.pt")))
     n_configs = len(list(CONFIGS_DIR.glob("*.yaml")))
     print(f"Collected {n_heads} head weights and {n_configs} configs.")
-    expected = len(summary)
     if n_heads != expected or n_configs != expected:
         print(
             f"ERROR: expected {expected} heads and {expected} configs",
@@ -221,7 +232,7 @@ def main() -> int:
         )
         return 1
 
-    return 0 if all_ok else 1
+    return 0 if (all_ok and verification_ok) else 1
 
 
 if __name__ == "__main__":
