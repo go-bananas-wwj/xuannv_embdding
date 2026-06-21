@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import shutil
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -39,13 +40,21 @@ def _read_rgb(path: Path) -> np.ndarray | None:
     return arr
 
 
+def _find_mask_path(mask_dir: Path, patch_id: str) -> Path | None:
+    exact = mask_dir / f"{patch_id}.tif"
+    if exact.exists():
+        return exact
+    candidates = sorted(mask_dir.glob(f"{patch_id}_*.tif"))
+    return candidates[0] if candidates else None
+
+
 def _collect_fold_probs(pred_dir: Path, mask_dir: Path) -> tuple[np.ndarray, np.ndarray] | None:
     probs: list[np.ndarray] = []
     masks: list[np.ndarray] = []
     for prob_path in sorted(pred_dir.glob("*_prob.tif")):
         patch_id = prob_path.stem.replace("_prob", "")
-        mask_path = mask_dir / f"{patch_id}.tif"
-        if not mask_path.exists():
+        mask_path = _find_mask_path(mask_dir, patch_id)
+        if mask_path is None:
             continue
         with rasterio.open(prob_path) as src:
             prob = src.read(1)
@@ -65,14 +74,22 @@ def main() -> None:
     p.add_argument("--task", type=str, default="construction")
     p.add_argument("--rgb-source", type=Path, default=None)
     p.add_argument("--n-samples", type=int, default=10)
+    p.add_argument("--out-dir", type=Path, default=None)
     args = p.parse_args()
 
     mask_dir = args.label_root / args.task / "masks"
 
-    for fold_dir in sorted(args.output_root.glob("fold_*")):
+    fold_dirs = sorted([d for d in args.output_root.iterdir() if d.is_dir() and d.name.startswith("fold")])
+    for fold_dir in fold_dirs:
+        # 支持 fold0/fold_0/ 这种嵌套结构
         metrics_path = fold_dir / "metrics.json"
         if not metrics_path.exists():
-            continue
+            inner = fold_dir / f"fold_{fold_dir.name.replace('fold', '')}"
+            if (inner / "metrics.json").exists():
+                fold_dir = inner
+                metrics_path = inner / "metrics.json"
+            else:
+                continue
         with open(metrics_path, "r", encoding="utf-8") as f:
             metrics = json.load(f)
         logger.info("%s: miou=%.3f f1=%.3f", fold_dir.name, metrics["miou"], metrics["f1_0.5"])
@@ -104,8 +121,8 @@ def main() -> None:
             continue
         for prob_path in sorted(pred_dir.glob("*_prob.tif"))[: args.n_samples]:
             patch_id = prob_path.stem.replace("_prob", "")
-            mask_path = mask_dir / f"{patch_id}.tif"
-            if not mask_path.exists():
+            mask_path = _find_mask_path(mask_dir, patch_id)
+            if mask_path is None:
                 continue
             with rasterio.open(prob_path) as src:
                 prob = src.read(1)
@@ -131,6 +148,16 @@ def main() -> None:
             out_png = vis_dir / f"{patch_id}_overlay.png"
             plt.imsave(out_png, overlay)
             logger.info("保存可视化 %s", out_png)
+
+            if args.out_dir is not None:
+                task_out_dir = args.out_dir / fold_dir.name
+                task_out_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy(out_png, task_out_dir / out_png.name)
+
+        if args.out_dir is not None and (vis_dir / "pr_curve.png").exists():
+            task_out_dir = args.out_dir / fold_dir.name
+            task_out_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy(vis_dir / "pr_curve.png", task_out_dir / "pr_curve.png")
 
     logger.info("可视化完成")
 
