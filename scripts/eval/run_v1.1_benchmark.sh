@@ -6,6 +6,7 @@ set -e
 
 CHECKPOINT="${1:-}"
 OUTPUT_ROOT="${2:-/data/xuannv_embedding/experiments/v1.1_distill_long_stable_50ep_benchmark}"
+CONFIG="${3:-configs/v1.1_extract_labeled_all_stable.yaml}"
 EMB_ROOT="/data/xuannv_embedding/embeddings/v1.1_labeled"
 
 WORKTREE="/root/workspace/xuannv/.worktrees/feat-multitask-downstream"
@@ -19,7 +20,7 @@ if [[ -n "$CHECKPOINT" ]]; then
   CKPT_ARGS="--checkpoint $CHECKPOINT"
 fi
 python downstreams/scripts/precompute_embeddings.py \
-  --config configs/v1.1_extract_labeled_all.yaml \
+  --config "$CONFIG" \
   $CKPT_ARGS \
   --regions harbin haidian \
   --output-root "$EMB_ROOT"
