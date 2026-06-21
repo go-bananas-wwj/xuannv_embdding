@@ -131,8 +131,8 @@ def precompute_embeddings(
                 for m in range(emb_map.shape[1]):
                     month_int = int(ts[b, m].item())
                     assert 190000 < month_int < 210000, f"timestamp {month_int} 不是 YYYYMM 格式"
-                    torch.save(emb_map[b, m], patch_dir / f"{month_int}_embedding_map.pt")
-                    torch.save(scene_emb[b, m], patch_dir / f"{month_int}_scene_embedding.pt")
+                    torch.save(emb_map[b, m].clone(), patch_dir / f"{month_int}_embedding_map.pt")
+                    torch.save(scene_emb[b, m].clone(), patch_dir / f"{month_int}_scene_embedding.pt")
 
 
 def write_meta_json(
