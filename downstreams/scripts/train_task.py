@@ -363,7 +363,7 @@ def run_fold(
             "task_name": args.task,
             "months": args.months,
             "bitemporal": bitemporal,
-            "include_diff": True,
+            "include_diff": False,
             "crop_size": cfg["training"].get("crop_size"),
         }
         train_ds = JointMultiTaskEmbeddingDataset(
@@ -400,7 +400,7 @@ def run_fold(
             "task_name": args.task,
             "months": args.months,
             "bitemporal": bitemporal,
-            "include_diff": True,
+            "include_diff": False,
             "crop_size": cfg["training"].get("crop_size"),
         }
         train_ds = EndToEndSegmentationDataset(
@@ -514,7 +514,7 @@ def run_fold(
             output_size=output_size,
             target_size=output_size,
             months=args.months,
-            include_diff=True,
+            include_diff=False,
         )
     else:
         model = task.build_head().to(device)
