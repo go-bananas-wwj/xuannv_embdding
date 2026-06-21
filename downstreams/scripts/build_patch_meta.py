@@ -29,19 +29,35 @@ def extract_patch_meta(tif_path: Path) -> dict[str, Any]:
         }
 
 
-def build_region_meta(mask_dir: Path) -> dict[str, dict[str, Any]]:
-    """Scan mask_dir for *.tif and build per-patch metadata."""
-    if not mask_dir.is_dir():
-        raise FileNotFoundError(f"Mask directory not found: {mask_dir}")
+def build_region_meta(mask_dirs: list[Path]) -> dict[str, dict[str, Any]]:
+    """Scan multiple mask directories for *.tif and build per-patch metadata.
 
+    Mask filenames may include a month suffix (e.g. patch_000001_202512.tif);
+    the patch_id is the base name before the first underscore after patch_*.
+    """
     meta: dict[str, dict[str, Any]] = {}
-    tif_paths = sorted(mask_dir.glob("*.tif"))
-    if not tif_paths:
-        raise ValueError(f"No *.tif files found in {mask_dir}")
+    seen_files: set[Path] = set()
 
-    for tif_path in tif_paths:
-        patch_id = tif_path.stem
-        meta[patch_id] = extract_patch_meta(tif_path)
+    for mask_dir in mask_dirs:
+        if not mask_dir.is_dir():
+            logger.warning("Skipping missing mask dir: %s", mask_dir)
+            continue
+        for tif_path in sorted(mask_dir.glob("*.tif")):
+            if tif_path in seen_files:
+                continue
+            seen_files.add(tif_path)
+            # patch_id is the stem with any trailing _YYYYMM removed
+            stem = tif_path.stem
+            import re
+            if re.fullmatch(r"patch_\d+_\d{6}", stem):
+                base_id = stem.rsplit("_", 1)[0]
+            else:
+                base_id = stem
+            if base_id not in meta:
+                meta[base_id] = extract_patch_meta(tif_path)
+
+    if not meta:
+        raise ValueError(f"No *.tif files found in any of {mask_dirs}")
 
     return meta
 
@@ -49,16 +65,25 @@ def build_region_meta(mask_dir: Path) -> dict[str, dict[str, Any]]:
 def main() -> None:
     p = argparse.ArgumentParser(description="Build AEF patch metadata JSONs")
     p.add_argument(
-        "--harbin-masks",
+        "--harbin-mask-dirs",
         type=Path,
-        default=Path("/data/xuannv_embedding/processed/harbin/masks"),
-        help="Directory containing harbin mask GeoTIFFs",
+        nargs="+",
+        default=[
+            Path("/data/xuannv_embedding/processed/harbin/labels/construction/masks"),
+            Path("/data/xuannv_embedding/processed/harbin/labels/building_change/masks"),
+            Path("/data/xuannv_embedding/processed/harbin/labels/farm_change/masks"),
+            Path("/data/xuannv_embedding/processed/harbin/labels/rubbish/masks"),
+        ],
+        help="Directories containing harbin mask GeoTIFFs",
     )
     p.add_argument(
-        "--haidian-masks",
+        "--haidian-mask-dirs",
         type=Path,
-        default=Path("/data/xuannv_embedding/processed/haidian/masks"),
-        help="Directory containing haidian mask GeoTIFFs",
+        nargs="+",
+        default=[
+            Path("/data/xuannv_embedding/processed/haidian/labels/construction/masks"),
+        ],
+        help="Directories containing haidian mask GeoTIFFs",
     )
     p.add_argument(
         "--output-root",
@@ -71,13 +96,13 @@ def main() -> None:
     args.output_root.mkdir(parents=True, exist_ok=True)
 
     regions = {
-        "harbin": args.harbin_masks,
-        "haidian": args.haidian_masks,
+        "harbin": args.harbin_mask_dirs,
+        "haidian": args.haidian_mask_dirs,
     }
 
-    for region, mask_dir in regions.items():
-        logger.info("Building metadata for %s from %s", region, mask_dir)
-        meta = build_region_meta(mask_dir)
+    for region, mask_dirs in regions.items():
+        logger.info("Building metadata for %s from %s", region, mask_dirs)
+        meta = build_region_meta(mask_dirs)
         out_path = args.output_root / f"{region}_patch_meta.json"
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
