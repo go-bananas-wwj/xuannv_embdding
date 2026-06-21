@@ -4,6 +4,7 @@ import inspect
 import logging
 import re
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
@@ -413,22 +414,47 @@ class Trainer:
         is_last_epoch = epoch == total_epochs - 1
         return is_save_epoch or is_last_epoch
 
+    @staticmethod
+    def _format_timedelta(seconds: float) -> str:
+        """将秒数格式化为 HH:MM:SS。"""
+        seconds = int(seconds)
+        hours, remainder = divmod(seconds, 3600)
+        minutes, secs = divmod(remainder, 60)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
     def fit(self) -> None:
         """执行完整训练循环。"""
         total_epochs = self.cfg.training.epochs
+        start_epoch = self.epoch
+        fit_start_time = time.time()
 
         try:
             for epoch in range(self.epoch, total_epochs):
                 self.epoch = epoch
                 if self.train_sampler is not None:
                     self.train_sampler.set_epoch(epoch)
+
+                epoch_start_time = time.time()
                 train_metrics = self.train_epoch()
                 val_metrics = self.val_epoch()
+                epoch_elapsed = time.time() - epoch_start_time
 
                 if self._is_main_process():
-                    log_msg = f"epoch {epoch}: train_loss={train_metrics['train_loss']:.6f}"
+                    completed_epochs = epoch - start_epoch + 1
+                    total_elapsed = time.time() - fit_start_time
+                    avg_epoch_time = total_elapsed / completed_epochs
+                    remaining_epochs = total_epochs - epoch - 1
+                    eta_seconds = max(0.0, avg_epoch_time * remaining_epochs)
+
+                    log_msg = (
+                        f"epoch {epoch}: train_loss={train_metrics['train_loss']:.6f}"
+                    )
                     if val_metrics is not None:
                         log_msg += f", val_loss={val_metrics['val_loss']:.6f}"
+                    log_msg += (
+                        f", elapsed={self._format_timedelta(epoch_elapsed)}"
+                        f", ETA={self._format_timedelta(eta_seconds)}"
+                    )
                     logger.info(log_msg)
 
                     # 保存 checkpoint。
