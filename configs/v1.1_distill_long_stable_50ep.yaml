@@ -7,5 +7,12 @@ experiment:
 training:
   epochs: 50
 
+model:
+  target_heads:
+    landsat_recon:
+      weight: 2.0
+    worldcover:
+      weight: 1.0
+
 data:
   cache_dir: /data/xuannv_embedding/cache
