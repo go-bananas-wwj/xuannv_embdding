@@ -28,6 +28,7 @@ class DataConfig:
     num_months: int = 17
     months: list[str] = field(default_factory=lambda: [])
     sources: list[str] = field(default_factory=lambda: ["s2", "s1", "landsat"])
+    teacher_embedding_root: Path | None = None
 
 
 @dataclass
@@ -68,6 +69,8 @@ class TrainingConfig:
     amp: bool = True
     gradient_checkpointing: bool = True
     log_every: int = 0
+    distill_weight: float = 0.0
+    distill_months: int = 12
 
 
 @dataclass
@@ -187,6 +190,11 @@ class Config:
                 num_months=data_cfg.get("num_months", 17),
                 months=data_cfg.get("months", []),
                 sources=data_cfg.get("sources", ["s2", "s1", "landsat"]),
+                teacher_embedding_root=(
+                    Path(data_cfg["teacher_embedding_root"])
+                    if data_cfg.get("teacher_embedding_root")
+                    else None
+                ),
             ),
             experiment=ExperimentConfig(
                 name=experiment_cfg["name"],
@@ -217,6 +225,8 @@ class Config:
                 amp=training_cfg.get("amp", True),
                 gradient_checkpointing=training_cfg.get("gradient_checkpointing", True),
                 log_every=training_cfg.get("log_every", 0),
+                distill_weight=training_cfg.get("distill_weight", 0.0),
+                distill_months=training_cfg.get("distill_months", 12),
             ),
         )
 

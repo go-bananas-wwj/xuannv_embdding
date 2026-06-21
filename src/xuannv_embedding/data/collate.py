@@ -123,4 +123,10 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
     else:
         collated["timestamps"] = torch.zeros(batch_size, 0, dtype=torch.long)
 
+    # 拼接教师 embedding map（如果存在）。
+    if "teacher_embedding_map" in batch[0]:
+        collated["teacher_embedding_map"] = torch.stack(
+            [item["teacher_embedding_map"] for item in batch]
+        )
+
     return collated
