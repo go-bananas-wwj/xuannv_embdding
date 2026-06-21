@@ -155,9 +155,11 @@ def _build_loader(
 
     sampler = None
     if is_distributed:
+        # 验证集也 drop_last，避免不同 rank 的 batch 数不一致导致 DDP 潜在 hang。
         sampler = DistributedSampler(
             dataset,
             shuffle=(split == "train"),
+            drop_last=True,
         )
 
     def training_collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
@@ -165,7 +167,8 @@ def _build_loader(
         return prepare_batch(collated, target_heads)
 
     shuffle = (split == "train") and (sampler is None)
-    drop_last = split == "train"
+    # num_workers=0 时 pin_memory 在 NPU 上可能带来额外开销，且收益有限。
+    pin_memory = cfg.data.num_workers > 0
 
     return DataLoader(
         dataset=dataset,
@@ -174,8 +177,8 @@ def _build_loader(
         sampler=sampler,
         num_workers=cfg.data.num_workers,
         collate_fn=training_collate_fn,
-        pin_memory=True,
-        drop_last=drop_last,
+        pin_memory=pin_memory,
+        drop_last=True,
     )
 
 

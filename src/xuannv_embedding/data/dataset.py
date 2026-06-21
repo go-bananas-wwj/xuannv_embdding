@@ -12,6 +12,7 @@ from typing import Any
 
 import numpy as np
 import torch
+import torch.distributed as dist
 from torch.utils.data import Dataset
 
 from xuannv_embedding.data.transforms import (
@@ -213,6 +214,16 @@ class MonthlyEmbeddingDataset(Dataset):
             h.update(json.dumps(stats, sort_keys=True).encode("utf-8"))
         return h.hexdigest()[:16]
 
+    def _compute_manifest_hash(self) -> str:
+        """对 manifest 文件内容取哈希，用于缓存失效判断。"""
+        try:
+            return hashlib.sha256(
+                self.manifest_path.read_bytes()
+            ).hexdigest()[:16]
+        except Exception as exc:
+            logger.warning("无法读取 manifest 计算哈希: %s", exc)
+            return ""
+
     def _cache_meta(self) -> dict[str, Any]:
         return {
             "patch_size": self.patch_size,
@@ -221,13 +232,19 @@ class MonthlyEmbeddingDataset(Dataset):
             "ref_month": self.ref_month,
             "sources": sorted(self.sources),
             "statistics_hash": self._compute_stats_hash(),
+            "manifest_hash": self._compute_manifest_hash(),
             "teacher_embedding_root": (
                 str(self.teacher_embedding_root) if self.teacher_embedding_root else None
             ),
-            "version": "1.0",
+            "version": "1.1",
         }
 
     def _ensure_cache_valid(self) -> None:
+        """校验/重建缓存根目录。
+
+        分布式环境下仅由 rank 0 执行目录清理与 meta 写入，其他 rank 通过
+        ``dist.barrier()`` 等待，避免并发 rmtree/mkdir 导致的 race/hang。
+        """
         if self.cache_dir is None:
             return
 
@@ -235,26 +252,38 @@ class MonthlyEmbeddingDataset(Dataset):
         meta_path = root / "cache_meta.json"
         current_meta = self._cache_meta()
 
-        if meta_path.exists():
-            try:
-                old_meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                if old_meta == current_meta:
-                    return
-                logger.info("Cache meta changed, clearing %s", root)
-            except Exception as exc:
-                logger.warning("Failed to read cache meta %s: %s", meta_path, exc)
+        is_distributed = dist.is_initialized()
+        rank = dist.get_rank() if is_distributed else 0
 
-        if root.exists():
-            shutil.rmtree(root)
-        root.mkdir(parents=True, exist_ok=True)
+        if rank == 0:
+            need_rebuild = True
+            if meta_path.exists():
+                try:
+                    old_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                    if old_meta == current_meta:
+                        need_rebuild = False
+                    else:
+                        logger.info("Cache meta changed, clearing %s", root)
+                except Exception as exc:
+                    logger.warning("Failed to read cache meta %s: %s", meta_path, exc)
 
-        # atomic meta write
-        tmp_meta = meta_path.with_suffix(".tmp")
-        tmp_meta.write_text(
-            json.dumps(current_meta, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        tmp_meta.replace(meta_path)
+            if need_rebuild:
+                if root.exists():
+                    shutil.rmtree(root)
+                root.mkdir(parents=True, exist_ok=True)
+
+            # 原子写入 meta
+            tmp_meta = meta_path.with_suffix(
+                f".tmp.{os.getpid()}.{threading.current_thread().ident}"
+            )
+            tmp_meta.write_text(
+                json.dumps(current_meta, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+            tmp_meta.replace(meta_path)
+
+        if is_distributed:
+            dist.barrier()
 
     def __len__(self) -> int:
         return len(self.manifest)

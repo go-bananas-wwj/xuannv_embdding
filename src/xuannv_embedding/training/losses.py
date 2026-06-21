@@ -198,15 +198,20 @@ class TotalLoss(nn.Module):
             ).reshape(B, M, -1, H, W)
             # 若教师通道数与学生不同，可在此处投影；本项目均为 64，无需投影。
             distill = F.mse_loss(student_norm, teacher_norm)
-            total_recon = total_recon + self.distill_weight * distill
+            weighted_distill = self.distill_weight * distill
+        else:
+            weighted_distill = torch.tensor(
+                0.0, device=output.embedding.device, dtype=output.embedding.dtype
+            )
 
-        total = total_recon + uniformity
+        total = total_recon + uniformity + weighted_distill
 
         result: dict[str, torch.Tensor] = {
             "total": total,
             "recon": total_recon,
             "uniformity": uniformity,
             "distill": distill,
+            "weighted_distill": weighted_distill,
         }
         result.update(recon_losses)
         return result

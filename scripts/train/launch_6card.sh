@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
-# 6× Ascend NPU DDP 训练启动脚本（Harbin 128）。
+# 6× Ascend NPU DDP 训练启动脚本。
 set -euo pipefail
 
 if [[ -z "${WANDB_API_KEY:-}" ]]; then
-    echo "ERROR: 请设置环境变量 WANDB_API_KEY 以启用 WANDB 实时监控。" >&2
-    echo "例如: export WANDB_API_KEY=<your_key>" >&2
-    exit 1
+    echo "WARNING: 未设置 WANDB_API_KEY，WANDB 将被禁用或初始化失败。" >&2
 fi
 
-CONFIG="${1:-configs/harbin_128.yaml}"
+CONFIG="${1:-configs/v1.1_distill_long_stable_50ep.yaml}"
 shift || true
 NNODES="${NNODES:-1}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-6}"

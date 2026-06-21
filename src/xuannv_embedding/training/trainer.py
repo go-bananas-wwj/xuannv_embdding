@@ -254,6 +254,12 @@ class Trainer:
             self.scaler.scale(loss).backward()
 
             if (batch_idx + 1) % self.gradient_accumulation_steps == 0:
+                self.scaler.unscale_(self.optimizer)
+                grad_clip_norm = getattr(self.cfg.training, "grad_clip_norm", None)
+                if grad_clip_norm is not None and grad_clip_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(
+                        self._unwrap_model().parameters(), grad_clip_norm
+                    )
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
                 self.optimizer.zero_grad(set_to_none=True)
@@ -288,13 +294,16 @@ class Trainer:
                 memory_mb = self._get_memory_mb()
                 if memory_mb is not None:
                     step_metrics["system/npu_memory_allocated_MB"] = memory_mb
-                util_info = self._get_utilization()
-                if util_info is not None:
-                    step_metrics[util_info[0]] = util_info[1]
                 self._log_to_wandb(step_metrics, step=self.global_step)
 
         # 处理最后未满一个累积步数的梯度。
         if (len(self.train_loader) % self.gradient_accumulation_steps) != 0:
+            self.scaler.unscale_(self.optimizer)
+            grad_clip_norm = getattr(self.cfg.training, "grad_clip_norm", None)
+            if grad_clip_norm is not None and grad_clip_norm > 0:
+                torch.nn.utils.clip_grad_norm_(
+                    self._unwrap_model().parameters(), grad_clip_norm
+                )
             self.scaler.step(self.optimizer)
             self.scaler.update()
             self.optimizer.zero_grad(set_to_none=True)
