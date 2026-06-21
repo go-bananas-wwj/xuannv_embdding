@@ -33,4 +33,5 @@ class BaseTask(ABC):
         model: nn.Module,
         loader: DataLoader,
         device: torch.device,
+        threshold: float | None = None,
     ) -> dict[str, float]: ...

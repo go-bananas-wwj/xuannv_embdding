@@ -4,7 +4,7 @@ from typing import Any
 
 import numpy as np
 import torch
-from sklearn.metrics import auc, average_precision_score, precision_recall_curve
+from sklearn.metrics import auc, average_precision_score, precision_recall_curve, roc_auc_score
 
 
 def _ensure_numpy(x: torch.Tensor | np.ndarray) -> np.ndarray:
@@ -18,6 +18,7 @@ def compute_segmentation_metrics(
     target: torch.Tensor | np.ndarray,
     ignore_index: int = -1,
     return_curve: bool = False,
+    threshold: float = 0.5,
 ) -> dict[str, Any]:
     """pred_logits: (N, H, W) 或 (H, W)；target: 同 shape 的 int 标签。"""
     pred_logits = _ensure_numpy(pred_logits)
@@ -29,12 +30,12 @@ def compute_segmentation_metrics(
 
     valid = target != ignore_index
     probs = 1.0 / (1.0 + np.exp(-pred_logits))
-    preds_05 = (probs > 0.5).astype(np.uint8)
+    preds = (probs > threshold).astype(np.uint8)
 
-    tp = int(((preds_05 == 1) & (target == 1) & valid).sum())
-    fp = int(((preds_05 == 1) & (target == 0) & valid).sum())
-    fn = int(((preds_05 == 0) & (target == 1) & valid).sum())
-    tn = int(((preds_05 == 0) & (target == 0) & valid).sum())
+    tp = int(((preds == 1) & (target == 1) & valid).sum())
+    fp = int(((preds == 1) & (target == 0) & valid).sum())
+    fn = int(((preds == 0) & (target == 1) & valid).sum())
+    tn = int(((preds == 0) & (target == 0) & valid).sum())
 
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
@@ -49,14 +50,16 @@ def compute_segmentation_metrics(
     y_score = probs[valid]
     p_arr = np.array([])
     r_arr = np.array([])
+    thresholds_arr = np.array([])
     if y_true.sum() == 0 or y_true.sum() == len(y_true):
-        ap = auprc = 0.0
+        ap = auprc = auc_roc = 0.0
         best_f1 = 0.0
     else:
-        p_arr, r_arr, _ = precision_recall_curve(y_true, y_score)
+        p_arr, r_arr, thresholds_arr = precision_recall_curve(y_true, y_score)
         auprc = auc(r_arr, p_arr)
         # AP via sklearn average_precision_score 更稳
         ap = average_precision_score(y_true, y_score)
+        auc_roc = float(roc_auc_score(y_true, y_score))
         f1s = 2 * p_arr * r_arr / (p_arr + r_arr + 1e-8)
         best_f1 = float(f1s.max())
 
@@ -68,6 +71,7 @@ def compute_segmentation_metrics(
         "recall": float(recall),
         "ap": float(ap),
         "auprc": float(auprc),
+        "auc_roc": float(auc_roc),
         "tp": tp,
         "fp": fp,
         "fn": fn,
@@ -76,4 +80,5 @@ def compute_segmentation_metrics(
     if return_curve:
         result["precision_curve"] = p_arr
         result["recall_curve"] = r_arr
+        result["thresholds"] = thresholds_arr
     return result
