@@ -31,7 +31,10 @@ def main() -> None:
             continue
         with open(summary_path, encoding="utf-8") as f:
             data = json.load(f)
-        fold_results.append(data)
+        if isinstance(data, list):
+            fold_results.extend(data)
+        else:
+            fold_results.append(data)
 
     if not fold_results:
         print("No fold results found.")
