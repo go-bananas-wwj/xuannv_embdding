@@ -286,6 +286,10 @@ def process_harbin(
         images = image_groups.get(pid, [])
         ref_img = _reference_image(images)
 
+        # 先收集该 patch 实际有标注的月份
+        present_months: list[str] = []
+        generated_masks: dict[str, Path] = {}
+
         for month in sorted(month_dict):
             labels = month_dict[month]
             if not labels:
@@ -330,6 +334,8 @@ def process_harbin(
 
             mask_path = mask_dir / f"{pid}_{month}.tif"
             _save_mask(mask, mask_path)
+            present_months.append(month)
+            generated_masks[month] = mask_path
 
             # 可选：复制参考影像到共享 highres_optical 目录
             dst_img = None
@@ -347,11 +353,39 @@ def process_harbin(
                 "label_count": len(labels),
                 "mask": str(mask_path.relative_to(output_root)),
                 "positive_ratio": ratio,
+                "source": "annotated",
             }
             if dst_img is not None:
                 stat["image"] = str(dst_img.relative_to(output_root))
             stats.append(stat)
             logger.info("%s %s 处理完成: 正样本比例 %.3f", pid, month, ratio)
+
+        # 补齐缺失月份：如果同一个 patch 只标注了一个月份，把 mask 复制到另一个月份
+        known_months = {"202512", "202605"}
+        annotated_months = set(present_months)
+        missing_months = known_months - annotated_months
+        if len(annotated_months) == 1 and missing_months:
+            src_month = present_months[0]
+            src_path = generated_masks[src_month]
+            for missing_month in missing_months:
+                dst_path = mask_dir / f"{pid}_{missing_month}.tif"
+                shutil.copy2(src_path, dst_path)
+                with rasterio.open(dst_path) as src:
+                    mask = src.read(1)
+                ratio = float((mask > 0).sum() / mask.size)
+                stat = {
+                    "patch_id": pid,
+                    "month": missing_month,
+                    "label_count": 0,
+                    "mask": str(dst_path.relative_to(output_root)),
+                    "positive_ratio": ratio,
+                    "source": f"copied_from_{src_month}",
+                }
+                stats.append(stat)
+                logger.info(
+                    "%s %s 缺失标注，已从 %s 复制 mask: 正样本比例 %.3f",
+                    pid, missing_month, src_month, ratio,
+                )
 
     summary_path = output_root / "harbin_patches_summary.json"
     with open(summary_path, "w", encoding="utf-8") as f:
