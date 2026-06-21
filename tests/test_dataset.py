@@ -195,7 +195,6 @@ def test_monthly_binning_with_synthetic_data(tmp_path: Path) -> None:
             "worldcover": ["labels/worldcover/worldcover_20230101_patch_000000.tif"],
         }
     ]
-    import json
 
     manifest_path = root / "manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -207,6 +206,7 @@ def test_monthly_binning_with_synthetic_data(tmp_path: Path) -> None:
         num_months=2,
         patch_size=4,
     )
+
 
     sample = dataset[0]
     s2_frames = sample["source_frames"]["s2"]
@@ -298,9 +298,20 @@ def test_dataset_caches_samples(tmp_path: Path) -> None:
     )
 
     sample1 = dataset[0]
-    cache_file = cache_dir / "preprocessed_4" / "test" / "patch_000000.pt"
+    cache_file = dataset._cache_file_for(dataset.manifest[0])
     assert cache_file.exists()
 
+    # After first call writes cache, monkeypatch _load_sample to raise
+    original_load_sample = dataset._load_sample
+    call_count = [0]
+
+    def counting_load_sample(idx: int):
+        call_count[0] += 1
+        return original_load_sample(idx)
+
+    dataset._load_sample = counting_load_sample  # type: ignore[method-assign]
+
     sample2 = dataset[0]
+    assert call_count[0] == 0, "second access should not call _load_sample"
     assert sample1["patch_id"] == sample2["patch_id"]
     assert torch.equal(sample1["source_frames"]["s2"], sample2["source_frames"]["s2"])

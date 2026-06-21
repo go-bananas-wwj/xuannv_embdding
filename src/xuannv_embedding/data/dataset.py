@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 # 月度地理嵌入 Dataset 实现
+import hashlib
 import json
 import logging
+import os
+import shutil
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -175,10 +179,17 @@ class MonthlyEmbeddingDataset(Dataset):
             self.source_channels[source] = inferred_channels
             self.source_hw[source] = inferred_hw or (self.patch_size, self.patch_size)
 
+    def _cache_root(self) -> Path:
+        assert self.cache_dir is not None
+        fingerprint = hashlib.sha256(
+            json.dumps(self._cache_meta(), sort_keys=True).encode("utf-8")
+        ).hexdigest()[:12]
+        return self.cache_dir / f"preprocessed_{self.patch_size}_{fingerprint}"
+
     def _cache_dir_for_patch(self, entry: dict[str, Any]) -> Path:
         assert self.cache_dir is not None
         region = entry.get("region", self.region or "")
-        return self.cache_dir / f"preprocessed_{self.patch_size}" / str(region)
+        return self._cache_root() / str(region)
 
     def _cache_file_for(self, entry: dict[str, Any]) -> Path:
         return self._cache_dir_for_patch(entry) / f"{entry['patch_id']}.pt"
@@ -196,6 +207,8 @@ class MonthlyEmbeddingDataset(Dataset):
         return {
             "patch_size": self.patch_size,
             "num_months": self.num_months,
+            "ref_year": self.ref_year,
+            "ref_month": self.ref_month,
             "sources": sorted(self.sources),
             "statistics_hash": self._compute_stats_hash(),
             "teacher_embedding_root": (
@@ -208,8 +221,8 @@ class MonthlyEmbeddingDataset(Dataset):
         if self.cache_dir is None:
             return
 
-        preproc_dir = self.cache_dir / f"preprocessed_{self.patch_size}"
-        meta_path = preproc_dir / "cache_meta.json"
+        root = self._cache_root()
+        meta_path = root / "cache_meta.json"
         current_meta = self._cache_meta()
 
         if meta_path.exists():
@@ -217,19 +230,21 @@ class MonthlyEmbeddingDataset(Dataset):
                 old_meta = json.loads(meta_path.read_text(encoding="utf-8"))
                 if old_meta == current_meta:
                     return
-                logger.info("Cache meta changed, clearing %s", preproc_dir)
+                logger.info("Cache meta changed, clearing %s", root)
             except Exception as exc:
                 logger.warning("Failed to read cache meta %s: %s", meta_path, exc)
 
-        if preproc_dir.exists():
-            import shutil
+        if root.exists():
+            shutil.rmtree(root)
+        root.mkdir(parents=True, exist_ok=True)
 
-            shutil.rmtree(preproc_dir)
-        preproc_dir.mkdir(parents=True, exist_ok=True)
-        meta_path.write_text(
+        # atomic meta write
+        tmp_meta = meta_path.with_suffix(".tmp")
+        tmp_meta.write_text(
             json.dumps(current_meta, indent=2, sort_keys=True),
             encoding="utf-8",
         )
+        tmp_meta.replace(meta_path)
 
     def __len__(self) -> int:
         return len(self.manifest)
@@ -383,7 +398,9 @@ class MonthlyEmbeddingDataset(Dataset):
         if self.cache_dir is not None:
             cache_file = self._cache_file_for(entry)
             cache_file.parent.mkdir(parents=True, exist_ok=True)
-            tmp = cache_file.with_suffix(".tmp")
+            tmp = cache_file.with_suffix(
+                f".tmp.{os.getpid()}.{threading.current_thread().ident}"
+            )
             try:
                 torch.save(sample, tmp)
                 tmp.replace(cache_file)
