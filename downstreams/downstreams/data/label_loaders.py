@@ -40,12 +40,23 @@ def rasterize_labelme(
 
     像素值：0=背景，class_map[label]=前景。
     多边形洞/重叠通过 shapely 处理为有效几何后栅格化。
+
+    LabelMe 的 polygon 坐标位于原图 (imageHeight, imageWidth) 空间，
+    输出 mask 尺寸可能与原图不同，因此按 out_shape / image_size 进行缩放。
     """
     if class_map is None:
-        class_map = {"jiazhudongdi": 1}
+        class_map = {"jiazhudongdi": 1, "gongdi": 1}
+
+    with open(label_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    img_h = data.get("imageHeight", out_shape[0])
+    img_w = data.get("imageWidth", out_shape[1])
+    scale_y = out_shape[0] / max(img_h, 1)
+    scale_x = out_shape[1] / max(img_w, 1)
 
     shapes: list[tuple[Any, int]] = []
-    for s in load_labelme_shapes(label_path):
+    for s in data.get("shapes", []):
         label = s.get("label")
         if label not in class_map:
             continue
@@ -53,7 +64,8 @@ def rasterize_labelme(
         points = s.get("points", [])
         if len(points) < 3:
             continue
-        geom = Polygon(points)
+        scaled_points = [(x * scale_x, y * scale_y) for x, y in points]
+        geom = Polygon(scaled_points)
         if not geom.is_valid:
             geom = geom.buffer(0)
         if geom.is_empty:
@@ -72,8 +84,8 @@ def rasterize_labelme(
 
 
 def get_reference_patch_path(patch_dir: Path, patch_id: str) -> Path | None:
-    """在 patch_dir 中查找匹配 patch_id 的参考影像。"""
-    candidates = sorted(patch_dir.glob(f"*_{patch_id}.tif"))
+    """在 patch_dir 中递归查找匹配 patch_id 的参考影像。"""
+    candidates = sorted(patch_dir.rglob(f"*_{patch_id}.tif"))
     if not candidates:
         return None
     if len(candidates) > 1:

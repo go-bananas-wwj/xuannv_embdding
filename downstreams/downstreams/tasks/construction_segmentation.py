@@ -33,6 +33,39 @@ class FocalDiceLoss(nn.Module):
         return focal.mean() + _dice_loss(logits, target)
 
 
+class BceDiceTverskyLoss(nn.Module):
+    """Class-weighted BCE + Dice + Tversky, suitable for extreme class imbalance."""
+
+    def __init__(
+        self,
+        pos_weight: float = 150.0,
+        tversky_beta: float = 0.7,
+        bce_weight: float = 1.0,
+        dice_weight: float = 1.0,
+        tversky_weight: float = 1.0,
+    ) -> None:
+        super().__init__()
+        self.bce = nn.BCEWithLogitsLoss(
+            pos_weight=torch.tensor(pos_weight),
+            reduction="mean",
+        )
+        self.beta = tversky_beta
+        self.bce_weight = bce_weight
+        self.dice_weight = dice_weight
+        self.tversky_weight = tversky_weight
+
+    def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        target = target.float()
+        bce = self.bce(logits, target)
+        probs = torch.sigmoid(logits)
+        tp = (probs * target).sum()
+        fp = (probs * (1 - target)).sum()
+        fn = ((1 - probs) * target).sum()
+        dice = 1.0 - (2.0 * tp + 1e-6) / (2.0 * tp + fp + fn + 1e-6)
+        tversky = 1.0 - (tp + 1e-6) / (tp + self.beta * fn + (1.0 - self.beta) * fp + 1e-6)
+        return self.bce_weight * bce + self.dice_weight * dice + self.tversky_weight * tversky
+
+
 class ConstructionSegmentationTask(BaseTask):
     def __init__(self, config: dict[str, Any]) -> None:
         super().__init__(config)
@@ -54,10 +87,12 @@ class ConstructionSegmentationTask(BaseTask):
         head_type = training["head_type"]
         embed_dim = data["embed_dim"]
         num_classes = data["num_classes"]
+        pos_prior = training.get("pos_prior", None)
         return build_segmentation_head(
             head_type,
             embed_dim,
             num_classes,
+            pos_prior=pos_prior,
         )
 
     def build_loss(self) -> nn.Module:
@@ -67,10 +102,21 @@ class ConstructionSegmentationTask(BaseTask):
             training = self.config["training"]
             loss_name = training.get("loss", "focal_dice").lower()
             if loss_name == "focal_dice":
-                self._loss = FocalDiceLoss()
+                self._loss = FocalDiceLoss(
+                    alpha=training.get("focal_alpha", 0.8),
+                    gamma=training.get("focal_gamma", 2.0),
+                )
             elif loss_name == "bce":
                 pos_weight = torch.tensor(training.get("pos_weight", 1.0))
                 self._loss = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+            elif loss_name == "bce_dice_tversky":
+                self._loss = BceDiceTverskyLoss(
+                    pos_weight=training.get("pos_weight", 150.0),
+                    tversky_beta=training.get("tversky_beta", 0.7),
+                    bce_weight=training.get("bce_weight", 1.0),
+                    dice_weight=training.get("dice_weight", 1.0),
+                    tversky_weight=training.get("tversky_weight", 1.0),
+                )
             else:
                 raise ValueError(f"未知 loss 类型: {loss_name}")
         return self._loss

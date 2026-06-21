@@ -25,6 +25,7 @@ def main() -> None:
     p.add_argument("--output-root", type=Path, required=True)
     p.add_argument("--suffix", default="")
     p.add_argument("--split", default="all")
+    p.add_argument("--batch-size", type=int, default=1, help="推理 batch size")
     init_group = p.add_mutually_exclusive_group(required=True)
     init_group.add_argument("--checkpoint", type=Path, default=None)
     init_group.add_argument(
@@ -52,7 +53,9 @@ def main() -> None:
 
     for region in args.regions:
         logger.info("生成 %s embedding", region)
-        loader = build_inference_loader(cfg, region, split=args.split)
+        loader = build_inference_loader(
+            cfg, region, split=args.split, batch_size=args.batch_size
+        )
         region_dir = out_root / region
         precompute_embeddings(model, loader, device, region_dir)
 

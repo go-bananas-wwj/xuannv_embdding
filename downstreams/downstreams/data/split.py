@@ -32,12 +32,13 @@ def _quantize(values: np.ndarray, n_bins: int) -> np.ndarray:
 def create_stratified_folds(
     mask_dir: Path,
     n_folds: int = 5,
-    val_ratio: float = 0.1,
+    val_ratio: float = 0.2,
     seed: int = 42,
 ) -> dict[str, Any]:
     """按 mask 正像素比例分层，生成 n_folds-fold。
 
     每 fold：4 folds 训练，1 fold 测试；训练集内部再切 val_ratio 做验证。
+    优先保证每个 fold 的 train/val/test 都至少包含一个正样本 patch。
     """
     mask_paths = sorted(mask_dir.glob("*.tif"))
     if not mask_paths:
@@ -45,9 +46,11 @@ def create_stratified_folds(
     patch_ids = [p.stem for p in mask_paths]
     ratios = np.array([_positive_ratio(p) for p in mask_paths])
     pid_to_idx = {pid: i for i, pid in enumerate(patch_ids)}
+    is_positive = ratios > 0
 
-    # 分层：按正像素比例分桶
-    strata = _quantize(ratios, n_bins=4)
+    # 分层：先区分是否有前景，再按正像素比例分桶
+    ratio_strata = _quantize(ratios, n_bins=3)
+    strata = is_positive.astype(int) * 10 + ratio_strata
 
     # 若任一 stratum 样本数不足 n_folds，则无法按 strata 分层，退化为非分层 KFold
     _, counts = np.unique(strata, return_counts=True)
@@ -67,11 +70,22 @@ def create_stratified_folds(
 
         rng = np.random.default_rng(seed + fold_idx)
         n_val = max(1, int(len(train_val_ids) * val_ratio))
-        val_indices = rng.choice(len(train_val_ids), size=n_val, replace=False)
-        train_indices = np.setdiff1d(np.arange(len(train_val_ids)), val_indices)
+        # 优先在 train_val 中选择一个正样本作为验证，避免 val 全为背景
+        pos_in_train_val = [pid for pid in train_val_ids if is_positive[pid_to_idx[pid]]]
+        if pos_in_train_val:
+            val_ids = rng.choice(pos_in_train_val, size=min(n_val, len(pos_in_train_val)), replace=False).tolist()
+        else:
+            val_ids = rng.choice(train_val_ids, size=n_val, replace=False).tolist()
+        train_ids = [pid for pid in train_val_ids if pid not in val_ids]
 
-        train_ids = [train_val_ids[i] for i in train_indices]
-        val_ids = [train_val_ids[i] for i in val_indices]
+        # 若 test 全为背景，尝试与 train 中一个正样本交换
+        if not any(is_positive[pid_to_idx[pid]] for pid in test_ids):
+            pos_train = [pid for pid in train_ids if is_positive[pid_to_idx[pid]]]
+            if pos_train:
+                swap_out = test_ids[0]
+                swap_in = rng.choice(pos_train)
+                test_ids = [swap_in if pid == swap_out else pid for pid in test_ids]
+                train_ids = [swap_out if pid == swap_in else pid for pid in train_ids]
 
         folds.append({"fold": fold_idx, "train": train_ids, "val": val_ids, "test": test_ids})
 

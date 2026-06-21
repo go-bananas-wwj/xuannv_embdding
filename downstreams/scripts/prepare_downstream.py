@@ -27,7 +27,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--labelme-rar", type=Path, required=True)
     p.add_argument("--patch-dir", type=Path, required=True)
     p.add_argument("--out-dir", type=Path, required=True)
-    p.add_argument("--class-map", type=str, default='{"jiazhudongdi": 1}')
+    p.add_argument("--class-map", type=str, default='{"jiazhudongdi": 1, "gongdi": 1}')
     return p.parse_args()
 
 
@@ -52,13 +52,22 @@ def main() -> None:
     # 解压 rar
     logger.info("解压 %s -> %s", args.labelme_rar, raw_dir)
     shutil.rmtree(raw_dir, ignore_errors=True)
+    raw_dir.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         ["bsdtar", "xf", str(args.labelme_rar), "-C", str(raw_dir)],
         check=True,
     )
 
-    label_files = sorted(raw_dir.rglob("*.json"))
-    logger.info("找到 %d 个 labelme json", len(label_files))
+    import re
+
+    label_files_all = sorted(raw_dir.rglob("*.json"))
+    # 去重：同一张 patch 经常有两个同名文件，例如
+    # patch_000002_20260430_rgb_uint8.json 与 patch_000002_20260430_rgb_uint8_patch_000002.json
+    label_files = [
+        p for p in label_files_all
+        if not re.search(r"_rgb_uint8_patch_\d+$", p.stem)
+    ]
+    logger.info("找到 %d 个 labelme json，去重后 %d 个", len(label_files_all), len(label_files))
 
     processed = 0
     for label_path in label_files:

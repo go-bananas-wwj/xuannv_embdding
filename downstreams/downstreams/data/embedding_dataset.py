@@ -33,6 +33,9 @@ class EmbeddingDataset(Dataset):
         patch_id = self.patch_ids[idx]
         emb_path = self.embedding_root / patch_id / f"{self.month}_embedding_map.pt"
         mask_path = self.mask_dir / f"{patch_id}.tif"
+        month_mask_path = self.mask_dir / f"{patch_id}_{self.month}.tif"
+        if month_mask_path.exists():
+            mask_path = month_mask_path
 
         if not emb_path.exists():
             raise FileNotFoundError(f"embedding 不存在: {emb_path}")

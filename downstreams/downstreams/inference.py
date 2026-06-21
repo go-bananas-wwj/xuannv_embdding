@@ -49,7 +49,11 @@ def load_model_for_inference(
         logger.info("使用随机初始化 AEFModel（无预训练权重）")
     elif checkpoint_path is not None:
         state = torch.load(checkpoint_path, map_location=device, weights_only=True)
-        model.load_state_dict(state["model"])
+        missing, unexpected = model.load_state_dict(state["model"], strict=False)
+        if missing:
+            logger.warning("checkpoint 缺失 keys: %s", missing)
+        if unexpected:
+            logger.warning("checkpoint 多余 keys: %s", unexpected)
         logger.info("加载模型: %s", checkpoint_path)
     else:
         raise ValueError("checkpoint_path 与 random_init 不能同时为空")
@@ -57,10 +61,12 @@ def load_model_for_inference(
     return model, cfg, device
 
 
-def build_inference_loader(cfg: Config, region: str, split: str = "all") -> DataLoader:
+def build_inference_loader(
+    cfg: Config, region: str, split: str = "all", batch_size: int = 1
+) -> DataLoader:
     # TODO: 当 MonthlyEmbeddingDataset 支持 split 过滤时，根据 split 值筛选 patch。
-    manifest_path = Path(cfg.data.root).parent / region / "manifest.json"
-    statistics_dir = Path(cfg.data.root).parent / "statistics" / region
+    manifest_path = Path(cfg.data.manifest_path)
+    statistics_dir = Path(cfg.data.statistics_dir)
     dataset = MonthlyEmbeddingDataset(
         manifest_path=manifest_path,
         statistics_dir=statistics_dir,
@@ -76,7 +82,7 @@ def build_inference_loader(cfg: Config, region: str, split: str = "all") -> Data
 
     return DataLoader(
         dataset,
-        batch_size=1,
+        batch_size=batch_size,
         shuffle=False,
         num_workers=0,
         collate_fn=collate,
