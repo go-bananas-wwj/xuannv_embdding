@@ -29,6 +29,7 @@ class DataConfig:
     months: list[str] = field(default_factory=lambda: [])
     sources: list[str] = field(default_factory=lambda: ["s2", "s1", "landsat"])
     teacher_embedding_root: Path | None = None
+    cache_dir: Path | None = None  # NEW
 
 
 @dataclass
@@ -193,6 +194,11 @@ class Config:
                 teacher_embedding_root=(
                     Path(data_cfg["teacher_embedding_root"])
                     if data_cfg.get("teacher_embedding_root")
+                    else None
+                ),
+                cache_dir=(
+                    Path(data_cfg["cache_dir"])
+                    if data_cfg.get("cache_dir")
                     else None
                 ),
             ),

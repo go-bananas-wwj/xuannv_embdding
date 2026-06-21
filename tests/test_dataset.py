@@ -224,3 +224,41 @@ def test_monthly_binning_with_synthetic_data(tmp_path: Path) -> None:
         sample["timestamps"]["worldcover"],
         torch.tensor([202501, 202502], dtype=torch.long),
     )
+
+
+def test_config_loads_cache_dir(tmp_path: Path) -> None:
+    from xuannv_embedding.config import Config
+
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text(
+        """
+experiment:
+  name: cache_test
+  use_wandb: false
+training:
+  epochs: 1
+  lr: 1e-4
+  weight_decay: 0.01
+  warmup_epochs: 0
+  gradient_accumulation_steps: 1
+  save_every: 1
+  eval_every: 1
+model:
+  embed_dim: 8
+  sensor_channels:
+    s2: 12
+  target_heads:
+    s2_recon:
+      loss_type: continuous
+      channels: 12
+      weight: 1.0
+data:
+  root: /tmp
+  region: test
+  manifest_path: /tmp/manifest.json
+  cache_dir: /tmp/cache
+""",
+        encoding="utf-8",
+    )
+    cfg = Config.from_yaml(yaml_path)
+    assert cfg.data.cache_dir == Path("/tmp/cache")
