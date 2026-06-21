@@ -11,11 +11,17 @@ import numpy as np
 import rasterio
 import torch
 import torch.distributed as dist
+from downstreams.data.end_to_end_dataset import (
+    EndToEndSegmentationDataset,
+    JointEndToEndSegmentationDataset,
+    collate_end_to_end,
+)
 from downstreams.data.multi_task_dataset import (
     MultiTaskEmbeddingDataset,
     collate_embeddings,
 )
 from downstreams.data.split import create_combined_stratified_folds, create_stratified_folds
+from downstreams.models.end_to_end_model import build_end_to_end_model
 from downstreams.metrics.segmentation import compute_segmentation_metrics
 from downstreams.tasks.construction_segmentation import ConstructionSegmentationTask
 from downstreams.utils.config import load_config
@@ -106,6 +112,14 @@ def _has_embedding(emb_root: Path, patch_id: str, months: list[str]) -> bool:
     return all((emb_root / patch_id / f"{m}_embedding_map.pt").exists() for m in months)
 
 
+def _has_image(image_root: Path, patch_id: str, months: list[str]) -> bool:
+    """检查 patch_id 在 image_root 下是否包含所有请求月份的高分影像。"""
+    return all(
+        any(image_root.glob(f"highres_optical_{month}*_{patch_id}.tif"))
+        for month in months
+    )
+
+
 def _has_mask(mask_dir: Path, patch_id: str, months: list[str]) -> bool:
     """检查 patch_id 在 mask_dir 下是否包含任一请求月份的 mask。"""
     return any(
@@ -170,9 +184,12 @@ def save_test_predictions(
     pred_dir.mkdir(parents=True, exist_ok=True)
     with torch.no_grad():
         for batch in loader:
-            emb = batch["embedding_map"].to(device)
+            if "embedding_map" in batch:
+                inp = batch["embedding_map"].to(device)
+            else:
+                inp = batch["image"].to(device)
             patch_ids = batch["patch_ids"]
-            logits = model(emb)[:, 1]
+            logits = model(inp)[:, 1]
             probs = torch.sigmoid(logits).cpu().numpy()
             for b, patch_id in enumerate(patch_ids):
                 if region_of is not None and mask_dirs is not None:
@@ -249,9 +266,12 @@ def _find_best_threshold(
     all_masks: list[torch.Tensor] = []
     with torch.no_grad():
         for batch in loader:
-            emb = batch["embedding_map"].to(device)
+            if "embedding_map" in batch:
+                inp = batch["embedding_map"].to(device)
+            else:
+                inp = batch["image"].to(device)
             mask = batch["mask"].to(device)
-            logits = model(emb)[:, 1]
+            logits = model(inp)[:, 1]
             all_logits.append(logits.cpu())
             all_masks.append(mask.cpu())
     if not all_logits:
@@ -301,6 +321,14 @@ def run_fold(
     task = ConstructionSegmentationTask(cfg)
     device = get_downstream_device(cfg["experiment"].get("device", "auto"))
 
+    end_to_end = cfg["training"].get("end_to_end", False)
+    backbone_lr = cfg["training"].get("backbone_lr", 1.0e-5)
+    head_lr = cfg["training"].get("head_lr", 1.0e-4)
+    freeze_backbone_epochs = cfg["training"].get("freeze_backbone_epochs", 0)
+
+    if end_to_end and args.regions:
+        raise NotImplementedError("端到端训练暂不支持联合多区域模式")
+
     train_ids = fold_info["train"]
     if args.fraction is not None and fractions is not None:
         frac_str = str(args.fraction)
@@ -346,6 +374,43 @@ def run_fold(
         )
         test_ds = JointMultiTaskEmbeddingDataset(
             emb_region_root, patch_ids=test_ids, augment=False, **ds_kwargs
+        )
+    elif end_to_end:
+        label_root = args.label_root / args.task
+        image_root = label_root.parent.parent / "patches" / "highres_optical"
+        train_ids = [
+            pid
+            for pid in train_ids
+            if _has_image(image_root, pid, args.months)
+            and _has_mask(mask_dir, pid, args.months)
+        ]
+        val_ids = [
+            pid
+            for pid in fold_info["val"]
+            if _has_image(image_root, pid, args.months)
+            and _has_mask(mask_dir, pid, args.months)
+        ]
+        test_ids = [
+            pid
+            for pid in fold_info["test"]
+            if _has_image(image_root, pid, args.months)
+            and _has_mask(mask_dir, pid, args.months)
+        ]
+        ds_kwargs = {
+            "task_name": args.task,
+            "months": args.months,
+            "bitemporal": bitemporal,
+            "include_diff": True,
+            "crop_size": cfg["training"].get("crop_size"),
+        }
+        train_ds = EndToEndSegmentationDataset(
+            image_root, label_root, train_ids, augment=True, **ds_kwargs
+        )
+        val_ds = EndToEndSegmentationDataset(
+            image_root, label_root, val_ids, augment=False, **ds_kwargs
+        )
+        test_ds = EndToEndSegmentationDataset(
+            image_root, label_root, test_ids, augment=False, **ds_kwargs
         )
     else:
         label_root = args.label_root / args.task
@@ -406,13 +471,14 @@ def run_fold(
         else None
     )
 
+    collate = collate_end_to_end if end_to_end else collate_embeddings
     train_loader = DataLoader(
         train_ds,
         batch_size=cfg["training"]["batch_size"],
         shuffle=(train_sampler is None),
         sampler=train_sampler,
         num_workers=cfg["training"].get("num_workers", 0),
-        collate_fn=collate_embeddings,
+        collate_fn=collate,
         drop_last=True,
     )
     val_loader = DataLoader(
@@ -421,7 +487,7 @@ def run_fold(
         shuffle=False,
         sampler=val_sampler,
         num_workers=cfg["training"].get("num_workers", 0),
-        collate_fn=collate_embeddings,
+        collate_fn=collate,
     )
     test_loader = DataLoader(
         test_ds,
@@ -429,25 +495,75 @@ def run_fold(
         shuffle=False,
         sampler=test_sampler,
         num_workers=cfg["training"].get("num_workers", 0),
-        collate_fn=collate_embeddings,
+        collate_fn=collate,
     )
 
     cfg["training"]["months"] = args.months
-    model = task.build_head().to(device)
+
+    if end_to_end:
+        if args.config_path is None or args.checkpoint is None:
+            raise ValueError("端到端训练需要 --config-path 与 --checkpoint")
+        output_size = cfg["training"].get("crop_size", cfg["data"].get("patch_size", 128))
+        output_size = (output_size, output_size)
+        head = task.build_head().to(device)
+        model, _ = build_end_to_end_model(
+            args.config_path,
+            args.checkpoint,
+            head,
+            freeze_backbone_epochs=freeze_backbone_epochs,
+            output_size=output_size,
+            target_size=output_size,
+            months=args.months,
+            include_diff=True,
+        )
+    else:
+        model = task.build_head().to(device)
+
     if world_size > 1:
         local_rank = int(__import__("os").environ.get("LOCAL_RANK", 0))
         model = torch.nn.parallel.DistributedDataParallel(
             model, device_ids=[local_rank], output_device=local_rank
         )
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=cfg["training"]["lr"],
-        weight_decay=cfg["training"].get("weight_decay", 0.0),
-    )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=cfg["training"]["epochs"]
-    )
+    def _unwrap(m: nn.Module) -> nn.Module:
+        return m.module if isinstance(m, torch.nn.parallel.DistributedDataParallel) else m
+
+    if end_to_end and freeze_backbone_epochs > 0:
+        optimizer = torch.optim.AdamW(
+            _unwrap(model).head.parameters(),
+            lr=head_lr,
+            weight_decay=cfg["training"].get("weight_decay", 0.0),
+        )
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=cfg["training"]["epochs"]
+        )
+    elif end_to_end:
+        optimizer = torch.optim.AdamW(
+            [
+                {
+                    "params": _unwrap(model).encoder.parameters(),
+                    "lr": backbone_lr,
+                },
+                {
+                    "params": _unwrap(model).head.parameters(),
+                    "lr": head_lr,
+                },
+            ],
+            lr=head_lr,
+            weight_decay=cfg["training"].get("weight_decay", 0.0),
+        )
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=cfg["training"]["epochs"]
+        )
+    else:
+        optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=cfg["training"]["lr"],
+            weight_decay=cfg["training"].get("weight_decay", 0.0),
+        )
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=cfg["training"]["epochs"]
+        )
     loss_fn = task.build_loss()
 
     early_stop_metric = cfg["training"].get("early_stop_metric", "miou")
@@ -462,14 +578,44 @@ def run_fold(
         if isinstance(train_sampler, DistributedSampler):
             train_sampler.set_epoch(epoch)
 
+        # 在冻结期结束后切换为完整优化器
+        if (
+            end_to_end
+            and freeze_backbone_epochs > 0
+            and epoch == freeze_backbone_epochs
+        ):
+            _unwrap(model).set_backbone_frozen(False)
+            optimizer = torch.optim.AdamW(
+                [
+                    {
+                        "params": _unwrap(model).encoder.parameters(),
+                        "lr": backbone_lr,
+                    },
+                    {
+                        "params": _unwrap(model).head.parameters(),
+                        "lr": head_lr,
+                    },
+                ],
+                lr=head_lr,
+                weight_decay=cfg["training"].get("weight_decay", 0.0),
+            )
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, T_max=cfg["training"]["epochs"]
+            )
+            if rank == 0:
+                logger.info("Epoch %d 解冻 backbone，使用 backbone_lr=%.2e head_lr=%.2e", epoch, backbone_lr, head_lr)
+
         model.train()
         train_loss = 0.0
         n_batches = 0
         for batch in train_loader:
-            emb = batch["embedding_map"].to(device)
+            if end_to_end:
+                inp = batch["image"].to(device)
+            else:
+                inp = batch["embedding_map"].to(device)
             mask = batch["mask"].to(device)
             optimizer.zero_grad()
-            logits = model(emb)[:, 1]
+            logits = model(inp)[:, 1]
             loss = loss_fn(logits, mask.float())
             loss.backward()
             optimizer.step()
@@ -586,6 +732,18 @@ def main() -> None:
     p.add_argument("--output-root", type=Path, required=True)
     p.add_argument("--fold", type=int, default=None, help="只跑单个 fold 调试")
     p.add_argument("--fraction", type=float, default=None)
+    p.add_argument(
+        "--config-path",
+        type=Path,
+        default=None,
+        help="AEF 编码器配置路径（端到端训练必填）",
+    )
+    p.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=None,
+        help="AEF 编码器检查点路径（端到端训练必填）",
+    )
     args = p.parse_args()
 
     cfg = load_config(args.config)

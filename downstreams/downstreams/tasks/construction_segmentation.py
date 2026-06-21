@@ -136,9 +136,12 @@ class ConstructionSegmentationTask(BaseTask):
         all_masks: list[torch.Tensor] = []
         with torch.no_grad():
             for batch in loader:
-                emb = batch["embedding_map"].to(device)
+                if "embedding_map" in batch:
+                    inp = batch["embedding_map"].to(device)
+                else:
+                    inp = batch["image"].to(device)
                 mask = batch["mask"].to(device)
-                logits = model(emb)[:, 1]
+                logits = model(inp)[:, 1]
                 all_logits.append(logits.cpu())
                 all_masks.append(mask.cpu())
         if not all_logits:

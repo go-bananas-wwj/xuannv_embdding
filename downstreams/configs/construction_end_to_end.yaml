@@ -1,0 +1,26 @@
+_base_: _base_.yaml
+
+experiment:
+  name: construction_harbin_end_to_end_upernet
+
+training:
+  head_type: upernet
+  end_to_end: true
+  freeze_backbone_epochs: 0
+  backbone_lr: 1.0e-5
+  head_lr: 1.0e-4
+  loss: bce_dice_tversky
+  lr: 1.0e-4
+  pos_weight: 200.0
+  tversky_beta: 0.7
+  tversky_weight: 1.5
+  bce_weight: 1.0
+  dice_weight: 1.0
+  early_stop_metric: f1_best
+  early_stop_patience: 30
+  use_weighted_sampler: true
+  use_threshold_tuning: true
+  pos_prior: 0.012
+  batch_size: 8
+  epochs: 200
+  months: [202512, 202605]
