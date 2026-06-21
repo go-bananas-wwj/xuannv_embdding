@@ -49,6 +49,32 @@ def _load_s2_rgb(patch_id: str, root: Path, month: str | None = None) -> np.ndar
     return _stretch(rgb)
 
 
+def _load_s1(patch_id: str, root: Path, month: str | None = None) -> np.ndarray | None:
+    """root: processed/<region>/patches/s1"""
+    if month:
+        files = sorted(root.glob(f"s1_{month}*{patch_id}.tif"))
+    else:
+        files = sorted(root.glob(f"s1_*_{patch_id}.tif"))
+    if not files:
+        return None
+    with rasterio.open(files[-1]) as src:
+        im = src.read(1)
+    return _stretch(np.nan_to_num(im, nan=0.0))
+
+
+def _load_input(patch_id: str, data_root: Path, month: str) -> tuple[np.ndarray | None, str]:
+    """优先读取 S2 RGB，缺失则回退到 S1 VV/VH。返回 (image, title)。"""
+    s2_root = data_root / "patches" / "s2"
+    s1_root = data_root / "patches" / "s1"
+    s2 = _load_s2_rgb(patch_id, s2_root, month=month)
+    if s2 is not None:
+        return s2, f"S2 {month}"
+    s1 = _load_s1(patch_id, s1_root, month=month)
+    if s1 is not None:
+        return s1, f"S1 {month}"
+    return None, f"S2 {month}"
+
+
 def _load_highres_optical(patch_id: str, root: Path) -> np.ndarray | None:
     files = sorted(root.glob(f"highres_optical_*_{patch_id}.tif"))
     if not files:
@@ -149,18 +175,17 @@ def plot_haidian_construction_versions(patch_id: str, data_root: Path, mask_dir:
 def plot_harbin_task_comparison(patch_id: str, task: str, data_root: Path, mask_dir: Path,
                                 our_pred_dir: Path, aef_pred_dir: Path,
                                 our_name: str = "Ours") -> None:
-    """Harbin task: S2 t1/t2, GT t1/t2, our pred, AEF pred."""
-    s2_root = data_root / "patches" / "s2"
-    s2_t1 = _load_s2_rgb(patch_id, s2_root, month="202512")
-    s2_t2 = _load_s2_rgb(patch_id, s2_root, month="202605")
+    """Harbin task: t1/t2 输入（S2 优先，缺失用 S1 回退），GT t1/t2，our pred，AEF pred。"""
+    input_t1, title_t1 = _load_input(patch_id, data_root, month="202512")
+    input_t2, title_t2 = _load_input(patch_id, data_root, month="202605")
     mask_t1 = _load_mask(f"{patch_id}_202512", mask_dir)
     mask_t2 = _load_mask(f"{patch_id}_202605", mask_dir)
     our_pred = _load_pred(patch_id, our_pred_dir)
     aef_pred = _load_pred(patch_id, aef_pred_dir)
 
     fig, axes = plt.subplots(2, 4, figsize=(13, 6.5))
-    _show(axes[0, 0], s2_t1, "S2 202512")
-    _show(axes[0, 1], s2_t2, "S2 202605")
+    _show(axes[0, 0], input_t1, title_t1)
+    _show(axes[0, 1], input_t2, title_t2)
     _show(axes[0, 2], mask_t1, "GT 202512", cmap="jet", vmin=0, vmax=1)
     _show(axes[0, 3], mask_t2, "GT 202605", cmap="jet", vmin=0, vmax=1)
     _show(axes[1, 0], our_pred, our_name, cmap="jet", vmin=0, vmax=1)
