@@ -17,9 +17,7 @@ model:
     s2: 12
     s1: 2
     landsat: 7
-    highres_optical_haidian: 4
     highres_optical_harbin: 3
-    highres_sar_haidian: 1
     highres_optical: 3
     highres_sar: 1
   target_heads:
@@ -49,17 +47,17 @@ training:
   save_every: 10
   eval_every: 5
   amp: false
-  gradient_checkpointing: true
+  gradient_checkpointing: false
   log_every: 10
   distill_weight: 0.5
   distill_months: 12
+  grad_clip_norm: 1.0
 data:
   root: /data/xuannv_embedding/processed
   region: combined
   manifest_path: /data/xuannv_embedding/processed/manifest_all_744.json
   statistics_dir: /data/xuannv_embedding/statistics
-  num_samples: 0
-  batch_size: 2
+  batch_size: 4
   num_workers: 0
   patch_size: 128
   months:
