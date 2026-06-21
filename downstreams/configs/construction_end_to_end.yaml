@@ -21,6 +21,7 @@ training:
   use_weighted_sampler: true
   use_threshold_tuning: true
   pos_prior: 0.012
-  batch_size: 8
+  batch_size: 4
   epochs: 200
+  crop_size: 640
   months: [202512, 202605]

@@ -506,6 +506,9 @@ def run_fold(
         output_size = cfg["training"].get("crop_size", cfg["data"].get("patch_size", 128))
         output_size = (output_size, output_size)
         head = task.build_head().to(device)
+        highres_source_name = cfg["training"].get(
+            "highres_source_name", f"highres_optical_{region}"
+        )
         model, _ = build_end_to_end_model(
             args.config_path,
             args.checkpoint,
@@ -515,6 +518,7 @@ def run_fold(
             target_size=output_size,
             months=args.months,
             include_diff=False,
+            highres_source_name=highres_source_name,
         )
     else:
         model = task.build_head().to(device)
