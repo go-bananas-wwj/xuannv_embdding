@@ -59,7 +59,10 @@ def load_model_for_inference(
 
 def build_inference_loader(cfg: Config, region: str, split: str = "all") -> DataLoader:
     # TODO: 当 MonthlyEmbeddingDataset 支持 split 过滤时，根据 split 值筛选 patch。
-    manifest_path = Path(cfg.data.root).parent / region / "manifest.json"
+    if cfg.data.manifest_path is not None:
+        manifest_path = Path(cfg.data.manifest_path)
+    else:
+        manifest_path = Path(cfg.data.root).parent / region / "manifest.json"
     statistics_dir = Path(cfg.data.root).parent / "statistics" / region
     dataset = MonthlyEmbeddingDataset(
         manifest_path=manifest_path,
@@ -67,6 +70,7 @@ def build_inference_loader(cfg: Config, region: str, split: str = "all") -> Data
         sources=cfg.data.sources,
         patch_size=cfg.data.patch_size,
         num_months=cfg.model.num_months,
+        region=region,
     )
 
     target_heads = cfg.model.target_heads
