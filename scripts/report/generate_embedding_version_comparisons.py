@@ -86,6 +86,17 @@ def _load_s1(patch_id: str, month: str) -> np.ndarray | None:
     return _stretch(np.nan_to_num(im, nan=0.0))
 
 
+def _load_input(patch_id: str, month: str) -> tuple[np.ndarray | None, str]:
+    """优先读取 S2 RGB，缺失则回退到 S1 VV/VH。返回 (image, title)。"""
+    s2 = _load_s2_rgb(patch_id, month)
+    if s2 is not None:
+        return s2, f"S2 {month}"
+    s1 = _load_s1(patch_id, month)
+    if s1 is not None:
+        return s1, f"S1 {month}"
+    return None, f"S2 {month}"
+
+
 def _load_landsat(patch_id: str, month: str) -> np.ndarray | None:
     landsat_root = HARBIN_DATA / "patches" / "landsat"
     files = sorted(landsat_root.glob(f"landsat_{month}*{patch_id}.tif"))
@@ -196,8 +207,8 @@ def generate_comprehensive(patch_id: str, version_name: str, emb_root: Path, mon
 
 def generate_version_comparison_grid(patch_id: str) -> Path:
     """生成各版本 Embedding PCA + Prediction 的汇总对比图。"""
-    s2_t1 = _load_s2_rgb(patch_id, "202512")
-    s2_t2 = _load_s2_rgb(patch_id, "202605")
+    input_t1, title_t1 = _load_input(patch_id, "202512")
+    input_t2, title_t2 = _load_input(patch_id, "202605")
     mask_t1 = _load_mask(patch_id, "202512")
     mask_t2 = _load_mask(patch_id, "202605")
 
@@ -207,8 +218,8 @@ def generate_version_comparison_grid(patch_id: str) -> Path:
     fig, axes = plt.subplots(n_rows, 4, figsize=(13, 2.8 * n_rows))
 
     # 参考行 0
-    _show(axes[0, 0], s2_t1, "S2 202512")
-    _show(axes[0, 1], s2_t2, "S2 202605")
+    _show(axes[0, 0], input_t1, title_t1)
+    _show(axes[0, 1], input_t2, title_t2)
     _show(axes[0, 2], mask_t1, "GT 202512", cmap="jet", vmin=0, vmax=1)
     _show(axes[0, 3], mask_t2, "GT 202605", cmap="jet", vmin=0, vmax=1)
 
