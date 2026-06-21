@@ -62,11 +62,12 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--output-root", type=Path, required=True)
     p.add_argument("--label-root", type=Path, required=True)
+    p.add_argument("--task", type=str, default="construction")
     p.add_argument("--rgb-source", type=Path, default=None)
     p.add_argument("--n-samples", type=int, default=10)
     args = p.parse_args()
 
-    mask_dir = args.label_root / "masks"
+    mask_dir = args.label_root / args.task / "masks"
 
     for fold_dir in sorted(args.output_root.glob("fold_*")):
         metrics_path = fold_dir / "metrics.json"
