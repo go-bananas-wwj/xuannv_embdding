@@ -1,0 +1,19 @@
+_base_: _base_.yaml
+
+experiment:
+  name: construction_harbin_bitemporal_upernet_v1
+
+training:
+  head_type: upernet
+  loss: bce_dice_tversky
+  lr: 3.0e-5
+  pos_weight: 200.0
+  tversky_beta: 0.7
+  tversky_weight: 1.5
+  early_stop_metric: f1_best
+  early_stop_patience: 20
+  use_weighted_sampler: true
+  use_threshold_tuning: true
+  pos_prior: 0.015
+  batch_size: 8
+  months: [202512, 202605]
