@@ -5,8 +5,10 @@ import torch
 from downstreams.heads import (
     ChangeDetectionHead,
     ClassificationHead,
+    DiffUNetHead,
     FCNHead,
     LinearProbeHead,
+    MLPHead,
     UNetHead,
     UperNetHead,
     build_segmentation_head,
@@ -58,6 +60,8 @@ def test_upernet_head(seg_input: torch.Tensor) -> None:
         ("fcn", FCNHead),
         ("unet", UNetHead),
         ("upernet", UperNetHead),
+        ("mlp", MLPHead),
+        ("diff_unet", DiffUNetHead),
     ],
 )
 def test_build_segmentation_head(head_type: str, expected_cls: type) -> None:
@@ -97,3 +101,25 @@ def test_change_detection_head_forward_raises() -> None:
     x = torch.randn(2, 128, 16, 16)
     with pytest.raises(NotImplementedError):
         head(x)
+
+
+def test_mlp_head(seg_input: torch.Tensor) -> None:
+    head = MLPHead(embed_dim=64, num_classes=5, hidden_dim=128)
+    out = head(seg_input)
+    assert out.shape == (2, 5, 16, 16)
+
+
+def test_diff_unet_head_with_diff() -> None:
+    # 3 * 64 = 192 channels: [emb_t1, emb_t2, |diff|]
+    x = torch.randn(2, 192, 16, 16)
+    head = DiffUNetHead(embed_dim=64, num_classes=5, hidden_dim=128)
+    out = head(x)
+    assert out.shape == (2, 5, 16, 16)
+
+
+def test_diff_unet_head_without_diff() -> None:
+    # 64 channels: single temporal embedding
+    x = torch.randn(2, 64, 16, 16)
+    head = DiffUNetHead(embed_dim=64, num_classes=5, hidden_dim=128, use_diff=False)
+    out = head(x)
+    assert out.shape == (2, 5, 16, 16)
