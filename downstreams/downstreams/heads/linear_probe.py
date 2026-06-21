@@ -9,9 +9,9 @@ from downstreams.heads.base import TaskHead
 class LinearProbeHead(TaskHead):
     """严格线性探测：单 1x1 conv，无激活/无 BN。"""
 
-    def __init__(self, embed_dim: int, num_classes: int) -> None:
+    def __init__(self, in_channels: int, num_classes: int) -> None:
         super().__init__()
-        self.conv = nn.Conv2d(embed_dim, num_classes, kernel_size=1)
+        self.conv = nn.Conv2d(in_channels, num_classes, kernel_size=1)
 
     def forward(
         self,

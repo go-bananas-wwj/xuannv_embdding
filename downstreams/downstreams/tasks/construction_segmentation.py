@@ -59,9 +59,12 @@ class ConstructionSegmentationTask(BaseTask):
         embed_dim = data["embed_dim"]
         num_classes = data["num_classes"]
         pos_prior = training.get("pos_prior")
+        months = training.get("months", ["202605"])
+        bitemporal = len(months) == 2
+        in_channels = embed_dim * (3 if bitemporal else 1)
         return build_segmentation_head(
             head_type,
-            embed_dim,
+            in_channels,
             num_classes,
             pos_prior=pos_prior,
         )
