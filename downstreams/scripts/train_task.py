@@ -48,6 +48,7 @@ class JointMultiTaskEmbeddingDataset(Dataset[Any]):
         augment: bool = False,
         bitemporal: bool = False,
         include_diff: bool = True,
+        crop_size: int | None = None,
     ) -> None:
         self.patch_ids = patch_ids
         self.region_of = region_of
@@ -56,6 +57,7 @@ class JointMultiTaskEmbeddingDataset(Dataset[Any]):
         self.augment = augment
         self.bitemporal = bitemporal
         self.include_diff = include_diff
+        self.crop_size = crop_size
 
         self._region_datasets: dict[str, MultiTaskEmbeddingDataset] = {}
         self._region_patch_ids: dict[str, list[str]] = {}
@@ -74,6 +76,7 @@ class JointMultiTaskEmbeddingDataset(Dataset[Any]):
                 augment=augment,
                 bitemporal=bitemporal,
                 include_diff=include_diff,
+                crop_size=crop_size,
             )
             self._region_patch_ids[region] = region_patch_ids
 
@@ -333,6 +336,7 @@ def run_fold(
             "months": args.months,
             "bitemporal": bitemporal,
             "include_diff": True,
+            "crop_size": cfg["training"].get("crop_size"),
         }
         train_ds = JointMultiTaskEmbeddingDataset(
             emb_region_root, patch_ids=train_ids, augment=True, **ds_kwargs
@@ -359,6 +363,7 @@ def run_fold(
             "months": args.months,
             "bitemporal": bitemporal,
             "include_diff": True,
+            "crop_size": cfg["training"].get("crop_size"),
         }
         train_ds = MultiTaskEmbeddingDataset(
             emb_region_root, label_root, train_ids, augment=True, **ds_kwargs
