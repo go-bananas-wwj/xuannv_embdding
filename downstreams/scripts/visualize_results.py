@@ -79,7 +79,9 @@ def main() -> None:
 
     mask_dir = args.label_root / args.task / "masks"
 
-    fold_dirs = sorted([d for d in args.output_root.iterdir() if d.is_dir() and d.name.startswith("fold")])
+    fold_dirs = sorted(
+        [d for d in args.output_root.iterdir() if d.is_dir() and d.name.startswith("fold")]
+    )
     for fold_dir in fold_dirs:
         # 支持 fold0/fold_0/ 这种嵌套结构
         metrics_path = fold_dir / "metrics.json"
