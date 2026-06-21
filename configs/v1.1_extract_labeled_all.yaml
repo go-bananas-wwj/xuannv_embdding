@@ -1,0 +1,7 @@
+_base_: v1.1_distill_long_stable_50ep.yaml
+
+experiment:
+  name: v1.1_extract_labeled_all
+
+data:
+  manifest_path: /data/xuannv_embedding/processed/manifest_labeled_all.json
