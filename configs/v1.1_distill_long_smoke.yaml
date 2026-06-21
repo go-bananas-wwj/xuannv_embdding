@@ -1,0 +1,13 @@
+_base_: v1.1_distill_long.yaml
+
+experiment:
+  name: v1.1_distill_long_smoke
+
+training:
+  epochs: 1
+  save_every: 1
+  eval_every: 1
+  log_every: 1
+
+data:
+  max_patches: 24
