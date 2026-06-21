@@ -19,8 +19,8 @@ from downstreams.data.split import create_combined_stratified_folds, create_stra
 from downstreams.metrics.segmentation import compute_segmentation_metrics
 from downstreams.tasks.construction_segmentation import ConstructionSegmentationTask
 from downstreams.utils.config import load_config
-from downstreams.utils.device import get_downstream_device
 from downstreams.utils.ddp import cleanup_ddp, setup_ddp
+from downstreams.utils.device import get_downstream_device
 from downstreams.utils.reproducibility import set_seed
 from torch import nn
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
