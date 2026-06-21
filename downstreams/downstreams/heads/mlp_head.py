@@ -12,14 +12,14 @@ class MLPHead(TaskHead):
 
     def __init__(
         self,
-        embed_dim: int,
+        in_channels: int,
         num_classes: int,
         hidden_dim: int = 256,
         pos_prior: float | None = None,
     ) -> None:
         super().__init__()
         self.net = nn.Sequential(
-            nn.Conv2d(embed_dim, hidden_dim, 1),
+            nn.Conv2d(in_channels, hidden_dim, 1),
             nn.BatchNorm2d(hidden_dim),
             nn.ReLU(inplace=True),
             nn.Dropout(0.1),

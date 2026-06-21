@@ -28,26 +28,26 @@ def scene_emb():
 
 
 def test_linear_probe_head(seg_input: torch.Tensor) -> None:
-    head = LinearProbeHead(embed_dim=64, num_classes=5)
+    head = LinearProbeHead(in_channels=64, num_classes=5)
     out = head(seg_input)
     assert out.shape == (2, 5, 16, 16)
 
 
 def test_fcn_head(seg_input: torch.Tensor) -> None:
-    head = FCNHead(embed_dim=64, num_classes=5, hidden_dim=128)
+    head = FCNHead(in_channels=64, num_classes=5, hidden_dim=128)
     out = head(seg_input)
     assert out.shape == (2, 5, 16, 16)
 
 
 def test_unet_head(seg_input: torch.Tensor) -> None:
-    head = UNetHead(embed_dim=64, num_classes=5)
+    head = UNetHead(in_channels=64, num_classes=5)
     out = head(seg_input)
     # UNetHead 内部上采样后再插值回原始尺寸
     assert out.shape == (2, 5, 16, 16)
 
 
 def test_upernet_head(seg_input: torch.Tensor) -> None:
-    head = UperNetHead(embed_dim=64, num_classes=5, pool_scales=(1, 2, 3, 6))
+    head = UperNetHead(in_channels=64, num_classes=5, pool_scales=(1, 2, 3, 6))
     out = head(seg_input)
     assert out.shape == (2, 5, 16, 16)
 
@@ -65,13 +65,13 @@ def test_upernet_head(seg_input: torch.Tensor) -> None:
     ],
 )
 def test_build_segmentation_head(head_type: str, expected_cls: type) -> None:
-    head = build_segmentation_head(head_type, embed_dim=64, num_classes=5)
+    head = build_segmentation_head(head_type, in_channels=64, num_classes=5)
     assert isinstance(head, expected_cls)
 
 
 def test_build_segmentation_head_unknown() -> None:
     with pytest.raises(ValueError, match="未知 head 类型"):
-        build_segmentation_head("unknown", embed_dim=64, num_classes=5)
+        build_segmentation_head("unknown", in_channels=64, num_classes=5)
 
 
 def test_classification_head(scene_emb: torch.Tensor) -> None:
@@ -104,7 +104,7 @@ def test_change_detection_head_forward_raises() -> None:
 
 
 def test_mlp_head(seg_input: torch.Tensor) -> None:
-    head = MLPHead(embed_dim=64, num_classes=5, hidden_dim=128)
+    head = MLPHead(in_channels=64, num_classes=5, hidden_dim=128)
     out = head(seg_input)
     assert out.shape == (2, 5, 16, 16)
 
