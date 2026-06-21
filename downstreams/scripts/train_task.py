@@ -16,13 +16,14 @@ from downstreams.data.multi_task_dataset import (
     collate_embeddings,
 )
 from downstreams.data.split import create_combined_stratified_folds, create_stratified_folds
+from downstreams.metrics.segmentation import compute_segmentation_metrics
 from downstreams.tasks.construction_segmentation import ConstructionSegmentationTask
 from downstreams.utils.config import load_config
 from downstreams.utils.device import get_downstream_device
 from downstreams.utils.ddp import cleanup_ddp, setup_ddp
 from downstreams.utils.reproducibility import set_seed
 from torch import nn
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from torch.utils.data.distributed import DistributedSampler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -210,6 +211,334 @@ def _average_metrics(metrics: dict[str, float], world_size: int) -> dict[str, fl
     return {k: float(v) for k, v in zip(keys, values.cpu().tolist())}
 
 
+def _compute_sample_weights(dataset: Dataset[Any], pos_weight: float) -> torch.Tensor:
+    """根据每张图的前景像素占比计算 WeightedRandomSampler 权重。
+
+    含前景的样本按 ``1 + pos_weight * positive_ratio`` 加权，全背景样本权重为 1。
+    """
+    weights = []
+    for idx in range(len(dataset)):
+        sample = dataset[idx]
+        mask = sample["mask"]
+        if isinstance(mask, torch.Tensor):
+            pos_ratio = float(mask.float().mean())
+        else:
+            pos_ratio = float(np.mean(mask))
+        weights.append(1.0 + pos_weight * pos_ratio)
+    return torch.tensor(weights, dtype=torch.float64)
+
+
+def _find_best_threshold(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+) -> float:
+    """在验证集上搜索使 F1 最大的概率阈值。"""
+    model.eval()
+    all_logits: list[torch.Tensor] = []
+    all_masks: list[torch.Tensor] = []
+    with torch.no_grad():
+        for batch in loader:
+            emb = batch["embedding_map"].to(device)
+            mask = batch["mask"].to(device)
+            logits = model(emb)[:, 1]
+            all_logits.append(logits.cpu())
+            all_masks.append(mask.cpu())
+    logits = torch.cat([x.flatten() for x in all_logits]).numpy()
+    targets = torch.cat([x.flatten() for x in all_masks]).numpy()
+    metrics = compute_segmentation_metrics(logits, targets, return_curve=True)
+    p_arr = metrics["precision_curve"]
+    r_arr = metrics["recall_curve"]
+    thresholds = metrics["thresholds"]
+    if len(thresholds) == 0:
+        return 0.5
+    f1s = 2 * p_arr[:-1] * r_arr[:-1] / (p_arr[:-1] + r_arr[:-1] + 1e-8)
+    best_idx = int(np.argmax(f1s))
+    return float(thresholds[best_idx])
+
+
+def run_fold(
+    cfg: dict[str, Any],
+    args: argparse.Namespace,
+    fold_info: dict[str, Any],
+    *,
+    emb_region_root: Path,
+    mask_dir: Path,
+    mask_dirs: dict[str, Path] | None,
+    region: str,
+    bitemporal: bool,
+    fractions: dict[str, Any] | None = None,
+    region_of: dict[str, str] | None = None,
+    rank: int = 0,
+    world_size: int = 1,
+) -> dict[str, Any] | None:
+    """训练并评测单个 fold，返回测试指标字典。
+
+    该函数可被 ``benchmark_heads.py`` 直接导入复用，从而避免启动子进程与 DDP 开销。
+    """
+    fold_idx = fold_info["fold"]
+    if rank == 0:
+        logger.info("===== Fold %d =====", fold_idx)
+    out_dir = args.output_root / f"fold_{fold_idx}"
+    if rank == 0:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    if world_size > 1:
+        dist.barrier()
+
+    task = ConstructionSegmentationTask(cfg)
+    device = get_downstream_device(cfg["experiment"].get("device", "auto"))
+
+    train_ids = fold_info["train"]
+    if args.fraction is not None and fractions is not None:
+        frac_str = str(args.fraction)
+        train_ids = fractions.get(frac_str, {}).get(f"fold_{fold_idx}", train_ids)
+
+    if args.regions:
+        region_of = region_of if region_of is not None else {}
+        train_ids = _filter_patch_ids(
+            train_ids,
+            emb_region_root,
+            args.months,
+            region_of=region_of,
+            mask_dirs=mask_dirs,
+        )
+        val_ids = _filter_patch_ids(
+            fold_info["val"],
+            emb_region_root,
+            args.months,
+            region_of=region_of,
+            mask_dirs=mask_dirs,
+        )
+        test_ids = _filter_patch_ids(
+            fold_info["test"],
+            emb_region_root,
+            args.months,
+            region_of=region_of,
+            mask_dirs=mask_dirs,
+        )
+        ds_kwargs = {
+            "mask_dirs": mask_dirs,
+            "region_of": region_of,
+            "task_name": args.task,
+            "months": args.months,
+            "bitemporal": bitemporal,
+            "include_diff": True,
+        }
+        train_ds = JointMultiTaskEmbeddingDataset(
+            emb_region_root, patch_ids=train_ids, augment=True, **ds_kwargs
+        )
+        val_ds = JointMultiTaskEmbeddingDataset(
+            emb_region_root, patch_ids=val_ids, augment=False, **ds_kwargs
+        )
+        test_ds = JointMultiTaskEmbeddingDataset(
+            emb_region_root, patch_ids=test_ids, augment=False, **ds_kwargs
+        )
+    else:
+        label_root = args.label_root / args.task
+        train_ids = _filter_patch_ids(
+            train_ids, emb_region_root, args.months, mask_dir=mask_dir
+        )
+        val_ids = _filter_patch_ids(
+            fold_info["val"], emb_region_root, args.months, mask_dir=mask_dir
+        )
+        test_ids = _filter_patch_ids(
+            fold_info["test"], emb_region_root, args.months, mask_dir=mask_dir
+        )
+        ds_kwargs = {
+            "task_name": args.task,
+            "months": args.months,
+            "bitemporal": bitemporal,
+            "include_diff": True,
+        }
+        train_ds = MultiTaskEmbeddingDataset(
+            emb_region_root, label_root, train_ids, augment=True, **ds_kwargs
+        )
+        val_ds = MultiTaskEmbeddingDataset(
+            emb_region_root, label_root, val_ids, augment=False, **ds_kwargs
+        )
+        test_ds = MultiTaskEmbeddingDataset(
+            emb_region_root, label_root, test_ids, augment=False, **ds_kwargs
+        )
+
+    use_weighted_sampler = cfg["training"].get("use_weighted_sampler", False)
+    train_sampler: DistributedSampler | WeightedRandomSampler | None = None
+    if world_size > 1:
+        train_sampler = DistributedSampler(
+            train_ds, num_replicas=world_size, rank=rank, shuffle=True
+        )
+    elif use_weighted_sampler:
+        weights = _compute_sample_weights(
+            train_ds, cfg["training"].get("pos_weight", 1.0)
+        )
+        train_sampler = WeightedRandomSampler(
+            weights, num_samples=len(train_ds), replacement=True
+        )
+
+    val_sampler = (
+        DistributedSampler(
+            val_ds, num_replicas=world_size, rank=rank, shuffle=False
+        )
+        if world_size > 1
+        else None
+    )
+    test_sampler = (
+        DistributedSampler(
+            test_ds, num_replicas=world_size, rank=rank, shuffle=False
+        )
+        if world_size > 1
+        else None
+    )
+
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=cfg["training"]["batch_size"],
+        shuffle=(train_sampler is None),
+        sampler=train_sampler,
+        num_workers=cfg["training"].get("num_workers", 0),
+        collate_fn=collate_embeddings,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=cfg["training"]["batch_size"],
+        shuffle=False,
+        sampler=val_sampler,
+        num_workers=cfg["training"].get("num_workers", 0),
+        collate_fn=collate_embeddings,
+    )
+    test_loader = DataLoader(
+        test_ds,
+        batch_size=cfg["training"]["batch_size"],
+        shuffle=False,
+        sampler=test_sampler,
+        num_workers=cfg["training"].get("num_workers", 0),
+        collate_fn=collate_embeddings,
+    )
+
+    model = task.build_head().to(device)
+    if world_size > 1:
+        local_rank = int(__import__("os").environ.get("LOCAL_RANK", 0))
+        model = torch.nn.parallel.DistributedDataParallel(
+            model, device_ids=[local_rank], output_device=local_rank
+        )
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=cfg["training"]["lr"],
+        weight_decay=cfg["training"].get("weight_decay", 0.0),
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=cfg["training"]["epochs"]
+    )
+    loss_fn = task.build_loss()
+
+    early_stop_metric = cfg["training"].get("early_stop_metric", "miou")
+    best_score = -float("inf")
+    patience_counter = 0
+    best_state: dict[str, torch.Tensor] | None = None
+    best_epoch = 0
+    use_threshold_tuning = cfg["training"].get("use_threshold_tuning", False)
+    best_threshold = 0.5
+
+    for epoch in range(cfg["training"]["epochs"]):
+        if isinstance(train_sampler, DistributedSampler):
+            train_sampler.set_epoch(epoch)
+
+        model.train()
+        train_loss = 0.0
+        for batch in train_loader:
+            emb = batch["embedding_map"].to(device)
+            mask = batch["mask"].to(device)
+            optimizer.zero_grad()
+            logits = model(emb)[:, 1]
+            loss = loss_fn(logits, mask.float())
+            loss.backward()
+            optimizer.step()
+            train_loss += loss.item()
+        scheduler.step()
+        train_loss /= len(train_loader)
+
+        val_metrics = task.evaluate(model, val_loader, device)
+        val_metrics = _average_metrics(val_metrics, world_size)
+
+        if rank == 0:
+            logger.info(
+                "Epoch %d train_loss=%.4f val_%s=%.4f",
+                epoch,
+                train_loss,
+                early_stop_metric,
+                val_metrics[early_stop_metric],
+            )
+
+        if val_metrics[early_stop_metric] > best_score:
+            best_score = val_metrics[early_stop_metric]
+            patience_counter = 0
+            best_epoch = epoch
+            best_state = (
+                model.module.state_dict()
+                if isinstance(model, torch.nn.parallel.DistributedDataParallel)
+                else model.state_dict()
+            )
+            if use_threshold_tuning:
+                best_threshold = _find_best_threshold(model, val_loader, device)
+            if rank == 0:
+                (out_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
+                torch.save(best_state, out_dir / "checkpoints" / "best.pt")
+        else:
+            patience_counter += 1
+            if patience_counter >= cfg["training"].get("early_stop_patience", 10):
+                if rank == 0:
+                    logger.info("早停于 epoch %d", epoch)
+                break
+
+    # 测试
+    if best_state is None:
+        # 所有 rank 都未保存过 best_state（数据极少时可能出现），直接跳过
+        return None
+
+    if rank == 0:
+        logger.info("加载最佳模型并测试 fold %d", fold_idx)
+    model.load_state_dict(
+        best_state
+        if not isinstance(model, torch.nn.parallel.DistributedDataParallel)
+        else {f"module.{k}": v for k, v in best_state.items()}
+    )
+    test_metrics = task.evaluate(model, test_loader, device, threshold=best_threshold)
+    test_metrics = _average_metrics(test_metrics, world_size)
+
+    if rank == 0:
+        test_metrics["fold"] = fold_idx
+        test_metrics["best_epoch"] = best_epoch
+        test_metrics["region"] = region
+        test_metrics["fraction"] = args.fraction
+        test_metrics["threshold"] = best_threshold
+        with open(out_dir / "metrics.json", "w", encoding="utf-8") as f:
+            json.dump(test_metrics, f, ensure_ascii=False, indent=2)
+
+        # 保存测试集概率图
+        if args.regions:
+            save_test_predictions(
+                model,
+                test_loader,
+                device,
+                out_dir / "predictions",
+                mask_dir,
+                args.months,
+                region_of=region_of,
+                mask_dirs=mask_dirs,
+            )
+        else:
+            save_test_predictions(
+                model,
+                test_loader,
+                device,
+                out_dir / "predictions",
+                mask_dir,
+                args.months,
+            )
+
+    return test_metrics
+
+
 def main() -> None:
     rank, local_rank, world_size = setup_ddp()
 
@@ -243,7 +572,6 @@ def main() -> None:
         cfg["training"]["head_type"] = args.head_type
 
     set_seed(cfg["experiment"]["seed"] + rank)
-    device = get_downstream_device(cfg["experiment"].get("device", "auto"))
 
     label_root = args.label_root / args.task
     mask_dir = label_root / "masks"
@@ -281,249 +609,28 @@ def main() -> None:
     with open(split_path, "r", encoding="utf-8") as f:
         split = json.load(f)
 
-    task = ConstructionSegmentationTask(cfg)
     folds = [split["folds"][args.fold]] if args.fold is not None else split["folds"]
 
     summary: list[dict[str, Any]] = []
+    fractions = split.get("fractions", {})
+    split_region_of = split.get("region_of", {})
     for fold_info in folds:
-        fold_idx = fold_info["fold"]
-        if rank == 0:
-            logger.info("===== Fold %d =====", fold_idx)
-        out_dir = args.output_root / f"fold_{fold_idx}"
-        if rank == 0:
-            out_dir.mkdir(parents=True, exist_ok=True)
-        if world_size > 1:
-            dist.barrier()
-
-        train_ids = fold_info["train"]
-        if args.fraction is not None:
-            frac_str = str(args.fraction)
-            train_ids = split["fractions"][frac_str][f"fold_{fold_idx}"]
-
-        if args.regions:
-            region_of = split["region_of"]
-            train_ids = _filter_patch_ids(
-                train_ids,
-                emb_region_root,
-                args.months,
-                region_of=region_of,
-                mask_dirs=mask_dirs,
-            )
-            val_ids = _filter_patch_ids(
-                fold_info["val"],
-                emb_region_root,
-                args.months,
-                region_of=region_of,
-                mask_dirs=mask_dirs,
-            )
-            test_ids = _filter_patch_ids(
-                fold_info["test"],
-                emb_region_root,
-                args.months,
-                region_of=region_of,
-                mask_dirs=mask_dirs,
-            )
-            ds_kwargs = {
-                "mask_dirs": mask_dirs,
-                "region_of": region_of,
-                "task_name": args.task,
-                "months": args.months,
-                "bitemporal": bitemporal,
-                "include_diff": True,
-            }
-            train_ds = JointMultiTaskEmbeddingDataset(
-                emb_region_root, patch_ids=train_ids, augment=True, **ds_kwargs
-            )
-            val_ds = JointMultiTaskEmbeddingDataset(
-                emb_region_root, patch_ids=val_ids, augment=False, **ds_kwargs
-            )
-            test_ds = JointMultiTaskEmbeddingDataset(
-                emb_region_root, patch_ids=test_ids, augment=False, **ds_kwargs
-            )
-        else:
-            train_ids = _filter_patch_ids(
-                train_ids, emb_region_root, args.months, mask_dir=mask_dir
-            )
-            val_ids = _filter_patch_ids(
-                fold_info["val"], emb_region_root, args.months, mask_dir=mask_dir
-            )
-            test_ids = _filter_patch_ids(
-                fold_info["test"], emb_region_root, args.months, mask_dir=mask_dir
-            )
-            ds_kwargs = {
-                "task_name": args.task,
-                "months": args.months,
-                "bitemporal": bitemporal,
-                "include_diff": True,
-            }
-            train_ds = MultiTaskEmbeddingDataset(
-                emb_region_root, label_root, train_ids, augment=True, **ds_kwargs
-            )
-            val_ds = MultiTaskEmbeddingDataset(
-                emb_region_root, label_root, val_ids, augment=False, **ds_kwargs
-            )
-            test_ds = MultiTaskEmbeddingDataset(
-                emb_region_root, label_root, test_ids, augment=False, **ds_kwargs
-            )
-
-        train_sampler = (
-            DistributedSampler(
-                train_ds, num_replicas=world_size, rank=rank, shuffle=True
-            )
-            if world_size > 1
-            else None
+        test_metrics = run_fold(
+            cfg,
+            args,
+            fold_info,
+            emb_region_root=emb_region_root,
+            mask_dir=mask_dir,
+            mask_dirs=mask_dirs,
+            region=region,
+            bitemporal=bitemporal,
+            fractions=fractions,
+            region_of=split_region_of,
+            rank=rank,
+            world_size=world_size,
         )
-        val_sampler = (
-            DistributedSampler(
-                val_ds, num_replicas=world_size, rank=rank, shuffle=False
-            )
-            if world_size > 1
-            else None
-        )
-        test_sampler = (
-            DistributedSampler(
-                test_ds, num_replicas=world_size, rank=rank, shuffle=False
-            )
-            if world_size > 1
-            else None
-        )
-
-        train_loader = DataLoader(
-            train_ds,
-            batch_size=cfg["training"]["batch_size"],
-            shuffle=(train_sampler is None),
-            sampler=train_sampler,
-            num_workers=cfg["training"].get("num_workers", 0),
-            collate_fn=collate_embeddings,
-        )
-        val_loader = DataLoader(
-            val_ds,
-            batch_size=cfg["training"]["batch_size"],
-            shuffle=False,
-            sampler=val_sampler,
-            num_workers=cfg["training"].get("num_workers", 0),
-            collate_fn=collate_embeddings,
-        )
-        test_loader = DataLoader(
-            test_ds,
-            batch_size=cfg["training"]["batch_size"],
-            shuffle=False,
-            sampler=test_sampler,
-            num_workers=cfg["training"].get("num_workers", 0),
-            collate_fn=collate_embeddings,
-        )
-
-        model = task.build_head().to(device)
-        if world_size > 1:
-            model = torch.nn.parallel.DistributedDataParallel(
-                model, device_ids=[local_rank], output_device=local_rank
-            )
-
-        optimizer = torch.optim.AdamW(
-            model.parameters(),
-            lr=cfg["training"]["lr"],
-            weight_decay=cfg["training"]["weight_decay"],
-        )
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=cfg["training"]["epochs"]
-        )
-        loss_fn = task.build_loss()
-
-        best_miou = -1.0
-        patience_counter = 0
-        best_state: dict[str, torch.Tensor] | None = None
-        for epoch in range(cfg["training"]["epochs"]):
-            if train_sampler is not None:
-                train_sampler.set_epoch(epoch)
-
-            model.train()
-            train_loss = 0.0
-            for batch in train_loader:
-                emb = batch["embedding_map"].to(device)
-                mask = batch["mask"].to(device)
-                optimizer.zero_grad()
-                logits = model(emb)[:, 1]
-                loss = loss_fn(logits, mask.float())
-                loss.backward()
-                optimizer.step()
-                train_loss += loss.item()
-            scheduler.step()
-            train_loss /= len(train_loader)
-
-            val_metrics = task.evaluate(model, val_loader, device)
-            val_metrics = _average_metrics(val_metrics, world_size)
-
-            if rank == 0:
-                logger.info(
-                    "Epoch %d train_loss=%.4f val_miou=%.4f",
-                    epoch,
-                    train_loss,
-                    val_metrics["miou"],
-                )
-
-            if val_metrics["miou"] > best_miou:
-                best_miou = val_metrics["miou"]
-                patience_counter = 0
-                best_state = (
-                    model.module.state_dict()
-                    if isinstance(model, torch.nn.parallel.DistributedDataParallel)
-                    else model.state_dict()
-                )
-                if rank == 0:
-                    (out_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
-                    torch.save(best_state, out_dir / "checkpoints" / "best.pt")
-            else:
-                patience_counter += 1
-                if patience_counter >= cfg["training"]["early_stop_patience"]:
-                    if rank == 0:
-                        logger.info("早停于 epoch %d", epoch)
-                    break
-
-        # 测试
-        if best_state is None:
-            # 所有 rank 都未保存过 best_state（数据极少时可能出现），直接跳过
-            continue
-
-        if rank == 0:
-            logger.info("加载最佳模型并测试 fold %d", fold_idx)
-        model.load_state_dict(
-            best_state
-            if not isinstance(model, torch.nn.parallel.DistributedDataParallel)
-            else {f"module.{k}": v for k, v in best_state.items()}
-        )
-        test_metrics = task.evaluate(model, test_loader, device)
-        test_metrics = _average_metrics(test_metrics, world_size)
-
-        if rank == 0:
-            test_metrics["fold"] = fold_idx
-            test_metrics["best_epoch"] = epoch - patience_counter
-            test_metrics["region"] = region
-            test_metrics["fraction"] = args.fraction
+        if rank == 0 and test_metrics is not None:
             summary.append(test_metrics)
-            with open(out_dir / "metrics.json", "w", encoding="utf-8") as f:
-                json.dump(test_metrics, f, ensure_ascii=False, indent=2)
-
-            # 保存测试集概率图
-            if args.regions:
-                save_test_predictions(
-                    model,
-                    test_loader,
-                    device,
-                    out_dir / "predictions",
-                    mask_dir,
-                    args.months,
-                    region_of=region_of,
-                    mask_dirs=mask_dirs,
-                )
-            else:
-                save_test_predictions(
-                    model,
-                    test_loader,
-                    device,
-                    out_dir / "predictions",
-                    mask_dir,
-                    args.months,
-                )
 
     # 汇总
     if rank == 0:

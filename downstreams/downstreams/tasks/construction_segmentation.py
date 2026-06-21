@@ -7,7 +7,10 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from downstreams.heads.segmentation_head import build_segmentation_head
-from downstreams.losses.segmentation_losses import FocalTverskyLoss
+from downstreams.losses.segmentation_losses import (
+    BceDiceTverskyLoss,
+    FocalTverskyLoss,
+)
 from downstreams.metrics.segmentation import compute_segmentation_metrics
 from downstreams.tasks.base import BaseTask
 
@@ -55,10 +58,12 @@ class ConstructionSegmentationTask(BaseTask):
         head_type = training["head_type"]
         embed_dim = data["embed_dim"]
         num_classes = data["num_classes"]
+        pos_prior = training.get("pos_prior")
         return build_segmentation_head(
             head_type,
             embed_dim,
             num_classes,
+            pos_prior=pos_prior,
         )
 
     def build_loss(self) -> nn.Module:
@@ -78,6 +83,15 @@ class ConstructionSegmentationTask(BaseTask):
             elif loss_name == "bce":
                 pos_weight = torch.tensor(training.get("pos_weight", 1.0))
                 self._loss = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+            elif loss_name == "bce_dice_tversky":
+                self._loss = BceDiceTverskyLoss(
+                    pos_weight=training.get("pos_weight", 1.0),
+                    tversky_alpha=training.get("tversky_alpha", 0.3),
+                    tversky_beta=training.get("tversky_beta", 0.7),
+                    tversky_weight=training.get("tversky_weight", 1.5),
+                    bce_weight=training.get("bce_weight", 1.0),
+                    dice_weight=training.get("dice_weight", 1.0),
+                )
             else:
                 raise ValueError(f"未知 loss 类型: {loss_name}")
         return self._loss
@@ -108,6 +122,7 @@ class ConstructionSegmentationTask(BaseTask):
         model: nn.Module,
         loader: DataLoader,
         device: torch.device,
+        threshold: float | None = None,
     ) -> dict[str, float]:
         model.eval()
         all_logits: list[torch.Tensor] = []
@@ -121,4 +136,6 @@ class ConstructionSegmentationTask(BaseTask):
                 all_masks.append(mask.cpu())
         logits = torch.cat([x.flatten() for x in all_logits])
         targets = torch.cat([x.flatten() for x in all_masks])
-        return compute_segmentation_metrics(logits, targets)
+        return compute_segmentation_metrics(
+            logits, targets, threshold=threshold if threshold is not None else 0.5
+        )
