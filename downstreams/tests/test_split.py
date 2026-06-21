@@ -4,7 +4,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 import rasterio
-from downstreams.data.split import _stratified_sample, create_stratified_folds
+from downstreams.data.split import (
+    _stratified_sample,
+    create_combined_stratified_folds,
+    create_stratified_folds,
+)
 
 
 def _make_mask_dir(tmp_path: Path, n: int, ratio_fn) -> Path:
@@ -110,3 +114,52 @@ def test_kfold_fallback(tmp_path: Path) -> None:
         assert set(fold["train"]) & set(fold["test"]) == set()
         assert set(fold["train"]) & set(fold["val"]) == set()
         assert set(fold["val"]) & set(fold["test"]) == set()
+
+
+def test_create_combined_folds(tmp_path: Path) -> None:
+    region_a_dir = tmp_path / "a"
+    region_a_dir.mkdir(parents=True)
+    region_b_dir = tmp_path / "b"
+    region_b_dir.mkdir(parents=True)
+    region_a = _make_mask_dir(region_a_dir, 10, lambda i: 0.0625 if i % 2 == 0 else 0.0)
+    region_b = _make_mask_dir(region_b_dir, 10, lambda i: 0.125 if i % 2 == 0 else 0.0)
+    split = create_combined_stratified_folds(
+        {"a": region_a, "b": region_b}, n_folds=5, seed=42
+    )
+    assert len(split["folds"]) == 5
+    assert "region_of" in split
+    expected_ids = {f"a_patch_{i:06d}" for i in range(10)} | {
+        f"b_patch_{i:06d}" for i in range(10)
+    }
+    for fold in split["folds"]:
+        all_fold = set(fold["train"]) | set(fold["val"]) | set(fold["test"])
+        assert all_fold <= expected_ids
+        assert len(fold["train"]) > 0
+        assert len(fold["test"]) > 0
+
+
+def test_month_suffix_is_stripped(tmp_path: Path) -> None:
+    mask_dir = tmp_path / "masks"
+    mask_dir.mkdir()
+    for i in range(5):
+        mask = np.zeros((16, 16), dtype=np.uint8)
+        if i % 2 == 0:
+            mask.flat[:4] = 1
+        # 同一 patch 有两个月份的 mask，应去重为一个 patch_id
+        for month in ("202512", "202605"):
+            with rasterio.open(
+                mask_dir / f"patch_{i:06d}_{month}.tif",
+                "w",
+                driver="GTiff",
+                height=16,
+                width=16,
+                count=1,
+                dtype=mask.dtype,
+                crs=None,
+                transform=rasterio.Affine.identity(),
+            ) as dst:
+                dst.write(mask, 1)
+    split = create_stratified_folds(mask_dir, n_folds=5, seed=42)
+    all_ids = {f"patch_{i:06d}" for i in range(5)}
+    for fold in split["folds"]:
+        assert set(fold["train"]) | set(fold["val"]) | set(fold["test"]) == all_ids

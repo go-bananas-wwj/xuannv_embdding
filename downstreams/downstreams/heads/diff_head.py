@@ -54,24 +54,24 @@ class DiffUNetHead(TaskHead):
         self.final = nn.Conv2d(hidden_dim // 4, num_classes, kernel_size=1)
         _init_foreground_bias(self.final, pos_prior)
 
-    def _build_in_proj(self, in_channels: int) -> None:
+    def _build_in_proj(self, in_channels: int, device: torch.device) -> None:
         """根据实际输入通道数构建输入投影与可选 diff 分支。"""
         if self.in_proj is not None:
             return
-        self.in_proj = nn.Conv2d(in_channels, self.hidden_dim, kernel_size=1)
+        self.in_proj = nn.Conv2d(in_channels, self.hidden_dim, kernel_size=1).to(device)
         if self.use_diff and in_channels % 3 == 0:
             diff_dim = in_channels // 3
             self.diff_branch = nn.Sequential(
                 nn.Conv2d(diff_dim, self.hidden_dim, kernel_size=3, padding=1),
                 nn.BatchNorm2d(self.hidden_dim),
                 nn.ReLU(inplace=True),
-            )
+            ).to(device)
 
     def _upsample_skip(self, x: torch.Tensor, scale: int) -> torch.Tensor:
         return F.interpolate(x, scale_factor=scale, mode="bilinear", align_corners=False)
 
     def forward(self, x: torch.Tensor, scene_emb: torch.Tensor | None = None) -> torch.Tensor:
-        self._build_in_proj(x.shape[1])
+        self._build_in_proj(x.shape[1], x.device)
         assert self.in_proj is not None
 
         feat = self.in_proj(x)
