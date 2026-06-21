@@ -150,6 +150,7 @@ def _build_loader(
         num_months=cfg.model.num_months,
         teacher_embedding_root=cfg.data.teacher_embedding_root,
         region=cfg.data.region,
+        cache_dir=cfg.data.cache_dir,
     )
 
     sampler = None
