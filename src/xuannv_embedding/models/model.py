@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -26,23 +27,14 @@ from xuannv_embedding.models.sensor_encoders import (
 logger = logging.getLogger(__name__)
 
 
+@dataclass(kw_only=True)
 class AEFOutput:
-    """AEFModel 前向输出容器。
+    """AEFModel 前向输出容器。"""
 
-    使用普通类而非 dataclass，便于在保持向后兼容的同时扩展可选字段。
-    """
-
-    def __init__(
-        self,
-        embedding_map: torch.Tensor,
-        embedding: torch.Tensor,
-        reconstructions: dict[str, torch.Tensor],
-        base_embedding_map: torch.Tensor | None = None,
-    ) -> None:
-        self.embedding_map = embedding_map  # [B, T_month, D, H, W]
-        self.embedding = embedding  # [B, T_month, D]
-        self.reconstructions = reconstructions  # [B, T_month, C_out, H, W]
-        self.base_embedding_map = base_embedding_map  # [B, T_month, D, H, W] 或 None
+    embedding_map: torch.Tensor  # [B, T_month, D, H, W]，与输入相同空间分辨率
+    embedding: torch.Tensor  # [B, T_month, D]
+    reconstructions: dict[str, torch.Tensor]  # [B, T_month, C_out, H, W]
+    base_embedding_map: torch.Tensor | None = None  # 蒸馏监督点（highres_fusion 之前）
 
 
 class AEFModel(nn.Module):

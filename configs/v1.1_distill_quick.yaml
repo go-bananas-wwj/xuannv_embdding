@@ -15,7 +15,7 @@ training:
   save_every: 5
   eval_every: 5
   amp: true
-  gradient_checkpointing: true
+  gradient_checkpointing: false
   log_every: 10
   distill_weight: 0.1
   distill_months: 12
@@ -34,7 +34,6 @@ model:
     s2: 12
     s1: 2
     landsat: 7
-    worldcover: 9
     highres_optical_harbin: 3
     highres_optical: 4
     highres_sar: 1
@@ -55,18 +54,6 @@ model:
       loss_type: categorical
       channels: 9
       weight: 0.5
-    highres_optical_harbin_recon:
-      loss_type: continuous
-      channels: 3
-      weight: 1.0
-    highres_optical_recon:
-      loss_type: continuous
-      channels: 4
-      weight: 1.0
-    highres_sar_recon:
-      loss_type: continuous
-      channels: 1
-      weight: 1.0
 
 data:
   region: combined
