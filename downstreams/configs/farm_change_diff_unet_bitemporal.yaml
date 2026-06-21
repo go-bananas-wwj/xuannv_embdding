@@ -1,24 +1,31 @@
-_base_: _base_.yaml
-
 experiment:
   name: farm_change_harbin_bitemporal_diff_unet_v2
-
+  seed: 42
+  device: auto
 training:
+  epochs: 200
+  lr: 3.0e-05
+  weight_decay: 0.01
+  batch_size: 8
+  num_workers: 0
+  early_stop_patience: 30
   head_type: diff_unet
   loss: bce_dice_tversky
-  lr: 3.0e-5
   pos_weight: 2000.0
+  label_fraction: 1.0
+  months:
+  - 202512
+  - 202605
   tversky_beta: 0.9
   tversky_weight: 2.0
   bce_weight: 1.0
   dice_weight: 2.0
   early_stop_metric: f1_best
-  early_stop_patience: 30
   use_weighted_sampler: true
   sampler_weight_strategy: binary
   use_threshold_tuning: true
   pos_prior: 0.0008
-  batch_size: 8
-  epochs: 200
   crop_size: 96
-  months: [202512, 202605]
+data:
+  embed_dim: 64
+  num_classes: 2

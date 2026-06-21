@@ -1,9 +1,20 @@
-_base_: _base_.yaml
-
 experiment:
   name: construction_site_haidian
-
+  seed: 42
+  device: auto
 training:
+  epochs: 100
+  lr: 0.0001
+  weight_decay: 0.01
+  batch_size: 8
+  num_workers: 0
+  early_stop_patience: 10
   head_type: upernet
   loss: focal_dice
-  lr: 1.0e-4
+  pos_weight: 10.0
+  label_fraction: 1.0
+  months:
+  - 202604
+data:
+  embed_dim: 64
+  num_classes: 2

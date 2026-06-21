@@ -1,17 +1,18 @@
 experiment:
-  name: smoke_100step
+  name: v1.1_extract_labeled_harbin
   seed: 42
-  use_wandb: false
+  use_wandb: true
   wandb_project: xuannv-embedding-stage1
+  wandb_run_name: v1.1_distill_quick_10ep
 model:
-  embed_dim: 32
-  stem_dim: 16
+  embed_dim: 64
+  stem_dim: 32
   stp:
-    space_dim: 128
-    time_dim: 64
-    precision_dim: 32
-    num_blocks: 2
-    num_heads: 4
+    space_dim: 512
+    time_dim: 256
+    precision_dim: 128
+    num_blocks: 6
+    num_heads: 8
   sensor_channels:
     s2: 12
     s1: 2
@@ -19,6 +20,8 @@ model:
     highres_optical_haidian: 4
     highres_optical_harbin: 3
     highres_sar_haidian: 1
+    highres_optical: 3
+    highres_sar: 1
   target_heads:
     s2_recon:
       loss_type: continuous
@@ -36,22 +39,28 @@ model:
       loss_type: categorical
       channels: 9
       weight: 0.5
+    highres_optical_harbin_recon:
+      loss_type: continuous
+      channels: 3
+      weight: 1.0
   num_months: 17
 training:
-  epochs: 25
+  epochs: 10
   lr: 0.0001
   weight_decay: 0.05
   warmup_epochs: 2
   gradient_accumulation_steps: 1
-  save_every: 10
-  eval_every: 10
-  amp: true
+  save_every: 5
+  eval_every: 5
+  amp: false
   gradient_checkpointing: false
-  log_every: 5
+  log_every: 10
+  distill_weight: 0.1
+  distill_months: 12
 data:
   root: /data/xuannv_embedding/processed/harbin
   region: harbin
-  manifest_path: /data/xuannv_embedding/processed/harbin/manifest.json
+  manifest_path: /data/xuannv_embedding/processed/harbin/manifest_labeled.json
   statistics_dir: /data/xuannv_embedding/statistics/harbin
   num_samples: 0
   batch_size: 4
@@ -75,6 +84,10 @@ data:
   - 2026-03
   - 2026-04
   - 2026-05
-  max_patches: 16
   sources:
   - s2
+  - s1
+  - landsat
+  - worldcover
+  - highres_optical_harbin
+  teacher_embedding_root: /data/xuannv_embedding/embeddings/aef_teacher_2025_annual
