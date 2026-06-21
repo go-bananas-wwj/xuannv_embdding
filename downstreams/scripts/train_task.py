@@ -211,10 +211,14 @@ def _average_metrics(metrics: dict[str, float], world_size: int) -> dict[str, fl
     return {k: float(v) for k, v in zip(keys, values.cpu().tolist())}
 
 
-def _compute_sample_weights(dataset: Dataset[Any], pos_weight: float) -> torch.Tensor:
+def _compute_sample_weights(
+    dataset: Dataset[Any], pos_weight: float, strategy: str = "ratio"
+) -> torch.Tensor:
     """根据每张图的前景像素占比计算 WeightedRandomSampler 权重。
 
-    含前景的样本按 ``1 + pos_weight * positive_ratio`` 加权，全背景样本权重为 1。
+    strategy="ratio": 含前景的样本按 ``1 + pos_weight * positive_ratio`` 加权。
+    strategy="binary": 含前景的样本统一按 ``pos_weight`` 加权，全背景样本权重为 1，
+    适用于正像素比例极低、需要强制过采样正样本 patch 的任务。
     """
     weights = []
     for idx in range(len(dataset)):
@@ -224,7 +228,10 @@ def _compute_sample_weights(dataset: Dataset[Any], pos_weight: float) -> torch.T
             pos_ratio = float(mask.float().mean())
         else:
             pos_ratio = float(np.mean(mask))
-        weights.append(1.0 + pos_weight * pos_ratio)
+        if strategy == "binary":
+            weights.append(float(pos_weight) if pos_ratio > 0 else 1.0)
+        else:
+            weights.append(1.0 + pos_weight * pos_ratio)
     return torch.tensor(weights, dtype=torch.float64)
 
 
@@ -369,7 +376,9 @@ def run_fold(
         )
     elif use_weighted_sampler:
         weights = _compute_sample_weights(
-            train_ds, cfg["training"].get("pos_weight", 1.0)
+            train_ds,
+            cfg["training"].get("pos_weight", 1.0),
+            cfg["training"].get("sampler_weight_strategy", "ratio"),
         )
         train_sampler = WeightedRandomSampler(
             weights, num_samples=len(train_ds), replacement=True
