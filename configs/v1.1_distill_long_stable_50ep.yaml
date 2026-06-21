@@ -6,3 +6,6 @@ experiment:
 
 training:
   epochs: 50
+
+data:
+  cache_dir: /data/xuannv_embedding/cache
