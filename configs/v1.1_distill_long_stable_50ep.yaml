@@ -34,11 +34,11 @@ model:
     landsat_recon:
       loss_type: continuous
       channels: 7
-      weight: 2.0
+      weight: 0.5
     worldcover:
       loss_type: categorical
       channels: 9
-      weight: 1.0
+      weight: 0.25
   num_months: 17
 training:
   epochs: 50
@@ -51,7 +51,7 @@ training:
   amp: false
   gradient_checkpointing: true
   log_every: 10
-  distill_weight: 0.1
+  distill_weight: 0.5
   distill_months: 12
 data:
   root: /data/xuannv_embedding/processed
