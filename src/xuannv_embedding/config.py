@@ -172,8 +172,8 @@ class Config:
         region = data_cfg["region"]
         statistics_dir = data_cfg.get("statistics_dir")
         if statistics_dir is None:
-            # 约定 root 为 processed/{region}，统计量位于数据根目录 statistics/{region}
-            statistics_dir = root.parent / "statistics" / region
+            # 约定统计量位于数据根目录 statistics/，按 region 组织
+            statistics_dir = root.parent / "statistics"
         else:
             statistics_dir = Path(statistics_dir)
 
