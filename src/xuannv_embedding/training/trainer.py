@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import logging
 import re
 import shutil
@@ -142,6 +143,17 @@ class Trainer:
             return self.model.module
         return self.model
 
+    def _criterion_accepts_teacher_map(self) -> bool:
+        """判断 criterion 的 forward 是否接受 ``teacher_embedding_map`` 参数。
+
+        用于兼容旧版不感知蒸馏的自定义损失函数（如测试中的 dummy loss）。
+        """
+        forward = getattr(self.criterion, "forward", None)
+        if forward is None:
+            return False
+        params = inspect.signature(forward).parameters
+        return "teacher_embedding_map" in params
+
     def _move_batch_to_device(self, batch: dict[str, Any]) -> dict[str, Any]:
         """将 batch 中所有 Tensor 移动到训练设备。"""
         moved: dict[str, Any] = {}
@@ -223,10 +235,14 @@ class Trainer:
 
             with self.autocast:
                 output = self._forward(batch)
+                criterion_kwargs: dict[str, Any] = {}
+                if self._criterion_accepts_teacher_map():
+                    criterion_kwargs["teacher_embedding_map"] = batch.get("teacher_embedding_map")
                 losses = self.criterion(
                     output,
                     batch["targets"],
                     batch["target_masks"],
+                    **criterion_kwargs,
                 )
             loss = losses["total"]
 
@@ -263,6 +279,8 @@ class Trainer:
                     "train/loss_uniformity": losses["uniformity"].item(),
                     "train/lr": self.optimizer.param_groups[0]["lr"],
                 }
+                if "distill" in losses:
+                    step_metrics["train/loss_distill"] = losses["distill"].item()
                 for name, value in losses.items():
                     if name.startswith("recon_"):
                         step_metrics[f"train/{name}"] = value.item()
@@ -296,6 +314,8 @@ class Trainer:
                 "train/loss_uniformity": metrics["uniformity"],
                 "train/lr": self.optimizer.param_groups[0]["lr"],
             }
+            if "distill" in metrics:
+                epoch_metrics["train/loss_distill"] = metrics["distill"]
             for name, value in metrics.items():
                 if name.startswith("recon_"):
                     epoch_metrics[f"train/{name}"] = value
@@ -333,10 +353,14 @@ class Trainer:
 
             with self.autocast:
                 output = self._forward(batch)
+                criterion_kwargs: dict[str, Any] = {}
+                if self._criterion_accepts_teacher_map():
+                    criterion_kwargs["teacher_embedding_map"] = batch.get("teacher_embedding_map")
                 losses = self.criterion(
                     output,
                     batch["targets"],
                     batch["target_masks"],
+                    **criterion_kwargs,
                 )
             for name, value in losses.items():
                 metric_sums.setdefault(name, 0.0)

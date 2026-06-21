@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -27,13 +26,23 @@ from xuannv_embedding.models.sensor_encoders import (
 logger = logging.getLogger(__name__)
 
 
-@dataclass
 class AEFOutput:
-    """AEFModel 前向输出容器。"""
+    """AEFModel 前向输出容器。
 
-    embedding_map: torch.Tensor  # [B, T_month, D, H, W]，与输入相同空间分辨率
-    embedding: torch.Tensor  # [B, T_month, D]
-    reconstructions: dict[str, torch.Tensor]  # [B, T_month, C_out, H, W]
+    使用普通类而非 dataclass，便于在保持向后兼容的同时扩展可选字段。
+    """
+
+    def __init__(
+        self,
+        embedding_map: torch.Tensor,
+        embedding: torch.Tensor,
+        reconstructions: dict[str, torch.Tensor],
+        base_embedding_map: torch.Tensor | None = None,
+    ) -> None:
+        self.embedding_map = embedding_map  # [B, T_month, D, H, W]
+        self.embedding = embedding  # [B, T_month, D]
+        self.reconstructions = reconstructions  # [B, T_month, C_out, H, W]
+        self.base_embedding_map = base_embedding_map  # [B, T_month, D, H, W] 或 None
 
 
 class AEFModel(nn.Module):
@@ -235,6 +244,7 @@ class AEFModel(nn.Module):
         )  # (B*T_month, H, W, embed_dim)
         mu_up = mu_up_flat.view(Bm, M, H, W, D)
         embedding_map = mu_up.permute(0, 1, 4, 2, 3)  # (B, T_month, D, H, W)
+        base_embedding_map = embedding_map.clone()
 
         # 6) 可选高分辨率 availability-aware 融合（逐月重复同一高分辨率特征）。
         if highres_frames:
@@ -285,4 +295,9 @@ class AEFModel(nn.Module):
             _, C_out, _, _ = out.shape
             reconstructions[name] = out.view(Bm, M, C_out, H, W)
 
-        return AEFOutput(embedding_map=emb_map, embedding=emb, reconstructions=reconstructions)
+        return AEFOutput(
+            embedding_map=emb_map,
+            embedding=emb,
+            reconstructions=reconstructions,
+            base_embedding_map=base_embedding_map,
+        )
