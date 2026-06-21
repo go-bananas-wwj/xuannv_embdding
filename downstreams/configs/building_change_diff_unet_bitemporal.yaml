@@ -1,0 +1,24 @@
+_base_: _base_.yaml
+
+experiment:
+  name: building_change_harbin_bitemporal_diff_unet_v2
+
+training:
+  head_type: diff_unet
+  loss: bce_dice_tversky
+  lr: 3.0e-5
+  pos_weight: 2000.0
+  tversky_beta: 0.9
+  tversky_weight: 2.0
+  bce_weight: 1.0
+  dice_weight: 2.0
+  early_stop_metric: f1_best
+  early_stop_patience: 30
+  use_weighted_sampler: true
+  sampler_weight_strategy: binary
+  use_threshold_tuning: true
+  pos_prior: 0.0015
+  batch_size: 8
+  epochs: 200
+  crop_size: 96
+  months: [202512, 202605]
