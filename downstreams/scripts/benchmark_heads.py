@@ -68,11 +68,13 @@ def _ensure_split(
     mask_dirs: dict[str, Path] | None,
 ) -> dict[str, Any]:
     """确保 split json 存在，若不存在则生成。"""
-    label_root = args.label_root / args.task
     if args.regions:
-        split_path = label_root / "split_joint_5fold.json"
+        split_dir = args.label_root / args.task
+        split_path = split_dir / "split_joint_5fold.json"
     else:
-        split_path = label_root / "split_5fold.json"
+        # 非联合模式下 --label-root 已经是任务级目录，如 .../{region}/labels/{task}
+        split_dir = args.label_root
+        split_path = split_dir / "split_5fold.json"
 
     if not split_path.exists():
         logger.info("split 文件不存在，自动生成: %s", split_path)
@@ -90,12 +92,18 @@ def _ensure_split(
         return json.load(f)
 
 
-def _make_run_args(args: argparse.Namespace, head: str) -> SimpleNamespace:
-    """构造传给 ``run_fold`` 的伪 args 对象。"""
+def _make_run_args(
+    args: argparse.Namespace, head: str, label_root: Path
+) -> SimpleNamespace:
+    """构造传给 ``run_fold`` 的伪 args 对象。
+
+    ``run_fold`` 在非联合模式下会在内部再次拼接 ``--task``，
+    因此这里传入的 ``label_root`` 应为任务目录的父目录（即 .../labels）。
+    """
     return SimpleNamespace(
         task=args.task,
         embedding_root=args.embedding_root,
-        label_root=args.label_root,
+        label_root=label_root,
         months=args.months,
         regions=args.regions,
         output_root=args.output_root / head,
@@ -116,9 +124,37 @@ def _print_markdown_table(results: list[dict[str, Any]]) -> None:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser()
+    p = argparse.ArgumentParser(
+        epilog=(
+            "示例（非联合模式）:\n"
+            "  python -m downstreams.scripts.benchmark_heads --task construction \\\n"
+            "    --label-root /data/xuannv_embedding/processed/harbin/labels/construction \\\n"
+            "    --region harbin \\\n"
+            "    --embedding-root /data/xuannv_embedding/embeddings/20260621_harbin_128_stage2_v1_best \\\n"
+            "    --output-root /tmp/bench_test --fold 0 --epochs 1 --batch-size 2 --heads linear\n\n"
+            "示例（联合多区域模式）:\n"
+            "  python -m downstreams.scripts.benchmark_heads --task construction \\\n"
+            "    --label-root /data/xuannv_embedding/processed \\\n"
+            "    --regions haidian harbin \\\n"
+            "    --embedding-root /data/xuannv_embedding/embeddings \\\n"
+            "    --output-root /tmp/bench_test_joint --fold 0 --epochs 1 --batch-size 2 --heads linear"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p.add_argument("--task", type=str, required=True)
-    p.add_argument("--regions", type=str, nargs="+", default=None)
+    p.add_argument(
+        "--region",
+        type=str,
+        default=None,
+        help="embedding 子目录名；非联合模式下默认从 --label-root 推断",
+    )
+    p.add_argument(
+        "--regions",
+        type=str,
+        nargs="+",
+        default=None,
+        help="联合训练的区域列表，例如 haidian harbin",
+    )
     p.add_argument("--months", type=str, nargs="+", default=["202605"])
     p.add_argument(
         "--heads",
@@ -129,7 +165,16 @@ def main() -> None:
     p.add_argument("--fold", type=int, default=0)
     p.add_argument("--epochs", type=int, default=30)
     p.add_argument("--embedding-root", type=Path, required=True)
-    p.add_argument("--label-root", type=Path, required=True)
+    p.add_argument(
+        "--label-root",
+        type=Path,
+        required=True,
+        help=(
+            "label 根目录。两种约定："
+            "1) 非联合模式：传入任务级目录，如 /processed/{region}/labels/{task}；"
+            "2) 联合模式：传入 /processed 并配合 --regions region1 region2"
+        ),
+    )
     p.add_argument("--output-root", type=Path, required=True)
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--lr", type=float, default=3e-5)
@@ -138,20 +183,25 @@ def main() -> None:
     args.output_root.mkdir(parents=True, exist_ok=True)
     bitemporal = len(args.months) == 2
 
-    label_root = args.label_root / args.task
-    mask_dir = label_root / "masks"
-
     if args.regions:
+        # 联合模式：--label-root 指向 /processed，内部按 region/labels/task 展开
+        label_root = args.label_root / args.task
+        mask_dir = label_root / "masks"  # 联合模式下仅作为 split 路径占位
         emb_region_root = args.embedding_root
         mask_dirs = {
             r: args.label_root / r / "labels" / args.task / "masks"
             for r in args.regions
         }
         region = "joint"
+        label_root_for_run = args.label_root
     else:
-        region = args.label_root.parent.name
+        # 非联合模式：--label-root 已经是任务级目录，如 .../{region}/labels/{task}
+        label_root = args.label_root
+        mask_dir = label_root / "masks"
+        region = args.region if args.region else args.label_root.parent.parent.name
         emb_region_root = args.embedding_root / region
         mask_dirs = None
+        label_root_for_run = args.label_root.parent
 
     results: list[dict[str, Any]] = []
     for head in args.heads:
@@ -159,7 +209,7 @@ def main() -> None:
         cfg = _build_config(head, args.task, args.epochs, args.batch_size, args.lr)
         split = _ensure_split(args, cfg, mask_dir, mask_dirs)
         fold_info = split["folds"][args.fold]
-        run_args = _make_run_args(args, head)
+        run_args = _make_run_args(args, head, label_root_for_run)
 
         set_seed(cfg["experiment"]["seed"])
         # 预热设备，确保 NPU 可用
