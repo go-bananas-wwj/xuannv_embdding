@@ -114,7 +114,7 @@ class MonthlyEmbeddingDataset(Dataset):
 
         for entry in manifest:
             for key, value in entry.items():
-                if key == "patch_id":
+                if key in ("patch_id", "region"):
                     continue
                 if isinstance(value, list):
                     entry[key] = [Path(p) for p in value]
@@ -130,15 +130,25 @@ class MonthlyEmbeddingDataset(Dataset):
         优先读取 ``statistics_dir/{region}/{source}_stats.json``，
         不存在时回退到 ``statistics_dir/{source}_stats.json``。
         """
-        regions: set[str] = set()
+        # 只加载每个 region 中实际出现、且需要归一化的 source 的统计量。
+        # worldcover 为 categorical 标签，不需要 mean/std；跨 region 的 source 组合
+        # （如 haidian 中出现 harbin 的 highres source）也不会产生无意义警告。
+        region_sources: dict[str, set[str]] = {}
         for entry in self.manifest:
-            regions.add(entry.get("region", self.region or ""))
-        if "" in regions and self.region:
-            regions.discard("")
-            regions.add(self.region)
-
-        for region in regions:
+            region = entry.get("region", self.region or "")
+            if not region and self.region:
+                region = self.region
+            if region not in region_sources:
+                region_sources[region] = set()
             for source in self.sources:
+                if source == "worldcover":
+                    continue
+                paths = entry.get(source)
+                if paths:
+                    region_sources[region].add(source)
+
+        for region, sources in region_sources.items():
+            for source in sources:
                 candidates = [self.statistics_dir / f"{source}_stats.json"]
                 if region:
                     candidates.insert(0, self.statistics_dir / region / f"{source}_stats.json")
