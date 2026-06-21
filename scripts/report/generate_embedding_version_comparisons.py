@@ -25,8 +25,9 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 HARBIN_DATA = Path("/data/xuannv_embedding/processed/harbin")
 HARBIN_MASK = Path("/data/xuannv_embedding/processed/harbin/labels/construction/masks")
 
-# 选定用于对比的 patch（这些 patch 在四个版本 embedding 与三个下游预测中均存在）
-SELECTED_PATCHES = ["patch_000146", "patch_000256", "patch_000181", "patch_000193"]
+# 选定用于对比的 patch：必须在四个版本 embedding 中均存在。
+# patch_000086 / patch_000066 有 GT；其余选取不同地物类型的常见 patch。
+SELECTED_PATCHES = ["patch_000086", "patch_000066", "patch_000007", "patch_000019", "patch_000027", "patch_000042"]
 
 VERSIONS = {
     "Stage2_V1": {
