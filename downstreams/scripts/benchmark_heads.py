@@ -13,15 +13,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import torch
 from downstreams.data.split import (
     create_combined_stratified_folds,
     create_stratified_folds,
 )
-from downstreams.scripts.train_task import run_fold
-from downstreams.utils.config import load_config
 from downstreams.utils.device import get_downstream_device
 from downstreams.utils.reproducibility import set_seed
+
+from downstreams.scripts.train_task import run_fold
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
