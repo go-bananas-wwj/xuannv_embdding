@@ -186,18 +186,19 @@ def main() -> None:
         ("V2", [Path(f"/data/xuannv_embedding/outputs/downstream/stage2_haidian_construction_v2_frac1.0_20260620_1744/fold_{i}/predictions") for i in range(5)]),
         ("V3", [Path(f"/data/xuannv_embedding/outputs/downstream/stage2_haidian_construction_v3_frac1.0_20260620_1814/fold_{i}/predictions") for i in range(5)]),
     ]
-    # Verify which fold has each patch and adjust
-    for pid in ["patch_000002", "patch_000027", "patch_000069"]:
+    # 仅使用有标注的 patch，选取 GT 面积较大的前 3 个示例
+    for pid in ["patch_000198", "patch_000090", "patch_000209"]:
         plot_haidian_construction_versions(pid, haidian_data, haidian_mask, haidian_versions, haidian_emb)
 
     # 2. Harbin construction: ours vs AEF
     harbin_data = Path("/data/xuannv_embedding/processed/harbin")
     harbin_construction_mask = Path("/data/xuannv_embedding/processed/harbin/labels/construction/masks")
+    # 仅使用有标注且自研与 AEF 均有预测的 patch
     harbin_construction_patches = [
-        ("patch_000000",
+        ("patch_000217",
          [Path(f"/data/xuannv_embedding/outputs/downstream/stage2_harbin_construction_v1_frac1.0/fold_{i}/predictions") for i in range(5)],
          [Path(f"/data/xuannv_embedding/experiments/aef_benchmark/construction/fold_{i}/predictions") for i in range(5)]),
-        ("patch_000007",
+        ("patch_000304",
          [Path(f"/data/xuannv_embedding/outputs/downstream/stage2_harbin_construction_v1_frac1.0/fold_{i}/predictions") for i in range(5)],
          [Path(f"/data/xuannv_embedding/experiments/aef_benchmark/construction/fold_{i}/predictions") for i in range(5)]),
     ]
@@ -206,11 +207,12 @@ def main() -> None:
 
     # 3. Harbin building_change: ours vs AEF
     building_change_mask = Path("/data/xuannv_embedding/processed/harbin/labels/building_change/masks")
+    # 仅使用有标注且自研与 AEF 均有预测的 patch
     building_change_patches = [
-        ("patch_000000",
+        ("patch_000027",
          [Path(f"/data/xuannv_embedding/experiments/building_change_diff_unet_harbin_5fold/fold{i}/fold_{i}/predictions") for i in range(5)],
          [Path(f"/data/xuannv_embedding/experiments/aef_benchmark/building_change/fold_{i}/predictions") for i in range(5)]),
-        ("patch_000007",
+        ("patch_000026",
          [Path(f"/data/xuannv_embedding/experiments/building_change_diff_unet_harbin_5fold/fold{i}/fold_{i}/predictions") for i in range(5)],
          [Path(f"/data/xuannv_embedding/experiments/aef_benchmark/building_change/fold_{i}/predictions") for i in range(5)]),
     ]
@@ -219,9 +221,13 @@ def main() -> None:
 
     # 4. Harbin farm_change: ours vs AEF
     farm_change_mask = Path("/data/xuannv_embedding/processed/harbin/labels/farm_change/masks")
+    # 修正预测路径；仅使用有标注且自研与 AEF 均有预测的 patch
     farm_change_patches = [
-        ("patch_000000",
-         [Path(f"/data/xuannv_embedding/experiments/farm_change_unet_harbin_fold0/fold_0/fold_0/predictions")],
+        ("patch_000034",
+         [Path("/data/xuannv_embedding/experiments/farm_change_unet_harbin_fold0/fold_0/predictions")],
+         [Path(f"/data/xuannv_embedding/experiments/aef_benchmark/farm_change/fold_{i}/predictions") for i in range(5)]),
+        ("patch_000087",
+         [Path("/data/xuannv_embedding/experiments/farm_change_unet_harbin_fold0/fold_0/predictions")],
          [Path(f"/data/xuannv_embedding/experiments/aef_benchmark/farm_change/fold_{i}/predictions") for i in range(5)]),
     ]
     for pid, our_dir, aef_dir in farm_change_patches:
@@ -229,8 +235,12 @@ def main() -> None:
 
     # 5. Harbin rubbish: ours vs AEF
     rubbish_mask = Path("/data/xuannv_embedding/processed/harbin/labels/rubbish/masks")
+    # 仅使用有标注且自研与 AEF 均有预测的 patch
     rubbish_patches = [
-        ("patch_000000",
+        ("patch_000027",
+         [Path(f"/data/xuannv_embedding/experiments/rubbish_diff_unet_harbin_5fold/fold{i}/fold_{i}/predictions") for i in range(5)],
+         [Path(f"/data/xuannv_embedding/experiments/aef_benchmark/rubbish/fold_{i}/predictions") for i in range(5)]),
+        ("patch_000033",
          [Path(f"/data/xuannv_embedding/experiments/rubbish_diff_unet_harbin_5fold/fold{i}/fold_{i}/predictions") for i in range(5)],
          [Path(f"/data/xuannv_embedding/experiments/aef_benchmark/rubbish/fold_{i}/predictions") for i in range(5)]),
     ]
