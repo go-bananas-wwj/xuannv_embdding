@@ -104,13 +104,9 @@ def build_encoder_entry() -> dict[str, Any]:
     if not ENCODER_DIR.exists():
         return {"files": [], "sha256": {}}
 
-    files = sorted(
-        str(p.relative_to(V1_ROOT)) for p in ENCODER_DIR.rglob("*") if p.is_file()
-    )
+    files = sorted(str(p.relative_to(V1_ROOT)) for p in ENCODER_DIR.rglob("*") if p.is_file())
     checksums = {
-        str(p.relative_to(V1_ROOT)): sha256_file(p)
-        for p in ENCODER_DIR.rglob("*")
-        if p.is_file()
+        str(p.relative_to(V1_ROOT)): sha256_file(p) for p in ENCODER_DIR.rglob("*") if p.is_file()
     }
     return {"files": files, "sha256": checksums}
 
