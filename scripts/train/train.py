@@ -12,6 +12,7 @@ from typing import Any
 import numpy as np
 import torch
 import torch.distributed as dist
+from torch import nn
 from torch.utils.data import DataLoader, DistributedSampler
 
 from xuannv_embedding.config import Config
@@ -147,6 +148,8 @@ def _build_loader(
         patch_size=cfg.data.patch_size,
         max_patches=cfg.data.max_patches,
         num_months=cfg.model.num_months,
+        teacher_embedding_root=cfg.data.teacher_embedding_root,
+        region=cfg.data.region,
     )
 
     sampler = None
@@ -249,7 +252,11 @@ def main() -> None:
         }
         for name, head_cfg in cfg.model.target_heads.items()
     }
-    criterion = TotalLoss(target_cfg)
+    criterion = TotalLoss(
+        target_cfg,
+        distill_weight=cfg.training.distill_weight,
+        distill_months=cfg.training.distill_months,
+    )
 
     train_loader = _build_loader(
         cfg,

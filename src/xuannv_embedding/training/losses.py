@@ -108,9 +108,14 @@ def batch_uniformity_loss(emb: torch.Tensor) -> torch.Tensor:
 
 
 class TotalLoss(nn.Module):
-    """AEF 训练总损失：加权重建损失 + batch uniformity 损失。"""
+    """AEF 训练总损失：加权重建损失 + batch uniformity 损失 + 可选蒸馏损失。"""
 
-    def __init__(self, target_cfg: dict[str, dict]) -> None:
+    def __init__(
+        self,
+        target_cfg: dict[str, dict],
+        distill_weight: float = 0.0,
+        distill_months: int = 12,
+    ) -> None:
         """初始化。
 
         Args:
@@ -124,15 +129,20 @@ class TotalLoss(nn.Module):
                     },
                     ...
                 }
+            distill_weight: 蒸馏损失权重；为 0 时不启用蒸馏。
+            distill_months: 蒸馏监督的月度数量，通常对应 2025 年 1-12 月。
         """
         super().__init__()
         self.target_cfg = target_cfg
+        self.distill_weight = distill_weight
+        self.distill_months = distill_months
 
     def forward(
         self,
         output,
         targets: dict[str, torch.Tensor],
         masks: dict[str, torch.Tensor],
+        teacher_embedding_map: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         """计算总损失。
 
@@ -165,12 +175,38 @@ class TotalLoss(nn.Module):
             total_recon = total_recon + weighted
 
         uniformity = batch_uniformity_loss(output.embedding)
+
+        # 蒸馏损失：在学生 base embedding map（高分辨率融合前、vMF 瓶颈前）
+        # 与 AEF 2025 年度教师 embedding 之间计算逐像素 L2 归一化后的 MSE。
+        distill = torch.tensor(
+            0.0, device=output.embedding.device, dtype=output.embedding.dtype
+        )
+        if (
+            teacher_embedding_map is not None
+            and self.distill_weight > 0.0
+            and getattr(output, "base_embedding_map", None) is not None
+        ):
+            student = output.base_embedding_map[:, : self.distill_months]  # (B, M, D, H, W)
+            B, M, D, H, W = student.shape
+            # 教师为年度 embedding，复制到 M 个月。
+            teacher = teacher_embedding_map[:, None, :, :, :].expand(-1, M, -1, -1, -1)
+            student_norm = F.normalize(
+                student.reshape(B * M, D, H, W), p=2, dim=1
+            ).reshape(B, M, D, H, W)
+            teacher_norm = F.normalize(
+                teacher.reshape(B * M, -1, H, W), p=2, dim=1
+            ).reshape(B, M, -1, H, W)
+            # 若教师通道数与学生不同，可在此处投影；本项目均为 64，无需投影。
+            distill = F.mse_loss(student_norm, teacher_norm)
+            total_recon = total_recon + self.distill_weight * distill
+
         total = total_recon + uniformity
 
         result: dict[str, torch.Tensor] = {
             "total": total,
             "recon": total_recon,
             "uniformity": uniformity,
+            "distill": distill,
         }
         result.update(recon_losses)
         return result
