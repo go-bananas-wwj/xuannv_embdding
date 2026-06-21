@@ -1,0 +1,8 @@
+_base_: v1.1_distill_long_stable_50ep.yaml
+
+experiment:
+  name: v1.1_distill_long_stable_50ep_fast
+  wandb_run_name: "v1.1_distill_long_stable_50ep_fast"
+
+data:
+  num_workers: 2
