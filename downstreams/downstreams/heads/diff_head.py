@@ -17,14 +17,15 @@ class DiffUNetHead(TaskHead):
 
     def __init__(
         self,
-        embed_dim: int,
+        in_channels: int,
         num_classes: int,
         hidden_dim: int = 256,
         pos_prior: float | None = None,
         use_diff: bool = True,
     ) -> None:
         super().__init__()
-        self.embed_dim = embed_dim
+        # in_channels 仅用于内部命名一致性；实际投影层在第一次 forward 时按 x.shape[1] 延迟创建。
+        self.in_channels = in_channels
         self.num_classes = num_classes
         self.hidden_dim = hidden_dim
         self.use_diff = use_diff

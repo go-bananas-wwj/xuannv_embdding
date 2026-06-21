@@ -60,6 +60,10 @@ class ConstructionSegmentationTask(BaseTask):
         num_classes = data["num_classes"]
         pos_prior = training.get("pos_prior")
         months = training.get("months", ["202605"])
+        if len(months) not in (1, 2):
+            raise ValueError(
+                f"training.months 长度必须为 1 或 2，实际为 {len(months)}: {months}"
+            )
         bitemporal = len(months) == 2
         in_channels = embed_dim * (3 if bitemporal else 1)
         return build_segmentation_head(

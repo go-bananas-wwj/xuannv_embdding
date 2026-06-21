@@ -285,6 +285,7 @@ def run_fold(
     if world_size > 1:
         dist.barrier()
 
+    cfg["training"]["months"] = args.months
     task = ConstructionSegmentationTask(cfg)
     device = get_downstream_device(cfg["experiment"].get("device", "auto"))
 
@@ -414,6 +415,7 @@ def run_fold(
         collate_fn=collate_embeddings,
     )
 
+    cfg["training"]["months"] = args.months
     model = task.build_head().to(device)
     if world_size > 1:
         local_rank = int(__import__("os").environ.get("LOCAL_RANK", 0))
