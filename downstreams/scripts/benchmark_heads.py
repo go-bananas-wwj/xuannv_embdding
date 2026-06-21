@@ -29,10 +29,9 @@ logger = logging.getLogger(__name__)
 def _build_config(head: str, task: str, epochs: int, batch_size: int, lr: float) -> dict[str, Any]:
     """构造单个 head 的训练配置。
 
-    bitemporal 输入通道数为 ``64 * 3 = 192``；``diff_unet`` 内部自带输入投影，
-    因此仍使用 ``embed_dim=64``，其余 head 直接以 192 作为输入通道。
+    bitemporal 输入通道数为 ``64 * 3 = 192``，由 ``ConstructionSegmentationTask.build_head()``
+    根据 ``training.months`` 自动计算。
     """
-    embed_dim = 64 if head.lower() == "diff_unet" else 192
     return {
         "experiment": {
             "name": f"{task}_{head}_benchmark",
@@ -56,7 +55,7 @@ def _build_config(head: str, task: str, epochs: int, batch_size: int, lr: float)
             "num_workers": 0,
         },
         "data": {
-            "embed_dim": embed_dim,
+            "embed_dim": 64,
             "num_classes": 2,
         },
     }

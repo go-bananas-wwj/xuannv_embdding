@@ -14,7 +14,7 @@ training:
   loss: focal_dice
   pos_weight: 10.0
   label_fraction: 1.0
-  month: 202604
+  months: [202604]
 
 data:
   embed_dim: 64

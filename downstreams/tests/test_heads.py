@@ -13,6 +13,7 @@ from downstreams.heads import (
     UperNetHead,
     build_segmentation_head,
 )
+from downstreams.tasks.construction_segmentation import ConstructionSegmentationTask
 
 
 @pytest.fixture
@@ -109,10 +110,22 @@ def test_mlp_head(seg_input: torch.Tensor) -> None:
     assert out.shape == (2, 5, 16, 16)
 
 
+@pytest.mark.parametrize(
+    "head_type",
+    ["linear", "fcn", "unet", "upernet", "mlp", "diff_unet"],
+)
+def test_head_bitemporal_192(head_type: str) -> None:
+    """所有 head 都应支持 192 通道双时相拼接输入。"""
+    x = torch.randn(2, 192, 32, 32)
+    head = build_segmentation_head(head_type, in_channels=192, num_classes=5)
+    out = head(x)
+    assert out.shape == (2, 5, 32, 32)
+
+
 def test_diff_unet_head_with_diff() -> None:
     # 3 * 64 = 192 channels: [emb_t1, emb_t2, |diff|]
     x = torch.randn(2, 192, 16, 16)
-    head = DiffUNetHead(embed_dim=64, num_classes=5, hidden_dim=128)
+    head = DiffUNetHead(in_channels=64, num_classes=5, hidden_dim=128)
     out = head(x)
     assert out.shape == (2, 5, 16, 16)
 
@@ -120,6 +133,44 @@ def test_diff_unet_head_with_diff() -> None:
 def test_diff_unet_head_without_diff() -> None:
     # 64 channels: single temporal embedding
     x = torch.randn(2, 64, 16, 16)
-    head = DiffUNetHead(embed_dim=64, num_classes=5, hidden_dim=128, use_diff=False)
+    head = DiffUNetHead(in_channels=64, num_classes=5, hidden_dim=128, use_diff=False)
     out = head(x)
     assert out.shape == (2, 5, 16, 16)
+
+
+def _first_conv_in_channels(model: torch.nn.Module) -> int | None:
+    """返回模型中第一个 Conv2d 的输入通道数。"""
+    for module in model.modules():
+        if isinstance(module, torch.nn.Conv2d):
+            return module.in_channels
+    return None
+
+
+@pytest.mark.parametrize(
+    "months, expected_in_channels",
+    [
+        (["202605"], 64),
+        (["202512", "202605"], 192),
+    ],
+)
+def test_construction_task_build_head_channels(
+    months: list[str], expected_in_channels: int
+) -> None:
+    cfg = {
+        "training": {"head_type": "fcn", "months": months},
+        "data": {"embed_dim": 64, "num_classes": 2},
+    }
+    task = ConstructionSegmentationTask(cfg)
+    head = task.build_head()
+    assert _first_conv_in_channels(head) == expected_in_channels
+
+
+@pytest.mark.parametrize("months", [[], ["202512", "202601", "202605"]])
+def test_construction_task_build_head_bad_months(months: list[str]) -> None:
+    cfg = {
+        "training": {"head_type": "fcn", "months": months},
+        "data": {"embed_dim": 64, "num_classes": 2},
+    }
+    task = ConstructionSegmentationTask(cfg)
+    with pytest.raises(ValueError, match="training.months 长度必须为 1 或 2"):
+        task.build_head()
