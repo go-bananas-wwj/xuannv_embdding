@@ -1,7 +1,7 @@
 experiment:
   name: v1.1_distill_long_stable_50ep
   seed: 42
-  use_wandb: true
+  use_wandb: false
   wandb_project: xuannv-embedding-stage1
   wandb_run_name: v1.1_distill_long_stable_50ep
 model:
