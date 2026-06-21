@@ -141,6 +141,21 @@ class ConstructionSegmentationTask(BaseTask):
                 logits = model(emb)[:, 1]
                 all_logits.append(logits.cpu())
                 all_masks.append(mask.cpu())
+        if not all_logits:
+            return {
+                "miou": 0.0,
+                "f1_0.5": 0.0,
+                "f1_best": 0.0,
+                "precision": 0.0,
+                "recall": 0.0,
+                "ap": 0.0,
+                "auprc": 0.0,
+                "auc_roc": 0.0,
+                "tp": 0,
+                "fp": 0,
+                "fn": 0,
+                "tn": 0,
+            }
         logits = torch.cat([x.flatten() for x in all_logits])
         targets = torch.cat([x.flatten() for x in all_masks])
         return compute_segmentation_metrics(

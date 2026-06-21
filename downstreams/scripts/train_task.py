@@ -251,6 +251,8 @@ def _find_best_threshold(
             logits = model(emb)[:, 1]
             all_logits.append(logits.cpu())
             all_masks.append(mask.cpu())
+    if not all_logits:
+        return 0.5
     logits = torch.cat([x.flatten() for x in all_logits]).numpy()
     targets = torch.cat([x.flatten() for x in all_masks]).numpy()
     metrics = compute_segmentation_metrics(logits, targets, return_curve=True)
@@ -406,6 +408,7 @@ def run_fold(
         sampler=train_sampler,
         num_workers=cfg["training"].get("num_workers", 0),
         collate_fn=collate_embeddings,
+        drop_last=True,
     )
     val_loader = DataLoader(
         val_ds,
@@ -456,6 +459,7 @@ def run_fold(
 
         model.train()
         train_loss = 0.0
+        n_batches = 0
         for batch in train_loader:
             emb = batch["embedding_map"].to(device)
             mask = batch["mask"].to(device)
@@ -465,8 +469,9 @@ def run_fold(
             loss.backward()
             optimizer.step()
             train_loss += loss.item()
+            n_batches += 1
         scheduler.step()
-        train_loss /= len(train_loader)
+        train_loss = train_loss / n_batches if n_batches > 0 else 0.0
 
         val_metrics = task.evaluate(model, val_loader, device)
         val_metrics = _average_metrics(val_metrics, world_size)
