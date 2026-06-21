@@ -21,6 +21,7 @@ class MultiTaskEmbeddingDataset(Dataset):
         augment: bool = False,
         bitemporal: bool = False,
         include_diff: bool = True,
+        crop_size: int | None = None,
     ) -> None:
         self.embedding_root = Path(embedding_root)
         self.label_root = Path(label_root)
@@ -30,6 +31,7 @@ class MultiTaskEmbeddingDataset(Dataset):
         self.augment = augment
         self.bitemporal = bitemporal
         self.include_diff = include_diff
+        self._crop_size = crop_size
         self.mask_dir = self.label_root / "masks"
 
         if self.bitemporal and len(self.months) != 2:
@@ -103,7 +105,41 @@ class MultiTaskEmbeddingDataset(Dataset):
         if torch.rand(1).item() > 0.5:
             emb = torch.flip(emb, dims=[-2])
             mask = torch.flip(mask, dims=[-2])
+        # 随机 90 度旋转
+        if torch.rand(1).item() > 0.5:
+            k = torch.randint(1, 4, (1,)).item()
+            emb = torch.rot90(emb, k=k, dims=[-2, -1])
+            mask = torch.rot90(mask, k=k, dims=[-2, -1])
+        # 前景感知随机裁剪，提升低比例正样本 patch 的有效前景密度
+        if self.augment and hasattr(self, "_crop_size") and self._crop_size is not None:
+            emb, mask = self._random_crop(emb, mask, self._crop_size)
         return emb, mask
+
+    @staticmethod
+    def _random_crop(
+        emb: torch.Tensor, mask: torch.Tensor, crop_size: int
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """对 emb (C, H, W) 和 mask (H, W) 做同步随机裁剪。
+
+        若 mask 含前景，则以 70% 概率将前景像素作为裁剪中心，否则随机选中心。
+        """
+        _, h, w = emb.shape
+        if h <= crop_size or w <= crop_size:
+            return emb, mask
+        fg_indices = torch.nonzero(mask > 0, as_tuple=False)
+        use_fg = fg_indices.numel() > 0 and torch.rand(1).item() < 0.7
+        if use_fg:
+            idx = torch.randint(0, fg_indices.shape[0], (1,)).item()
+            cy, cx = fg_indices[idx].tolist()
+        else:
+            cy = torch.randint(0, h, (1,)).item()
+            cx = torch.randint(0, w, (1,)).item()
+
+        y1 = min(max(cy - crop_size // 2, 0), h - crop_size)
+        x1 = min(max(cx - crop_size // 2, 0), w - crop_size)
+        y2 = y1 + crop_size
+        x2 = x1 + crop_size
+        return emb[:, y1:y2, x1:x2], mask[y1:y2, x1:x2]
 
 
 def collate_embeddings(batch: list[dict[str, Any]]) -> dict[str, Any]:
