@@ -1,0 +1,87 @@
+_base_: base.yaml
+
+experiment:
+  name: v1.1_distill_quick
+  use_wandb: true
+  wandb_project: "xuannv-embedding-stage1"
+  wandb_run_name: "v1.1_distill_quick_10ep"
+
+training:
+  epochs: 10
+  lr: 1.0e-4
+  weight_decay: 0.05
+  warmup_epochs: 2
+  gradient_accumulation_steps: 1
+  save_every: 5
+  eval_every: 5
+  amp: true
+  gradient_checkpointing: true
+  log_every: 10
+  distill_weight: 0.1
+  distill_months: 12
+
+model:
+  embed_dim: 64
+  stem_dim: 32
+  num_months: 17
+  stp:
+    space_dim: 512
+    time_dim: 256
+    precision_dim: 128
+    num_blocks: 6
+    num_heads: 8
+  sensor_channels:
+    s2: 12
+    s1: 2
+    landsat: 7
+    worldcover: 9
+    highres_optical_harbin: 3
+    highres_optical: 4
+    highres_sar: 1
+  target_heads:
+    s2_recon:
+      loss_type: continuous
+      channels: 12
+      weight: 1.0
+    s1_recon:
+      loss_type: continuous
+      channels: 2
+      weight: 1.0
+    landsat_recon:
+      loss_type: continuous
+      channels: 7
+      weight: 1.0
+    worldcover:
+      loss_type: categorical
+      channels: 9
+      weight: 0.5
+    highres_optical_harbin_recon:
+      loss_type: continuous
+      channels: 3
+      weight: 1.0
+    highres_optical_recon:
+      loss_type: continuous
+      channels: 4
+      weight: 1.0
+    highres_sar_recon:
+      loss_type: continuous
+      channels: 1
+      weight: 1.0
+
+data:
+  region: combined
+  root: /data/xuannv_embedding/processed
+  manifest_path: /data/xuannv_embedding/processed/manifest_all_744.json
+  statistics_dir: /data/xuannv_embedding/statistics
+  patch_size: 128
+  num_workers: 0
+  batch_size: 4
+  sources:
+    - s2
+    - s1
+    - landsat
+    - worldcover
+    - highres_optical_harbin
+    - highres_optical
+    - highres_sar
+  teacher_embedding_root: /data/xuannv_embedding/embeddings/aef_teacher_2025_annual
