@@ -37,3 +37,4 @@ fusion_result.json
 # Git worktrees
 .worktrees/
 kernel_meta/
+ge_check_op.json
