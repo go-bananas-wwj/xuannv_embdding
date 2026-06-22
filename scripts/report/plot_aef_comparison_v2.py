@@ -7,7 +7,7 @@ from pathlib import Path
 data = json.loads(Path("/root/workspace/report/data/aef_benchmark_summary.json").read_text(encoding="utf-8"))
 
 # Extract per-task metrics
-tasks = ["construction", "building_change", "farm_change", "rubbish", "construction_joint"]
+tasks = ["construction", "building_change", "farm_change", "rubbish"]
 metrics = ["auc_roc", "f1_best", "f1_at_0_5", "miou"]
 metric_labels = ["AUC-ROC", "F1-best", "F1@0.5", "mIoU"]
 
