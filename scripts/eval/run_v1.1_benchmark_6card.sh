@@ -64,11 +64,18 @@ ASCEND_RT_VISIBLE_DEVICES=4 python downstreams/scripts/train_task.py \
   --regions harbin haidian \
   --output-root "$OUTPUT_ROOT/construction_joint" > "$OUTPUT_ROOT/construction_joint.log" 2>&1
 
-echo "==> Generating comparison report ..."
+echo "==> Generating V1.0 vs V1.1 comparison report ..."
 python downstreams/scripts/generate_aef_report.py \
   --aef-root "$OUTPUT_ROOT" \
   --v10-path /data/xuannv_embedding/experiments/v1.0/all_tasks_summary_final.json \
-  --output "$OUTPUT_ROOT/V1.1_vs_AEF_REPORT.md" \
-  --plot "$OUTPUT_ROOT/v1.1_vs_aef.png"
+  --output "$OUTPUT_ROOT/V1.0_vs_V1.1_REPORT.md" \
+  --plot "$OUTPUT_ROOT/v1.0_vs_v1.1.png"
 
-echo "==> Done. Report: $OUTPUT_ROOT/V1.1_vs_AEF_REPORT.md"
+echo "==> Generating V1.1 vs AEF 2025 comparison report/figure ..."
+python scripts/eval/generate_v1.1_vs_aef_report.py \
+  --v11-root "$OUTPUT_ROOT" \
+  --output-dir /root/workspace/report/v1.1_benchmark
+
+echo "==> Done. Reports:"
+echo "  $OUTPUT_ROOT/V1.0_vs_V1.1_REPORT.md"
+echo "  /root/workspace/report/v1.1_benchmark/V1.1_vs_AEF_REPORT.md"
