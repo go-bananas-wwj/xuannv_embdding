@@ -56,9 +56,9 @@ def aggregate_folds(summary_path: Path) -> dict[str, Any]:
     return out
 
 
-def load_v11(benchmark_root: Path) -> dict[str, Any]:
+def load_v11(benchmark_root: Path, tasks: list[str]) -> dict[str, Any]:
     data: dict[str, Any] = {}
-    for task in TASKS:
+    for task in tasks:
         summary_path = benchmark_root / task / "summary_5fold.json"
         if not summary_path.exists():
             raise FileNotFoundError(f"Missing V1.1 summary: {summary_path}")
@@ -66,7 +66,7 @@ def load_v11(benchmark_root: Path) -> dict[str, Any]:
     return data
 
 
-def load_aef(aef_path: Path) -> dict[str, Any]:
+def load_aef(aef_path: Path, tasks: list[str]) -> dict[str, Any]:
     with open(aef_path, encoding="utf-8") as f:
         raw = json.load(f)
     # aef_benchmark_summary.json contains a list of entries, some with empty task keys.
@@ -88,7 +88,7 @@ def load_aef(aef_path: Path) -> dict[str, Any]:
             "miou_mean": entry["miou"]["value"],
             "miou_std": 0.0,
         }
-    missing = [t for t in TASKS if t not in data]
+    missing = [t for t in tasks if t not in data]
     if missing:
         raise ValueError(f"AEF baseline missing tasks: {missing}")
     return data
@@ -104,11 +104,11 @@ def write_report(
     v11: dict[str, Any],
     aef: dict[str, Any],
     output_path: Path,
+    tasks: list[str],
 ) -> None:
     lines: list[str] = []
     lines.append("# V1.1 vs AEF 2025 下游 benchmark 对比报告")
     lines.append("")
-    lines.append("## 说明")
     lines.append("- **V1.1**：本次 AEF 蒸馏训练得到的 embedding（双时相 202512+202605，64 维）。")
     lines.append("- **AEF 2025**：Google / GeoAI Foundation 官方年度 embedding（单时相 2025，64 维）。")
     lines.append("- 指标均为 5-fold 交叉验证的 mean±std。")
@@ -116,7 +116,7 @@ def write_report(
     lines.append("| 任务 | 对比项 | AUC-ROC | F1-best | F1@0.5 | mIoU |")
     lines.append("|------|--------|---------|---------|--------|------|")
 
-    for task in TASKS:
+    for task in tasks:
         v = v11[task]
         a = aef[task]
         lines.append(
@@ -142,8 +142,9 @@ def write_report(
         )
         lines.append("| | | | | | |")
 
+    n_tasks = len(tasks)
     wins = {m: 0 for m in METRICS}
-    for task in TASKS:
+    for task in tasks:
         for metric in METRICS:
             if v11[task][f"{metric}_mean"] > aef[task][f"{metric}_mean"]:
                 wins[metric] += 1
@@ -151,9 +152,9 @@ def write_report(
     lines.append("")
     lines.append("## 结论")
     lines.append(
-        f"V1.1 在 5 个任务中，AUC-ROC 胜出 {wins['auc_roc']}/5，"
-        f"F1-best 胜出 {wins['f1_best']}/5，F1@0.5 胜出 {wins['f1_0.5']}/5，"
-        f"mIoU 胜出 {wins['miou']}/5。"
+        f"V1.1 在 {n_tasks} 个任务中，AUC-ROC 胜出 {wins['auc_roc']}/{n_tasks}，"
+        f"F1-best 胜出 {wins['f1_best']}/{n_tasks}，F1@0.5 胜出 {wins['f1_0.5']}/{n_tasks}，"
+        f"mIoU 胜出 {wins['miou']}/{n_tasks}。"
     )
     lines.append("")
     lines.append("![V1.1 vs AEF 2025 指标对比](v1.1_vs_aef_metrics.png)")
@@ -166,9 +167,10 @@ def plot_comparison(
     v11: dict[str, Any],
     aef: dict[str, Any],
     output_path: Path,
+    tasks: list[str],
     dpi: int = 200,
 ) -> None:
-    x = np.arange(len(TASKS))
+    x = np.arange(len(tasks))
     width = 0.35
 
     # Use a clean, presentation-friendly palette matching the report.
@@ -180,10 +182,10 @@ def plot_comparison(
 
     for idx, metric in enumerate(METRICS):
         ax = axes[idx]
-        v_means = np.array([v11[t][f"{metric}_mean"] for t in TASKS])
-        v_stds = np.array([v11[t][f"{metric}_std"] for t in TASKS])
-        a_means = np.array([aef[t][f"{metric}_mean"] for t in TASKS])
-        a_stds = np.array([aef[t][f"{metric}_std"] for t in TASKS])
+        v_means = np.array([v11[t][f"{metric}_mean"] for t in tasks])
+        v_stds = np.array([v11[t][f"{metric}_std"] for t in tasks])
+        a_means = np.array([aef[t][f"{metric}_mean"] for t in tasks])
+        a_stds = np.array([aef[t][f"{metric}_std"] for t in tasks])
 
         bars1 = ax.bar(
             x - width / 2,
@@ -212,7 +214,7 @@ def plot_comparison(
 
         ax.set_title(METRIC_LABELS[metric], fontsize=13, fontweight="bold", color="#2c3e50")
         ax.set_xticks(x)
-        ax.set_xticklabels([TASK_LABELS[t] for t in TASKS], rotation=20, ha="right", fontsize=10)
+        ax.set_xticklabels([TASK_LABELS[t] for t in tasks], rotation=20, ha="right", fontsize=10)
         ax.set_ylabel("Score", fontsize=11)
         ax.legend(loc="upper right", fontsize=9)
         ax.grid(axis="y", linestyle="--", alpha=0.4)
@@ -252,7 +254,7 @@ def plot_comparison(
             )
 
     fig.suptitle(
-        "V1.1 vs AEF 2025：下游任务 5-fold 指标对比",
+        "V1.1 vs AEF 2025: Downstream Task Metrics (5-fold CV)",
         fontsize=16,
         fontweight="bold",
         color="#2c3e50",
@@ -284,12 +286,23 @@ def main() -> None:
         help="Output directory for figure and JSON",
     )
     p.add_argument("--dpi", type=int, default=200, help="Output PNG DPI")
+    p.add_argument(
+        "--tasks",
+        type=str,
+        default=",".join(TASKS),
+        help="Comma-separated task names to include (default: all 5 tasks)",
+    )
     args = p.parse_args()
+
+    tasks = [t.strip() for t in args.tasks.split(",") if t.strip()]
+    for t in tasks:
+        if t not in TASKS:
+            raise ValueError(f"Unknown task: {t}. Allowed: {TASKS}")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    v11 = load_v11(args.v11_root)
-    aef = load_aef(args.aef_summary)
+    v11 = load_v11(args.v11_root, tasks)
+    aef = load_aef(args.aef_summary, tasks)
 
     summary: dict[str, Any] = {
         "v1.1": v11,
@@ -300,10 +313,10 @@ def main() -> None:
         json.dump(summary, f, ensure_ascii=False, indent=2)
 
     plot_path = args.output_dir / "v1.1_vs_aef_metrics.png"
-    plot_comparison(v11, aef, plot_path, dpi=args.dpi)
+    plot_comparison(v11, aef, plot_path, tasks, dpi=args.dpi)
 
     report_path = args.output_dir / "V1.1_vs_AEF_REPORT.md"
-    write_report(v11, aef, report_path)
+    write_report(v11, aef, report_path, tasks)
 
     print(f"Summary: {summary_path}")
     print(f"Figure: {plot_path}")
