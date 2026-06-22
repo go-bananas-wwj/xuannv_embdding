@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import rasterio
 import torch
+from scipy.ndimage import gaussian_filter
 from sklearn.decomposition import PCA
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -33,12 +34,12 @@ VERSIONS = {
     "Stage2_V1": {
         "emb_root": Path("/data/xuannv_embedding/embeddings/harbin"),
         "pred_dirs": [Path(f"/data/xuannv_embedding/outputs/downstream/stage2_harbin_construction_v1_frac1.0/fold_{i}/predictions") for i in range(5)],
-        "month": "202512",
+        "month": "202605",
     },
     "V1.1_Quick": {
         "emb_root": Path("/data/xuannv_embedding/embeddings/v1.1_quick_harbin_labeled/20260621_v1.1_extract_labeled_harbin_best/harbin"),
         "pred_dirs": [Path("/data/xuannv_embedding/experiments/v1.1_quick/construction_harbin/fold_0/predictions")],
-        "month": "202512",
+        "month": "202605",
     },
     "AEF_Official": {
         "emb_root": Path("/data/xuannv_embedding/embeddings/aef_official_2025_annual/harbin"),
@@ -135,7 +136,9 @@ def _load_pred(patch_id: str, pred_dirs: list[Path]) -> np.ndarray | None:
     return None
 
 
-def _compute_embedding_pca(patch_id: str, emb_root: Path, month: str) -> np.ndarray | None:
+def _compute_embedding_pca(
+    patch_id: str, emb_root: Path, month: str, smooth_sigma: float = 0.0
+) -> np.ndarray | None:
     path = emb_root / patch_id / f"{month}_embedding_map.pt"
     if not path.exists():
         return None
@@ -146,7 +149,10 @@ def _compute_embedding_pca(patch_id: str, emb_root: Path, month: str) -> np.ndar
     pca = PCA(n_components=3)
     pcs = pca.fit_transform(flat)
     pcs = pcs.reshape(h, w, 3)
-    return _stretch(pcs)
+    rgb = _stretch(pcs)
+    if smooth_sigma > 0:
+        rgb = gaussian_filter(rgb, sigma=(smooth_sigma, smooth_sigma, 0))
+    return rgb
 
 
 def _show(ax, img, title, cmap=None, vmin=None, vmax=None):
@@ -164,13 +170,15 @@ def _show(ax, img, title, cmap=None, vmin=None, vmax=None):
     ax.axis("off")
 
 
-def generate_comprehensive(patch_id: str, version_name: str, emb_root: Path, month: str, pred_dirs: list[Path]) -> Path:
+def generate_comprehensive(
+    patch_id: str, version_name: str, emb_root: Path, month: str, pred_dirs: list[Path], smooth_sigma: float = 0.5
+) -> Path:
     """生成类似 harbin_stage2_v1_fold0 风格的单版本 comprehensive 图。"""
     s2 = _load_s2_rgb(patch_id, month)
     s1 = _load_s1(patch_id, month)
     landsat = _load_landsat(patch_id, month)
     wc = _load_worldcover(patch_id)
-    emb_pca = _compute_embedding_pca(patch_id, emb_root, month)
+    emb_pca = _compute_embedding_pca(patch_id, emb_root, month, smooth_sigma=smooth_sigma)
     pred = _load_pred(patch_id, pred_dirs)
     mask_t1 = _load_mask(patch_id, "202512")
     mask_t2 = _load_mask(patch_id, "202605")
@@ -225,7 +233,8 @@ def generate_version_comparison_grid(patch_id: str) -> Path:
 
     # 版本行
     for row_idx, (version_name, cfg) in enumerate(VERSIONS.items(), start=1):
-        emb = _compute_embedding_pca(patch_id, cfg["emb_root"], cfg["month"])
+        smooth_sigma = 0.0 if "AEF" in version_name else 0.5
+        emb = _compute_embedding_pca(patch_id, cfg["emb_root"], cfg["month"], smooth_sigma=smooth_sigma)
         pred = _load_pred(patch_id, cfg["pred_dirs"])
         axes[row_idx, 0].text(0.5, 0.5, version_name, ha="center", va="center", fontsize=11, fontweight="bold")
         axes[row_idx, 0].axis("off")

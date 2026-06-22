@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import rasterio
 import torch
+from scipy.ndimage import gaussian_filter
 from sklearn.decomposition import PCA
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -134,7 +135,9 @@ def _load_pred(patch_id: str, pred_dir: Path | list[Path]) -> np.ndarray | None:
     return None
 
 
-def _load_embedding_pca(patch_id: str, emb_root: Path, month: str = "202604") -> np.ndarray | None:
+def _load_embedding_pca(
+    patch_id: str, emb_root: Path, month: str = "202604", smooth_sigma: float = 0.0
+) -> np.ndarray | None:
     path = emb_root / patch_id / f"{month}_embedding_map.pt"
     if not path.exists():
         return None
@@ -145,7 +148,10 @@ def _load_embedding_pca(patch_id: str, emb_root: Path, month: str = "202604") ->
     pca = PCA(n_components=3)
     pcs = pca.fit_transform(flat)
     pcs = pcs.reshape(h, w, 3)
-    return _stretch(pcs)
+    rgb = _stretch(pcs)
+    if smooth_sigma > 0:
+        rgb = gaussian_filter(rgb, sigma=(smooth_sigma, smooth_sigma, 0))
+    return rgb
 
 
 def _show(ax, img, title, cmap=None, vmin=None, vmax=None):
@@ -173,7 +179,7 @@ def plot_haidian_construction_versions(patch_id: str, data_root: Path, mask_dir:
     s2 = _load_s2_rgb(patch_id, s2_root, month=month)
     highres = _load_highres_optical(patch_id, highres_root)
     mask = _load_mask(patch_id, mask_dir)
-    emb_pca = _load_embedding_pca(patch_id, emb_root, month=month)
+    emb_pca = _load_embedding_pca(patch_id, emb_root, month=month, smooth_sigma=1.0)
 
     n_versions = len(versions)
     n_cols = max(4, n_versions)
@@ -220,8 +226,8 @@ def plot_haidian_v3_vs_aef(
     highres_our = _load_highres_optical(patch_id, highres_root, month=our_month)
     highres_aef = _load_highres_optical(patch_id, highres_root, month=aef_month)
     mask = _load_mask(patch_id, mask_dir)
-    our_emb_pca = _load_embedding_pca(patch_id, our_emb_root, month=our_month)
-    aef_emb_pca = _load_embedding_pca(patch_id, aef_emb_root, month=aef_month)
+    our_emb_pca = _load_embedding_pca(patch_id, our_emb_root, month=our_month, smooth_sigma=1.0)
+    aef_emb_pca = _load_embedding_pca(patch_id, aef_emb_root, month=aef_month, smooth_sigma=0.0)
     our_pred = _load_pred(patch_id, v3_pred_dir)
     aef_pred = _load_pred(patch_id, aef_pred_dir)
 
@@ -291,7 +297,7 @@ def main() -> None:
             aef_haidian_emb,
             aef_construction_pred_dir,
             our_emb_root=haidian_emb,
-            our_month="202505",
+            our_month="202601",
             aef_month="202512",
         )
 
