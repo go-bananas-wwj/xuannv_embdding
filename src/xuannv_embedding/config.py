@@ -30,6 +30,11 @@ class DataConfig:
     sources: list[str] = field(default_factory=lambda: ["s2", "s1", "landsat"])
     teacher_embedding_root: Path | None = None
     cache_dir: Path | None = None  # NEW
+    # 训练时增强
+    augment: bool = False
+    sensor_dropout_prob: float = 0.0
+    temporal_dropout_prob: float = 0.0
+    noise_std: float = 0.0
 
 
 @dataclass
@@ -72,6 +77,8 @@ class TrainingConfig:
     log_every: int = 0
     distill_weight: float = 0.0
     distill_months: int = 12
+    relation_weight: float = 0.0
+    relation_temperature: float = 0.5
 
 
 @dataclass
@@ -201,6 +208,10 @@ class Config:
                     if data_cfg.get("cache_dir")
                     else None
                 ),
+                augment=data_cfg.get("augment", False),
+                sensor_dropout_prob=data_cfg.get("sensor_dropout_prob", 0.0),
+                temporal_dropout_prob=data_cfg.get("temporal_dropout_prob", 0.0),
+                noise_std=data_cfg.get("noise_std", 0.0),
             ),
             experiment=ExperimentConfig(
                 name=experiment_cfg["name"],
@@ -233,6 +244,8 @@ class Config:
                 log_every=training_cfg.get("log_every", 0),
                 distill_weight=training_cfg.get("distill_weight", 0.0),
                 distill_months=training_cfg.get("distill_months", 12),
+                relation_weight=training_cfg.get("relation_weight", 0.0),
+                relation_temperature=training_cfg.get("relation_temperature", 0.5),
             ),
         )
 

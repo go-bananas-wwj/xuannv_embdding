@@ -151,6 +151,10 @@ def _build_loader(
         teacher_embedding_root=cfg.data.teacher_embedding_root,
         region=cfg.data.region,
         cache_dir=cfg.data.cache_dir,
+        augment=cfg.data.augment and split == "train",
+        sensor_dropout_prob=cfg.data.sensor_dropout_prob,
+        temporal_dropout_prob=cfg.data.temporal_dropout_prob,
+        noise_std=cfg.data.noise_std,
     )
 
     sampler = None
@@ -260,6 +264,8 @@ def main() -> None:
         target_cfg,
         distill_weight=cfg.training.distill_weight,
         distill_months=cfg.training.distill_months,
+        relation_weight=cfg.training.relation_weight,
+        relation_temperature=cfg.training.relation_temperature,
     )
 
     train_loader = _build_loader(

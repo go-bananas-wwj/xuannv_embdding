@@ -107,6 +107,48 @@ def batch_uniformity_loss(emb: torch.Tensor) -> torch.Tensor:
     return (squared_dist * diag_mask).sum() / off_diag_count
 
 
+def relation_distillation_loss(
+    student_emb: torch.Tensor,
+    teacher_emb: torch.Tensor,
+    temperature: float = 0.5,
+) -> torch.Tensor:
+    """关系蒸馏（Contrastive Representation Distillation 风格）。
+
+    对学生与教师的场景级嵌入分别计算 pairwise cosine similarity，
+    用 KL 散度约束两者的相似度分布一致，从而传递样本间的结构关系。
+
+    Args:
+        student_emb: 学生场景嵌入 ``[B, D]`` 或 ``[B, T, D]``。
+        teacher_emb: 教师场景嵌入 ``[B, D]``。
+        temperature: 温度系数。
+
+    Returns:
+        标量 KL 损失。
+    """
+    if student_emb.dim() == 3:
+        # 对时间维度取平均得到 patch 级表示。
+        student_emb = student_emb.mean(dim=1)
+
+    student_emb = F.normalize(student_emb, p=2, dim=1)
+    teacher_emb = F.normalize(teacher_emb, p=2, dim=1)
+
+    s_sim = student_emb @ student_emb.t() / temperature
+    t_sim = teacher_emb @ teacher_emb.t() / temperature
+
+    # 双向 KL，数值更稳定。
+    loss_st = F.kl_div(
+        F.log_softmax(s_sim, dim=1),
+        F.softmax(t_sim.detach(), dim=1),
+        reduction="batchmean",
+    )
+    loss_ts = F.kl_div(
+        F.log_softmax(t_sim, dim=1),
+        F.softmax(s_sim.detach(), dim=1),
+        reduction="batchmean",
+    )
+    return (loss_st + loss_ts) / 2.0
+
+
 class TotalLoss(nn.Module):
     """AEF 训练总损失：加权重建损失 + batch uniformity 损失 + 可选蒸馏损失。"""
 
@@ -115,6 +157,8 @@ class TotalLoss(nn.Module):
         target_cfg: dict[str, dict],
         distill_weight: float = 0.0,
         distill_months: int = 12,
+        relation_weight: float = 0.0,
+        relation_temperature: float = 0.5,
     ) -> None:
         """初始化。
 
@@ -131,11 +175,15 @@ class TotalLoss(nn.Module):
                 }
             distill_weight: 蒸馏损失权重；为 0 时不启用蒸馏。
             distill_months: 蒸馏监督的月度数量，通常对应 2025 年 1-12 月。
+            relation_weight: 关系蒸馏损失权重；为 0 时不启用。
+            relation_temperature: 关系蒸馏温度系数。
         """
         super().__init__()
         self.target_cfg = target_cfg
         self.distill_weight = distill_weight
         self.distill_months = distill_months
+        self.relation_weight = relation_weight
+        self.relation_temperature = relation_temperature
 
     def forward(
         self,
@@ -204,7 +252,29 @@ class TotalLoss(nn.Module):
                 0.0, device=output.embedding.device, dtype=output.embedding.dtype
             )
 
-        total = total_recon + uniformity + weighted_distill
+        # 关系蒸馏：保持 batch 内样本相似度结构与教师一致。
+        relation = torch.tensor(
+            0.0, device=output.embedding.device, dtype=output.embedding.dtype
+        )
+        if (
+            teacher_embedding_map is not None
+            and self.relation_weight > 0.0
+            and getattr(output, "embedding", None) is not None
+        ):
+            # 教师为年度空间 embedding map，先在空间上池化到场景级。
+            teacher_scene = teacher_embedding_map.mean(dim=(-2, -1))  # (B, D)
+            relation = relation_distillation_loss(
+                output.embedding,
+                teacher_scene,
+                temperature=self.relation_temperature,
+            )
+            weighted_relation = self.relation_weight * relation
+        else:
+            weighted_relation = torch.tensor(
+                0.0, device=output.embedding.device, dtype=output.embedding.dtype
+            )
+
+        total = total_recon + uniformity + weighted_distill + weighted_relation
 
         result: dict[str, torch.Tensor] = {
             "total": total,
@@ -212,6 +282,8 @@ class TotalLoss(nn.Module):
             "uniformity": uniformity,
             "distill": distill,
             "weighted_distill": weighted_distill,
+            "relation": relation,
+            "weighted_relation": weighted_relation,
         }
         result.update(recon_losses)
         return result
