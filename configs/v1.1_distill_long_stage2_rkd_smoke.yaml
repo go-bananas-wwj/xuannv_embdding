@@ -1,0 +1,109 @@
+experiment:
+  name: v1.1_distill_long_stage2_rkd_smoke
+  seed: 42
+  use_wandb: false
+  wandb_project: xuannv-embedding-stage1
+  wandb_run_name: v1.1_distill_long_stage2_rkd_smoke
+model:
+  embed_dim: 64
+  stem_dim: 32
+  stp:
+    space_dim: 512
+    time_dim: 256
+    precision_dim: 128
+    num_blocks: 6
+    num_heads: 8
+  sensor_channels:
+    s2: 12
+    s1: 2
+    landsat: 7
+    highres_optical_harbin: 3
+    highres_optical: 3
+    highres_sar: 1
+  target_heads:
+    s2_recon:
+      loss_type: continuous
+      channels: 12
+      weight: 1.0
+    s1_recon:
+      loss_type: continuous
+      channels: 2
+      weight: 1.0
+    landsat_recon:
+      loss_type: continuous
+      channels: 7
+      weight: 1.0
+    worldcover:
+      loss_type: categorical
+      channels: 9
+      weight: 0.25
+    highres_optical_harbin_recon:
+      loss_type: continuous
+      channels: 3
+      weight: 0.5
+    highres_optical_recon:
+      loss_type: continuous
+      channels: 3
+      weight: 0.5
+    highres_sar_recon:
+      loss_type: continuous
+      channels: 1
+      weight: 0.5
+  num_months: 17
+training:
+  epochs: 1
+  lr: 0.00002
+  weight_decay: 0.05
+  warmup_epochs: 1
+  gradient_accumulation_steps: 1
+  save_every: 1
+  eval_every: 1
+  amp: false
+  gradient_checkpointing: false
+  log_every: 1
+  distill_weight: 0.3
+  distill_months: 12
+  relation_weight: 0.1
+  relation_temperature: 0.5
+  grad_clip_norm: 1.0
+data:
+  root: /data/xuannv_embedding/processed
+  region: combined
+  manifest_path: /data/xuannv_embedding/processed/manifest_all_744.json
+  statistics_dir: /data/xuannv_embedding/statistics
+  batch_size: 4
+  num_workers: 0
+  patch_size: 128
+  max_patches: 4
+  augment: true
+  sensor_dropout_prob: 0.1
+  temporal_dropout_prob: 0.1
+  noise_std: 0.01
+  months:
+  - 2025-01
+  - 2025-02
+  - 2025-03
+  - 2025-04
+  - 2025-05
+  - 2025-06
+  - 2025-07
+  - 2025-08
+  - 2025-09
+  - 2025-10
+  - 2025-11
+  - 2025-12
+  - 2026-01
+  - 2026-02
+  - 2026-03
+  - 2026-04
+  - 2026-05
+  sources:
+  - s2
+  - s1
+  - landsat
+  - worldcover
+  - highres_optical_harbin
+  - highres_optical
+  - highres_sar
+  teacher_embedding_root: /data/xuannv_embedding/embeddings/aef_teacher_2025_annual
+  cache_dir: /data/xuannv_embedding/cache

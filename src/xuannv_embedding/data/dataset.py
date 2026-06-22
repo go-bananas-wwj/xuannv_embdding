@@ -44,6 +44,10 @@ class MonthlyEmbeddingDataset(Dataset):
         teacher_embedding_root: Path | None = None,
         region: str | None = None,
         cache_dir: Path | None = None,
+        augment: bool = False,
+        sensor_dropout_prob: float = 0.0,
+        temporal_dropout_prob: float = 0.0,
+        noise_std: float = 0.0,
     ) -> None:
         """初始化 Dataset。
 
@@ -60,6 +64,10 @@ class MonthlyEmbeddingDataset(Dataset):
                 按 ``{region}/{patch_id}/202512_embedding_map.pt`` 组织。
             region: 当前 dataset 的默认 region；manifest 条目中的 ``region`` 字段优先级更高。
             cache_dir: 预处理后样本缓存目录；None 表示禁用缓存。
+            augment: 是否启用训练时增强。
+            sensor_dropout_prob: 随机丢弃整个 source 的概率。
+            temporal_dropout_prob: 随机丢弃部分月份的概率。
+            noise_std: 加性高斯噪声标准差。
         """
         self.manifest_path = Path(manifest_path)
         self.statistics_dir = Path(statistics_dir)
@@ -74,6 +82,10 @@ class MonthlyEmbeddingDataset(Dataset):
         )
         self.region = region
         self.cache_dir = Path(cache_dir) if cache_dir else None
+        self.augment = augment
+        self.sensor_dropout_prob = sensor_dropout_prob
+        self.temporal_dropout_prob = temporal_dropout_prob
+        self.noise_std = noise_std
         self.month_bins = self._generate_month_bins()
 
         self.root_dir = self.manifest_path.parent
@@ -446,5 +458,51 @@ class MonthlyEmbeddingDataset(Dataset):
             except Exception as exc:
                 logger.warning("Failed to save cache %s: %s", cache_file, exc)
                 tmp.unlink(missing_ok=True)
+
+        if self.augment:
+            sample = self._augment_sample(sample)
+
+        return sample
+
+    def _augment_sample(self, sample: dict[str, Any]) -> dict[str, Any]:
+        """对样本进行遥感专用增强（仅在训练时使用）。"""
+        # 传感器随机丢弃（DINO-MM 风格），鼓励多源鲁棒融合。
+        if self.sensor_dropout_prob > 0.0:
+            for source in list(sample["source_frames"].keys()):
+                if torch.rand(1).item() < self.sensor_dropout_prob:
+                    frames = sample["source_frames"][source]
+                    masks = sample["source_masks"][source]
+                    sample["source_frames"][source] = torch.zeros_like(frames)
+                    sample["source_masks"][source] = torch.zeros_like(masks)
+
+        # 对普通时序 source 做月份随机丢弃。
+        if self.temporal_dropout_prob > 0.0:
+            for source in self.sources:
+                if source.startswith("highres") or source == "worldcover":
+                    continue
+                frames = sample["source_frames"][source]
+                masks = sample["source_masks"][source]
+                if frames.shape[0] == 0:
+                    continue
+                drop_mask = torch.rand(frames.shape[0]) < self.temporal_dropout_prob
+                frames = frames.clone()
+                masks = masks.clone()
+                frames[drop_mask] = 0.0
+                masks[drop_mask] = 0.0
+                sample["source_frames"][source] = frames
+                sample["source_masks"][source] = masks
+
+        # 加性高斯噪声（仅在有效帧上）。
+        if self.noise_std > 0.0:
+            for source in self.sources:
+                frames = sample["source_frames"][source]
+                masks = sample["source_masks"][source]
+                if frames.shape[0] == 0:
+                    continue
+                noise = torch.randn_like(frames) * self.noise_std
+                # 只对有效时间步加噪声。
+                valid = masks > 0
+                valid = valid.view(-1, 1, 1, 1).expand_as(frames)
+                sample["source_frames"][source] = frames + noise.where(valid, torch.zeros_like(noise))
 
         return sample
