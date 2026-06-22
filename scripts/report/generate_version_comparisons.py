@@ -34,6 +34,17 @@ def _stretch(im: np.ndarray, lower: float = 2.0, upper: float = 98.0) -> np.ndar
     return out
 
 
+def _norm_for_display(im: np.ndarray | None, lower: float = 2.0, upper: float = 98.0) -> np.ndarray | None:
+    """对单通道概率图做 2-98 百分位拉伸，便于低置信度预测可视化。"""
+    if im is None:
+        return None
+    im = np.nan_to_num(im, nan=0.0)
+    lo, hi = np.percentile(im, [lower, upper])
+    if hi <= lo:
+        return np.zeros_like(im)
+    return np.clip((im - lo) / (hi - lo), 0, 1)
+
+
 def _load_s2_rgb(patch_id: str, root: Path, month: str | None = None) -> np.ndarray | None:
     """root: processed/<region>/patches/s2"""
     if month:
@@ -75,14 +86,34 @@ def _load_input(patch_id: str, data_root: Path, month: str) -> tuple[np.ndarray 
     return None, f"S2 {month}"
 
 
-def _load_highres_optical(patch_id: str, root: Path) -> np.ndarray | None:
-    files = sorted(root.glob(f"highres_optical_*_{patch_id}.tif"))
+def _load_highres_optical(patch_id: str, root: Path, month: str | None = None) -> np.ndarray | None:
+    if month:
+        files = sorted(root.glob(f"highres_optical_{month}*{patch_id}.tif"))
+    else:
+        files = sorted(root.glob(f"highres_optical_*_{patch_id}.tif"))
     if not files:
         return None
     with rasterio.open(files[-1]) as src:
         im = src.read()
     rgb = np.transpose(im[:3], (1, 2, 0))
     return _stretch(rgb)
+
+
+def _load_input(patch_id: str, data_root: Path, month: str) -> tuple[np.ndarray | None, str]:
+    """优先读取高分光学，缺失则回退到 S2 RGB，再缺失回退到 S1。返回 (image, title)。"""
+    highres_root = data_root / "patches" / "highres_optical"
+    s2_root = data_root / "patches" / "s2"
+    s1_root = data_root / "patches" / "s1"
+    highres = _load_highres_optical(patch_id, highres_root, month=month)
+    if highres is not None:
+        return highres, f"High-res Optical {month}"
+    s2 = _load_s2_rgb(patch_id, s2_root, month=month)
+    if s2 is not None:
+        return s2, f"S2 {month}"
+    s1 = _load_s1(patch_id, s1_root, month=month)
+    if s1 is not None:
+        return s1, f"S1 {month}"
+    return None, f"High-res Optical {month}"
 
 
 def _load_mask(patch_id: str, mask_dir: Path, suffix: str = ".tif") -> np.ndarray | None:
@@ -172,6 +203,46 @@ def plot_haidian_construction_versions(patch_id: str, data_root: Path, mask_dir:
     logger.info("saved %s", out_path)
 
 
+def plot_haidian_v3_vs_aef(
+    patch_id: str,
+    data_root: Path,
+    mask_dir: Path,
+    v3_pred_dir: Path | list[Path],
+    aef_emb_root: Path,
+    aef_pred_dir: Path | list[Path],
+    our_emb_root: Path,
+    our_month: str = "202505",
+    aef_month: str = "202512",
+) -> None:
+    """海淀 construction：Stage2_V1 V3 预测 与 AEF Official 预测同 patch 对比。"""
+    highres_root = data_root / "patches" / "highres_optical"
+
+    highres_our = _load_highres_optical(patch_id, highres_root, month=our_month)
+    highres_aef = _load_highres_optical(patch_id, highres_root, month=aef_month)
+    mask = _load_mask(patch_id, mask_dir)
+    our_emb_pca = _load_embedding_pca(patch_id, our_emb_root, month=our_month)
+    aef_emb_pca = _load_embedding_pca(patch_id, aef_emb_root, month=aef_month)
+    our_pred = _load_pred(patch_id, v3_pred_dir)
+    aef_pred = _load_pred(patch_id, aef_pred_dir)
+
+    fig, axes = plt.subplots(2, 4, figsize=(13, 6.5))
+    _show(axes[0, 0], highres_our, f"High-res Optical {our_month}")
+    _show(axes[0, 1], our_emb_pca, "Stage2_V1 Embedding PCA")
+    _show(axes[0, 2], our_pred, "Stage2_V1 V3 Pred", cmap="jet", vmin=0, vmax=1)
+    _show(axes[0, 3], mask, "GT Mask", cmap="jet", vmin=0, vmax=1)
+    _show(axes[1, 0], highres_aef, f"High-res Optical {aef_month}")
+    _show(axes[1, 1], aef_emb_pca, "AEF Embedding PCA")
+    _show(axes[1, 2], aef_pred, "AEF Pred", cmap="jet", vmin=0, vmax=1)
+    _show(axes[1, 3], mask, "GT Mask", cmap="jet", vmin=0, vmax=1)
+
+    fig.suptitle(f"Haidian Construction V3 vs AEF - {patch_id}", fontsize=13, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    out_path = OUT_DIR / f"compare_haidian_construction_{patch_id}.png"
+    fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    logger.info("saved %s", out_path)
+
+
 def plot_harbin_task_comparison(patch_id: str, task: str, data_root: Path, mask_dir: Path,
                                 our_pred_dir: Path, aef_pred_dir: Path,
                                 our_name: str = "Ours") -> None:
@@ -188,8 +259,9 @@ def plot_harbin_task_comparison(patch_id: str, task: str, data_root: Path, mask_
     _show(axes[0, 1], input_t2, title_t2)
     _show(axes[0, 2], mask_t1, "GT 202512", cmap="jet", vmin=0, vmax=1)
     _show(axes[0, 3], mask_t2, "GT 202605", cmap="jet", vmin=0, vmax=1)
-    _show(axes[1, 0], our_pred, our_name, cmap="jet", vmin=0, vmax=1)
-    _show(axes[1, 1], aef_pred, "AEF 2025", cmap="jet", vmin=0, vmax=1)
+    # 对预测概率做 display 拉伸，避免低置信度结果全黑
+    _show(axes[1, 0], _norm_for_display(our_pred), f"{our_name} (norm)", cmap="jet", vmin=0, vmax=1)
+    _show(axes[1, 1], _norm_for_display(aef_pred), "AEF 2025 (norm)", cmap="jet", vmin=0, vmax=1)
     axes[1, 2].axis("off")
     axes[1, 3].axis("off")
 
@@ -206,48 +278,55 @@ def main() -> None:
     haidian_data = Path("/data/xuannv_embedding/processed/haidian")
     haidian_mask = Path("/data/xuannv_embedding/processed/haidian/labels/construction/masks")
     haidian_emb = Path("/data/xuannv_embedding/embeddings/haidian")
-    haidian_versions = [
-        ("V1", [Path(f"/data/xuannv_embedding/outputs/downstream/stage2_haidian_construction_frac1.0_20260620_1728/fold_{i}/predictions") for i in range(5)]),
-        ("V2", [Path(f"/data/xuannv_embedding/outputs/downstream/stage2_haidian_construction_v2_frac1.0_20260620_1744/fold_{i}/predictions") for i in range(5)]),
-        ("V3", [Path(f"/data/xuannv_embedding/outputs/downstream/stage2_haidian_construction_v3_frac1.0_20260620_1814/fold_{i}/predictions") for i in range(5)]),
-    ]
-    # 仅使用有标注的 patch，选取 GT 面积较大的前 3 个示例
+    aef_haidian_emb = Path("/data/xuannv_embedding/embeddings/aef_official_2025_annual/haidian")
+    v3_pred_dir = [Path(f"/data/xuannv_embedding/outputs/downstream/stage2_haidian_construction_v3_frac1.0_20260620_1814/fold_{i}/predictions") for i in range(5)]
+    aef_construction_pred_dir = [Path(f"/data/xuannv_embedding/experiments/aef_benchmark/construction/fold_{i}/predictions") for i in range(5)]
+    # 仅使用有标注、且 Stage2_V1 / AEF embedding 与预测均存在的 patch
     for pid in ["patch_000198", "patch_000090", "patch_000209"]:
-        plot_haidian_construction_versions(pid, haidian_data, haidian_mask, haidian_versions, haidian_emb)
+        plot_haidian_v3_vs_aef(
+            pid,
+            haidian_data,
+            haidian_mask,
+            v3_pred_dir,
+            aef_haidian_emb,
+            aef_construction_pred_dir,
+            our_emb_root=haidian_emb,
+            our_month="202505",
+            aef_month="202512",
+        )
 
-    # 2. Harbin construction: ours vs AEF
+    # 2. Harbin construction: ours vs AEF，使用高分光学前后时相
     harbin_data = Path("/data/xuannv_embedding/processed/harbin")
     harbin_construction_mask = Path("/data/xuannv_embedding/processed/harbin/labels/construction/masks")
-    # 仅使用有标注且自研与 AEF 均有预测的 patch
+    # 选取 GT 面积较大、且自研与 AEF 预测均有明显响应的 patch
     harbin_construction_patches = [
-        ("patch_000217",
+        ("patch_000255",
          [Path(f"/data/xuannv_embedding/outputs/downstream/stage2_harbin_construction_v1_frac1.0/fold_{i}/predictions") for i in range(5)],
          [Path(f"/data/xuannv_embedding/experiments/aef_benchmark/construction/fold_{i}/predictions") for i in range(5)]),
-        ("patch_000304",
+        ("patch_000285",
          [Path(f"/data/xuannv_embedding/outputs/downstream/stage2_harbin_construction_v1_frac1.0/fold_{i}/predictions") for i in range(5)],
          [Path(f"/data/xuannv_embedding/experiments/aef_benchmark/construction/fold_{i}/predictions") for i in range(5)]),
     ]
     for pid, our_dir, aef_dir in harbin_construction_patches:
         plot_harbin_task_comparison(pid, "construction", harbin_data, harbin_construction_mask, our_dir, aef_dir)
 
-    # 3. Harbin building_change: ours vs AEF
+    # 3. Harbin building_change: ours vs AEF，避开效果差的 patch_000027
     building_change_mask = Path("/data/xuannv_embedding/processed/harbin/labels/building_change/masks")
-    # 仅使用有标注且自研与 AEF 均有预测的 patch
     building_change_patches = [
-        ("patch_000027",
+        ("patch_000026",
          [Path(f"/data/xuannv_embedding/experiments/building_change_diff_unet_harbin_5fold/fold{i}/fold_{i}/predictions") for i in range(5)],
          [Path(f"/data/xuannv_embedding/experiments/aef_benchmark/building_change/fold_{i}/predictions") for i in range(5)]),
-        ("patch_000026",
+        ("patch_000039",
          [Path(f"/data/xuannv_embedding/experiments/building_change_diff_unet_harbin_5fold/fold{i}/fold_{i}/predictions") for i in range(5)],
          [Path(f"/data/xuannv_embedding/experiments/aef_benchmark/building_change/fold_{i}/predictions") for i in range(5)]),
     ]
     for pid, our_dir, aef_dir in building_change_patches:
         plot_harbin_task_comparison(pid, "building_change", harbin_data, building_change_mask, our_dir, aef_dir)
 
-    # 4. Harbin farm_change: ours vs AEF
+    # 4. Harbin farm_change: ours vs AEF，选取预测响应相对最好的 patch
     farm_change_mask = Path("/data/xuannv_embedding/processed/harbin/labels/farm_change/masks")
-    # 修正预测路径；仅使用有标注且自研与 AEF 均有预测的 patch
     farm_change_patches = [
+        # 000034 是少数有 GT（15 像素）的 patch；000087 有 AEF 强响应
         ("patch_000034",
          [Path("/data/xuannv_embedding/experiments/farm_change_unet_harbin_fold0/fold_0/predictions")],
          [Path(f"/data/xuannv_embedding/experiments/aef_benchmark/farm_change/fold_{i}/predictions") for i in range(5)]),
