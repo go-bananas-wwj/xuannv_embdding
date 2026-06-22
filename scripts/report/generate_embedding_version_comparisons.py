@@ -214,40 +214,19 @@ def generate_comprehensive(
 
 
 def generate_version_comparison_grid(patch_id: str) -> Path:
-    """生成各版本 Embedding PCA + Prediction 的汇总对比图。"""
-    input_t1, title_t1 = _load_input(patch_id, "202512")
-    input_t2, title_t2 = _load_input(patch_id, "202605")
-    mask_t1 = _load_mask(patch_id, "202512")
-    mask_t2 = _load_mask(patch_id, "202605")
-
+    """生成各版本 Embedding PCA 的汇总对比图（仅展示 embedding，不展示 GT 与 prediction）。"""
     n_versions = len(VERSIONS)
-    # 每行 4 列：1 行参考 + n_versions 行版本
-    n_rows = 1 + n_versions
-    fig, axes = plt.subplots(n_rows, 4, figsize=(13, 2.8 * n_rows))
+    fig, axes = plt.subplots(1, n_versions, figsize=(4.2 * n_versions, 4.0))
+    if n_versions == 1:
+        axes = [axes]
 
-    # 参考行 0
-    _show(axes[0, 0], input_t1, title_t1)
-    _show(axes[0, 1], input_t2, title_t2)
-    _show(axes[0, 2], mask_t1, "GT 202512", cmap="jet", vmin=0, vmax=1)
-    _show(axes[0, 3], mask_t2, "GT 202605", cmap="jet", vmin=0, vmax=1)
-
-    # 版本行
-    for row_idx, (version_name, cfg) in enumerate(VERSIONS.items(), start=1):
+    for ax, (version_name, cfg) in zip(axes, VERSIONS.items()):
         smooth_sigma = 0.0 if "AEF" in version_name else 0.5
         emb = _compute_embedding_pca(patch_id, cfg["emb_root"], cfg["month"], smooth_sigma=smooth_sigma)
-        pred = _load_pred(patch_id, cfg["pred_dirs"])
-        axes[row_idx, 0].text(0.5, 0.5, version_name, ha="center", va="center", fontsize=11, fontweight="bold")
-        axes[row_idx, 0].axis("off")
-        _show(axes[row_idx, 1], emb, f"{version_name} Embedding PCA")
-        if pred is not None:
-            _show(axes[row_idx, 2], pred, f"{version_name} Prediction", cmap="jet", vmin=0, vmax=1)
-        else:
-            _show(axes[row_idx, 2], mask_t1, "GT 202512 (no pred)", cmap="jet", vmin=0, vmax=1)
-        # 第 4 列放 GT Mask 作为参照
-        _show(axes[row_idx, 3], mask_t1, "GT 202512", cmap="jet", vmin=0, vmax=1)
+        _show(ax, emb, f"{version_name} Embedding PCA")
 
     fig.suptitle(f"Embedding Version Comparison - {patch_id}", fontsize=14, fontweight="bold")
-    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
     out_path = OUT_DIR / f"embedding_version_compare_{patch_id}.png"
     fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)

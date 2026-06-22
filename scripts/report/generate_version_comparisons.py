@@ -135,6 +135,27 @@ def _load_pred(patch_id: str, pred_dir: Path | list[Path]) -> np.ndarray | None:
     return None
 
 
+def _stripe_score(emb: np.ndarray) -> float:
+    """embedding 行方向高频噪声强度，越小越平滑。"""
+    row_mean = emb.mean(axis=(0, 2))
+    spec = np.abs(np.fft.rfft(row_mean))
+    low = spec[:5].sum()
+    high = spec[5:].sum()
+    return high / (low + 1e-8)
+
+
+def _best_pca_month(emb_root: Path, patch_id: str) -> str:
+    patch_dir = emb_root / patch_id
+    best_month, best_score = None, float("inf")
+    for path in patch_dir.glob("*_embedding_map.pt"):
+        month = path.stem[:6]
+        emb = torch.load(path, map_location="cpu", weights_only=True).numpy()
+        score = _stripe_score(emb)
+        if score < best_score:
+            best_score, best_month = score, month
+    return best_month if best_month else "202605"
+
+
 def _load_embedding_pca(
     patch_id: str, emb_root: Path, month: str = "202604", smooth_sigma: float = 0.0
 ) -> np.ndarray | None:
@@ -249,27 +270,57 @@ def plot_haidian_v3_vs_aef(
     logger.info("saved %s", out_path)
 
 
-def plot_harbin_task_comparison(patch_id: str, task: str, data_root: Path, mask_dir: Path,
-                                our_pred_dir: Path, aef_pred_dir: Path,
-                                our_name: str = "Ours") -> None:
-    """Harbin task: t1/t2 输入（S2 优先，缺失用 S1 回退），GT t1/t2，our pred，AEF pred。"""
+def plot_harbin_task_comparison(
+    patch_id: str,
+    task: str,
+    data_root: Path,
+    mask_dir: Path,
+    our_pred_dir: Path,
+    aef_pred_dir: Path,
+    our_name: str = "Ours",
+    our_emb_root: Path | None = None,
+    aef_emb_root: Path | None = None,
+    our_emb_month: str = "202605",
+    aef_emb_month: str = "202512",
+) -> None:
+    """Harbin task: t1/t2 输入（S2 优先，缺失用 S1 回退）、embedding PCA、GT、预测对比。"""
     input_t1, title_t1 = _load_input(patch_id, data_root, month="202512")
     input_t2, title_t2 = _load_input(patch_id, data_root, month="202605")
     mask_t1 = _load_mask(f"{patch_id}_202512", mask_dir)
     mask_t2 = _load_mask(f"{patch_id}_202605", mask_dir)
     our_pred = _load_pred(patch_id, our_pred_dir)
     aef_pred = _load_pred(patch_id, aef_pred_dir)
+    if our_emb_root is not None:
+        our_emb_month = our_emb_month or _best_pca_month(our_emb_root, patch_id)
+        our_emb = _load_embedding_pca(patch_id, our_emb_root, month=our_emb_month, smooth_sigma=0.5)
+    else:
+        our_emb = None
+    if aef_emb_root is not None:
+        aef_emb_month = aef_emb_month or "202512"
+        aef_emb = _load_embedding_pca(patch_id, aef_emb_root, month=aef_emb_month, smooth_sigma=0.0)
+    else:
+        aef_emb = None
 
     fig, axes = plt.subplots(2, 4, figsize=(13, 6.5))
-    _show(axes[0, 0], input_t1, title_t1)
-    _show(axes[0, 1], input_t2, title_t2)
-    _show(axes[0, 2], mask_t1, "GT 202512", cmap="jet", vmin=0, vmax=1)
-    _show(axes[0, 3], mask_t2, "GT 202605", cmap="jet", vmin=0, vmax=1)
-    # 对预测概率做 display 拉伸，避免低置信度结果全黑
-    _show(axes[1, 0], _norm_for_display(our_pred), f"{our_name} (norm)", cmap="jet", vmin=0, vmax=1)
-    _show(axes[1, 1], _norm_for_display(aef_pred), "AEF 2025 (norm)", cmap="jet", vmin=0, vmax=1)
-    axes[1, 2].axis("off")
-    axes[1, 3].axis("off")
+    if our_emb is not None and aef_emb is not None:
+        # 上排：输入 + embedding PCA；下排：GT + 预测
+        _show(axes[0, 0], input_t1, title_t1)
+        _show(axes[0, 1], input_t2, title_t2)
+        _show(axes[0, 2], our_emb, f"{our_name} Embedding PCA")
+        _show(axes[0, 3], aef_emb, "AEF Embedding PCA")
+        _show(axes[1, 0], mask_t1, "GT 202512", cmap="jet", vmin=0, vmax=1)
+        _show(axes[1, 1], mask_t2, "GT 202605", cmap="jet", vmin=0, vmax=1)
+        _show(axes[1, 2], _norm_for_display(our_pred), f"{our_name} (norm)", cmap="jet", vmin=0, vmax=1)
+        _show(axes[1, 3], _norm_for_display(aef_pred), "AEF 2025 (norm)", cmap="jet", vmin=0, vmax=1)
+    else:
+        _show(axes[0, 0], input_t1, title_t1)
+        _show(axes[0, 1], input_t2, title_t2)
+        _show(axes[0, 2], mask_t1, "GT 202512", cmap="jet", vmin=0, vmax=1)
+        _show(axes[0, 3], mask_t2, "GT 202605", cmap="jet", vmin=0, vmax=1)
+        _show(axes[1, 0], _norm_for_display(our_pred), f"{our_name} (norm)", cmap="jet", vmin=0, vmax=1)
+        _show(axes[1, 1], _norm_for_display(aef_pred), "AEF 2025 (norm)", cmap="jet", vmin=0, vmax=1)
+        axes[1, 2].axis("off")
+        axes[1, 3].axis("off")
 
     fig.suptitle(f"Harbin {task.replace('_', ' ').title()} - {patch_id}", fontsize=13, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.96])
@@ -316,18 +367,26 @@ def main() -> None:
     for pid, our_dir, aef_dir in harbin_construction_patches:
         plot_harbin_task_comparison(pid, "construction", harbin_data, harbin_construction_mask, our_dir, aef_dir)
 
-    # 3. Harbin building_change: ours vs AEF，避开效果差的 patch_000027
+    # 3. Harbin building_change: ours vs AEF，选取有标注且 label 占比最大的 patch
     building_change_mask = Path("/data/xuannv_embedding/processed/harbin/labels/building_change/masks")
+    our_building_change_emb = Path("/data/xuannv_embedding/embeddings/harbin")
+    aef_building_change_emb = Path("/data/xuannv_embedding/embeddings/aef_official_2025_annual/harbin")
     building_change_patches = [
-        ("patch_000026",
+        ("patch_000027",
          [Path(f"/data/xuannv_embedding/experiments/building_change_diff_unet_harbin_5fold/fold{i}/fold_{i}/predictions") for i in range(5)],
          [Path(f"/data/xuannv_embedding/experiments/aef_benchmark/building_change/fold_{i}/predictions") for i in range(5)]),
-        ("patch_000039",
+        ("patch_000026",
          [Path(f"/data/xuannv_embedding/experiments/building_change_diff_unet_harbin_5fold/fold{i}/fold_{i}/predictions") for i in range(5)],
          [Path(f"/data/xuannv_embedding/experiments/aef_benchmark/building_change/fold_{i}/predictions") for i in range(5)]),
     ]
     for pid, our_dir, aef_dir in building_change_patches:
-        plot_harbin_task_comparison(pid, "building_change", harbin_data, building_change_mask, our_dir, aef_dir)
+        plot_harbin_task_comparison(
+            pid, "building_change", harbin_data, building_change_mask, our_dir, aef_dir,
+            our_emb_root=our_building_change_emb,
+            aef_emb_root=aef_building_change_emb,
+            our_emb_month=None,
+            aef_emb_month="202512",
+        )
 
     # 4. Harbin farm_change: ours vs AEF，选取预测响应相对最好的 patch
     farm_change_mask = Path("/data/xuannv_embedding/processed/harbin/labels/farm_change/masks")
