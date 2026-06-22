@@ -1,0 +1,9 @@
+_base_: v1.1_distill_long_stage2.yaml
+
+experiment:
+  name: v1.1_distill_long_stage2_smoke
+data:
+  max_patches: 4
+training:
+  epochs: 1
+  log_every: 1
