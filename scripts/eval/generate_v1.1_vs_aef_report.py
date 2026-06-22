@@ -309,6 +309,22 @@ def main() -> None:
     print(f"Figure: {plot_path}")
     print(f"Report: {report_path}")
 
+    # Update the HTML report index to include this section.
+    index_updater = Path("/root/workspace/xuannv/.worktrees/feat-multitask-downstream/scripts/eval/update_report_index.py")
+    if index_updater.exists():
+        import subprocess
+        subprocess.run(
+            [
+                "python",
+                str(index_updater),
+                "--report", str(report_path),
+                "--figure", str(plot_path),
+            ],
+            check=True,
+        )
+        print("Updated /root/workspace/report/index.html")
+
+
 
 if __name__ == "__main__":
     main()
