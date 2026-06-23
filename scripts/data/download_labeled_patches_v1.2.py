@@ -73,7 +73,14 @@ def process_patch(row: pd.Series, args: argparse.Namespace) -> bool:
     for month in args.months:
         for source, assets in SOURCES.items():
             if not _download_source_month(
-                row, month, source, assets, catalog, Path(args.output_root), region=row["region"]
+                row,
+                month,
+                source,
+                assets,
+                catalog,
+                Path(args.output_root),
+                region=row["region"],
+                zero_fill_on_failure=args.zero_fill_on_failure,
             ):
                 ok = False
     if ok:
@@ -106,6 +113,11 @@ def main() -> None:
         nargs="+",
         default=None,
         help="仅下载指定 region（默认全部）",
+    )
+    parser.add_argument(
+        "--zero-fill-on-failure",
+        action="store_true",
+        help="下载/重试失败后使用零值填充，保证 patch 可被加入训练",
     )
     args = parser.parse_args()
 

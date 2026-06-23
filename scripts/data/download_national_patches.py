@@ -72,7 +72,10 @@ def save_tensor(path: Path, tensor: torch.Tensor) -> None:
 
 
 def download_aef(
-    row: pd.Series, output_root: Path, max_retries: int = 3
+    row: pd.Series,
+    output_root: Path,
+    max_retries: int = 3,
+    zero_fill_on_failure: bool = False,
 ) -> bool:
     """下载单个 patch 的 AEF 教师 embedding，支持自动重试。"""
     patch_id = row["patch_id"]
@@ -120,6 +123,18 @@ def download_aef(
         except Exception as exc:
             logger.error("AEF download failed for %s: %s", patch_id, exc)
             return False
+
+    if zero_fill_on_failure:
+        logger.warning(
+            "AEF download failed for %s after %d retries; zero-filling",
+            patch_id,
+            max_retries + 1,
+        )
+        tensor = torch.zeros(
+            64, int(row["aef_height"]), int(row["aef_width"]), dtype=torch.float32
+        )
+        save_tensor(out_path, tensor)
+        return True
 
     logger.error(
         "AEF download failed for %s after %d retries: %s",
@@ -193,6 +208,7 @@ def _download_source_month(
     output_root: Path,
     region: str = "national",
     max_retries: int = 3,
+    zero_fill_on_failure: bool = False,
 ) -> bool:
     """下载单个 patch 某月某数据源的中位数合成影像，支持自动重试。"""
     patch_id = row["patch_id"]
@@ -308,6 +324,21 @@ def _download_source_month(
             )
             return False
 
+    if zero_fill_on_failure:
+        logger.warning(
+            "%s download failed for %s %s after %d retries; zero-filling",
+            source,
+            patch_id,
+            month,
+            max_retries + 1,
+        )
+        array = np.zeros(
+            (len(assets), int(row["aef_height"]), int(row["aef_width"])),
+            dtype=np.float32,
+        )
+        _save_geotiff(out_path, array, bounds_utm, epsg)
+        return True
+
     logger.exception(
         "%s download failed for %s %s after %d retries: %s",
         source,
@@ -344,13 +375,19 @@ def process_patch(row: pd.Series, args: argparse.Namespace) -> bool:
     catalog = Client.open(EARTH_SEARCH_URL)
 
     ok = True
-    if not download_aef(row, output_root):
+    if not download_aef(row, output_root, zero_fill_on_failure=args.zero_fill_on_failure):
         ok = False
 
     for month in args.months:
         for source, assets in SOURCES.items():
             if not _download_source_month(
-                row, month, source, assets, catalog, output_root
+                row,
+                month,
+                source,
+                assets,
+                catalog,
+                output_root,
+                zero_fill_on_failure=args.zero_fill_on_failure,
             ):
                 ok = False
 
@@ -371,6 +408,11 @@ def main() -> None:
     parser.add_argument("--max-workers", type=int, default=8)
     parser.add_argument(
         "--limit", type=int, default=None, help="仅处理前 N 个 patch（用于 smoke）"
+    )
+    parser.add_argument(
+        "--zero-fill-on-failure",
+        action="store_true",
+        help="下载/重试失败后使用零值填充，保证 patch 可被加入训练",
     )
     args = parser.parse_args()
 
