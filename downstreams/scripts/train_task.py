@@ -31,6 +31,15 @@ def _score_for_early_stop(metrics: dict[str, float], metric_name: str) -> float:
     return float(metrics[metric_name])
 
 
+def _resolve_device_preference(
+    cli_device: str | None,
+    cfg: dict,
+) -> str:
+    if cli_device is not None:
+        return cli_device
+    return cfg["experiment"].get("device", "auto")
+
+
 def save_test_predictions(
     model: nn.Module,
     loader: DataLoader,
@@ -77,11 +86,12 @@ def main() -> None:
     p.add_argument("--output-root", type=Path, required=True)
     p.add_argument("--fold", type=int, default=None, help="只跑单个 fold 调试")
     p.add_argument("--fraction", type=float, default=None)
+    p.add_argument("--device", type=str, default=None, help="覆盖配置中的 experiment.device")
     args = p.parse_args()
 
     cfg = load_config(args.config)
     set_seed(cfg["experiment"]["seed"])
-    device = get_downstream_device(cfg["experiment"].get("device", "auto"))
+    device = get_downstream_device(_resolve_device_preference(args.device, cfg))
 
     region = args.region if args.region else args.label_root.parent.name
     emb_region_root = args.embedding_root / region
