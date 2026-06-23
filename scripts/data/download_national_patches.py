@@ -15,6 +15,7 @@ import calendar
 import logging
 import os
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +27,7 @@ import rasterio
 import stackstac
 import torch
 from pystac_client import Client
+from rasterio.errors import RasterioIOError
 from rasterio.transform import from_bounds
 
 logging.basicConfig(
@@ -35,6 +37,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 os.environ.setdefault("AWS_NO_SIGN_REQUEST", "YES")
+os.environ.setdefault("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
+os.environ.setdefault("GDAL_HTTP_MERGE_CONSECUTIVE_RANGES", "YES")
+os.environ.setdefault("GDAL_HTTP_MAX_RETRY", "3")
+os.environ.setdefault("GDAL_HTTP_RETRY_DELAY", "2")
 
 # Earth Search 公开 STAC catalog
 EARTH_SEARCH_URL = "https://earth-search.aws.element84.com/v1"
@@ -157,8 +163,9 @@ def _download_source_month(
     catalog: Client,
     output_root: Path,
     region: str = "national",
+    max_retries: int = 3,
 ) -> bool:
-    """下载单个 patch 某月某数据源的中位数合成影像。"""
+    """下载单个 patch 某月某数据源的中位数合成影像，支持自动重试。"""
     patch_id = row["patch_id"]
     epsg = int(row["utm_epsg"])
     bounds_utm = (
@@ -179,80 +186,108 @@ def _download_source_month(
     if out_path.exists():
         return True
 
-    try:
-        # 用 UTM bbox 的 lat/lon 范围查询 STAC。
-        transformer = pyproj.Transformer.from_crs(epsg, 4326, always_xy=True)
-        lons, lats = transformer.transform(
-            [bounds_utm[0], bounds_utm[2]], [bounds_utm[1], bounds_utm[3]]
-        )
-        bounds_latlon = (min(lons), min(lats), max(lons), max(lats))
-
-        search = catalog.search(
-            collections=[S2_COLLECTION],
-            bbox=bounds_latlon,
-            datetime=_month_range(month),
-            max_items=50,
-            query={"eo:cloud_cover": {"lt": CLOUD_COVER_THRESHOLD}},
-        )
-        items = list(search.items())
-        if not items:
-            array = np.zeros(
-                (len(assets), int(row["aef_height"]), int(row["aef_width"])),
-                dtype=np.float32,
+    last_exc: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            # 用 UTM bbox 的 lat/lon 范围查询 STAC。
+            transformer = pyproj.Transformer.from_crs(epsg, 4326, always_xy=True)
+            lons, lats = transformer.transform(
+                [bounds_utm[0], bounds_utm[2]], [bounds_utm[1], bounds_utm[3]]
             )
+            bounds_latlon = (min(lons), min(lats), max(lons), max(lats))
+
+            search = catalog.search(
+                collections=[S2_COLLECTION],
+                bbox=bounds_latlon,
+                datetime=_month_range(month),
+                max_items=50,
+                query={"eo:cloud_cover": {"lt": CLOUD_COVER_THRESHOLD}},
+            )
+            items = list(search.items())
+            if not items:
+                array = np.zeros(
+                    (len(assets), int(row["aef_height"]), int(row["aef_width"])),
+                    dtype=np.float32,
+                )
+                _save_geotiff(out_path, array, bounds_utm, epsg)
+                return True
+
+            item_dicts = _prepare_items(items)
+            stack = stackstac.stack(
+                item_dicts,
+                assets=assets,
+                epsg=epsg,
+                resolution=10,
+                bounds=bounds_utm,
+                dtype=np.float64,
+                fill_value=0,
+                rescale=False,
+            )
+            if stack.shape[0] == 0 or stack.shape[1] == 0:
+                logger.warning(
+                    "%s %s %s: stackstac returned empty stack (shape=%s), using zeros",
+                    source,
+                    patch_id,
+                    month,
+                    stack.shape,
+                )
+                array = np.zeros(
+                    (len(assets), int(row["aef_height"]), int(row["aef_width"])),
+                    dtype=np.float32,
+                )
+                _save_geotiff(out_path, array, bounds_utm, epsg)
+                return True
+
+            median = stack.median(dim="time", skipna=True).compute()
+            array = median.values.astype(np.float32)  # (bands, H, W)
+
+            expected_h = int(row["aef_height"])
+            expected_w = int(row["aef_width"])
+            if array.shape[1] != expected_h or array.shape[2] != expected_w:
+                logger.warning(
+                    "%s %s %s shape mismatch %s vs (%d,%d), cropping/padding",
+                    source,
+                    patch_id,
+                    month,
+                    array.shape[1:],
+                    expected_h,
+                    expected_w,
+                )
+                array = _crop_pad(array, expected_h, expected_w)
+
             _save_geotiff(out_path, array, bounds_utm, epsg)
             return True
-
-        item_dicts = _prepare_items(items)
-        stack = stackstac.stack(
-            item_dicts,
-            assets=assets,
-            epsg=epsg,
-            resolution=10,
-            bounds=bounds_utm,
-            dtype=np.float64,
-            fill_value=0,
-            rescale=False,
-        )
-        if stack.shape[0] == 0 or stack.shape[1] == 0:
-            logger.warning(
-                "%s %s %s: stackstac returned empty stack (shape=%s), using zeros",
-                source,
-                patch_id,
-                month,
-                stack.shape,
+        except (RasterioIOError, RuntimeError) as exc:
+            last_exc = exc
+            if attempt < max_retries:
+                sleep_s = 2 ** attempt
+                logger.warning(
+                    "%s %s %s attempt %d failed (%s), retrying in %ds",
+                    source,
+                    patch_id,
+                    month,
+                    attempt + 1,
+                    exc,
+                    sleep_s,
+                )
+                time.sleep(sleep_s)
+            else:
+                break
+        except Exception as exc:
+            logger.exception(
+                "%s download failed for %s %s: %s", source, patch_id, month, exc
             )
-            array = np.zeros(
-                (len(assets), int(row["aef_height"]), int(row["aef_width"])),
-                dtype=np.float32,
-            )
-            _save_geotiff(out_path, array, bounds_utm, epsg)
-            return True
+            return False
 
-        median = stack.median(dim="time", skipna=True).compute()
-        array = median.values.astype(np.float32)  # (bands, H, W)
-
-        expected_h = int(row["aef_height"])
-        expected_w = int(row["aef_width"])
-        if array.shape[1] != expected_h or array.shape[2] != expected_w:
-            logger.warning(
-                "%s %s %s shape mismatch %s vs (%d,%d), cropping/padding",
-                source,
-                patch_id,
-                month,
-                array.shape[1:],
-                expected_h,
-                expected_w,
-            )
-            array = _crop_pad(array, expected_h, expected_w)
-
-        _save_geotiff(out_path, array, bounds_utm, epsg)
-        return True
-    except Exception as exc:
-        logger.exception(
-            "%s download failed for %s %s: %s", source, patch_id, month, exc
-        )
-        return False
+    logger.exception(
+        "%s download failed for %s %s after %d retries: %s",
+        source,
+        patch_id,
+        month,
+        max_retries + 1,
+        last_exc,
+    )
+    return False
 
 
 def _crop_pad(array: np.ndarray, target_h: int, target_w: int) -> np.ndarray:
