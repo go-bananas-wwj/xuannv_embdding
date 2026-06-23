@@ -63,13 +63,18 @@ def build_inference_loader(cfg: Config, region: str, split: str = "all") -> Data
         manifest_path = Path(cfg.data.manifest_path)
     else:
         manifest_path = Path(cfg.data.root).parent / region / "manifest.json"
-    statistics_dir = Path(cfg.data.root).parent / "statistics"
+    if cfg.data.statistics_dir is not None:
+        statistics_dir = Path(cfg.data.statistics_dir)
+    else:
+        statistics_dir = Path(cfg.data.root).parent / "statistics"
     dataset = MonthlyEmbeddingDataset(
         manifest_path=manifest_path,
         statistics_dir=statistics_dir,
         sources=cfg.data.sources,
         patch_size=cfg.data.patch_size,
         num_months=cfg.model.num_months,
+        ref_year=cfg.data.ref_year,
+        ref_month=cfg.data.ref_month,
         region=region,
     )
 

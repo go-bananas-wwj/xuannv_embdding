@@ -156,6 +156,7 @@ def _download_source_month(
     assets: list[str],
     catalog: Client,
     output_root: Path,
+    region: str = "national",
 ) -> bool:
     """下载单个 patch 某月某数据源的中位数合成影像。"""
     patch_id = row["patch_id"]
@@ -170,7 +171,7 @@ def _download_source_month(
     out_path = (
         output_root
         / "processed"
-        / "national"
+        / region
         / "patches"
         / source
         / f"{source}_{date_str}_{patch_id}.tif"
@@ -211,7 +212,7 @@ def _download_source_month(
             bounds=bounds_utm,
             dtype=np.float64,
             fill_value=0,
-            rescale=True,
+            rescale=False,
         )
         if stack.shape[0] == 0 or stack.shape[1] == 0:
             logger.warning(
