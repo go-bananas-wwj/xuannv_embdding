@@ -71,36 +71,63 @@ def save_tensor(path: Path, tensor: torch.Tensor) -> None:
     tmp.replace(path)
 
 
-def download_aef(row: pd.Series, output_root: Path) -> bool:
-    """下载单个 patch 的 AEF 教师 embedding。"""
+def download_aef(
+    row: pd.Series, output_root: Path, max_retries: int = 3
+) -> bool:
+    """下载单个 patch 的 AEF 教师 embedding，支持自动重试。"""
     patch_id = row["patch_id"]
     out_path = (
         output_root / "embeddings" / "national" / patch_id / "202512_embedding_map.pt"
     )
     if out_path.exists():
         return True
-    try:
-        with rasterio.open(row["aef_vsis_path"]) as src:
-            window = rasterio.windows.Window(
-                int(row["aef_col_off"]),
-                int(row["aef_row_off"]),
-                int(row["aef_width"]),
-                int(row["aef_height"]),
-            )
-            data = src.read(window=window)  # (64, H, W)
-        data = dequantize_aef(data)
-        nodata_mask = np.isnan(data) | (np.abs(data) > 1.0)
-        if nodata_mask.any():
-            logger.warning(
-                "AEF patch %s contains %d nodata pixels", patch_id, nodata_mask.sum()
-            )
-            data[nodata_mask] = 0.0
-        tensor = torch.from_numpy(data)
-        save_tensor(out_path, tensor)
-        return True
-    except Exception as exc:
-        logger.error("AEF download failed for %s: %s", patch_id, exc)
-        return False
+
+    last_exc: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            with rasterio.open(row["aef_vsis_path"]) as src:
+                window = rasterio.windows.Window(
+                    int(row["aef_col_off"]),
+                    int(row["aef_row_off"]),
+                    int(row["aef_width"]),
+                    int(row["aef_height"]),
+                )
+                data = src.read(window=window)  # (64, H, W)
+            data = dequantize_aef(data)
+            nodata_mask = np.isnan(data) | (np.abs(data) > 1.0)
+            if nodata_mask.any():
+                logger.warning(
+                    "AEF patch %s contains %d nodata pixels", patch_id, nodata_mask.sum()
+                )
+                data[nodata_mask] = 0.0
+            tensor = torch.from_numpy(data)
+            save_tensor(out_path, tensor)
+            return True
+        except (RasterioIOError, RuntimeError) as exc:
+            last_exc = exc
+            if attempt < max_retries:
+                sleep_s = 2 ** attempt
+                logger.warning(
+                    "AEF %s attempt %d failed (%s), retrying in %ds",
+                    patch_id,
+                    attempt + 1,
+                    exc,
+                    sleep_s,
+                )
+                time.sleep(sleep_s)
+            else:
+                break
+        except Exception as exc:
+            logger.error("AEF download failed for %s: %s", patch_id, exc)
+            return False
+
+    logger.error(
+        "AEF download failed for %s after %d retries: %s",
+        patch_id,
+        max_retries + 1,
+        last_exc,
+    )
+    return False
 
 
 def _month_range(month_str: str) -> str:
