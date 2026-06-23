@@ -80,7 +80,10 @@ def process_patch(row: pd.Series, args: argparse.Namespace) -> bool:
                 catalog,
                 Path(args.output_root),
                 region=row["region"],
+                max_retries=args.max_retries,
                 zero_fill_on_failure=args.zero_fill_on_failure,
+                cloud_cover_threshold=args.cloud_cover_threshold,
+                max_items=args.max_items,
             ):
                 ok = False
     if ok:
@@ -118,6 +121,24 @@ def main() -> None:
         "--zero-fill-on-failure",
         action="store_true",
         help="下载/重试失败后使用零值填充，保证 patch 可被加入训练",
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=3,
+        help="每个 source-month 失败后的重试次数",
+    )
+    parser.add_argument(
+        "--cloud-cover-threshold",
+        type=float,
+        default=80.0,
+        help="STAC 云量过滤阈值",
+    )
+    parser.add_argument(
+        "--max-items",
+        type=int,
+        default=50,
+        help="每月每个 source 最多使用的 STAC item 数量",
     )
     args = parser.parse_args()
 
