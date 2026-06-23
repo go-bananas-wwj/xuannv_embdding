@@ -36,14 +36,27 @@ for task in construction building_change farm_change rubbish; do
     cfg="${TASK_CONFIG[$task]}"
     out_dir="$BENCH_ROOT/$task"
     echo "==> Benchmark task: $task"
-    python -m downstreams.scripts.train_task \
-        --task "$task" \
-        --config "$cfg" \
-        --embedding-root "$EMB_ROOT" \
-        --label-root "$LABEL_ROOT" \
-        --regions haidian harbin \
-        --output-root "$out_dir" \
-        --months 202512
+    if [ "$task" = "construction" ]; then
+        # construction 在 haidian+harbin 联合训练
+        python -m downstreams.scripts.train_task \
+            --task "$task" \
+            --config "$cfg" \
+            --embedding-root "$EMB_ROOT" \
+            --label-root "$LABEL_ROOT" \
+            --regions haidian harbin \
+            --output-root "$out_dir" \
+            --months 202512
+    else
+        # 其他任务仅在 harbin 有标注
+        python -m downstreams.scripts.train_task \
+            --task "$task" \
+            --config "$cfg" \
+            --embedding-root "$EMB_ROOT" \
+            --label-root "$LABEL_ROOT" \
+            --region harbin \
+            --output-root "$out_dir" \
+            --months 202512
+    fi
 
     # 汇总 5-fold 结果
     python -m downstreams.scripts.aggregate_5fold \
