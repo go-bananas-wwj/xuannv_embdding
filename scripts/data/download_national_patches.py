@@ -246,7 +246,7 @@ def _download_source_month(
                 collections=[S2_COLLECTION],
                 bbox=bounds_latlon,
                 datetime=_month_range(month),
-                max_items=50,
+                max_items=args.max_items,
                 query={"eo:cloud_cover": {"lt": cloud_cover_threshold}},
             )
             items = list(search.items())
@@ -433,6 +433,12 @@ def main() -> None:
         type=float,
         default=CLOUD_COVER_THRESHOLD,
         help="STAC 云量过滤阈值（越低则每月影像越少，下载越快）",
+    )
+    parser.add_argument(
+        "--max-items",
+        type=int,
+        default=50,
+        help="每月每个 source 最多使用的 STAC item 数量（越小越快）",
     )
     args = parser.parse_args()
 
