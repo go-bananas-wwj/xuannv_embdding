@@ -270,10 +270,12 @@ def _crop_pad(array: np.ndarray, target_h: int, target_w: int) -> np.ndarray:
 
 def process_patch(row: pd.Series, args: argparse.Namespace) -> bool:
     """处理单个 patch：AEF + 各月 s2/s2_20m。"""
+    if isinstance(row, dict):
+        row = pd.Series(row)
     patch_id = row["patch_id"]
     output_root = Path(args.output_root)
 
-    # 每个线程使用独立的 STAC catalog 客户端，避免并发问题。
+    # 每个 worker 使用独立的 STAC catalog 客户端。
     catalog = Client.open(EARTH_SEARCH_URL)
 
     ok = True
@@ -301,7 +303,7 @@ def main() -> None:
         "--output-root", default="/data2/xuannv_embedding/national", type=Path
     )
     parser.add_argument("--months", nargs="+", default=DEFAULT_MONTHS)
-    parser.add_argument("--max-workers", type=int, default=4)
+    parser.add_argument("--max-workers", type=int, default=8)
     parser.add_argument(
         "--limit", type=int, default=None, help="仅处理前 N 个 patch（用于 smoke）"
     )

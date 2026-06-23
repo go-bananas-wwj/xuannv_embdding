@@ -3,6 +3,7 @@ experiment:
   seed: 42
   use_wandb: false
   wandb_project: xuannv-embedding-stage1
+  output_dir: /data2/xuannv_embedding/national/outputs/v1.2_national_crossmodal_smoke
 
 model:
   embed_dim: 64

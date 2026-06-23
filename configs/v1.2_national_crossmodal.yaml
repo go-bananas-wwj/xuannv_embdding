@@ -4,6 +4,7 @@ experiment:
   use_wandb: true
   wandb_project: xuannv-embedding-stage1
   wandb_run_name: v1.2_national_crossmodal_100ep
+  output_dir: /data2/xuannv_embedding/national/outputs/v1.2_national_crossmodal
 
 model:
   embed_dim: 64
