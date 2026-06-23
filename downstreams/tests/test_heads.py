@@ -5,6 +5,7 @@ import torch
 from downstreams.heads import (
     ChangeDetectionHead,
     ClassificationHead,
+    DeepLabV3PlusHead,
     FCNHead,
     LinearProbeHead,
     UNetHead,
@@ -50,6 +51,12 @@ def test_upernet_head(seg_input: torch.Tensor) -> None:
     assert out.shape == (2, 5, 16, 16)
 
 
+def test_deeplabv3plus_head(seg_input: torch.Tensor) -> None:
+    head = DeepLabV3PlusHead(embed_dim=64, num_classes=5, hidden_dim=128)
+    out = head(seg_input)
+    assert out.shape == (2, 5, 16, 16)
+
+
 @pytest.mark.parametrize(
     "head_type, expected_cls",
     [
@@ -58,6 +65,8 @@ def test_upernet_head(seg_input: torch.Tensor) -> None:
         ("fcn", FCNHead),
         ("unet", UNetHead),
         ("upernet", UperNetHead),
+        ("deeplabv3plus", DeepLabV3PlusHead),
+        ("deeplab", DeepLabV3PlusHead),
     ],
 )
 def test_build_segmentation_head(head_type: str, expected_cls: type) -> None:

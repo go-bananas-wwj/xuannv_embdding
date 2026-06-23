@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 import torch
+from downstreams.heads import DeepLabV3PlusHead
 from downstreams.heads.linear_probe import LinearProbeHead
 from downstreams.tasks.construction_segmentation import (
     BCEDiceTverskyLoss,
@@ -62,6 +63,27 @@ def test_build_head_initializes_foreground_bias_from_positive_prior() -> None:
     expected = torch.logit(torch.tensor(0.04))
     assert head.conv.bias[1].item() == pytest.approx(expected.item())
     assert head.conv.bias[0].item() == pytest.approx(0.0)
+
+
+def test_build_deeplab_head_uses_training_options() -> None:
+    cfg = {
+        "training": {
+            "head_type": "deeplabv3plus",
+            "loss": "focal_dice",
+            "head_hidden_dim": 128,
+            "head_dropout": 0.2,
+            "aspp_rates": [2, 4],
+        },
+        "data": {"embed_dim": 64, "num_classes": 2},
+    }
+    task = ConstructionSegmentationTask(cfg)
+    head = task.build_head()
+    assert isinstance(head, DeepLabV3PlusHead)
+    assert len(head.aspp_branches) == 3
+    assert head.aspp_branches[1][0].dilation == (2, 2)
+    assert head.aspp_branches[2][0].dilation == (4, 4)
+    out = head(torch.randn(2, 64, 16, 16))
+    assert out.shape == (2, 2, 16, 16)
 
 
 def test_focal_dice_loss() -> None:
