@@ -83,6 +83,10 @@ declare -A TASK_CONFIG=(
 # 每任务可用的 NPU 编号（0-4，共 5 张）
 GPUS=(0 1 2 3 4)
 
+# 临时配置目录
+TMP_CONFIG_DIR="$BENCH_ROOT/.tmp_configs"
+mkdir -p "$TMP_CONFIG_DIR"
+
 for task in construction building_change farm_change rubbish; do
     cfg="${TASK_CONFIG[$task]}"
     out_dir="$BENCH_ROOT/$task"
@@ -94,30 +98,42 @@ for task in construction building_change farm_change rubbish; do
         gpu="${GPUS[$fold]}"
         fold_out="$out_dir/fold_$fold"
         mkdir -p "$fold_out"
+
+        # 复制配置并显式指定设备，确保各 fold 落在不同 NPU 上
+        fold_cfg="$TMP_CONFIG_DIR/${task}_fold${fold}.yaml"
+        python - "$cfg" "$gpu" "$fold_cfg" <<'PY'
+import sys
+from pathlib import Path
+import yaml
+cfg_path, gpu, out_path = sys.argv[1:4]
+data = yaml.safe_load(open(cfg_path))
+data.setdefault("experiment", {})["device"] = f"npu:{gpu}"
+Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+yaml.safe_dump(data, open(out_path, "w"), allow_unicode=True, sort_keys=False)
+PY
+
         if [ "$task" = "construction" ]; then
-            ASCEND_VISIBLE_DEVICES="$gpu" \
-                python -m downstreams.scripts.train_task \
-                    --task "$task" \
-                    --config "$cfg" \
-                    --embedding-root "$EMB_SUBDIR" \
-                    --label-root "$LABEL_ROOT" \
-                    --regions haidian harbin \
-                    --output-root "$fold_out" \
-                    --months 202512 \
-                    --fold "$fold" \
-                    > "$fold_out/train.log" 2>&1 &
+            python -m downstreams.scripts.train_task \
+                --task "$task" \
+                --config "$fold_cfg" \
+                --embedding-root "$EMB_SUBDIR" \
+                --label-root "$LABEL_ROOT" \
+                --regions haidian harbin \
+                --output-root "$fold_out" \
+                --months 202512 \
+                --fold "$fold" \
+                > "$fold_out/train.log" 2>&1 &
         else
-            ASCEND_VISIBLE_DEVICES="$gpu" \
-                python -m downstreams.scripts.train_task \
-                    --task "$task" \
-                    --config "$cfg" \
-                    --embedding-root "$EMB_SUBDIR" \
-                    --label-root "$LABEL_ROOT" \
-                    --region harbin \
-                    --output-root "$fold_out" \
-                    --months 202512 \
-                    --fold "$fold" \
-                    > "$fold_out/train.log" 2>&1 &
+            python -m downstreams.scripts.train_task \
+                --task "$task" \
+                --config "$fold_cfg" \
+                --embedding-root "$EMB_SUBDIR" \
+                --label-root "$LABEL_ROOT" \
+                --region harbin \
+                --output-root "$fold_out" \
+                --months 202512 \
+                --fold "$fold" \
+                > "$fold_out/train.log" 2>&1 &
         fi
         pids+=($!)
         echo "  fold $fold -> NPU $gpu (pid ${pids[-1]})"
