@@ -18,7 +18,7 @@ class DataConfig:
 
     root: Path
     region: str
-    manifest_path: Path
+    manifest_path: Path | None
     num_samples: int | None = None  # 仅作为元数据，实际样本数由 dataset 长度决定
     statistics_dir: Path | None = None
     max_patches: int | None = None
@@ -192,7 +192,11 @@ class Config:
             data=DataConfig(
                 root=root,
                 region=region,
-                manifest_path=Path(data_cfg["manifest_path"]),
+                manifest_path=(
+                    Path(data_cfg["manifest_path"])
+                    if data_cfg.get("manifest_path") is not None
+                    else None
+                ),
                 num_samples=data_cfg.get("num_samples"),
                 statistics_dir=statistics_dir,
                 max_patches=data_cfg.get("max_patches"),

@@ -15,7 +15,7 @@ CONFIG_ROOT="downstreams/configs/aef_benchmark"
 mkdir -p "$BENCH_ROOT"
 
 # 1) 提取 embedding（如尚未提取）
-if [ ! -d "$EMB_ROOT" ]; then
+if [ ! -d "$EMB_ROOT" ] || [ -z "$(ls -A "$EMB_ROOT")" ]; then
     echo "==> Precomputing embeddings for haidian + harbin"
     python -m downstreams.scripts.precompute_embeddings \
         --config configs/v1.2_extract_labeled.yaml \
@@ -23,6 +23,14 @@ if [ ! -d "$EMB_ROOT" ]; then
         --output-root "$EMB_ROOT" \
         --checkpoint "$NATIONAL_OUTPUT/v1.2_national_crossmodal/best.pt"
 fi
+
+# precompute_embeddings 会按日期创建子目录，取最新一个作为实际 embedding 根目录
+EMB_SUBDIR=$(ls -td "$EMB_ROOT"/*/ 2>/dev/null | head -1)
+if [ -z "$EMB_SUBDIR" ]; then
+    echo "ERROR: no embedding subdirectory found under $EMB_ROOT"
+    exit 1
+fi
+echo "==> Using embedding root: $EMB_SUBDIR"
 
 # 2) 4-task × 5-fold
 declare -A TASK_CONFIG=(
@@ -41,7 +49,7 @@ for task in construction building_change farm_change rubbish; do
         python -m downstreams.scripts.train_task \
             --task "$task" \
             --config "$cfg" \
-            --embedding-root "$EMB_ROOT" \
+            --embedding-root "$EMB_SUBDIR" \
             --label-root "$LABEL_ROOT" \
             --regions haidian harbin \
             --output-root "$out_dir" \
@@ -51,7 +59,7 @@ for task in construction building_change farm_change rubbish; do
         python -m downstreams.scripts.train_task \
             --task "$task" \
             --config "$cfg" \
-            --embedding-root "$EMB_ROOT" \
+            --embedding-root "$EMB_SUBDIR" \
             --label-root "$LABEL_ROOT" \
             --region harbin \
             --output-root "$out_dir" \
