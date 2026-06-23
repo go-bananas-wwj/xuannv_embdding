@@ -22,6 +22,15 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 
+def _score_for_early_stop(metrics: dict[str, float], metric_name: str) -> float:
+    if metric_name not in metrics:
+        available = ", ".join(sorted(metrics))
+        raise KeyError(
+            f"early_stop_metric={metric_name!r} 不在验证指标中，可用指标: {available}"
+        )
+    return float(metrics[metric_name])
+
+
 def save_test_predictions(
     model: nn.Module,
     loader: DataLoader,
@@ -155,7 +164,8 @@ def main() -> None:
         )
         loss_fn = task.build_loss()
 
-        best_miou = -1.0
+        early_stop_metric = cfg["training"].get("early_stop_metric", "miou")
+        best_score = -1.0
         patience_counter = 0
         best_state: dict[str, torch.Tensor] | None = None
         for epoch in range(cfg["training"]["epochs"]):
@@ -175,14 +185,16 @@ def main() -> None:
 
             val_metrics = task.evaluate(model, val_loader, device)
             logger.info(
-                "Epoch %d train_loss=%.4f val_miou=%.4f",
+                "Epoch %d train_loss=%.4f val_%s=%.4f",
                 epoch,
                 train_loss,
-                val_metrics["miou"],
+                early_stop_metric,
+                _score_for_early_stop(val_metrics, early_stop_metric),
             )
 
-            if val_metrics["miou"] > best_miou:
-                best_miou = val_metrics["miou"]
+            current_score = _score_for_early_stop(val_metrics, early_stop_metric)
+            if current_score > best_score:
+                best_score = current_score
                 patience_counter = 0
                 best_state = model.state_dict()
                 (out_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
