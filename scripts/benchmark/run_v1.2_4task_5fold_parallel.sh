@@ -91,6 +91,13 @@ for task in construction building_change farm_change rubbish; do
     cfg="${TASK_CONFIG[$task]}"
     out_dir="$BENCH_ROOT/$task"
     mkdir -p "$out_dir"
+
+    # 若该任务已汇总，直接跳过
+    if [ -f "$out_dir/summary_5fold.json" ]; then
+        echo "==> Benchmark task: $task already done, skipping"
+        continue
+    fi
+
     echo "==> Benchmark task: $task (5 folds in parallel)"
 
     pids=()
@@ -124,11 +131,12 @@ PY
                 --fold "$fold" \
                 > "$fold_out/train.log" 2>&1 &
         else
+            # 非 construction 任务的标注位于 {region}/labels/{task}
             python -m downstreams.scripts.train_task \
                 --task "$task" \
                 --config "$fold_cfg" \
                 --embedding-root "$EMB_SUBDIR" \
-                --label-root "$LABEL_ROOT" \
+                --label-root "$LABEL_ROOT/harbin/labels" \
                 --region harbin \
                 --output-root "$fold_out" \
                 --months 202512 \

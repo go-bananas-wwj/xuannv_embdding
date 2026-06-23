@@ -32,6 +32,11 @@ def main() -> None:
         action="store_true",
         help="随机初始化 backbone，生成 random-init 基线 embedding",
     )
+    p.add_argument(
+        "--use-base-embedding",
+        action="store_true",
+        help="保存 base_embedding_map（蒸馏监督点）作为下游 embedding_map，而不是 vMF 瓶颈后的输出",
+    )
     args = p.parse_args()
 
     if not args.config.exists():
@@ -68,7 +73,7 @@ def main() -> None:
         logger.info("生成 %s embedding", region)
         loader = build_inference_loader(cfg, region, split=args.split)
         region_dir = out_root / region
-        precompute_embeddings(model, loader, device, region_dir)
+        precompute_embeddings(model, loader, device, region_dir, use_base_embedding=args.use_base_embedding)
 
     write_meta_json(out_root, args.checkpoint, args.config, " ".join(sys.argv))
     logger.info("embedding 保存至 %s", out_root)

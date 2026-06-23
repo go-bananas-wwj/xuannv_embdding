@@ -98,6 +98,7 @@ def precompute_embeddings(
     loader: DataLoader,
     device: torch.device,
     output_dir: Path,
+    use_base_embedding: bool = False,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     with torch.no_grad():
@@ -130,7 +131,10 @@ def precompute_embeddings(
 
             # output.embedding_map: (B, T_month, D, H, W)
             # output.embedding:     (B, T_month, D)
-            emb_map = output.embedding_map.cpu()
+            if use_base_embedding and output.base_embedding_map is not None:
+                emb_map = output.base_embedding_map.cpu()
+            else:
+                emb_map = output.embedding_map.cpu()
             scene_emb = output.embedding.cpu()
             ts = batch["timestamps"].cpu()  # (B, T_month)
 
