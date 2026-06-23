@@ -201,7 +201,8 @@ def prepare_batch(
                 and xmodal_weight is not None
                 and source_name in xmodal_weight
             ):
-                w = xmodal_weight[source_name][:, None, None, None, None]  # (B,1,1,1,1)
+                # (B, 1) 以便与时间维度广播，保持 mask 原有维度不变。
+                w = xmodal_weight[source_name][:, None]
                 target_mask = target_mask * w
 
             targets[head_name] = target
