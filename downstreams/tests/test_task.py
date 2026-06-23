@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 import torch
-from downstreams.tasks.construction_segmentation import ConstructionSegmentationTask, FocalDiceLoss
+from downstreams.heads.linear_probe import LinearProbeHead
+from downstreams.tasks.construction_segmentation import (
+    BCEDiceTverskyLoss,
+    ConstructionSegmentationTask,
+    FocalDiceLoss,
+)
 from downstreams.utils.config import load_config
 from torch import nn
 from torch.utils.data import DataLoader
@@ -46,6 +51,19 @@ def test_task_build() -> None:
     assert head is not None
 
 
+def test_build_head_initializes_foreground_bias_from_positive_prior() -> None:
+    cfg = {
+        "training": {"head_type": "linear", "loss": "focal_dice", "pos_prior": 0.04},
+        "data": {"embed_dim": 64, "num_classes": 2},
+    }
+    task = ConstructionSegmentationTask(cfg)
+    head = task.build_head()
+    assert isinstance(head, LinearProbeHead)
+    expected = torch.logit(torch.tensor(0.04))
+    assert head.conv.bias[1].item() == pytest.approx(expected.item())
+    assert head.conv.bias[0].item() == pytest.approx(0.0)
+
+
 def test_focal_dice_loss() -> None:
     loss_fn = FocalDiceLoss()
     logits = torch.randn(2, 16, 16, requires_grad=True)
@@ -54,6 +72,56 @@ def test_focal_dice_loss() -> None:
     assert loss.ndim == 0
     loss.backward()
     assert logits.grad is not None
+
+
+def test_focal_dice_loss_uses_positive_weight() -> None:
+    logits = torch.tensor([[[0.0, 0.0]]])
+    target = torch.tensor([[[1.0, 0.0]]])
+    unweighted = FocalDiceLoss(pos_weight=1.0)(logits, target)
+    weighted = FocalDiceLoss(pos_weight=20.0)(logits, target)
+    assert weighted > unweighted
+
+
+def test_bce_dice_tversky_loss_penalizes_false_negatives_more() -> None:
+    target = torch.tensor(
+        [
+            [[1.0, 0.0], [0.0, 0.0]],
+            [[1.0, 0.0], [0.0, 0.0]],
+        ]
+    )
+    false_negative_logits = torch.tensor(
+        [
+            [[-4.0, -4.0], [-4.0, -4.0]],
+            [[-4.0, -4.0], [-4.0, -4.0]],
+        ]
+    )
+    false_positive_logits = torch.tensor(
+        [
+            [[4.0, 4.0], [-4.0, -4.0]],
+            [[4.0, 4.0], [-4.0, -4.0]],
+        ]
+    )
+
+    loss_fn = BCEDiceTverskyLoss(pos_weight=1.0, tversky_beta=0.8)
+
+    assert loss_fn(false_negative_logits, target) > loss_fn(false_positive_logits, target)
+
+
+def test_build_loss_bce_dice_tversky() -> None:
+    cfg = {
+        "training": {
+            "head_type": "linear",
+            "loss": "bce_dice_tversky",
+            "pos_weight": 150.0,
+            "tversky_beta": 0.7,
+        },
+        "data": {"embed_dim": 64, "num_classes": 2},
+    }
+    task = ConstructionSegmentationTask(cfg)
+    loss_fn = task.build_loss()
+    assert isinstance(loss_fn, BCEDiceTverskyLoss)
+    assert loss_fn.pos_weight.item() == pytest.approx(150.0)
+    assert loss_fn.tversky_beta == pytest.approx(0.7)
 
 
 def test_build_loss_bce() -> None:
