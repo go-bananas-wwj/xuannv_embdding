@@ -155,6 +155,7 @@ def _build_loader(
         sensor_dropout_prob=cfg.data.sensor_dropout_prob,
         temporal_dropout_prob=cfg.data.temporal_dropout_prob,
         noise_std=cfg.data.noise_std,
+        cross_modal_mask_prob=cfg.data.cross_modal_mask_prob,
     )
 
     sampler = None

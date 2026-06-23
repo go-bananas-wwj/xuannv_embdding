@@ -36,9 +36,16 @@ def build_dataloader(
         patch_size=cfg.patch_size,
         max_patches=cfg.max_patches,
         num_months=cfg.num_months,
+        ref_year=cfg.ref_year,
+        ref_month=cfg.ref_month,
         teacher_embedding_root=cfg.teacher_embedding_root,
         region=cfg.region,
         cache_dir=cfg.cache_dir,
+        augment=cfg.augment,
+        sensor_dropout_prob=cfg.sensor_dropout_prob,
+        temporal_dropout_prob=cfg.temporal_dropout_prob,
+        noise_std=cfg.noise_std,
+        cross_modal_mask_prob=cfg.cross_modal_mask_prob,
     )
 
     shuffle = split == "train"
