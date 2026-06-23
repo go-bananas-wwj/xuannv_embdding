@@ -17,11 +17,20 @@ import numpy as np
 METRICS = ["auc_roc", "f1_best", "f1_0.5", "miou"]
 TASKS = ["construction", "building_change", "farm_change", "rubbish"]
 
+# AEF 2025 的 construction 任务为 haidian+harbin 联合目录，
+# 其他任务目录名与 TASKS 一致。
+AEF_TASK_DIR = {
+    "construction": "construction_joint",
+    "building_change": "building_change",
+    "farm_change": "farm_change",
+    "rubbish": "rubbish",
+}
+
 
 def aggregate_task(summary_path: Path) -> dict[str, Any]:
     with open(summary_path, encoding="utf-8") as f:
         data = json.load(f)
-    folds = data.get("folds", data)
+    folds = data.get("folds", data) if isinstance(data, dict) else data
     if not folds:
         raise ValueError(f"No fold results in {summary_path}")
     out: dict[str, Any] = {"n_folds": len(folds)}
@@ -50,7 +59,7 @@ def generate_report(
     aef: dict[str, Any] = {}
     v12: dict[str, Any] = {}
     for task in TASKS:
-        aef[task] = aggregate_task(aef_root / task / "summary_5fold.json")
+        aef[task] = aggregate_task(aef_root / AEF_TASK_DIR[task] / "summary_5fold.json")
         v12[task] = aggregate_task(v12_root / task / "summary_5fold.json")
 
     lines: list[str] = []
