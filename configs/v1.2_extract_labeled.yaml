@@ -45,9 +45,8 @@ training:
   cross_modal_recon_weight: 0.0
 
 data:
-  root: /data2/xuannv_embedding/national/processed_labeled_v1.2/processed
-  region: national
-  manifest_path: /data2/xuannv_embedding/national/processed_labeled_v1.2/processed/manifest.json
+  root: /data2/xuannv_embedding/national/processed_labeled_v1.2/processed/haidian
+  region: haidian
   statistics_dir: /data2/xuannv_embedding/national/statistics_labeled_v1.2
   batch_size: 1
   num_workers: 0
