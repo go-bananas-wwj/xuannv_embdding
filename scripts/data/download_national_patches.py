@@ -375,7 +375,12 @@ def process_patch(row: pd.Series, args: argparse.Namespace) -> bool:
     catalog = Client.open(EARTH_SEARCH_URL)
 
     ok = True
-    if not download_aef(row, output_root, zero_fill_on_failure=args.zero_fill_on_failure):
+    if not download_aef(
+        row,
+        output_root,
+        max_retries=args.max_retries,
+        zero_fill_on_failure=args.zero_fill_on_failure,
+    ):
         ok = False
 
     for month in args.months:
@@ -387,6 +392,7 @@ def process_patch(row: pd.Series, args: argparse.Namespace) -> bool:
                 assets,
                 catalog,
                 output_root,
+                max_retries=args.max_retries,
                 zero_fill_on_failure=args.zero_fill_on_failure,
             ):
                 ok = False
@@ -413,6 +419,12 @@ def main() -> None:
         "--zero-fill-on-failure",
         action="store_true",
         help="下载/重试失败后使用零值填充，保证 patch 可被加入训练",
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=3,
+        help="每个 source-month 失败后的重试次数（zero-fill 模式下可设为 0 加速）",
     )
     args = parser.parse_args()
 
