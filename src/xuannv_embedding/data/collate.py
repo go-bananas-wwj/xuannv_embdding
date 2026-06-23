@@ -31,6 +31,13 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
         "source_masks": {},
         "timestamps": {},
     }
+    has_orig = "source_frames_orig" in batch[0]
+    if has_orig:
+        collated["source_frames_orig"] = {}
+        collated["source_masks_orig"] = {}
+    has_xmodal = "cross_modal_masked" in batch[0]
+    if has_xmodal:
+        collated["cross_modal_masked"] = [item.get("cross_modal_masked", []) for item in batch]
 
     for source in source_names:
         frames_list = [item["source_frames"][source] for item in batch]
@@ -107,6 +114,12 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
         collated["source_frames"][source] = torch.stack(frames_list)
         collated["source_masks"][source] = torch.stack(masks_list)
         collated["timestamps"][source] = torch.stack(timestamps_list)
+
+        if has_orig and source in batch[0]["source_frames_orig"]:
+            orig_list = [item["source_frames_orig"][source] for item in batch]
+            collated["source_frames_orig"][source] = torch.stack(orig_list)
+            mask_orig_list = [item["source_masks_orig"][source] for item in batch]
+            collated["source_masks_orig"][source] = torch.stack(mask_orig_list)
 
     # 使用第一个非高分辨率 source 的时间戳作为全局月度时间戳。
     temporal_sources = [s for s in source_names if not s.startswith("highres")]

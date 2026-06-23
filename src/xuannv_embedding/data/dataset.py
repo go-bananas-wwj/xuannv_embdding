@@ -466,6 +466,57 @@ class MonthlyEmbeddingDataset(Dataset):
 
     def _augment_sample(self, sample: dict[str, Any]) -> dict[str, Any]:
         """对样本进行遥感专用增强（仅在训练时使用）。"""
+        # 保留一份未增强的副本，用于跨模态重建的 target。
+        sample["source_frames_orig"] = {
+            source: frames.clone()
+            for source, frames in sample["source_frames"].items()
+        }
+        sample["source_masks_orig"] = {
+            source: masks.clone()
+            for source, masks in sample["source_masks"].items()
+        }
+
+        cross_modal_masked: list[str] = []
+
+        # 跨模态掩码：随机遮蔽整个 source，要求模型用其他模态重建它。
+        if self.cross_modal_mask_prob > 0.0:
+            eligible = [
+                s
+                for s in self.sources
+                if not s.startswith("highres") and s != "worldcover"
+            ]
+            # 随机打乱后依次尝试 mask，确保至少保留一个 source 可见。
+            if len(eligible) >= 2:
+                order = torch.randperm(len(eligible)).tolist()
+                kept = 0
+                for idx in order:
+                    source = eligible[idx]
+                    if (
+                        sample["source_frames"][source].shape[0] == 0
+                        or sample["source_masks"][source].sum() == 0
+                    ):
+                        continue
+                    if torch.rand(1).item() < self.cross_modal_mask_prob:
+                        sample["source_frames"][source] = torch.zeros_like(
+                            sample["source_frames"][source]
+                        )
+                        sample["source_masks"][source] = torch.zeros_like(
+                            sample["source_masks"][source]
+                        )
+                        cross_modal_masked.append(source)
+                    else:
+                        kept += 1
+                # 若所有 eligible 都被 mask，则随机恢复一个，避免无输入。
+                if kept == 0 and cross_modal_masked:
+                    restore = cross_modal_masked[torch.randint(len(cross_modal_masked), (1,)).item()]
+                    sample["source_frames"][restore] = sample["source_frames_orig"][restore].clone()
+                    sample["source_masks"][restore] = (
+                        sample["source_frames_orig"][restore].sum(dim=(1, 2, 3)) != 0
+                    ).float()
+                    cross_modal_masked.remove(restore)
+
+        sample["cross_modal_masked"] = cross_modal_masked
+
         # 传感器随机丢弃（DINO-MM 风格），鼓励多源鲁棒融合。
         if self.sensor_dropout_prob > 0.0:
             for source in list(sample["source_frames"].keys()):
