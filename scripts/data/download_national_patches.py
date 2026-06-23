@@ -210,6 +210,7 @@ def _download_source_month(
     max_retries: int = 3,
     zero_fill_on_failure: bool = False,
     cloud_cover_threshold: float = CLOUD_COVER_THRESHOLD,
+    max_items: int = 50,
 ) -> bool:
     """下载单个 patch 某月某数据源的中位数合成影像，支持自动重试。"""
     patch_id = row["patch_id"]
@@ -246,7 +247,7 @@ def _download_source_month(
                 collections=[S2_COLLECTION],
                 bbox=bounds_latlon,
                 datetime=_month_range(month),
-                max_items=args.max_items,
+                max_items=max_items,
                 query={"eo:cloud_cover": {"lt": cloud_cover_threshold}},
             )
             items = list(search.items())
@@ -396,6 +397,7 @@ def process_patch(row: pd.Series, args: argparse.Namespace) -> bool:
                 max_retries=args.max_retries,
                 zero_fill_on_failure=args.zero_fill_on_failure,
                 cloud_cover_threshold=args.cloud_cover_threshold,
+                max_items=args.max_items,
             ):
                 ok = False
 
