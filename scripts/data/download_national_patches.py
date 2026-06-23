@@ -112,12 +112,13 @@ def _month_range(month_str: str) -> str:
 
 
 def _save_geotiff(path: Path, array: np.ndarray, bounds: tuple, epsg: int) -> None:
-    """保存 (bands, H, W) 数组为 GeoTIFF。"""
+    """原子保存 (bands, H, W) 数组为 GeoTIFF。"""
     path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(f".tmp.{os.getpid()}.tif")
     bands, height, width = array.shape
     transform = from_bounds(*bounds, width, height)
     with rasterio.open(
-        path,
+        tmp,
         "w",
         driver="GTiff",
         height=height,
@@ -129,6 +130,7 @@ def _save_geotiff(path: Path, array: np.ndarray, bounds: tuple, epsg: int) -> No
         compress="lzw",
     ) as dst:
         dst.write(array)
+    tmp.replace(path)
 
 
 def _prepare_items(items: list) -> list:
