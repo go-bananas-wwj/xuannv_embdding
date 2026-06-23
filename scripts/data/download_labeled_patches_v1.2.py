@@ -101,6 +101,12 @@ def main() -> None:
     parser.add_argument("--months", nargs="+", default=DEFAULT_MONTHS)
     parser.add_argument("--max-workers", type=int, default=8)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--regions",
+        nargs="+",
+        default=None,
+        help="仅下载指定 region（默认全部）",
+    )
     args = parser.parse_args()
 
     labeled_ids: set[str] = set()
@@ -110,6 +116,8 @@ def main() -> None:
         logger.info("Limiting to %d labeled patches", len(labeled_ids))
 
     df = load_patch_meta(args.meta_root)
+    if args.regions:
+        df = df[df["region"].isin(args.regions)]
     if labeled_ids:
         df = df[df["patch_id"].isin(labeled_ids)]
     if args.limit:
