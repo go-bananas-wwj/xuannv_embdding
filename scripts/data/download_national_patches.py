@@ -246,7 +246,7 @@ def _download_source_month(
                 bbox=bounds_latlon,
                 datetime=_month_range(month),
                 max_items=50,
-                query={"eo:cloud_cover": {"lt": CLOUD_COVER_THRESHOLD}},
+                query={"eo:cloud_cover": {"lt": args.cloud_cover_threshold}},
             )
             items = list(search.items())
             if not items:
@@ -264,7 +264,7 @@ def _download_source_month(
                 epsg=epsg,
                 resolution=10,
                 bounds=bounds_utm,
-                dtype=np.float64,
+                dtype=np.float32,
                 fill_value=0,
                 rescale=False,
             )
@@ -425,6 +425,12 @@ def main() -> None:
         type=int,
         default=3,
         help="每个 source-month 失败后的重试次数（zero-fill 模式下可设为 0 加速）",
+    )
+    parser.add_argument(
+        "--cloud-cover-threshold",
+        type=float,
+        default=CLOUD_COVER_THRESHOLD,
+        help="STAC 云量过滤阈值（越低则每月影像越少，下载越快）",
     )
     args = parser.parse_args()
 
