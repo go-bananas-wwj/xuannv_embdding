@@ -8,6 +8,36 @@ from downstreams.heads.base import TaskHead
 from downstreams.heads.linear_probe import LinearProbeHead
 
 
+def _num_groups(channels: int) -> int:
+    for groups in (32, 16, 8, 4, 2):
+        if channels % groups == 0:
+            return groups
+    return 1
+
+
+class ConvGNReLU(nn.Sequential):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int,
+        padding: int = 0,
+        dilation: int = 1,
+    ) -> None:
+        super().__init__(
+            nn.Conv2d(
+                in_channels,
+                out_channels,
+                kernel_size=kernel_size,
+                padding=padding,
+                dilation=dilation,
+                bias=False,
+            ),
+            nn.GroupNorm(_num_groups(out_channels), out_channels),
+            nn.ReLU(inplace=True),
+        )
+
+
 class FCNHead(TaskHead):
     def __init__(self, embed_dim: int, num_classes: int, hidden_dim: int = 256) -> None:
         super().__init__()
@@ -93,14 +123,85 @@ class UperNetHead(TaskHead):
         return self.classifier(fused)
 
 
-def build_segmentation_head(head_type: str, embed_dim: int, num_classes: int) -> TaskHead:
+class DeepLabV3PlusHead(TaskHead):
+    """ASPP + embedding skip decoder for dense prediction on 128x128 embeddings."""
+
+    def __init__(
+        self,
+        embed_dim: int,
+        num_classes: int,
+        hidden_dim: int = 256,
+        aspp_rates: tuple[int, ...] = (3, 6, 12),
+        dropout: float = 0.15,
+    ) -> None:
+        super().__init__()
+        branch_dim = hidden_dim // 4
+        self.input_adapter = ConvGNReLU(embed_dim, hidden_dim, kernel_size=1)
+
+        self.aspp_branches = nn.ModuleList(
+            [ConvGNReLU(hidden_dim, branch_dim, kernel_size=1)]
+        )
+        for rate in aspp_rates:
+            self.aspp_branches.append(
+                ConvGNReLU(
+                    hidden_dim,
+                    branch_dim,
+                    kernel_size=3,
+                    padding=rate,
+                    dilation=rate,
+                )
+            )
+        self.global_branch = ConvGNReLU(hidden_dim, branch_dim, kernel_size=1)
+
+        aspp_channels = branch_dim * (len(self.aspp_branches) + 1)
+        self.aspp_project = nn.Sequential(
+            ConvGNReLU(aspp_channels, hidden_dim, kernel_size=1),
+            nn.Dropout(dropout),
+        )
+        self.skip_project = ConvGNReLU(embed_dim, branch_dim, kernel_size=1)
+        self.decoder = nn.Sequential(
+            ConvGNReLU(hidden_dim + branch_dim, hidden_dim, kernel_size=3, padding=1),
+            nn.Dropout(dropout),
+            ConvGNReLU(hidden_dim, hidden_dim // 2, kernel_size=3, padding=1),
+            nn.Dropout(dropout),
+            nn.Conv2d(hidden_dim // 2, num_classes, kernel_size=1),
+        )
+
+    def forward(self, x: torch.Tensor, scene_emb: torch.Tensor | None = None) -> torch.Tensor:
+        adapted = self.input_adapter(x)
+        feats = [branch(adapted) for branch in self.aspp_branches]
+        pooled = F.adaptive_avg_pool2d(adapted, 1)
+        pooled = self.global_branch(pooled)
+        pooled = F.interpolate(pooled, size=x.shape[-2:], mode="bilinear", align_corners=False)
+        feats.append(pooled)
+        aspp = self.aspp_project(torch.cat(feats, dim=1))
+        skip = self.skip_project(x)
+        return self.decoder(torch.cat([aspp, skip], dim=1))
+
+
+def build_segmentation_head(
+    head_type: str,
+    embed_dim: int,
+    num_classes: int,
+    hidden_dim: int | None = None,
+    dropout: float | None = None,
+    aspp_rates: tuple[int, ...] | None = None,
+) -> TaskHead:
     head_type = head_type.lower()
     if head_type == "linear" or head_type == "linear_probe":
         return LinearProbeHead(embed_dim, num_classes)
     if head_type == "fcn":
-        return FCNHead(embed_dim, num_classes)
+        return FCNHead(embed_dim, num_classes, hidden_dim=hidden_dim or 256)
     if head_type == "unet":
         return UNetHead(embed_dim, num_classes)
     if head_type == "upernet":
         return UperNetHead(embed_dim, num_classes)
+    if head_type in {"deeplab", "deeplabv3plus"}:
+        return DeepLabV3PlusHead(
+            embed_dim,
+            num_classes,
+            hidden_dim=hidden_dim or 256,
+            aspp_rates=aspp_rates or (3, 6, 12),
+            dropout=0.15 if dropout is None else dropout,
+        )
     raise ValueError(f"未知 head 类型: {head_type}")
