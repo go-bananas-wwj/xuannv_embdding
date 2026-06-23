@@ -145,11 +145,6 @@ class ConstructionSegmentationTask(BaseTask):
             head_type,
             embed_dim,
             num_classes,
-            hidden_dim=training.get("head_hidden_dim"),
-            dropout=training.get("head_dropout"),
-            aspp_rates=(
-                tuple(training["aspp_rates"]) if "aspp_rates" in training else None
-            ),
         )
         _initialize_foreground_bias(
             head,
