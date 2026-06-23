@@ -35,6 +35,7 @@ class DataConfig:
     sensor_dropout_prob: float = 0.0
     temporal_dropout_prob: float = 0.0
     noise_std: float = 0.0
+    cross_modal_mask_prob: float = 0.0
 
 
 @dataclass
@@ -79,6 +80,7 @@ class TrainingConfig:
     distill_months: int = 12
     relation_weight: float = 0.0
     relation_temperature: float = 0.5
+    cross_modal_recon_weight: float = 0.0
 
 
 @dataclass
@@ -212,6 +214,7 @@ class Config:
                 sensor_dropout_prob=data_cfg.get("sensor_dropout_prob", 0.0),
                 temporal_dropout_prob=data_cfg.get("temporal_dropout_prob", 0.0),
                 noise_std=data_cfg.get("noise_std", 0.0),
+                cross_modal_mask_prob=data_cfg.get("cross_modal_mask_prob", 0.0),
             ),
             experiment=ExperimentConfig(
                 name=experiment_cfg["name"],
@@ -246,6 +249,7 @@ class Config:
                 distill_months=training_cfg.get("distill_months", 12),
                 relation_weight=training_cfg.get("relation_weight", 0.0),
                 relation_temperature=training_cfg.get("relation_temperature", 0.5),
+                cross_modal_recon_weight=training_cfg.get("cross_modal_recon_weight", 0.0),
             ),
         )
 

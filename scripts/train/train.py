@@ -168,7 +168,11 @@ def _build_loader(
 
     def training_collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
         collated = collate_fn(batch)
-        return prepare_batch(collated, target_heads)
+        return prepare_batch(
+            collated,
+            target_heads,
+            cross_modal_recon_weight=cfg.training.cross_modal_recon_weight,
+        )
 
     shuffle = (split == "train") and (sampler is None)
     # num_workers=0 时 pin_memory 在 NPU 上可能带来额外开销，且收益有限。

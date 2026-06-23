@@ -58,6 +58,7 @@ def _weighted_temporal_mean(frames: torch.Tensor, mask: torch.Tensor) -> torch.T
 def prepare_batch(
     batch: dict[str, Any],
     target_heads: dict[str, dict[str, Any]],
+    cross_modal_recon_weight: float = 0.0,
 ) -> dict[str, Any]:
     """将 collate 后的 batch 转换为 AEFModel / Trainer 需要的格式。
 
@@ -84,16 +85,32 @@ def prepare_batch(
     """
     source_frames = dict(batch["source_frames"])
     source_masks = dict(batch["source_masks"])
+    # 跨模态重建的 target 使用未遮蔽的原始帧/掩码。
+    source_frames_clean = batch.get("source_frames_orig", source_frames)
+    source_masks_clean = batch.get("source_masks_orig", source_masks)
     global_timestamps = batch["timestamps"]
     patch_ids = batch["patch_ids"]
 
     if not source_frames:
         raise ValueError("source_frames 不能为空字典")
 
+    # 跨模态掩码权重：被 mask 的 source 重建损失加权。
+    cross_modal_masked = batch.get("cross_modal_masked", None)
+    batch_size = global_timestamps.shape[0]
+    xmodal_weight: dict[str, torch.Tensor] | None = None
+    if cross_modal_recon_weight > 0.0 and cross_modal_masked is not None:
+        source_names = list(source_frames.keys())
+        xmodal_weight = {}
+        for source in source_names:
+            weights = torch.ones(batch_size, dtype=torch.float32)
+            for i, masked_sources in enumerate(cross_modal_masked):
+                if source in masked_sources:
+                    weights[i] = cross_modal_recon_weight
+            xmodal_weight[source] = weights
+
     if not isinstance(global_timestamps, torch.Tensor):
         raise TypeError("collate_fn 应返回单一全局 timestamps 张量")
 
-    batch_size = global_timestamps.shape[0]
     num_months = global_timestamps.shape[1]
 
     # 使用第一个非高分辨率、非 target-only source 的空间尺寸作为参考分辨率。
@@ -124,11 +141,11 @@ def prepare_batch(
 
         if (
             source_name is not None
-            and source_name in source_frames
-            and source_frames[source_name].shape[1] > 0
+            and source_name in source_frames_clean
+            and source_frames_clean[source_name].shape[1] > 0
         ):
-            frames = source_frames[source_name]
-            masks = source_masks[source_name]
+            frames = source_frames_clean[source_name]
+            masks = source_masks_clean[source_name]
             t_in = frames.shape[1]
 
             if loss_type == "continuous":
@@ -177,6 +194,15 @@ def prepare_batch(
                 target = label
                 # 以 0 作为 nodata/背景，不参与损失计算。
                 target_mask = target_mask.unsqueeze(-1).unsqueeze(-1) * (target != 0).float()
+
+            # 跨模态重建加权：被 mask 的 source 损失乘以 cross_modal_recon_weight。
+            if (
+                cross_modal_recon_weight > 0.0
+                and xmodal_weight is not None
+                and source_name in xmodal_weight
+            ):
+                w = xmodal_weight[source_name][:, None, None, None, None]  # (B,1,1,1,1)
+                target_mask = target_mask * w
 
             targets[head_name] = target
             target_masks[head_name] = target_mask
