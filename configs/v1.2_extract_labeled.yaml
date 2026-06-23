@@ -1,0 +1,67 @@
+experiment:
+  name: v1.2_extract_labeled
+  seed: 42
+  use_wandb: false
+  wandb_project: xuannv-embedding-stage1
+
+model:
+  embed_dim: 64
+  stem_dim: 32
+  stp:
+    space_dim: 512
+    time_dim: 256
+    precision_dim: 128
+    num_blocks: 6
+    num_heads: 8
+  sensor_channels:
+    s2: 4
+    s2_20m: 6
+  target_heads:
+    s2_recon:
+      loss_type: continuous
+      channels: 4
+      weight: 1.0
+    s2_20m_recon:
+      loss_type: continuous
+      channels: 6
+      weight: 1.0
+  num_months: 6
+
+training:
+  epochs: 0
+  lr: 0.0
+  weight_decay: 0.0
+  warmup_epochs: 0
+  gradient_accumulation_steps: 1
+  save_every: 0
+  eval_every: 0
+  amp: false
+  gradient_checkpointing: false
+  log_every: 0
+  distill_weight: 0.0
+  distill_months: 6
+  relation_weight: 0.0
+  relation_temperature: 0.5
+  cross_modal_recon_weight: 0.0
+
+data:
+  root: /data2/xuannv_embedding/national/processed_labeled_v1.2/processed
+  region: national
+  manifest_path: /data2/xuannv_embedding/national/processed_labeled_v1.2/processed/manifest.json
+  statistics_dir: /data2/xuannv_embedding/national/statistics_labeled_v1.2
+  batch_size: 1
+  num_workers: 0
+  patch_size: 128
+  num_months: 6
+  ref_year: 2025
+  ref_month: 12
+  months:
+    - "2025-12"
+    - "2026-01"
+    - "2026-02"
+    - "2026-03"
+    - "2026-04"
+    - "2026-05"
+  sources:
+    - s2
+    - s2_20m
