@@ -47,6 +47,7 @@ training:
 data:
   root: /data2/xuannv_embedding/national/processed_labeled_v1.2/processed/haidian
   region: haidian
+  manifest_path: null
   statistics_dir: /data2/xuannv_embedding/national/statistics_labeled_v1.2
   batch_size: 1
   num_workers: 0
