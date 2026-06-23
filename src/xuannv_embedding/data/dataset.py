@@ -48,6 +48,7 @@ class MonthlyEmbeddingDataset(Dataset):
         sensor_dropout_prob: float = 0.0,
         temporal_dropout_prob: float = 0.0,
         noise_std: float = 0.0,
+        cross_modal_mask_prob: float = 0.0,
     ) -> None:
         """初始化 Dataset。
 
@@ -68,6 +69,7 @@ class MonthlyEmbeddingDataset(Dataset):
             sensor_dropout_prob: 随机丢弃整个 source 的概率。
             temporal_dropout_prob: 随机丢弃部分月份的概率。
             noise_std: 加性高斯噪声标准差。
+            cross_modal_mask_prob: 跨模态掩码概率，随机遮蔽整个 source 以训练跨模态重建。
         """
         self.manifest_path = Path(manifest_path)
         self.statistics_dir = Path(statistics_dir)
@@ -86,6 +88,7 @@ class MonthlyEmbeddingDataset(Dataset):
         self.sensor_dropout_prob = sensor_dropout_prob
         self.temporal_dropout_prob = temporal_dropout_prob
         self.noise_std = noise_std
+        self.cross_modal_mask_prob = cross_modal_mask_prob
         self.month_bins = self._generate_month_bins()
 
         self.root_dir = self.manifest_path.parent
@@ -248,7 +251,12 @@ class MonthlyEmbeddingDataset(Dataset):
             "teacher_embedding_root": (
                 str(self.teacher_embedding_root) if self.teacher_embedding_root else None
             ),
-            "version": "1.1",
+            "augment": self.augment,
+            "sensor_dropout_prob": self.sensor_dropout_prob,
+            "temporal_dropout_prob": self.temporal_dropout_prob,
+            "noise_std": self.noise_std,
+            "cross_modal_mask_prob": self.cross_modal_mask_prob,
+            "version": "1.2",
         }
 
     def _ensure_cache_valid(self) -> None:
@@ -446,6 +454,9 @@ class MonthlyEmbeddingDataset(Dataset):
 
         sample = self._load_sample(idx)
 
+        if self.augment:
+            sample = self._augment_sample(sample)
+
         if self.cache_dir is not None:
             cache_file = self._cache_file_for(entry)
             cache_file.parent.mkdir(parents=True, exist_ok=True)
@@ -458,9 +469,6 @@ class MonthlyEmbeddingDataset(Dataset):
             except Exception as exc:
                 logger.warning("Failed to save cache %s: %s", cache_file, exc)
                 tmp.unlink(missing_ok=True)
-
-        if self.augment:
-            sample = self._augment_sample(sample)
 
         return sample
 

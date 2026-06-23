@@ -1,0 +1,75 @@
+experiment:
+  name: v1.2_national_crossmodal_smoke
+  seed: 42
+  use_wandb: false
+  wandb_project: xuannv-embedding-stage1
+
+model:
+  embed_dim: 64
+  stem_dim: 32
+  stp:
+    space_dim: 512
+    time_dim: 256
+    precision_dim: 128
+    num_blocks: 6
+    num_heads: 8
+  sensor_channels:
+    s2: 4
+    s2_20m: 6
+  target_heads:
+    s2_recon:
+      loss_type: continuous
+      channels: 4
+      weight: 1.0
+    s2_20m_recon:
+      loss_type: continuous
+      channels: 6
+      weight: 1.0
+  num_months: 6
+
+training:
+  epochs: 10
+  lr: 0.0001
+  weight_decay: 0.05
+  warmup_epochs: 1
+  gradient_accumulation_steps: 1
+  save_every: 5
+  eval_every: 5
+  amp: false
+  gradient_checkpointing: false
+  log_every: 5
+  distill_weight: 1.0
+  distill_months: 6
+  relation_weight: 0.1
+  relation_temperature: 0.5
+  cross_modal_recon_weight: 5.0
+
+data:
+  root: /data2/xuannv_embedding/national/processed/national
+  region: national
+  manifest_path: /data2/xuannv_embedding/national/processed/national/manifest.json
+  statistics_dir: /data2/xuannv_embedding/national/statistics/national
+  max_patches: 64
+  batch_size: 4
+  num_workers: 2
+  patch_size: 128
+  num_months: 6
+  ref_year: 2025
+  ref_month: 12
+  months:
+    - "2025-12"
+    - "2026-01"
+    - "2026-02"
+    - "2026-03"
+    - "2026-04"
+    - "2026-05"
+  sources:
+    - s2
+    - s2_20m
+  teacher_embedding_root: /data2/xuannv_embedding/national/embeddings
+  cache_dir: /data2/xuannv_embedding/national/cache_smoke
+  augment: true
+  sensor_dropout_prob: 0.1
+  temporal_dropout_prob: 0.1
+  noise_std: 0.01
+  cross_modal_mask_prob: 0.3
