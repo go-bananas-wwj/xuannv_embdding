@@ -89,6 +89,11 @@ def main() -> None:
         type=Path,
     )
     parser.add_argument(
+        "--labeled-manifest",
+        default="/data/xuannv_embedding/processed/manifest_labeled_all.json",
+        type=Path,
+    )
+    parser.add_argument(
         "--output-root",
         default="/data2/xuannv_embedding/national/processed_labeled_v1.2",
         type=Path,
@@ -98,7 +103,15 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=None)
     args = parser.parse_args()
 
+    labeled_ids: set[str] = set()
+    if args.labeled_manifest.exists():
+        with args.labeled_manifest.open("r", encoding="utf-8") as f:
+            labeled_ids = {entry["patch_id"] for entry in json.load(f)}
+        logger.info("Limiting to %d labeled patches", len(labeled_ids))
+
     df = load_patch_meta(args.meta_root)
+    if labeled_ids:
+        df = df[df["patch_id"].isin(labeled_ids)]
     if args.limit:
         df = df.head(args.limit)
     logger.info("Processing %d labeled patches", len(df))
