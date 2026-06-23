@@ -266,7 +266,7 @@ def _download_source_month(
                 resolution=10,
                 bounds=bounds_utm,
                 dtype=np.float32,
-                fill_value=0,
+                fill_value=0.0,
                 rescale=False,
             )
             if stack.shape[0] == 0 or stack.shape[1] == 0:
