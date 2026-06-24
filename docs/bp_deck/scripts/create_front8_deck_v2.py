@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "assets"
 USER = ASSETS / "user_materials"
 PPT_MEDIA = USER / "harbin_yajiang_ppt_media"
+YAJIANG = USER / "yajiang_case"
 AEF = ASSETS / "aef_references"
 E4_AEF = USER / "e4_alphaearth_media"
 OPENGEOSCOPE = ASSETS / "opengoscope"
@@ -85,6 +86,13 @@ IMG = {
     "space_data_boom_arrow": ASSETS / "generated" / "commercial_space_data_boom_arrow.png",
     "annotation_video": ASSETS / "video" / "custom_annotation_demo.mov",
     "annotation_poster": ASSETS / "video" / "custom_annotation_demo_poster.png",
+    "yajiang_embedding": YAJIANG / "embedding_quarter.jpeg",
+    "yajiang_cluster": YAJIANG / "spatial_cluster.png",
+    "yajiang_elevation": YAJIANG / "elevation_regression.png",
+    "yajiang_classification": YAJIANG / "land_classification.png",
+    "yajiang_retrieval": YAJIANG / "embedding_retrieval.png",
+    "yajiang_change": YAJIANG / "change_detection.png",
+    "yajiang_risk": YAJIANG / "slope_risk.png",
 }
 
 
@@ -441,6 +449,24 @@ def step_chain(slide, label: str, steps: list[str], x: float, y: float, color, f
             arrow(slide, sx + box_w + 0.02, y + 0.49, sx + box_w + gap - 0.02, y + 0.49, C.line, 0.7)
 
 
+def pain_card(slide, idx: str, head: str, body: str, x: float, y: float, color, fill) -> None:
+    rect(slide, x, y, 5.10, 1.04, C.white, C.line)
+    badge = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.OVAL, Inches(x + 0.18), Inches(y + 0.21), Inches(0.46), Inches(0.46))
+    badge.fill.solid()
+    badge.fill.fore_color.rgb = fill
+    badge.line.color.rgb = color
+    badge.line.width = Pt(1.0)
+    text(slide, idx, x + 0.18, y + 0.32, 0.46, 0.12, 8, color, True, PP_ALIGN.CENTER)
+    text(slide, head, x + 0.82, y + 0.18, 1.22, 0.18, 12, C.ink, True)
+    text(slide, body, x + 2.04, y + 0.17, 2.84, 0.36, 8, C.body)
+
+
+def yajiang_task(slide, label: str, path: Path, x: float, y: float, w: float = 1.52, h: float = 1.03) -> None:
+    rect(slide, x, y, w, h, C.white, C.line)
+    picture_crop(slide, path, x + 0.05, y + 0.05, w - 0.10, h - 0.30)
+    text(slide, label, x + 0.06, y + h - 0.20, w - 0.12, 0.12, 6, C.body, True, PP_ALIGN.CENTER)
+
+
 def build() -> Presentation:
     prs = Presentation()
     prs.slide_width = Inches(13.333)
@@ -625,37 +651,30 @@ def build() -> Presentation:
     # 7. Three industry frictions
     s = prs.slides.add_slide(blank)
     bg(s)
-    title(s, "07", "遥感应用没有大规模爆发：用不起、用不好、用不快")
-    for i, (head, body, color, fill) in enumerate(
-        [
-            ("用不起", "项目制、专家制、标注贵，任务越多成本越高。", C.blue, C.pale_blue),
-            ("用不好", "换区域、换地物、换传感器，模型泛化就变差。", C.green, C.mint),
-            ("用不快", "从需求到交付链条长，结果常常错过决策窗口。", C.purple, C.pale_purple),
-        ]
-    ):
-        x = 0.94 + i * 4.13
-        rect(s, x, 1.50, 3.45, 1.34, fill, color)
-        text(s, head, x + 0.22, 1.77, 3.02, 0.28, 18, color, True, PP_ALIGN.CENTER)
-        text(s, body, x + 0.28, 2.24, 2.90, 0.32, 9, C.body, align=PP_ALIGN.CENTER)
-    text(s, "传统流程", 1.08, 3.65, 1.10, 0.22, 11, C.muted, True)
-    old = ["采购", "预处理", "标注", "训练", "核查", "报告"]
-    for i, label in enumerate(old):
-        x = 2.06 + i * 0.98
-        rect(s, x, 3.50, 0.74, 0.48, C.off, C.line)
-        text(s, label, x, 3.62, 0.74, 0.16, 8, C.body, True, PP_ALIGN.CENTER)
-        if i < len(old) - 1:
-            arrow(s, x + 0.76, 3.74, x + 0.92, 3.74, C.line, 0.9)
-    text(s, "玄女流程", 1.08, 4.80, 1.10, 0.22, 11, C.green, True)
-    new = ["地理嵌入", "任务适配", "候选图斑", "证据包"]
-    for i, label in enumerate(new):
-        x = 2.06 + i * 1.28
-        rect(s, x, 4.65, 1.00, 0.48, C.mint, C.green)
-        text(s, label, x, 4.77, 1.00, 0.16, 8, C.green, True, PP_ALIGN.CENTER)
-        if i < len(new) - 1:
-            arrow(s, x + 1.02, 4.89, x + 1.22, 4.89, C.green, 1.0)
-    picture_crop(s, IMG["construction"], 8.28, 3.32, 3.58, 1.04)
-    picture_crop(s, IMG["land"], 8.28, 4.66, 3.58, 1.04)
-    claim(s, "玄女要做的，是把一次性项目流程变成可复用的地理智能流水线。", 6.18, C.ink)
+    title(s, "07", "全域底座到底解决什么痛点")
+    text(s, "遥感项目真正难的不是做一个模型，而是让同一片区域的数据、表征和任务结果持续复用。", 1.04, 1.02, 10.70, 0.24, 10, C.muted)
+
+    text(s, "行业痛点", 0.88, 1.42, 2.0, 0.24, 15, C.ink, True)
+    pain_card(s, "01", "数据割裂", "不同模态、不同时间、不同区域反复处理，难以沉淀统一底座。", 0.86, 1.86, C.blue, C.pale_blue)
+    pain_card(s, "02", "任务重做", "分类、检测、检索、预测各自建模，每个任务都从头下载、标注、训练。", 0.86, 3.10, C.amber, C.pale_amber)
+    pain_card(s, "03", "结果难复用", "项目交付后只留下结果图，底层表征和经验无法持续服务新任务。", 0.86, 4.34, C.green, C.mint)
+    rect(s, 1.08, 5.76, 4.66, 0.50, C.pale_blue, C.blue)
+    text(s, "全域底座的价值：把区域数据先沉淀成统一嵌入，再支撑多任务调用。", 1.28, 5.90, 4.26, 0.14, 9, C.blue, True, PP_ALIGN.CENTER)
+
+    line(s, 6.22, 1.42, 6.22, 6.22, C.line, 0.8)
+    text(s, "雅江案例：一个区域嵌入，多类下游任务", 6.58, 1.42, 5.55, 0.26, 15, C.ink, True)
+    picture_crop(s, IMG["yajiang_embedding"], 6.62, 1.92, 2.05, 1.52)
+    text(s, "23-26 年季度嵌入数据可视化", 6.66, 3.56, 1.98, 0.14, 7, C.body, True, PP_ALIGN.CENTER)
+    rect(s, 8.96, 1.92, 3.20, 1.52, C.mint, C.green)
+    text(s, "同一套雅江嵌入数据集", 9.20, 2.18, 2.72, 0.20, 13, C.green, True, PP_ALIGN.CENTER)
+    text(s, "支撑空间聚类、高程回归、地物分类、检索、变化检测与坡度风险预测", 9.25, 2.70, 2.62, 0.36, 9, C.body, True, PP_ALIGN.CENTER)
+    yajiang_task(s, "空间聚类", IMG["yajiang_cluster"], 6.58, 3.92)
+    yajiang_task(s, "高程回归", IMG["yajiang_elevation"], 8.34, 3.92)
+    yajiang_task(s, "地物分类", IMG["yajiang_classification"], 10.10, 3.92)
+    yajiang_task(s, "嵌入检索", IMG["yajiang_retrieval"], 6.58, 5.12)
+    yajiang_task(s, "变化检测", IMG["yajiang_change"], 8.34, 5.12)
+    yajiang_task(s, "坡度风险预测", IMG["yajiang_risk"], 10.10, 5.12)
+    claim(s, "全域底座不是多做几个模型，而是让一个区域嵌入持续服务多个业务问题。", 6.82, C.blue)
 
     # 8. Angel users
     s = prs.slides.add_slide(blank)
