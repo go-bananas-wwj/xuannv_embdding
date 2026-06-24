@@ -415,6 +415,17 @@ def compare_row(slide, item: str, aef: str, xuannv: str, y: float, highlight=Fal
     text(slide, xuannv, 9.84, y + 0.09, 2.42, 0.26, 7, C.ink if highlight else C.body, True, PP_ALIGN.CENTER)
 
 
+def difference_card(slide, head: str, aef: str, xuannv: str, x: float, y: float, color, fill) -> None:
+    rect(slide, x, y, 2.82, 1.34, C.white, C.line)
+    text(slide, head, x + 0.18, y + 0.15, 2.46, 0.18, 11, C.ink, True, PP_ALIGN.CENTER)
+    line(slide, x + 0.28, y + 0.48, x + 2.54, y + 0.48, C.line, 0.7)
+    text(slide, "AlphaEarth", x + 0.22, y + 0.63, 1.02, 0.14, 6, C.muted, True, PP_ALIGN.CENTER)
+    text(slide, "玄女", x + 1.58, y + 0.63, 0.92, 0.14, 6, color, True, PP_ALIGN.CENTER)
+    text(slide, aef, x + 0.16, y + 0.86, 1.18, 0.20, 8, C.body, True, PP_ALIGN.CENTER)
+    text(slide, xuannv, x + 1.46, y + 0.82, 1.18, 0.26, 9, color, True, PP_ALIGN.CENTER)
+    rect(slide, x + 1.38, y + 0.72, 0.02, 0.42, fill, fill, rounded=False)
+
+
 def build() -> Presentation:
     prs = Presentation()
     prs.slide_width = Inches(13.333)
@@ -531,43 +542,34 @@ def build() -> Presentation:
     # 5. Xuannv versus AlphaEarth
     s = prs.slides.add_slide(blank)
     bg(s)
-    title(s, "05", "玄女底座和 AlphaEarth 有什么不一样")
-    text(s, "我们是国内较早系统性推进地理嵌入底座的团队：既有国际项目积累，也有面向中国数据与业务的工程化路径。", 1.04, 1.02, 10.70, 0.24, 10, C.muted)
+    title(s, "05", "对标 AlphaEarth：玄女的差异化路径")
+    text(s, "国内较早系统性推进地理嵌入底座的团队，面向中国遥感数据与政企业务场景做高频、高分辨率、可部署的基础设施。", 1.04, 1.02, 10.70, 0.24, 10, C.muted)
 
-    text(s, "技术储备：全球数据检索已经跑通", 0.88, 1.42, 4.85, 0.26, 15, C.ink, True)
-    picture_crop(s, IMG["og_text_search"], 0.86, 1.86, 4.90, 2.42)
-    text(s, "OpenGeoScope / EarthEmbeddingExplorer", 0.98, 4.45, 4.66, 0.18, 9, C.ink, True, PP_ALIGN.CENTER)
+    text(s, "团队具备全球数据嵌入项目开发经验", 0.88, 1.42, 4.85, 0.26, 15, C.ink, True)
+    picture_crop(s, IMG["og_text_search"], 0.86, 1.86, 4.90, 2.54)
+    text(s, "OpenGeoScope / EarthEmbeddingExplorer", 0.98, 4.58, 4.66, 0.18, 9, C.ink, True, PP_ALIGN.CENTER)
     text(
         s,
-        "基于 ESA PhiLab MajorTOM 数据集，支持自然语言、图像、坐标检索全球卫星影像；证明团队具备大规模嵌入检索与可视化系统能力。",
+        "团队此前参与开发的全球卫星影像嵌入检索项目，与欧空局 ESA PhiLab / MajorTOM 生态合作，获得国际社区广泛关注与好评。",
         0.98,
-        4.77,
+        4.92,
         4.66,
-        0.46,
-        8,
+        0.58,
+        9,
         C.body,
         align=PP_ALIGN.CENTER,
     )
-    picture_fit(s, IMG["og_embedding"], 1.08, 5.52, 2.08, 0.98)
-    rect(s, 3.42, 5.54, 2.05, 0.96, C.pale_blue, C.blue)
-    text(s, "约 24.9 万", 3.58, 5.68, 1.72, 0.20, 15, C.blue, True, PP_ALIGN.CENTER)
-    text(s, "全球卫星影像嵌入", 3.58, 6.06, 1.72, 0.14, 7, C.body, align=PP_ALIGN.CENTER)
+    rect(s, 1.10, 5.86, 4.44, 0.42, C.pale_blue, C.blue)
+    text(s, "国际项目经验，是玄女底座能力的早期验证。", 1.36, 5.96, 3.92, 0.14, 9, C.blue, True, PP_ALIGN.CENTER)
 
     line(s, 6.02, 1.40, 6.02, 6.45, C.line, 0.8)
-    text(s, "对标 AlphaEarth：玄女不是复刻，而是做中国场景的高频高分辨率底座", 6.28, 1.42, 5.95, 0.30, 13, C.ink, True)
-    rect(s, 6.28, 1.92, 1.20, 0.40, C.off, C.line)
-    rect(s, 7.48, 1.92, 2.22, 0.40, C.off, C.line)
-    rect(s, 9.70, 1.92, 2.70, 0.40, C.mint, C.green)
-    text(s, "维度", 6.42, 2.04, 0.92, 0.12, 7, C.muted, True, PP_ALIGN.CENTER)
-    text(s, "AlphaEarth", 7.60, 2.04, 1.98, 0.12, 7, C.muted, True, PP_ALIGN.CENTER)
-    text(s, "玄女底座", 9.84, 2.04, 2.42, 0.12, 7, C.green, True, PP_ALIGN.CENTER)
-    compare_row(s, "开放性", "模型不开源", "自研底座，可面向政企部署", 2.42)
-    compare_row(s, "数据体系", "全球公开多源数据", "加入中国高分/商业遥感数据", 3.02)
-    compare_row(s, "空间粒度", "10 米", "最高 0.5 米", 3.62, True)
-    compare_row(s, "时间粒度", "一年一景", "最快 11 天一个嵌入", 4.22, True)
-    compare_row(s, "变化检测", "通用表征可迁移", "实验中优于 AlphaEarth", 4.82, True)
-    compare_row(s, "目标识别", "数据规模领先", "当前仍需继续堆训练数据", 5.42)
-    text(s, "诚实判断：玄女在高频变化检测上更贴近中国政企业务，在目标识别等任务上仍需通过数据规模继续追赶。", 6.42, 6.12, 5.70, 0.26, 9, C.body, True, PP_ALIGN.CENTER)
+    text(s, "差异化定位：面向中国场景的高频高分辨率地理嵌入", 6.28, 1.42, 5.95, 0.30, 14, C.ink, True)
+    difference_card(s, "数据体系", "全球公开数据", "加入中国遥感数据", 6.28, 2.04, C.green, C.mint)
+    difference_card(s, "空间粒度", "10 米", "最高 0.5 米", 9.48, 2.04, C.blue, C.pale_blue)
+    difference_card(s, "时间频率", "一年一景", "最快 11 天", 6.28, 3.76, C.purple, C.pale_purple)
+    difference_card(s, "业务部署", "模型不开源", "可面向政企部署", 9.48, 3.76, C.green, C.mint)
+    rect(s, 6.40, 5.72, 5.76, 0.58, RGBColor(255, 251, 235), C.amber)
+    text(s, "阶段性结论：变化检测实验优于 AlphaEarth；目标识别仍需继续提升训练数据规模。", 6.70, 5.90, 5.16, 0.18, 10, C.amber, True, PP_ALIGN.CENTER)
     claim(s, "AlphaEarth 证明方向，玄女把方向落到中国高分辨率、高频更新、可部署的业务场景。", 6.82, C.blue)
 
     # 6. Commercial space window
