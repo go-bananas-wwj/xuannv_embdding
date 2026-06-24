@@ -1,7 +1,8 @@
-"""Generate the investor-facing Xuannv business plan deck.
+"""Generate the 22-page Xuannv investor BP deck.
 
-The deck is intentionally content-first: it uses a calm pastel theme, Chinese
-copy, source-backed benchmark data, and project-local experiment visuals.
+This version follows docs/business_bp_final_slide_content.md page-by-page.
+It keeps copy short and uses diagrams, image panels, and simple matrices instead
+of dense paragraphs.
 """
 
 from __future__ import annotations
@@ -12,407 +13,380 @@ from PIL import Image
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE
-from pptx.enum.text import PP_ALIGN, MSO_AUTO_SIZE
+from pptx.enum.text import MSO_AUTO_SIZE, PP_ALIGN
 from pptx.util import Inches, Pt
 
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSET_DIR = ROOT / "docs" / "presentation_assets"
 OUT_DIR = ROOT / "docs" / "presentations"
-OUT_PATH = OUT_DIR / "玄女科技BP_投资人版_v0.2.pptx"
+OUT_PATH = OUT_DIR / "玄女科技BP_投资人版_v0.3_22页.pptx"
 
-COVER_IMAGE = ASSET_DIR / "geo_embedding_cover_pastel.png"
-VIS_IMAGE = Path(
+COVER = ASSET_DIR / "geo_embedding_cover_pastel.png"
+SPACE = ASSET_DIR / "space_data_to_intelligence.png"
+GOV = ASSET_DIR / "government_change_review.png"
+TEAM_WORK = ASSET_DIR / "remote_sensing_team_workflow.png"
+LAB = ASSET_DIR / "university_research_lab.png"
+VIS = Path(
     "/data/xuannv_embedding/outputs/downstream/visualizations/"
     "harbin_stage2_v1_fold0/patch_000021_visualization.png"
 )
 
 
-class Theme:
+class C:
     bg = RGBColor(250, 248, 241)
-    ink = RGBColor(36, 51, 57)
-    muted = RGBColor(102, 118, 125)
-    green = RGBColor(137, 183, 164)
-    blue = RGBColor(139, 180, 202)
-    lavender = RGBColor(180, 170, 210)
-    sand = RGBColor(235, 226, 204)
-    line = RGBColor(216, 226, 220)
+    ink = RGBColor(34, 48, 53)
+    muted = RGBColor(98, 111, 117)
+    green = RGBColor(132, 181, 160)
+    blue = RGBColor(136, 181, 205)
+    lavender = RGBColor(180, 171, 210)
+    sand = RGBColor(238, 229, 209)
+    line = RGBColor(218, 226, 221)
     white = RGBColor(255, 255, 255)
-    dark_green = RGBColor(74, 121, 104)
+    pale_green = RGBColor(242, 249, 245)
+    pale_blue = RGBColor(241, 248, 251)
+    pale_lav = RGBColor(247, 245, 251)
+    dark_green = RGBColor(72, 121, 103)
 
 
-FONT_CN = "Microsoft YaHei"
-FONT_EN = "Aptos"
+FONT = "Microsoft YaHei"
 
 
-def ensure_dirs() -> None:
+def ensure_assets() -> None:
     ASSET_DIR.mkdir(parents=True, exist_ok=True)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    if not VIS.exists():
+        return
+    image = Image.open(VIS).convert("RGB")
+    panels = {
+        "harbin_s2_rgb.png": (15, 120, 392, 497),
+        "harbin_highres_optical.png": (459, 120, 836, 497),
+        "harbin_s1_sar.png": (903, 120, 1280, 497),
+        "harbin_landsat.png": (1347, 120, 1724, 497),
+        "harbin_worldcover.png": (15, 528, 392, 905),
+        "harbin_embedding_pca.png": (459, 528, 836, 905),
+        "harbin_prediction.png": (903, 528, 1280, 905),
+    }
+    for name, box in panels.items():
+        out = ASSET_DIR / name
+        if not out.exists():
+            image.crop(box).save(out)
 
 
-def crop_visual_panels() -> list[Path]:
-    """Crop clean image panels from the existing English-labeled visualization."""
-
-    if not VIS_IMAGE.exists():
-        return []
-
-    panel_specs = [
-        ("s2_rgb", "S2 影像", (15, 120, 392, 497)),
-        ("highres_optical", "高分光学", (459, 120, 836, 497)),
-        ("s1_sar", "SAR / S1", (903, 120, 1280, 497)),
-        ("landsat", "Landsat", (1347, 120, 1724, 497)),
-        ("worldcover", "土地覆盖", (15, 528, 392, 905)),
-        ("embedding_pca", "嵌入 PCA", (459, 528, 836, 905)),
-        ("prediction", "预测概率", (903, 528, 1280, 905)),
-    ]
-    image = Image.open(VIS_IMAGE).convert("RGB")
-    paths: list[Path] = []
-    for slug, _label, box in panel_specs:
-        out = ASSET_DIR / f"harbin_{slug}.png"
-        image.crop(box).save(out)
-        paths.append(out)
-    return paths
-
-
-def set_slide_bg(slide, color=Theme.bg) -> None:
+def bg(slide, color=C.bg) -> None:
     slide.background.fill.solid()
     slide.background.fill.fore_color.rgb = color
 
 
-def add_text(
+def text(
     slide,
-    text: str,
+    value: str,
     x: float,
     y: float,
     w: float,
     h: float,
-    size: int = 24,
-    color: RGBColor = Theme.ink,
+    size: int = 14,
+    color=C.ink,
     bold: bool = False,
     align=PP_ALIGN.LEFT,
-    font: str = FONT_CN,
-    line_spacing: float | None = None,
 ):
     box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
-    tf = box.text_frame
-    tf.clear()
-    tf.word_wrap = True
-    tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
-    p = tf.paragraphs[0]
+    frame = box.text_frame
+    frame.clear()
+    frame.word_wrap = True
+    frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+    p = frame.paragraphs[0]
     p.alignment = align
-    if line_spacing is not None:
-        p.line_spacing = line_spacing
     run = p.add_run()
-    run.text = text
-    run.font.name = font
+    run.text = value
+    run.font.name = FONT
     run.font.size = Pt(size)
     run.font.bold = bold
     run.font.color.rgb = color
     return box
 
 
-def add_title(slide, title: str, subtitle: str | None = None, kicker: str | None = None):
-    if kicker:
-        add_text(slide, kicker, 0.72, 0.42, 6.8, 0.24, 9, Theme.dark_green, True)
-    add_text(slide, title, 0.72, 0.64, 10.9, 0.62, 25, Theme.ink, True)
-    if subtitle:
-        add_text(slide, subtitle, 0.74, 1.24, 11.0, 0.38, 10, Theme.muted)
+def title(slide, page: int, heading: str, sub: str = "") -> None:
+    text(slide, f"{page:02d}", 0.72, 0.42, 0.45, 0.22, 8, C.dark_green, True)
+    text(slide, heading, 1.18, 0.34, 10.8, 0.54, 23, C.ink, True)
+    if sub:
+        text(slide, sub, 1.2, 0.95, 10.7, 0.28, 10, C.muted)
 
 
-def add_footer(slide, page: int, note: str = "玄女科技商业计划书 v0.2") -> None:
-    add_text(slide, note, 0.72, 7.14, 6.0, 0.22, 7, Theme.muted)
-    add_text(slide, f"{page:02d}", 12.0, 7.11, 0.55, 0.25, 8, Theme.muted, align=PP_ALIGN.RIGHT)
+def footer(slide, page: int) -> None:
+    text(slide, "玄女科技商业计划书 v0.3｜按 22 页内容稿重制", 0.72, 7.14, 6.2, 0.20, 7, C.muted)
+    text(slide, f"{page:02d}", 12.05, 7.12, 0.5, 0.20, 8, C.muted, align=PP_ALIGN.RIGHT)
 
 
-def add_round_rect(
-    slide,
-    x: float,
-    y: float,
-    w: float,
-    h: float,
-    fill=Theme.white,
-    line=Theme.line,
-    radius=MSO_AUTO_SHAPE_TYPE.ROUNDED_RECTANGLE,
-):
-    shape = slide.shapes.add_shape(radius, Inches(x), Inches(y), Inches(w), Inches(h))
-    shape.fill.solid()
-    shape.fill.fore_color.rgb = fill
-    shape.line.color.rgb = line
-    shape.line.width = Pt(0.8)
-    return shape
+def rect(slide, x, y, w, h, fill=C.white, line=C.line, rounded=True):
+    kind = MSO_AUTO_SHAPE_TYPE.ROUNDED_RECTANGLE if rounded else MSO_AUTO_SHAPE_TYPE.RECTANGLE
+    s = slide.shapes.add_shape(kind, Inches(x), Inches(y), Inches(w), Inches(h))
+    s.fill.solid()
+    s.fill.fore_color.rgb = fill
+    s.line.color.rgb = line
+    s.line.width = Pt(0.8)
+    return s
 
 
-def add_chip(slide, text: str, x: float, y: float, w: float, color=Theme.green):
-    shape = add_round_rect(slide, x, y, w, 0.34, RGBColor(240, 247, 244), color)
-    add_text(slide, text, x + 0.08, y + 0.06, w - 0.16, 0.16, 8, Theme.dark_green, True, PP_ALIGN.CENTER)
-    return shape
-
-
-def add_card(slide, title: str, body: str, x: float, y: float, w: float, h: float, accent=Theme.green):
-    add_round_rect(slide, x, y, w, h)
-    bar = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.RECTANGLE, Inches(x), Inches(y), Inches(0.08), Inches(h))
+def card(slide, head: str, body: str, x, y, w, h, accent=C.green, fill=C.white):
+    rect(slide, x, y, w, h, fill)
+    bar = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.RECTANGLE, Inches(x), Inches(y), Inches(0.07), Inches(h))
     bar.fill.solid()
     bar.fill.fore_color.rgb = accent
     bar.line.fill.background()
-    add_text(slide, title, x + 0.24, y + 0.18, w - 0.44, 0.33, 13, Theme.ink, True)
-    add_text(slide, body, x + 0.24, y + 0.62, w - 0.44, h - 0.75, 9, Theme.muted, line_spacing=1.1)
+    text(slide, head, x + 0.22, y + 0.16, w - 0.38, 0.25, 12, C.ink, True)
+    text(slide, body, x + 0.22, y + 0.55, w - 0.38, h - 0.66, 9, C.muted)
 
 
-def add_metric(slide, label: str, value: str, note: str, x: float, y: float, w: float, accent=Theme.blue):
-    add_round_rect(slide, x, y, w, 1.04, RGBColor(253, 253, 250), Theme.line)
-    add_text(slide, value, x + 0.18, y + 0.12, w - 0.32, 0.34, 19, accent, True)
-    add_text(slide, label, x + 0.18, y + 0.52, w - 0.32, 0.22, 8, Theme.ink, True)
-    add_text(slide, note, x + 0.18, y + 0.74, w - 0.32, 0.18, 7, Theme.muted)
+def metric(slide, value: str, label: str, x, y, w, color=C.green):
+    rect(slide, x, y, w, 0.92, RGBColor(253, 253, 250))
+    text(slide, value, x + 0.15, y + 0.12, w - 0.3, 0.30, 18, color, True)
+    text(slide, label, x + 0.15, y + 0.54, w - 0.3, 0.22, 8, C.muted)
 
 
-def add_flow(slide, items: list[str], x: float, y: float, w: float, color=Theme.green) -> None:
-    gap = 0.15
+def flow(slide, items: list[str], x, y, w, color=C.green):
+    gap = 0.16
     bw = (w - gap * (len(items) - 1)) / len(items)
     for i, item in enumerate(items):
         bx = x + i * (bw + gap)
-        add_round_rect(slide, bx, y, bw, 0.65, RGBColor(245, 250, 248), color)
-        add_text(slide, item, bx + 0.06, y + 0.18, bw - 0.12, 0.20, 8, Theme.ink, True, PP_ALIGN.CENTER)
+        rect(slide, bx, y, bw, 0.58, RGBColor(246, 250, 248), color)
+        text(slide, item, bx + 0.06, y + 0.17, bw - 0.12, 0.18, 8, C.ink, True, PP_ALIGN.CENTER)
         if i < len(items) - 1:
-            add_text(slide, "→", bx + bw + 0.02, y + 0.20, 0.12, 0.2, 10, Theme.muted, True)
+            text(slide, "→", bx + bw + 0.02, y + 0.18, 0.1, 0.18, 9, C.muted, True)
 
 
-def add_table_like(slide, rows: list[list[str]], x: float, y: float, col_ws: list[float], row_h: float = 0.56):
-    total_w = sum(col_ws)
+def picture(slide, path: Path, x, y, w, h):
+    if path.exists():
+        slide.shapes.add_picture(str(path), Inches(x), Inches(y), width=Inches(w), height=Inches(h))
+    else:
+        rect(slide, x, y, w, h, C.pale_blue)
+        text(slide, "素材待补", x, y + h / 2 - 0.12, w, 0.24, 11, C.muted, True, PP_ALIGN.CENTER)
+
+
+def mini_table(slide, rows: list[list[str]], x, y, col_w: list[float], row_h=0.48, size=7):
+    total = sum(col_w)
     for r, row in enumerate(rows):
-        fill = RGBColor(241, 248, 246) if r == 0 else Theme.white
-        add_round_rect(slide, x, y + r * row_h, total_w, row_h - 0.04, fill, Theme.line, MSO_AUTO_SHAPE_TYPE.RECTANGLE)
+        fill = C.pale_green if r == 0 else C.white
+        rect(slide, x, y + r * row_h, total, row_h - 0.03, fill, C.line, rounded=False)
         cx = x
-        for c, txt in enumerate(row):
-            add_text(
-                slide,
-                txt,
-                cx + 0.08,
-                y + r * row_h + 0.12,
-                col_ws[c] - 0.12,
-                row_h - 0.22,
-                7 if r else 8,
-                Theme.ink if r == 0 else Theme.muted,
-                bold=(r == 0 or c == 0),
-            )
-            cx += col_ws[c]
+        for c, cell in enumerate(row):
+            text(slide, cell, cx + 0.06, y + r * row_h + 0.10, col_w[c] - 0.1, row_h - 0.16, size, C.ink if r == 0 else C.muted, r == 0 or c == 0)
+            cx += col_w[c]
 
 
-def create_deck() -> Presentation:
+def three_points(slide, points: list[tuple[str, str]], y=4.85):
+    colors = [C.green, C.blue, C.lavender]
+    for i, (h, b) in enumerate(points):
+        card(slide, h, b, 0.82 + i * 4.05, y, 3.55, 1.24, colors[i])
+
+
+def build() -> Presentation:
     prs = Presentation()
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
     blank = prs.slide_layouts[6]
 
-    # 1 Cover
-    slide = prs.slides.add_slide(blank)
-    set_slide_bg(slide)
-    if COVER_IMAGE.exists():
-        slide.shapes.add_picture(str(COVER_IMAGE), Inches(5.25), Inches(0.0), width=Inches(8.1), height=Inches(7.5))
-    add_chip(slide, "商业计划书 · 投资人版", 0.75, 0.76, 1.82, Theme.green)
-    add_text(slide, "玄女科技", 0.78, 1.55, 4.2, 0.56, 25, Theme.ink, True)
-    add_text(slide, "中国地球空间智能底座", 0.78, 2.15, 5.6, 0.9, 30, Theme.dark_green, True)
-    add_text(slide, "用地理嵌入赋能遥感智能应用。\n一次生成地球表征，多任务复用。", 0.82, 3.22, 4.9, 0.82, 15, Theme.muted)
-    add_text(slide, "融资需求：5000 万元｜用于样板城市、模型工程化、任务库与商业交付", 0.82, 6.42, 6.9, 0.28, 9, Theme.muted)
+    # 1
+    s = prs.slides.add_slide(blank); bg(s)
+    picture(s, COVER, 5.15, 0, 8.2, 7.5)
+    text(s, "玄女科技", 0.82, 1.22, 4.8, 0.48, 24, C.ink, True)
+    text(s, "用地理嵌入赋能遥感智能应用", 0.82, 1.88, 5.8, 0.72, 27, C.dark_green, True)
+    text(s, "一次生成地球表征，多任务复用。\n让中国拥有自己的地理智能底座。", 0.86, 3.02, 5.1, 0.75, 15, C.muted)
+    text(s, "商业计划书｜融资需求 5000 万元", 0.86, 6.45, 4.8, 0.25, 10, C.muted)
 
-    # 2 Scene pain
-    slide = prs.slides.add_slide(blank)
-    set_slide_bg(slide)
-    add_title(slide, "一个新区每月都要知道：哪里在施工、哪里占地、哪里发生变化", "传统遥感项目并不缺数据，真正缺的是把海量影像快速变成可核查变化线索的能力。", "01｜客户场景")
-    add_metric(slide, "传统项目", "每类任务重跑一次", "找数据、预处理、标注、训练、核查、出报告", 0.9, 1.75, 3.5, Theme.blue)
-    add_metric(slide, "玄女方案", "一个底座，多任务复用", "先生成区域地理嵌入，再调用施工、农用地、建筑等任务", 4.9, 1.75, 3.5, Theme.green)
-    add_metric(slide, "客户价值", "先筛候选，再人工核查", "把人从全量盯图转到高优先级变化证据链", 8.9, 1.75, 3.5, Theme.lavender)
-    add_text(slide, "核心问题", 0.95, 3.75, 1.5, 0.26, 10, Theme.muted, True)
-    add_text(slide, "如何把海量地球观测数据压缩成可复用的地理嵌入，让变化检测、分类、预测和问答不再每个任务重做一遍？", 0.98, 4.16, 11.1, 0.8, 25, Theme.ink, True)
-    add_flow(slide, ["海量观测", "地理嵌入", "多任务候选", "人工核查", "业务闭环"], 1.25, 5.9, 10.5, Theme.green)
-    add_footer(slide, 2)
-
-    # 3 Why now and market
-    slide = prs.slides.add_slide(blank)
-    set_slide_bg(slide)
-    add_title(slide, "现在是窗口期：商业航天让“看见”变便宜，地理智能决定“理解”效率", "以下数字代表广义产业基础、上游数据供给和地理空间分析大盘，不等同于玄女可直接获得市场。", "02｜为什么现在")
-    add_metric(slide, "中国地理信息产业", "8501 亿元", "2024 年总产值，广义产业基础", 0.82, 1.68, 3.42, Theme.green)
-    add_metric(slide, "地球观测小卫星市场", "26.4→55.2 亿美元", "2025-2030，上游数据供给市场", 4.85, 1.68, 3.42, Theme.blue)
-    add_metric(slide, "全球地理空间分析", "1027→2340 亿美元", "2025-2033，广义分析市场", 8.88, 1.68, 3.42, Theme.lavender)
-    add_card(slide, "美国对标给出的信号", "Planet、BlackSky、Maxar 证明遥感数据和实时监测存在持续需求；Esri 证明地理平台能进入政企核心工作流；Google 卫星嵌入证明地理表征层正在出现。", 0.82, 3.28, 5.55, 1.72, Theme.blue)
-    add_card(slide, "中国需要自己的底座", "中国数据、政企流程、国产算力和安全合规要求不同；玄女借鉴的是地理表征层趋势，不复制美国公司的资产结构。", 6.82, 3.28, 5.55, 1.72, Theme.green)
-    add_text(slide, "投资判断：未来竞争不只是谁拥有影像，而是谁能把影像持续变成可调用的地球智能。", 1.05, 5.82, 11.0, 0.42, 18, Theme.dark_green, True, PP_ALIGN.CENTER)
-    add_footer(slide, 3)
-
-    # 4 Industry bottleneck
-    slide = prs.slides.add_slide(blank)
-    set_slide_bg(slide)
-    add_title(slide, "行业不是没有需求，而是需求越多，传统交付方式越重", "今天遥感公司主要靠项目、人力和数据交付赚钱；换区域、换任务、换传感器，就要重做样本和模型。", "03｜行业痛点")
-    add_flow(slide, ["找数据", "预处理", "标注", "训练", "核查", "交付"], 1.0, 1.8, 11.1, Theme.blue)
-    add_card(slide, "收入方式", "数据销售、项目交付、遥感/GIS 平台授权、专业服务、少量订阅或接口。", 0.82, 3.0, 3.42, 1.45, Theme.green)
-    add_card(slide, "天花板", "项目越多，人力越多；标注、质检、调参和交付吃掉毛利。", 4.85, 3.0, 3.42, 1.45, Theme.blue)
-    add_card(slide, "真实证据", "天津遥感建筑半自动标注案例：AI 辅助让标注效率提升 80%，年均节省人力成本超 200 万元。", 8.88, 3.0, 3.42, 1.45, Theme.lavender)
-    add_text(slide, "该案例证明遥感标注环节存在明确降本空间；玄女要验证的是把这种效率提升从单点任务扩展到多任务复用。", 1.04, 5.48, 11.0, 0.58, 18, Theme.dark_green, True, PP_ALIGN.CENTER)
-    add_footer(slide, 4, "案例来源：国家数据局天津市测绘院遥感建筑半自动标注案例")
-
-    # 5 Users
-    slide = prs.slides.add_slide(blank)
-    set_slide_bg(slide)
-    add_title(slide, "四类天使用户的痛点，本质上都是“每个任务重做一遍”", "玄女优先服务有预算、有数据、有反复任务的客户，而不是泛泛做遥感平台。", "04｜天使用户")
-    add_card(slide, "B 端遥感项目公司", "不缺项目，缺可复用能力。多项目并行时，标注、质检、跨区域迁移和交付成本压低毛利。", 0.76, 1.72, 2.85, 1.72, Theme.green)
-    add_card(slide, "政府/新区管委会", "不缺卫星图，缺能进入流程的变化证据链：图斑优先级、历史过程、冲突提示、外业核查闭环。", 3.83, 1.72, 2.85, 1.72, Theme.blue)
-    add_card(slide, "准 C 端地块用户", "农场、园区、能源走廊、土地业主不想学遥感，只想知道地块有没有异常、风险在哪里。", 6.90, 1.72, 2.85, 1.72, Theme.lavender)
-    add_card(slide, "学校科研端", "每个课题重复下载数据、做标签、训模型；真正需要的是可复用数据底座和快速任务验证。", 9.97, 1.72, 2.85, 1.72, Theme.green)
-    add_text(slide, "共同需求：把遥感数据处理、标注、模型适配和变化候选生成变成一层统一能力，而不是每个专项项目从零开始。", 1.02, 4.46, 11.05, 0.66, 21, Theme.ink, True, PP_ALIGN.CENTER)
-    add_flow(slide, ["采购触发", "试点区域", "多任务验证", "年度服务", "平台接口"], 1.15, 5.86, 10.8, Theme.green)
-    add_footer(slide, 5)
-
-    # 6 Harbin workflow/accounting
-    slide = prs.slides.add_slide(blank)
-    set_slide_bg(slide)
-    add_title(slide, "以哈尔滨新区为例：传统变化检测是一条多人协同的项目流水线", "区长/管委会要看施工工地、农用地、建筑变化等任务，下属需要协调数据、标注、模型和核查。", "05｜场景账本")
-    add_flow(slide, ["接到任务", "协调人员", "下载多源数据", "标注样本", "训练/调参", "人工核查", "出报告"], 0.78, 1.82, 11.9, Theme.blue)
-    add_card(slide, "时间消耗", "等数据、等标注、等训练、等质检；不同任务并行时排队更明显。", 0.88, 3.12, 3.55, 1.38, Theme.blue)
-    add_card(slide, "空间消耗", "原始影像、中间栅格、标注版本、模型输出重复存储，很难在下一个任务里直接复用。", 4.88, 3.12, 3.55, 1.38, Theme.green)
-    add_card(slide, "算力消耗", "每个任务独立训练或调参，重复跑编码器和预处理，GPU/NPU 时间沉淀不成公共资产。", 8.88, 3.12, 3.55, 1.38, Theme.lavender)
-    add_text(slide, "玄女切入点：先把区域底座做好，再让每个任务只新增轻量适配和核查，不再从零开始。", 0.95, 5.55, 10.9, 0.48, 17, Theme.dark_green, True, PP_ALIGN.CENTER)
-    add_footer(slide, 6)
-
-    # 7 Solution
-    slide = prs.slides.add_slide(blank)
-    set_slide_bg(slide)
-    add_title(slide, "玄女方法：先为区域生成地理嵌入，再在同一底座上调用多任务", "一次生成地球表征，多任务复用；把重复的人力、存储和算力消耗前置成可沉淀的模型资产。", "06｜解决方案")
-    add_flow(slide, ["多源观测", "统一地理嵌入", "任务头/少样本适配", "变化候选", "人工核查", "闭环沉淀"], 0.92, 1.76, 11.5, Theme.green)
-    add_text(slide, "传统成本 = 每个任务 ×（数据 + 标注 + 训练 + 核查 + 交付）", 1.05, 3.15, 11.0, 0.36, 18, Theme.muted, True, PP_ALIGN.CENTER)
-    add_text(slide, "玄女成本 = 区域底座一次生成 + 多任务轻量适配 + 重点核查", 1.05, 3.78, 11.0, 0.42, 22, Theme.dark_green, True, PP_ALIGN.CENTER)
-    add_card(slide, "时间", "从“每个任务从零开始”变成“任务库调用 + 少样本适配”。", 0.88, 4.78, 2.82, 1.18, Theme.green)
-    add_card(slide, "空间", "嵌入成为公共资产，减少重复中间成果和重复特征存储。", 3.92, 4.78, 2.82, 1.18, Theme.blue)
-    add_card(slide, "算力", "编码器复用，任务头轻量化；后续重点在候选筛查和人机协同。", 6.96, 4.78, 2.82, 1.18, Theme.lavender)
-    add_card(slide, "人力", "人不再盯全量影像，而是核查模型给出的高优先级变化。", 10.00, 4.78, 2.82, 1.18, Theme.green)
-    add_footer(slide, 7)
-
-    # 8 Token analogy
-    slide = prs.slides.add_slide(blank)
-    set_slide_bg(slide)
-    add_title(slide, "地理嵌入，是遥感行业进入智能应用前的“词元层”", "类比不是说遥感等于大语言模型，而是说：先有统一表征，才有可组合、可迁移、可调用的下游任务。", "07｜核心类比")
-    add_card(slide, "大语言模型", "文本 → 词元 → 理解 / 检索 / 生成", 1.05, 2.0, 4.8, 1.55, Theme.blue)
-    add_card(slide, "玄女", "地球观测 → 地理嵌入 → 变化检测 / 分类 / 预测 / 问答", 7.05, 2.0, 4.8, 1.55, Theme.green)
-    add_text(slide, "GPT 先把文本转成词元，才能进行理解、检索、生成；玄女先把地球观测转成地理嵌入，才能进行变化检测、分类、预测和问答。", 1.18, 4.28, 10.9, 0.82, 22, Theme.ink, True, PP_ALIGN.CENTER)
-    add_flow(slide, ["多源", "时序", "空间", "语义", "任务"], 2.0, 5.88, 9.3, Theme.green)
-    add_footer(slide, 8, "参考趋势：Google Earth Engine 卫星嵌入 V1")
-
-    # 9 Product
-    slide = prs.slides.add_slide(blank)
-    set_slide_bg(slide)
-    add_title(slide, "产品不是单点模型，而是地理嵌入底座 + 任务库 + 行业交付层", "先把区域数据资产化，再把任务从项目交付逐步产品化。", "08｜产品形态")
-    add_card(slide, "底座层", "多源遥感数据接入、时空对齐、月度/区域地理嵌入生成、国产算力适配。", 1.0, 1.72, 3.2, 1.7, Theme.green)
-    add_card(slide, "任务层", "施工工地、农用地变化、建筑变化、裸地/垃圾堆放、灾害扰动、水体变化等任务头。", 5.05, 1.72, 3.2, 1.7, Theme.blue)
-    add_card(slide, "交付层", "图斑候选、证据链、接口、私有化部署、年度监测服务、人工核查闭环。", 9.1, 1.72, 3.2, 1.7, Theme.lavender)
-    add_text(slide, "短期：样板城市 + 项目交付验证价值\n中期：任务库 + 私有化 / 年度服务提高复购\n长期：区域地理嵌入接口 / 订阅，进入政企数据栈", 1.15, 4.5, 10.8, 1.2, 19, Theme.ink, True, PP_ALIGN.CENTER)
-    add_footer(slide, 9)
-
-    # 10 Harbin sample
-    slide = prs.slides.add_slide(blank)
-    set_slide_bg(slide)
-    add_title(slide, "哈尔滨新区样板：同一区域底座，支撑多源输入与变化候选", "样板目标是形成可核查候选和成本账本，不把模型输出包装成自动执法结论。", "09｜样板验证")
-    labels = ["S2 影像", "高分光学", "SAR/S1", "土地覆盖", "地理嵌入", "预测概率"]
-    paths = [
-        ASSET_DIR / "harbin_s2_rgb.png",
-        ASSET_DIR / "harbin_highres_optical.png",
-        ASSET_DIR / "harbin_s1_sar.png",
-        ASSET_DIR / "harbin_worldcover.png",
-        ASSET_DIR / "harbin_embedding_pca.png",
-        ASSET_DIR / "harbin_prediction.png",
-    ]
-    for idx, (label, path) in enumerate(zip(labels, paths)):
-        col = idx % 3
-        row = idx // 3
-        x, y = 0.88 + col * 2.05, 1.72 + row * 2.02
-        add_text(slide, label, x, y - 0.20, 1.8, 0.18, 7, Theme.muted, True, PP_ALIGN.CENTER)
-        if path.exists():
-            slide.shapes.add_picture(str(path), Inches(x), Inches(y), width=Inches(1.72), height=Inches(1.72))
-    add_card(slide, "样板验证逻辑", "传统方式：每类任务重新组织数据、标注和模型。\n玄女方式：一次生成地理嵌入，施工、农用地、建筑变化等任务复用。\n交付定位：变化候选、优先级排序、证据链，而非替代最终判定。", 7.25, 1.72, 4.78, 3.75, Theme.green)
-    add_text(slide, "定位：不是直接替代最终判定，而是让基层先看到最值得核查的变化。", 7.34, 5.78, 4.45, 0.42, 14, Theme.dark_green, True)
-    add_footer(slide, 10)
-
-    # 11 Competition
-    slide = prs.slides.add_slide(blank)
-    set_slide_bg(slide)
-    add_title(slide, "我们不和影像公司抢卫星，而是做任务复用的地理智能底座", "客户今天的替代方案各有价值，但很少同时解决多源时序、跨任务复用和私有化工作流。", "10｜竞争与替代")
+    # 2
+    s = prs.slides.add_slide(blank); bg(s); title(s, 2, "美国已经证明：地理智能可以长成大公司", "不同标杆证明不同环节：数据、监测、平台、地理嵌入趋势。")
     rows = [
-        ["方案", "优势", "不足", "玄女定位"],
-        ["传统项目制", "熟悉流程、可交付报告", "每个任务重做，人力重", "把重复劳动资产化"],
-        ["影像/底图平台", "数据覆盖强", "偏数据供给，应用仍需二次开发", "连接上游数据与下游任务"],
-        ["遥感/GIS 平台", "进入政企流程", "模型和任务复用不足", "补上 AI 表征和任务库"],
-        ["通用遥感模型", "研发速度快", "本土数据、私有化、交付闭环不足", "面向中国场景工程化"],
+        ["公司", "主营业务", "公开数据", "启发"],
+        ["Maxar", "高分影像 / 地理智能", "约 64 亿美元收购", "国家级数据基础设施"],
+        ["Planet", "日更影像 / 订阅分析", "FY2025 收入 2.444 亿美元", "高频影像可订阅"],
+        ["BlackSky", "实时地理空间情报", "2024 收入 1.021 亿美元", "快速响应是刚需"],
+        ["Esri", "GIS / 位置智能平台", "覆盖 50% 财富 500 强", "平台进入工作流"],
+        ["Google", "卫星嵌入数据集", "10 米 / 64 维 / 2017-2024", "嵌入层成为趋势"],
     ]
-    add_table_like(slide, rows, 0.72, 1.72, [1.6, 2.55, 3.1, 3.85], 0.72)
-    add_text(slide, "壁垒来自三件事：区域级多源数据组织、可复用地理嵌入、进入客户核查流程的任务库。", 1.0, 5.95, 11.2, 0.4, 17, Theme.dark_green, True, PP_ALIGN.CENTER)
-    add_footer(slide, 11)
+    mini_table(s, rows, 0.72, 1.55, [1.25, 2.25, 2.8, 4.7], 0.57, 7)
+    metric(s, "数据 + 平台 + 订阅", "美国路径的共同指向", 0.9, 5.62, 3.3, C.green)
+    metric(s, "本土化底座", "中国机会不等于复制美国公司", 5.0, 5.62, 3.3, C.blue)
+    metric(s, "AI 表征层", "玄女切入更靠近应用价值", 9.1, 5.62, 3.3, C.lavender)
+    footer(s, 2)
 
-    # 12 Business model and financials
-    slide = prs.slides.add_slide(blank)
-    set_slide_bg(slide)
-    add_title(slide, "商业模式：先用样板交付拿信任，再用任务库和年度服务提高复购", "以下为融资阶段的商业假设框架，单价和毛利需要随真实试点继续校准。", "11｜商业化")
-    add_card(slide, "近期：样板项目", "城市/新区/园区样板，按区域、任务数量和交付周期收费；收入来自现有项目或平台升级预算。", 0.82, 1.75, 3.55, 1.38, Theme.green)
-    add_card(slide, "中期：私有化 + 年度服务", "为遥感公司、政府部门和高校提供工具链、任务库、年度监测和技术服务。", 4.88, 1.75, 3.55, 1.38, Theme.blue)
-    add_card(slide, "长期：接口/订阅", "区域地理嵌入、任务结果、样本检索和变化候选以接口或订阅进入政企数据栈。", 8.94, 1.75, 3.55, 1.38, Theme.lavender)
-    add_metric(slide, "18 个月商业目标", "2-3 个样板", "形成可披露案例和成本账本", 0.9, 4.0, 3.35, Theme.green)
-    add_metric(slide, "任务库目标", "5-10 类高频任务", "施工、农用地、建筑、灾害等", 4.95, 4.0, 3.35, Theme.blue)
-    add_metric(slide, "收入模型", "项目 + 年服 + 接口", "从交付收入走向复购收入", 9.0, 4.0, 3.35, Theme.lavender)
-    add_footer(slide, 12)
+    # 3
+    s = prs.slides.add_slide(blank); bg(s); title(s, 3, "行业正在从“卖影像”走向“卖可调用的地球智能”")
+    picture(s, SPACE, 7.0, 1.35, 5.6, 4.0)
+    flow(s, ["影像时代", "监测时代", "平台时代", "嵌入时代"], 0.9, 2.0, 5.5, C.green)
+    card(s, "玄女的位置", "不是再造卫星公司，而是做应用价值更高的 AI 可用地理表征层。", 0.95, 3.0, 5.35, 1.05, C.blue)
+    card(s, "上游 / 下游", "上游接国产多源遥感数据；下游接城市治理、遥感公司、科研和行业任务。", 0.95, 4.32, 5.35, 1.05, C.lavender)
+    footer(s, 3)
 
-    # 13 Team/resources
-    slide = prs.slides.add_slide(blank)
-    set_slide_bg(slide)
-    add_title(slide, "团队与资源：同时理解遥感 AI、国产算力和政企交付", "核心团队将以遥感 AI、模型工程化、数据组织和政企交付资源形成复合能力。", "12｜团队")
-    add_card(slide, "算法与工程", "多源时序遥感、地理嵌入、下游变化检测、模型工程化和国产 NPU 适配能力。", 0.9, 1.75, 3.55, 1.55, Theme.green)
-    add_card(slide, "数据与场景", "已围绕哈尔滨、海淀等区域组织多源数据与研发验证，具备样板城市扩展基础。", 4.9, 1.75, 3.55, 1.55, Theme.blue)
-    add_card(slide, "商业与交付", "目标客户明确：遥感项目公司、政府/新区管委会、科研机构和行业地块用户。", 8.9, 1.75, 3.55, 1.55, Theme.lavender)
-    add_text(slide, "需要补强为投资人最终版的信息：创始人履历、团队人数、核心论文/专利/项目、客户资源和顾问背书。", 1.0, 4.7, 11.0, 0.62, 22, Theme.ink, True, PP_ALIGN.CENTER)
-    add_footer(slide, 13)
+    # 4
+    s = prs.slides.add_slide(blank); bg(s); title(s, 4, "中国也到了这个窗口：商业航天解决“看见”，地理智能解决“理解”", "市场数字为广义产业和上游供给口径，不等同于玄女直接可获得收入。")
+    metric(s, "8501 亿元", "中国地理信息产业 2024 总产值", 0.95, 1.72, 3.55, C.green)
+    metric(s, "26.4→55.2 亿美元", "全球地球观测小卫星市场 2025-2030", 4.9, 1.72, 3.55, C.blue)
+    metric(s, "1027→2340 亿美元", "全球地理空间分析市场 2025-2033", 8.85, 1.72, 3.55, C.lavender)
+    three_points(s, [("数据供给", "商业航天、高分光学、SAR、无人机与北斗持续增长。"), ("场景密集", "自然资源、应急、农业、水利、能源、重大工程都要监测。"), ("支付基础", "已有政企采购和项目交付基础，需要更高复用效率。")], 3.75)
+    text(s, "中国的机会不是再多一批影像，而是把影像变成可复用的地理智能。", 1.0, 6.25, 11.0, 0.35, 17, C.dark_green, True, PP_ALIGN.CENTER)
+    footer(s, 4)
 
-    # 14 Financing
-    slide = prs.slides.add_slide(blank)
-    set_slide_bg(slide)
-    add_title(slide, "融资 5000 万：把地理嵌入从研发验证推到可复制样板", "资金重点投向样板闭环、模型工程化、任务库产品化和商业交付能力。", "13｜融资计划")
-    add_metric(slide, "融资金额", "5000 万元", "轮次与估值待最终确认", 0.9, 1.72, 3.35, Theme.green)
-    add_metric(slide, "周期", "18 个月", "从样板验证到可复制交付", 4.95, 1.72, 3.35, Theme.blue)
-    add_metric(slide, "目标", "3 个样板 + 10 个任务", "用真实账本证明商业价值", 9.0, 1.72, 3.35, Theme.lavender)
-    add_card(slide, "资金用途", "模型工程化与国产算力适配｜样板城市数据和标注｜产品化任务库｜销售与交付团队｜合规和数据采购。", 0.9, 3.35, 5.35, 1.6, Theme.green)
-    add_card(slide, "18 个月里程碑", "拿下 2-3 个可披露样板；形成哈尔滨/海淀/雅江案例；沉淀 5-10 个高频任务；完成年度服务或私有化首单。", 6.95, 3.35, 5.35, 1.6, Theme.blue)
-    add_text(slide, "最终要让投资人相信：这笔钱不是买更多实验，而是买“样板闭环 + 可复用资产 + 商业化入口”。", 1.02, 5.82, 11.1, 0.42, 16, Theme.ink, True, PP_ALIGN.CENTER)
-    add_footer(slide, 14)
+    # 5
+    s = prs.slides.add_slide(blank); bg(s); title(s, 5, "今天的遥感公司，主要还是靠项目、人力和数据交付赚钱")
+    rows = [["收入方式", "交付内容", "受限点"], ["数据销售", "影像 / 底图 / 时相", "价值停在数据层"], ["项目交付", "变化检测 / 制图 / 报告", "项目越多人越多"], ["平台授权", "软件 / 私有化部署", "智能任务仍需定制"], ["专业服务", "人工解译 / 标注 / 核查", "毛利被人力吞掉"], ["订阅接口", "监测服务 / 接口调用", "行业仍在早期"]]
+    mini_table(s, rows, 1.1, 1.55, [2.1, 4.2, 4.2], 0.62, 8)
+    text(s, "行业不是没有需求，而是需求越多，传统交付方式越重。", 1.0, 6.15, 11.1, 0.38, 19, C.dark_green, True, PP_ALIGN.CENTER)
+    footer(s, 5)
 
-    # 15 Appendix capabilities
-    slide = prs.slides.add_slide(blank)
-    set_slide_bg(slide)
-    add_title(slide, "附录：研发验证显示已有候选排序信号，但仍需样板数据提升可交付精度", "对稀疏变化检测，AUC 说明排序信号；最佳 F1 和平均交并比仍低，当前定位为候选生成与优先级筛查。", "14｜附录 · 能力边界")
-    cap_paths = [
-        ("高分光学", ASSET_DIR / "harbin_highres_optical.png"),
-        ("地理嵌入 PCA", ASSET_DIR / "harbin_embedding_pca.png"),
-        ("预测概率", ASSET_DIR / "harbin_prediction.png"),
-    ]
-    for i, (label, path) in enumerate(cap_paths):
-        x = 0.9 + i * 2.42
-        add_text(slide, label, x, 1.82, 2.1, 0.2, 8, Theme.muted, True, PP_ALIGN.CENTER)
-        if path.exists():
-            slide.shapes.add_picture(str(path), Inches(x), Inches(2.08), width=Inches(2.05), height=Inches(2.05))
-    add_card(slide, "研发信号", "哈尔滨研发集 5 折验证显示多个任务存在候选排序信号，AUC 约 0.75-0.89。", 8.45, 1.9, 3.75, 1.25, Theme.green)
-    add_card(slide, "表达边界", "最佳 F1、固定阈值 F1 和平均交并比仍低；当前不作为自动判定或执法级结果，只做候选生成、人机核查和样板验证。", 8.45, 3.45, 3.75, 1.75, Theme.blue)
-    add_footer(slide, 15)
+    # 6
+    s = prs.slides.add_slide(blank); bg(s); title(s, 6, "真正的瓶颈不是数据少，而是每个任务都重做一遍")
+    flow(s, ["找数据", "预处理", "标注", "训练", "核查", "交付"], 1.1, 1.8, 10.8, C.blue)
+    metric(s, "80%", "天津案例：AI 辅助标注效率提升", 1.15, 3.25, 3.1, C.green)
+    metric(s, "200 万元+", "年均节省人力成本", 5.1, 3.25, 3.1, C.blue)
+    metric(s, "5000 万元", "近三年累计经济效益", 9.05, 3.25, 3.1, C.lavender)
+    text(s, "该案例证明标注环节有明确降本空间；玄女要把这种效率提升从单点工具扩展到多任务复用。", 1.0, 5.5, 11.1, 0.55, 18, C.ink, True, PP_ALIGN.CENTER)
+    footer(s, 6)
 
-    # 16 Appendix sources
-    slide = prs.slides.add_slide(blank)
-    set_slide_bg(slide)
-    add_title(slide, "附录：关键数据来源与口径", "用于投资人尽调追溯；正式路演可把详细链接放在资料包中。", "15｜附录 · 来源")
-    add_card(slide, "海外对标", "Planet FY2026：收入 3.077 亿美元、经常性 ACV 98%\nBlackSky FY2025：收入 1.066 亿美元\nMaxar/Advent：交易估值约 64 亿美元\nEsri Fact Sheet：数十万组织、50% Fortune 500、多数国家政府", 0.82, 1.58, 5.65, 2.25, Theme.blue)
-    add_card(slide, "市场与技术趋势", "Google Earth Engine 卫星嵌入 V1：全球 10 米、64 维、2017-2024\nMarketsandMarkets：EO 小卫星市场 2025-2030 CAGR 15.9%\nGrand View Research：地理空间分析市场 2025-2033 CAGR 10.4%\n国家数据局：天津遥感建筑半自动标注案例", 6.86, 1.58, 5.65, 2.25, Theme.green)
-    add_text(slide, "完整链接：Planet、BlackSky、Maxar/Advent、Esri、Google Earth Engine、MarketsandMarkets、Grand View Research、国家数据局天津案例已记录在项目文档中。", 0.95, 4.58, 11.3, 0.52, 13, Theme.muted, align=PP_ALIGN.CENTER)
-    add_text(slide, "口径提醒：广义产业和市场规模用于说明机会窗口，不等同于玄女可直接获得收入；玄女直接市场需结合样板客户、年度服务和接口订阅另行测算。", 1.0, 5.65, 11.1, 0.62, 17, Theme.dark_green, True, PP_ALIGN.CENTER)
-    add_footer(slide, 16)
+    # 7
+    s = prs.slides.add_slide(blank); bg(s); title(s, 7, "真实痛点 1：遥感项目公司不是缺项目，而是项目越多越像人力外包")
+    picture(s, TEAM_WORK, 0.78, 1.35, 5.6, 3.95)
+    card(s, "今天怎么做", "施工、农用地、违建、裸地等项目各开一条流程。", 6.78, 1.55, 5.05, 0.96, C.blue)
+    card(s, "真正痛点", "多项目并行、人手不够；标注和质检成本高；跨区域迁移不稳定。", 6.78, 2.8, 5.05, 1.06, C.lavender)
+    card(s, "玄女价值", "区域地理嵌入底座 + 少样本适配 + 变化候选和图斑预筛。", 6.78, 4.15, 5.05, 1.06, C.green)
+    text(s, "玄女卖的不是一张图，而是把项目制遥感交付的重复劳动压缩成可复用的模型资产。", 0.95, 6.12, 11.5, 0.35, 16, C.dark_green, True, PP_ALIGN.CENTER)
+    footer(s, 7)
+
+    # 8
+    s = prs.slides.add_slide(blank); bg(s); title(s, 8, "真实痛点 2：政府不是缺卫星图，而是缺能进入流程的变化证据链")
+    picture(s, GOV, 6.85, 1.3, 5.65, 4.05)
+    flow(s, ["疑似图斑", "外业核查", "举证判定", "整改复核", "归档闭环"], 0.9, 1.75, 5.55, C.green)
+    card(s, "痛点", "图斑多、专项任务交叉、时间集中、遥感结果不能直接执法。", 0.95, 3.15, 5.35, 0.98, C.blue)
+    card(s, "玄女", "图斑优先级、变化类型理解、历史过程证据链、冲突点提示。", 0.95, 4.45, 5.35, 0.98, C.lavender)
+    footer(s, 8)
+
+    # 9
+    s = prs.slides.add_slide(blank); bg(s); title(s, 9, "真实痛点 3：普通地块用户不想学遥感，只想知道自己的地有没有异常")
+    metric(s, "27%", "2023 年美国农场/牧场使用精准农业实践", 0.95, 1.55, 3.6, C.green)
+    card(s, "今天", "人工巡查、拍照反馈、一次性报告；不会处理专业遥感图层。", 0.95, 3.0, 3.6, 1.15, C.blue)
+    card(s, "玄女", "圈定地块，监测硬化、堆土、棚房、道路、积水、作物异常。", 4.95, 3.0, 3.6, 1.15, C.green)
+    card(s, "定位", "不是近期主收入，但说明地理嵌入能让遥感能力普惠化。", 8.95, 3.0, 3.6, 1.15, C.lavender)
+    flow(s, ["圈地块", "自动监测", "异常提醒", "证据包"], 2.0, 5.3, 9.3, C.green)
+    footer(s, 9)
+
+    # 10
+    s = prs.slides.add_slide(blank); bg(s); title(s, 10, "真实痛点 4：高校和科研团队有想法，但数据工程吃掉研究周期")
+    picture(s, LAB, 0.82, 1.28, 5.65, 4.0)
+    card(s, "今天", "下载、配准、裁切、标注、转换格式、跑环境；样本制作本身就是大工程。", 6.85, 1.5, 5.0, 1.1, C.blue)
+    card(s, "痛点", "数据准备比算法研究更耗时；小团队缺算力；跨区域复现难。", 6.85, 2.92, 5.0, 1.1, C.lavender)
+    card(s, "玄女", "现成地理嵌入、预标注、变化候选、难例检索、少样本微调。", 6.85, 4.34, 5.0, 1.1, C.green)
+    footer(s, 10)
+
+    # 11
+    s = prs.slides.add_slide(blank); bg(s); title(s, 11, "从四类用户出发，我们的核心问题是什么？")
+    three_points(s, [("B 端", "项目越多，越依赖人力交付。"), ("政府", "图斑越多，越需要证据链。"), ("科研 / 地块", "想用遥感，但数据工程太重。")], 1.65)
+    text(s, "我们如何把爆发式增长的地球观测数据转化为可复用的地理智能底座，让不同用户不再为每个遥感任务重复采购、标注、建模和计算？", 1.0, 4.3, 11.1, 1.05, 27, C.ink, True, PP_ALIGN.CENTER)
+    footer(s, 11)
+
+    # 12
+    s = prs.slides.add_slide(blank); bg(s); title(s, 12, "玄女的答案：先生成地理嵌入，再服务下游任务")
+    flow(s, ["多源观测", "地理嵌入", "任务组件", "变化候选", "业务交付"], 1.0, 1.62, 11.1, C.green)
+    rows = [["近期任务", "扩展能力"], ["施工工地 / 建筑变化", "缺失模态补齐"], ["农用地 / 违法用地线索", "地理检索"], ["垃圾裸地 / 灾害线索", "地理问答"]]
+    mini_table(s, rows, 2.05, 3.0, [4.5, 4.5], 0.66, 10)
+    text(s, "先把地球变成机器能复用的表示，再让所有任务调用这个表示。", 1.0, 5.9, 11.2, 0.38, 20, C.dark_green, True, PP_ALIGN.CENTER)
+    footer(s, 12)
+
+    # 13
+    s = prs.slides.add_slide(blank); bg(s); title(s, 13, "地理嵌入是遥感行业的 token 层")
+    card(s, "文本智能", "文本 → token → 理解 / 检索 / 生成", 1.2, 1.7, 4.6, 1.25, C.blue)
+    card(s, "地球智能", "地球观测 → 地理嵌入 → 变化检测 / 分类 / 预测 / 问答", 7.15, 1.7, 4.6, 1.25, C.green)
+    text(s, "GPT 先把文本转成 token，才能进行理解、检索、生成；玄女先把地球观测转成地理嵌入，才能进行变化检测、分类、预测和问答。", 1.15, 3.85, 11.1, 0.9, 24, C.ink, True, PP_ALIGN.CENTER)
+    text(s, "商业航天解决“看见地球”，地理嵌入解决“理解地球”。", 1.0, 5.8, 11.2, 0.36, 18, C.dark_green, True, PP_ALIGN.CENTER)
+    footer(s, 13)
+
+    # 14
+    s = prs.slides.add_slide(blank); bg(s); title(s, 14, "一次嵌入，多任务复用，改变遥感交付的成本曲线")
+    card(s, "传统模式", "总成本 ≈ 任务数 ×（数据处理 + 标注 + 建模 + 推理 + 核查 + 报告）", 0.95, 1.7, 5.4, 1.25, C.blue)
+    card(s, "玄女模式", "总成本 ≈ 区域底座成本 + 任务数 ×（少量样本 + 轻量适配 + 核查报告）", 6.95, 1.7, 5.4, 1.25, C.green)
+    three_points(s, [("时间", "跳过重复数据工程。"), ("算力 / 存储", "复用底座和中间表征。"), ("人力", "从逐图解译转向重点审核。")], 3.7)
+    text(s, "第一个任务验证价值，第二个任务开始复用；任务越多，底座越值钱。", 1.0, 6.05, 11.2, 0.36, 19, C.dark_green, True, PP_ALIGN.CENTER)
+    footer(s, 14)
+
+    # 15
+    s = prs.slides.add_slide(blank); bg(s); title(s, 15, "产品形态：不是一个模型，而是城市地理智能底座")
+    card(s, "地理嵌入底座", "按区域、按月份持续生成地理嵌入。", 0.9, 1.6, 3.6, 1.28, C.green)
+    card(s, "任务组件库", "施工、建筑、农用地、违法用地、垃圾、灾害、生态。", 4.9, 1.6, 3.6, 1.28, C.blue)
+    card(s, "业务交付层", "图斑、证据链、报告、接口、驾驶舱。", 8.9, 1.6, 3.6, 1.28, C.lavender)
+    rows = [["客户", "产品"], ["政府 / 新区", "年度变化监测"], ["遥感公司", "任务库授权 / 接口"], ["学校科研", "嵌入数据集 / 开发生态"], ["地块用户", "异常提醒 / 证据报告"]]
+    mini_table(s, rows, 2.05, 3.55, [3.2, 5.6], 0.5, 8)
+    footer(s, 15)
+
+    # 16
+    s = prs.slides.add_slide(blank); bg(s); title(s, 16, "样板 1：哈尔滨新区，用于验证“一区多任务复用”")
+    labels = [("S2 影像", "harbin_s2_rgb.png"), ("高分光学", "harbin_highres_optical.png"), ("地理嵌入", "harbin_embedding_pca.png"), ("预测概率", "harbin_prediction.png")]
+    for i, (lab, name) in enumerate(labels):
+        x = 0.95 + i * 2.05
+        text(s, lab, x, 1.45, 1.7, 0.18, 7, C.muted, True, PP_ALIGN.CENTER)
+        picture(s, ASSET_DIR / name, x, 1.72, 1.75, 1.75)
+    card(s, "验证什么", "一个区域生成月度地理嵌入；同一套表征支撑施工、建筑、农用地、垃圾/裸地等任务。", 9.35, 1.55, 2.85, 1.72, C.green)
+    flow(s, ["区域底座", "施工", "建筑变化", "农用地", "异常变化"], 1.1, 4.65, 10.8, C.green)
+    footer(s, 16)
+
+    # 17
+    s = prs.slides.add_slide(blank); bg(s); title(s, 17, "样板 2：海淀区，用于验证复杂城市纹理和高分模态融合")
+    picture(s, ASSET_DIR / "harbin_highres_optical.png", 0.95, 1.55, 3.1, 3.1)
+    picture(s, ASSET_DIR / "harbin_s1_sar.png", 4.45, 1.55, 3.1, 3.1)
+    card(s, "验证任务", "高密度城市空间、小目标、复杂边界；高分光学 / 高分 SAR 与低分时序融合。", 8.1, 1.62, 4.05, 1.35, C.blue)
+    card(s, "输出证据", "高分影像、标注样本、模型输出与人工标注对比、模态增强前后差异。", 8.1, 3.35, 4.05, 1.35, C.green)
+    text(s, "海淀页当前用已有高分样例占位；后续可替换为真实海淀最佳 patch。", 1.0, 5.82, 11.2, 0.35, 13, C.muted, align=PP_ALIGN.CENTER)
+    footer(s, 17)
+
+    # 18
+    s = prs.slides.add_slide(blank); bg(s); title(s, 18, "样板 3：雅江，用于验证极端地形、灾害场景和缺失模态补齐")
+    picture(s, ASSET_DIR / "harbin_landsat.png", 0.95, 1.55, 3.05, 3.05)
+    picture(s, ASSET_DIR / "harbin_s1_sar.png", 4.35, 1.55, 3.05, 3.05)
+    card(s, "复杂性", "山地峡谷、河谷、灾害风险、施工扰动；光学云雾遮挡和模态缺失。", 8.0, 1.55, 4.25, 1.2, C.lavender)
+    card(s, "验证任务", "滑坡、崩塌、堰塞湖、施工扰动候选；光学缺失时用 SAR / 时序补齐。", 8.0, 3.05, 4.25, 1.2, C.green)
+    card(s, "需要补充", "真实雅江数据目录、云遮挡样例、缺失模态补齐结果、人工核查命中率。", 8.0, 4.55, 4.25, 1.2, C.blue)
+    footer(s, 18)
+
+    # 19
+    s = prs.slides.add_slide(blank); bg(s); title(s, 19, "能力展示：嵌入、补齐、时序、多任务迁移")
+    panels = [("原始影像", "harbin_highres_optical.png"), ("地理嵌入", "harbin_embedding_pca.png"), ("预测概率", "harbin_prediction.png"), ("土地覆盖", "harbin_worldcover.png")]
+    for i, (lab, name) in enumerate(panels):
+        x = 0.9 + i * 2.25
+        text(s, lab, x, 1.45, 1.85, 0.18, 7, C.muted, True, PP_ALIGN.CENTER)
+        picture(s, ASSET_DIR / name, x, 1.75, 1.85, 1.85)
+    card(s, "四类能力", "地理嵌入｜缺失模态补齐｜多源时序理解｜下游迁移", 1.0, 4.55, 5.4, 1.1, C.green)
+    card(s, "核心判断", "玄女的核心不是某个任务准确率，而是一个表征可以服务多少任务。", 6.95, 4.55, 5.1, 1.1, C.blue)
+    footer(s, 19)
+
+    # 20
+    s = prs.slides.add_slide(blank); bg(s); title(s, 20, "为什么我们能做：多源时空地理嵌入模型架构")
+    flow(s, ["多源输入", "时空对齐", "编码器", "地理嵌入", "任务头"], 1.0, 1.7, 11.1, C.green)
+    three_points(s, [("多源输入", "S2、S1、Landsat、高分光学、高分 SAR、DEM、气象。"), ("稳定表征", "学习同一地点在不同时间、传感器下的地物表示。"), ("下游适配", "支持重建、补齐、变化检测、分类、分割。")], 3.1)
+    text(s, "我们不是把多源影像简单拼接，而是让模型学习同一地点在不同时间、不同传感器下的稳定表征。", 1.0, 5.95, 11.2, 0.4, 17, C.dark_green, True, PP_ALIGN.CENTER)
+    footer(s, 20)
+
+    # 21
+    s = prs.slides.add_slide(blank); bg(s); title(s, 21, "商业模式：先用标杆项目拿信任，再用底座和任务库拿复用收入")
+    card(s, "近期", "标杆项目交付：哈尔滨新区、海淀、雅江；政府/园区/重大工程年度监测。", 0.9, 1.65, 3.6, 1.4, C.green)
+    card(s, "中期", "城市级地理嵌入底座订阅；多任务组件库授权；接口调用；私有化部署。", 4.9, 1.65, 3.6, 1.4, C.blue)
+    card(s, "长期", "数据方接入和分成；学校/开发者生态；地理智能应用市场。", 8.9, 1.65, 3.6, 1.4, C.lavender)
+    text(s, "政府合同是压舱石，B 端授权是现金流，接口和生态是放大器。", 1.0, 4.65, 11.2, 0.45, 24, C.ink, True, PP_ALIGN.CENTER)
+    footer(s, 21)
+
+    # 22
+    s = prs.slides.add_slide(blank); bg(s); title(s, 22, "融资 5000 万：把技术样板推成商业样板")
+    metric(s, "5000 万", "融资金额", 0.95, 1.55, 3.2, C.green)
+    metric(s, "18 个月", "样板和商业化周期", 5.05, 1.55, 3.2, C.blue)
+    metric(s, "5-8 个", "可复用下游任务", 9.15, 1.55, 3.2, C.lavender)
+    rows = [["里程碑", "目标"], ["城市级样板", "哈尔滨新区多任务连续监测"], ["补充场景", "海淀复杂城市 / 雅江复杂地形"], ["商业结果", "1-2 个年度服务或 B 端授权意向 / 订单"], ["交付能力", "接口、任务库、报告流程可演示"]]
+    mini_table(s, rows, 1.6, 3.1, [3.2, 6.4], 0.5, 8)
+    text(s, "这轮融资不是为了做一组模型指标，而是为了证明地理嵌入底座可以规模化交付。", 1.0, 6.25, 11.2, 0.35, 17, C.dark_green, True, PP_ALIGN.CENTER)
+    footer(s, 22)
 
     return prs
 
 
 def main() -> None:
-    ensure_dirs()
-    crop_visual_panels()
-    prs = create_deck()
+    ensure_assets()
+    prs = build()
     prs.save(OUT_PATH)
     print(OUT_PATH)
 
