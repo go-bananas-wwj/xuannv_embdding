@@ -20,6 +20,7 @@ from pptx.util import Inches, Pt
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "assets"
 USER = ASSETS / "user_materials"
+PPT_MEDIA = USER / "harbin_yajiang_ppt_media"
 CACHE = ASSETS / "render_cache"
 OUT = ROOT / "outputs" / "玄女科技BP_前8页视觉返工_v0.2.pptx"
 
@@ -64,6 +65,9 @@ IMG = {
     "persona_gov": ASSETS / "persona_government_v2.png",
     "persona_biz": ASSETS / "persona_enterprise_v2.png",
     "persona_uni": ASSETS / "persona_university_v2.png",
+    "downstream_harbin_embedding": PPT_MEDIA / "image4.png",
+    "downstream_harbin_task": PPT_MEDIA / "image5.png",
+    "downstream_harbin_cover": PPT_MEDIA / "image7.png",
 }
 
 
@@ -250,6 +254,19 @@ def persona_card(slide, path: Path, x, y, w, h, fill, color) -> None:
     picture_crop(slide, path, x + 0.42, y + 0.22, w - 0.84, h - 0.28)
 
 
+def diamond_stack(slide, x, y, labels: list[tuple[str, RGBColor]]) -> None:
+    for i, (label, color) in enumerate(labels):
+        dx = x + i * 0.26
+        dy = y + i * 0.30
+        shape = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.DIAMOND, Inches(dx), Inches(dy), Inches(1.28), Inches(0.84))
+        shape.fill.solid()
+        shape.fill.fore_color.rgb = color
+        shape.fill.transparency = 18
+        shape.line.color.rgb = color
+        shape.line.width = Pt(1.0)
+        text(slide, label, dx + 0.20, dy + 0.30, 0.88, 0.16, 7, C.ink, True, PP_ALIGN.CENTER)
+
+
 def metric(slide, number: str, label: str, x, y, w, color, fill) -> None:
     rect(slide, x, y, w, 1.0, fill, color)
     text(slide, number, x + 0.18, y + 0.13, w - 0.36, 0.30, 18, color, True, PP_ALIGN.CENTER)
@@ -275,20 +292,52 @@ def build() -> Presentation:
     s = prs.slides.add_slide(blank)
     bg(s)
     title(s, "02", "企业简介")
-    text(s, "玄女科技是一家面向地球空间智能的人工智能基础底座公司。", 1.04, 1.16, 8.7, 0.36, 17, C.ink, True)
-    text(s, "面向政府、遥感企业和行业客户，把遥感项目制交付沉淀成可复用的地理智能能力。", 1.04, 1.62, 10.8, 0.42, 12, C.body)
-    rect(s, 0.98, 2.46, 11.35, 3.15, C.white, C.line)
-    chip(s, "多源观测", 1.34, 2.78, 1.10, C.blue, C.pale_blue)
-    chip(s, "地理嵌入", 5.72, 2.78, 1.10, C.green, C.mint)
-    chip(s, "下游任务", 9.72, 2.78, 1.10, C.purple, C.pale_purple)
-    for i, (label, key) in enumerate([("哨兵二号", "s2"), ("雷达影像", "s1"), ("陆地卫星", "landsat"), ("高程数据", "dem")]):
-        image_card(s, label, IMG[key], 1.20 + (i % 2) * 1.26, 3.20 + (i // 2) * 1.03, 1.08, 0.90, C.line)
-    arrow(s, 3.72, 4.02, 5.10, 4.02, C.line, 1.7)
-    picture_crop(s, IMG["semantic"], 5.06, 3.18, 2.86, 2.08)
-    arrow(s, 7.90, 4.02, 9.16, 4.02, C.line, 1.7)
-    for i, (label, key) in enumerate([("施工变化", "construction"), ("建筑提取", "building")]):
-        image_card(s, label, IMG[key], 9.10, 3.08 + i * 1.08, 2.86, 0.90, [C.blue, C.purple][i])
-    claim(s, "不是接一个项目做一个模型，而是沉淀一套可复用的地理智能基础设施。", 6.22, C.blue)
+    text(
+        s,
+        "北京玄女科技有限公司是一家专注于地球空间智能的人工智能基础底座提供商，致力于打造遥感数据通用嵌入底座。",
+        1.04,
+        1.13,
+        11.05,
+        0.34,
+        15,
+        C.ink,
+        True,
+    )
+    text(
+        s,
+        "公司以遥感领域的大规模预训练模型为核心，为城市治理、自然资源、应急灾害、农业生态等场景提供全球范围内可复用的像素级表征能力，推动遥感智能从“定制化开发”走向“底座赋能”。",
+        1.04,
+        1.62,
+        11.10,
+        0.58,
+        11,
+        C.body,
+    )
+    text(s, "多元观测", 1.34, 2.66, 1.40, 0.22, 12, C.blue, True, PP_ALIGN.CENTER)
+    text(s, "地理嵌入", 5.72, 2.66, 1.40, 0.22, 12, C.green, True, PP_ALIGN.CENTER)
+    text(s, "下游任务", 9.86, 2.66, 1.40, 0.22, 12, C.purple, True, PP_ALIGN.CENTER)
+    diamond_stack(
+        s,
+        1.02,
+        3.20,
+        [
+            ("光学", C.pale_blue),
+            ("雷达", C.mint),
+            ("高分", C.pale_purple),
+            ("高程", C.pale_amber),
+            ("时序", RGBColor(240, 253, 250)),
+        ],
+    )
+    arrow(s, 3.52, 4.10, 4.75, 4.10, C.line, 1.7)
+    picture_crop(s, IMG["migration"], 4.80, 3.05, 3.10, 2.28)
+    arrow(s, 8.08, 4.10, 9.05, 4.10, C.line, 1.7)
+    picture_crop(s, IMG["downstream_harbin_embedding"], 9.12, 3.02, 1.42, 1.15)
+    picture_crop(s, IMG["downstream_harbin_task"], 10.66, 3.02, 1.42, 1.15)
+    picture_crop(s, IMG["downstream_harbin_cover"], 9.86, 4.30, 1.52, 1.16)
+    text(s, "区域表征", 9.12, 4.20, 1.42, 0.16, 7, C.body, True, PP_ALIGN.CENTER)
+    text(s, "任务识别", 10.66, 4.20, 1.42, 0.16, 7, C.body, True, PP_ALIGN.CENTER)
+    text(s, "多源底图", 9.86, 5.48, 1.52, 0.16, 7, C.body, True, PP_ALIGN.CENTER)
+    claim(s, "以区域级通用表征替代任务级重复建模，形成可持续复用的地理智能基础设施。", 6.22, C.blue)
 
     # 3. Same place, multiple observations
     s = prs.slides.add_slide(blank)
