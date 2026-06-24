@@ -1,4 +1,4 @@
-"""Generate the revised first eight Xuannv BP slides.
+"""Generate the revised first nine Xuannv BP slides.
 
 This deck is a stage-presentation draft, not a document handout.  It avoids
 internal notes, keeps each slide to one claim, and favors real project images
@@ -23,8 +23,9 @@ USER = ASSETS / "user_materials"
 PPT_MEDIA = USER / "harbin_yajiang_ppt_media"
 AEF = ASSETS / "aef_references"
 E4_AEF = USER / "e4_alphaearth_media"
+OPENGEOSCOPE = ASSETS / "opengoscope"
 CACHE = ASSETS / "render_cache"
-OUT = ROOT / "outputs" / "玄女科技BP_前8页视觉返工_v0.2.pptx"
+OUT = ROOT / "outputs" / "玄女科技BP_前9页视觉返工_v0.3.pptx"
 
 
 class C:
@@ -80,6 +81,8 @@ IMG = {
     "aef_change": E4_AEF / "slide09_img04_f5b957e4.png",
     "aef_target": E4_AEF / "slide11_img01_ea269f1d.png",
     "aef_crop": E4_AEF / "slide18_img14_6da1eb9d.png",
+    "og_text_search": OPENGEOSCOPE / "Text_Search.jpg",
+    "og_embedding": OPENGEOSCOPE / "embedding.png",
 }
 
 
@@ -402,6 +405,16 @@ def aef_task(slide, label: str, path: Path, x, y) -> None:
     text(slide, label, x + 0.10, y + 0.97, 3.38, 0.12, 7, C.body, True, PP_ALIGN.CENTER)
 
 
+def compare_row(slide, item: str, aef: str, xuannv: str, y: float, highlight=False) -> None:
+    fill = C.pale_blue if highlight else C.white
+    rect(slide, 6.28, y, 1.20, 0.52, fill, C.line)
+    rect(slide, 7.48, y, 2.22, 0.52, fill, C.line)
+    rect(slide, 9.70, y, 2.70, 0.52, C.mint if highlight else C.white, C.green if highlight else C.line)
+    text(slide, item, 6.42, y + 0.15, 0.92, 0.14, 7, C.ink, True, PP_ALIGN.CENTER)
+    text(slide, aef, 7.60, y + 0.10, 1.98, 0.24, 7, C.body, True, PP_ALIGN.CENTER)
+    text(slide, xuannv, 9.84, y + 0.09, 2.42, 0.26, 7, C.ink if highlight else C.body, True, PP_ALIGN.CENTER)
+
+
 def build() -> Presentation:
     prs = Presentation()
     prs.slide_width = Inches(13.333)
@@ -515,10 +528,52 @@ def build() -> Presentation:
     aef_task(s, "土地分类 / 农用地识别", IMG["aef_crop"], 8.90, 5.48)
     claim(s, "AlphaEarth 验证了方向：地理嵌入会成为遥感应用的基础层。", 6.82, C.blue)
 
-    # 5. Commercial space window
+    # 5. Xuannv versus AlphaEarth
     s = prs.slides.add_slide(blank)
     bg(s)
-    title(s, "05", "商业航天把数据推向爆发，遥感应用还卡在重流程")
+    title(s, "05", "玄女底座和 AlphaEarth 有什么不一样")
+    text(s, "我们是国内较早系统性推进地理嵌入底座的团队：既有国际项目积累，也有面向中国数据与业务的工程化路径。", 1.04, 1.02, 10.70, 0.24, 10, C.muted)
+
+    text(s, "技术储备：全球数据检索已经跑通", 0.88, 1.42, 4.85, 0.26, 15, C.ink, True)
+    picture_crop(s, IMG["og_text_search"], 0.86, 1.86, 4.90, 2.42)
+    text(s, "OpenGeoScope / EarthEmbeddingExplorer", 0.98, 4.45, 4.66, 0.18, 9, C.ink, True, PP_ALIGN.CENTER)
+    text(
+        s,
+        "基于 ESA PhiLab MajorTOM 数据集，支持自然语言、图像、坐标检索全球卫星影像；证明团队具备大规模嵌入检索与可视化系统能力。",
+        0.98,
+        4.77,
+        4.66,
+        0.46,
+        8,
+        C.body,
+        align=PP_ALIGN.CENTER,
+    )
+    picture_fit(s, IMG["og_embedding"], 1.08, 5.52, 2.08, 0.98)
+    rect(s, 3.42, 5.54, 2.05, 0.96, C.pale_blue, C.blue)
+    text(s, "约 24.9 万", 3.58, 5.68, 1.72, 0.20, 15, C.blue, True, PP_ALIGN.CENTER)
+    text(s, "全球卫星影像嵌入", 3.58, 6.06, 1.72, 0.14, 7, C.body, align=PP_ALIGN.CENTER)
+
+    line(s, 6.02, 1.40, 6.02, 6.45, C.line, 0.8)
+    text(s, "对标 AlphaEarth：玄女不是复刻，而是做中国场景的高频高分辨率底座", 6.28, 1.42, 5.95, 0.30, 13, C.ink, True)
+    rect(s, 6.28, 1.92, 1.20, 0.40, C.off, C.line)
+    rect(s, 7.48, 1.92, 2.22, 0.40, C.off, C.line)
+    rect(s, 9.70, 1.92, 2.70, 0.40, C.mint, C.green)
+    text(s, "维度", 6.42, 2.04, 0.92, 0.12, 7, C.muted, True, PP_ALIGN.CENTER)
+    text(s, "AlphaEarth", 7.60, 2.04, 1.98, 0.12, 7, C.muted, True, PP_ALIGN.CENTER)
+    text(s, "玄女底座", 9.84, 2.04, 2.42, 0.12, 7, C.green, True, PP_ALIGN.CENTER)
+    compare_row(s, "开放性", "模型不开源", "自研底座，可面向政企部署", 2.42)
+    compare_row(s, "数据体系", "全球公开多源数据", "加入中国高分/商业遥感数据", 3.02)
+    compare_row(s, "空间粒度", "10 米", "最高 0.5 米", 3.62, True)
+    compare_row(s, "时间粒度", "一年一景", "最快 11 天一个嵌入", 4.22, True)
+    compare_row(s, "变化检测", "通用表征可迁移", "实验中优于 AlphaEarth", 4.82, True)
+    compare_row(s, "目标识别", "数据规模领先", "当前仍需继续堆训练数据", 5.42)
+    text(s, "诚实判断：玄女在高频变化检测上更贴近中国政企业务，在目标识别等任务上仍需通过数据规模继续追赶。", 6.42, 6.12, 5.70, 0.26, 9, C.body, True, PP_ALIGN.CENTER)
+    claim(s, "AlphaEarth 证明方向，玄女把方向落到中国高分辨率、高频更新、可部署的业务场景。", 6.82, C.blue)
+
+    # 6. Commercial space window
+    s = prs.slides.add_slide(blank)
+    bg(s)
+    title(s, "06", "商业航天把数据推向爆发，遥感应用还卡在重流程")
     steps = [("制造", C.pale_blue, C.blue), ("发射", C.pale_blue, C.sky), ("组网", C.mint, C.green), ("下行", C.mint, C.green), ("处理", C.pale_amber, C.amber), ("应用", C.pale_purple, C.purple)]
     for i, (label, fill, color) in enumerate(steps):
         x = 0.92 + i * 1.88
@@ -537,10 +592,10 @@ def build() -> Presentation:
     text(s, "云遮挡与缺失模态", 8.14, 5.50, 3.20, 0.20, 9, C.body, True, PP_ALIGN.CENTER)
     claim(s, "窗口期的核心机会：更低成本、更快交付、更高频更新。", 6.22, C.ink)
 
-    # 6. Three industry frictions
+    # 7. Three industry frictions
     s = prs.slides.add_slide(blank)
     bg(s)
-    title(s, "06", "遥感应用没有大规模爆发：用不起、用不好、用不快")
+    title(s, "07", "遥感应用没有大规模爆发：用不起、用不好、用不快")
     for i, (head, body, color, fill) in enumerate(
         [
             ("用不起", "项目制、专家制、标注贵，任务越多成本越高。", C.blue, C.pale_blue),
@@ -572,10 +627,10 @@ def build() -> Presentation:
     picture_crop(s, IMG["land"], 8.28, 4.66, 3.58, 1.04)
     claim(s, "玄女要做的，是把一次性项目流程变成可复用的地理智能流水线。", 6.18, C.ink)
 
-    # 7. Angel users
+    # 8. Angel users
     s = prs.slides.add_slide(blank)
     bg(s)
-    title(s, "07", "天使用户：政府、企业、高校，痛点都指向同一件事")
+    title(s, "08", "天使用户：政府、企业、高校，痛点都指向同一件事")
     users = [
         ("gov", "政府部门", "变化图斑太多", "需要证据链、优先级、核查闭环", C.pale_blue, C.blue),
         ("biz", "遥感企业", "项目越多越重", "需要复用底座、少样本适配、降低人力", C.mint, C.green),
@@ -590,10 +645,10 @@ def build() -> Presentation:
         text(s, value, x + 0.34, 5.48, 2.86, 0.34, 9, C.body, align=PP_ALIGN.CENTER)
     claim(s, "三类用户表面不同，本质都是：不要每个任务重做一次遥感工程。", 6.23, C.ink)
 
-    # 8. HMW and token analogy
+    # 9. HMW and token analogy
     s = prs.slides.add_slide(blank)
     bg(s)
-    title(s, "08", "我们的答案：把地球观测转成地理智能底座")
+    title(s, "09", "我们的答案：把地球观测转成地理智能底座")
     text(
         s,
         "我们如何把爆发式增长的地球观测数据转化为可复用的地理智能底座，\n让不同用户不再为每个遥感任务重复采购、标注、建模和计算？",
