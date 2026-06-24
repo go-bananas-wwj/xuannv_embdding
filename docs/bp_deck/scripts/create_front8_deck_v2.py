@@ -66,6 +66,7 @@ IMG = {
     "persona_gov": ASSETS / "persona_government_v2.png",
     "persona_biz": ASSETS / "persona_enterprise_v2.png",
     "persona_uni": ASSETS / "persona_university_v2.png",
+    "same_land_models": ASSETS / "same_land_multi_satellite_models.png",
     "downstream_harbin_embedding": PPT_MEDIA / "image4.png",
     "downstream_harbin_task": PPT_MEDIA / "image5.png",
     "downstream_harbin_cover": PPT_MEDIA / "image7.png",
@@ -397,24 +398,8 @@ def build() -> Presentation:
     # 3. Same place, multiple observations
     s = prs.slides.add_slide(blank)
     bg(s)
-    title(s, "03", "卫星越多，理解地球的方式反而越碎片化")
-    rect(s, 0.92, 1.30, 6.10, 4.62, C.white, C.line)
-    text(s, "同一地理位置", 3.03, 1.58, 1.72, 0.22, 11, C.ink, True, PP_ALIGN.CENTER)
-    pin = slide_pin = slide = s
-    center = slide_pin.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.OVAL, Inches(3.28), Inches(2.12), Inches(1.28), Inches(1.28))
-    center.fill.solid()
-    center.fill.fore_color.rgb = C.mint
-    center.line.color.rgb = C.green
-    text(s, "同一\n地块", 3.38, 2.38, 1.08, 0.34, 12, C.green, True, PP_ALIGN.CENTER)
-    sources = [
-        ("哨兵二号", "s2", 1.20, 1.80),
-        ("高分光学", "s2hr", 5.02, 1.80),
-        ("雷达卫星", "s1", 1.20, 4.15),
-        ("陆地卫星", "landsat", 5.02, 4.15),
-    ]
-    for label, key, x, y in sources:
-        image_card(s, label, IMG[key], x, y, 1.45, 1.20, C.line)
-        arrow(s, x + 0.74, y + 0.60, 3.92, 2.76, C.line, 1.1)
+    title(s, "03", "我们为什么要做这样一件事情")
+    picture_fit(s, IMG["same_land_models"], 0.72, 1.22, 6.35, 4.86)
     pain_row(s, icon_loop, "重复造轮子", "每个任务都重新找数据、清洗、标注、训练。", 7.62, 1.54, C.blue, C.pale_blue)
     pain_row(s, icon_database, "数据孤岛", "光学、雷达、高程、气象各自成体系，难复用。", 7.62, 2.88, C.green, C.mint)
     pain_row(s, icon_layers, "结果难复用", "一个项目一个结果，难沉淀成下次可调用的资产。", 7.62, 4.22, C.purple, C.pale_purple)
