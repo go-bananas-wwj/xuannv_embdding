@@ -18,8 +18,8 @@ from pptx.util import Inches, Pt
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ASSET_DIR = ROOT / "docs" / "presentation_assets"
-OUT_DIR = ROOT / "docs" / "presentations"
+ASSET_DIR = ROOT / "assets"
+OUT_DIR = ROOT / "outputs"
 OUT_PATH = OUT_DIR / "玄女科技BP_投资人版_v0.4_22页美化版.pptx"
 
 COVER = ASSET_DIR / "geo_embedding_cover_pastel.png"
