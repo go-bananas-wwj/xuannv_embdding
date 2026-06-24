@@ -83,6 +83,7 @@ IMG = {
     "aef_crop": E4_AEF / "slide18_img14_6da1eb9d.png",
     "og_text_search": OPENGEOSCOPE / "Text_Search.jpg",
     "og_embedding": OPENGEOSCOPE / "embedding.png",
+    "space_embedding_gap": ASSETS / "generated" / "commercial_space_embedding_gap.png",
 }
 
 
@@ -426,6 +427,24 @@ def difference_card(slide, head: str, aef: str, xuannv: str, x: float, y: float,
     rect(slide, x + 1.38, y + 0.72, 0.02, 0.42, fill, fill, rounded=False)
 
 
+def mini_annotate_panel(slide, x: float, y: float) -> None:
+    rect(slide, x, y, 4.15, 1.18, C.white, C.line)
+    text(slide, "玄女已实现", x + 0.16, y + 0.14, 0.92, 0.14, 8, C.green, True)
+    text(slide, "少量标注 → 自定义任务头 → 下游结果", x + 1.12, y + 0.14, 2.78, 0.14, 8, C.ink, True, PP_ALIGN.RIGHT)
+    # annotation canvas
+    picture_crop(slide, IMG["construction"], x + 0.18, y + 0.42, 0.86, 0.52)
+    for i, color in enumerate([C.green, C.blue, C.amber]):
+        dot = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.OVAL, Inches(x + 0.30 + i * 0.18), Inches(y + 0.56 + (i % 2) * 0.10), Inches(0.07), Inches(0.07))
+        dot.fill.solid()
+        dot.fill.fore_color.rgb = color
+        dot.line.fill.background()
+    arrow(slide, x + 1.18, y + 0.68, x + 1.54, y + 0.68, C.line, 1.0)
+    rect(slide, x + 1.64, y + 0.44, 0.86, 0.48, C.mint, C.green)
+    text(slide, "任务头", x + 1.72, y + 0.58, 0.70, 0.12, 8, C.green, True, PP_ALIGN.CENTER)
+    arrow(slide, x + 2.62, y + 0.68, x + 2.98, y + 0.68, C.line, 1.0)
+    picture_crop(slide, IMG["land"], x + 3.08, y + 0.42, 0.86, 0.52)
+
+
 def build() -> Presentation:
     prs = Presentation()
     prs.slide_width = Inches(13.333)
@@ -576,24 +595,28 @@ def build() -> Presentation:
     # 6. Commercial space window
     s = prs.slides.add_slide(blank)
     bg(s)
-    title(s, "06", "商业航天把数据推向爆发，遥感应用还卡在重流程")
-    steps = [("制造", C.pale_blue, C.blue), ("发射", C.pale_blue, C.sky), ("组网", C.mint, C.green), ("下行", C.mint, C.green), ("处理", C.pale_amber, C.amber), ("应用", C.pale_purple, C.purple)]
-    for i, (label, fill, color) in enumerate(steps):
-        x = 0.92 + i * 1.88
-        rect(s, x, 1.78, 1.26, 0.72, fill, color)
-        text(s, label, x, 1.95, 1.26, 0.20, 11, color, True, PP_ALIGN.CENTER)
-        if i < len(steps) - 1:
-            arrow(s, x + 1.28, 2.14, x + 1.72, 2.14, C.line, 1.1)
-    rect(s, 8.48, 2.84, 3.58, 0.96, RGBColor(255, 247, 237), C.amber)
-    text(s, "真正卡住商业化的是应用层", 8.78, 3.05, 2.98, 0.22, 12, C.amber, True, PP_ALIGN.CENTER)
-    text(s, "处理、标注、建模、核查仍重度项目制", 8.78, 3.42, 2.98, 0.20, 9, C.body, True, PP_ALIGN.CENTER)
-    picture_crop(s, IMG["migration"], 0.92, 3.18, 3.15, 2.08)
-    picture_crop(s, IMG["dynamic"], 4.30, 3.18, 3.15, 2.08)
-    picture_crop(s, IMG["cloud"], 8.14, 4.26, 3.20, 1.08)
-    text(s, "新区级连续监测", 0.92, 5.42, 3.15, 0.20, 9, C.body, True, PP_ALIGN.CENTER)
-    text(s, "多任务结果复用", 4.30, 5.42, 3.15, 0.20, 9, C.body, True, PP_ALIGN.CENTER)
-    text(s, "云遮挡与缺失模态", 8.14, 5.50, 3.20, 0.20, 9, C.body, True, PP_ALIGN.CENTER)
-    claim(s, "窗口期的核心机会：更低成本、更快交付、更高频更新。", 6.22, C.ink)
+    title(s, "06", "遥感应用正在迎来它的 GPT 时刻")
+    text(s, "商业航天快速发展打开数据供给，应用层需要新的基础设施。", 1.04, 1.02, 10.70, 0.24, 10, C.muted)
+    picture_fit(s, IMG["space_embedding_gap"], 0.45, 1.28, 12.42, 3.62)
+    rect(s, 0.96, 1.50, 2.42, 0.50, C.pale_blue, C.blue)
+    text(s, "火箭 / 卫星 / 载荷快速成熟", 1.12, 1.64, 2.10, 0.14, 8, C.blue, True, PP_ALIGN.CENTER)
+    rect(s, 4.18, 1.50, 2.42, 0.50, C.mint, C.green)
+    text(s, "遥感数据开始井喷", 4.34, 1.64, 2.10, 0.14, 8, C.green, True, PP_ALIGN.CENTER)
+    rect(s, 7.32, 1.50, 2.42, 0.50, C.pale_purple, C.purple)
+    text(s, "地理嵌入成为地理 token", 7.48, 1.64, 2.10, 0.14, 8, C.purple, True, PP_ALIGN.CENTER)
+    rect(s, 10.16, 1.50, 2.20, 0.50, RGBColor(255, 251, 235), C.amber)
+    text(s, "应用层才能规模化", 10.32, 1.64, 1.88, 0.14, 8, C.amber, True, PP_ALIGN.CENTER)
+
+    rect(s, 0.88, 5.08, 5.54, 1.18, C.white, C.line)
+    text(s, "为什么像 GPT？", 1.10, 5.26, 1.48, 0.18, 12, C.ink, True)
+    text(s, "文本智能", 1.12, 5.72, 0.88, 0.14, 8, C.blue, True)
+    text(s, "字符 / 词 → token → 理解、检索、生成", 2.10, 5.70, 3.86, 0.16, 9, C.body)
+    text(s, "地球智能", 1.12, 6.08, 0.88, 0.14, 8, C.green, True)
+    text(s, "同一地物的多源多时相观测 → 地理嵌入 → 监测、分类、预测、问答", 2.10, 6.06, 3.86, 0.16, 8, C.body)
+
+    mini_annotate_panel(s, 7.32, 5.08)
+    text(s, "通过少量标注训练自定义下游任务头，让嵌入真正进入业务流程。", 7.44, 6.38, 3.92, 0.18, 8, C.body, True, PP_ALIGN.CENTER)
+    claim(s, "当遥感数据像文本一样持续增长，地理嵌入就是遥感应用规模化的入口。", 6.82, C.blue)
 
     # 7. Three industry frictions
     s = prs.slides.add_slide(blank)
