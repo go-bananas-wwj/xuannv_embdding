@@ -436,11 +436,13 @@ def build() -> Presentation:
     s = prs.slides.add_slide(blank)
     bg(s)
     title(s, "03", "我们为什么要做这样一件事情")
-    picture_fit(s, IMG["same_land_models"], 0.72, 1.22, 6.35, 4.86)
+    picture_fit(s, IMG["same_land_models"], 0.72, 1.22, 6.35, 4.62)
+    text(s, "不同地理模型都在对同一地物的多源图像重复编码、解码，造成大量算力与工程成本浪费。", 0.98, 5.94, 5.82, 0.22, 8, C.muted, align=PP_ALIGN.CENTER)
+    line(s, 7.18, 1.42, 7.18, 5.76, C.line, 0.9)
     insight_row(s, "repeat", "同一批观测，被反复训练", "气象、分割、变化检测模型，各自重建底层特征。", 7.55, 1.55, C.blue, C.pale_blue)
     insight_row(s, "compute", "成本耗在重复编码", "数据处理、标注、训练无法复用，任务越多成本越高。", 7.55, 3.02, C.green, C.mint)
     insight_row(s, "embedding", "缺少通用嵌入层", "行业需要统一地理表征，连接多源观测与下游应用。", 7.55, 4.49, C.purple, C.pale_purple)
-    claim(s, "从每个任务重训，走向一次嵌入、多任务复用。", 6.22, C.ink)
+    claim(s, "从每个任务重训，走向一次嵌入、多任务复用。", 6.22, C.blue)
 
     # 4. Benchmark and timing
     s = prs.slides.add_slide(blank)
