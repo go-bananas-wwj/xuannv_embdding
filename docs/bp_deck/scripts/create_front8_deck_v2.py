@@ -268,8 +268,8 @@ def build() -> Presentation:
     picture(s, IMG["cover"], 0, 0, 13.333, 7.5)
     text(s, "玄女科技", 0.82, 1.42, 4.5, 0.42, 24, C.ink, True)
     text(s, "用地理嵌入\n赋能遥感智能应用", 0.82, 2.08, 5.45, 1.15, 31, C.ink, True)
-    text(s, "地球观测，一次表征，多任务复用", 0.86, 3.64, 5.4, 0.32, 15, C.body)
-    text(s, "让中国拥有自己的地理智能底座", 0.86, 4.10, 5.4, 0.30, 13, C.blue, True)
+    text(s, "地球观测 - 一次表征 - 多任务复用", 0.86, 3.64, 5.4, 0.32, 15, C.body)
+    text(s, "做中国的遥感数据通用嵌入底座", 0.86, 4.10, 5.4, 0.30, 13, C.blue, True)
 
     # 2. Company intro
     s = prs.slides.add_slide(blank)
