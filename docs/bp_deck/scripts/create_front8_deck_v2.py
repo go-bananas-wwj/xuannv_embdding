@@ -22,6 +22,7 @@ ASSETS = ROOT / "assets"
 USER = ASSETS / "user_materials"
 PPT_MEDIA = USER / "harbin_yajiang_ppt_media"
 AEF = ASSETS / "aef_references"
+E4_AEF = USER / "e4_alphaearth_media"
 CACHE = ASSETS / "render_cache"
 OUT = ROOT / "outputs" / "玄女科技BP_前8页视觉返工_v0.2.pptx"
 
@@ -75,6 +76,10 @@ IMG = {
     "aef_mosaic": AEF / "deepmind_aef_hero.jpg",
     "aef_vector": AEF / "deepmind_aef_4.jpg",
     "aef_carto": AEF / "carto_aef_cover.webp",
+    "aef_global_embedding": E4_AEF / "slide04_img10_24c66b14.png",
+    "aef_change": E4_AEF / "slide09_img04_f5b957e4.png",
+    "aef_target": E4_AEF / "slide11_img01_ea269f1d.png",
+    "aef_crop": E4_AEF / "slide18_img14_6da1eb9d.png",
 }
 
 
@@ -385,6 +390,18 @@ def metric(slide, number: str, label: str, x, y, w, color, fill) -> None:
     text(slide, label, x + 0.16, y + 0.58, w - 0.32, 0.22, 8, C.body, align=PP_ALIGN.CENTER)
 
 
+def small_metric(slide, number: str, label: str, x, y, color, fill) -> None:
+    rect(slide, x, y, 1.18, 0.62, fill, color)
+    text(slide, number, x + 0.08, y + 0.10, 1.02, 0.18, 11, color, True, PP_ALIGN.CENTER)
+    text(slide, label, x + 0.08, y + 0.36, 1.02, 0.14, 6, C.body, align=PP_ALIGN.CENTER)
+
+
+def aef_task(slide, label: str, path: Path, x, y) -> None:
+    rect(slide, x, y, 3.58, 1.20, C.white, C.line)
+    picture_crop(slide, path, x + 0.06, y + 0.06, 3.46, 0.84)
+    text(slide, label, x + 0.10, y + 0.97, 3.38, 0.12, 7, C.body, True, PP_ALIGN.CENTER)
+
+
 def build() -> Presentation:
     prs = Presentation()
     prs.slide_width = Inches(13.333)
@@ -465,22 +482,38 @@ def build() -> Presentation:
     # 4. Benchmark and timing
     s = prs.slides.add_slide(blank)
     bg(s)
-    title(s, "04", "全球已验证地理嵌入方向，中国需要本土底座")
-    text(s, "公开案例显示，遥感正在从“影像资产”升级为“机器可调用的地球表征”。", 1.04, 1.02, 10.8, 0.24, 10, C.muted)
-    evidence_panel(s, IMG["aef_mosaic"], "AlphaEarth：地球表征成为新入口", "来源：Google DeepMind", 0.86, 1.48, 3.05, 1.78)
-    evidence_panel(s, IMG["aef_vector"], "10 米像素 / 64 维嵌入向量", "来源：Google DeepMind", 4.10, 1.48, 2.55, 1.78)
-    evidence_panel(s, IMG["aef_carto"], "CARTO：嵌入进入空间工作流", "来源：CARTO", 0.86, 3.55, 5.79, 1.76)
-    metric(s, "1.4 万亿+", "年度嵌入足迹", 0.95, 5.66, 1.55, C.blue, C.pale_blue)
-    metric(s, "16 倍", "更低存储开销", 2.70, 5.66, 1.55, C.green, C.mint)
-    metric(s, "2017 至 2024", "连续年度数据", 4.45, 5.66, 1.72, C.purple, C.pale_purple)
-    line(s, 6.92, 1.42, 6.92, 5.82, C.line, 0.9)
-    text(s, "玄女站在哪一层？", 7.34, 1.46, 4.50, 0.26, 15, C.ink, True)
-    positioning_row(s, "影像数据层", "Maxar / Planet", "解决“看见地球”", 7.28, 2.02, 4.70, C.off, C.line)
-    positioning_row(s, "地理平台层", "Esri / 谷歌地球引擎 / CARTO", "解决管理、分析与调用", 7.28, 2.88, 4.70, C.off, C.line)
-    positioning_row(s, "嵌入趋势层", "谷歌 AlphaEarth", "证明地球表征是下一代入口", 7.28, 3.74, 4.70, C.pale_blue, C.blue)
-    positioning_row(s, "本土底座层", "玄女科技", "做中国遥感数据通用嵌入底座", 7.28, 4.60, 4.70, C.mint, C.green, True)
-    text(s, "中国路径：国产高分与雷达数据、本地化算力部署、政企遥感业务流程。", 7.38, 5.52, 4.42, 0.24, 9, C.body, True, PP_ALIGN.CENTER)
-    claim(s, "美国已验证地理智能路径，中国需要自己的遥感数据通用嵌入底座。", 6.45, C.blue)
+    title(s, "04", "地理嵌入方向，我们走在前列")
+    text(s, "AlphaEarth Foundations 已经把遥感从“影像处理”推向“统一地球表征”。", 1.04, 1.02, 10.8, 0.24, 10, C.muted)
+
+    picture_crop(s, IMG["aef_global_embedding"], 0.86, 1.38, 6.08, 3.28)
+    text(s, "AlphaEarth 全球嵌入可视化：把多源地球观测压缩为可计算的语义空间。", 0.98, 4.82, 5.84, 0.18, 8, C.body, True, PP_ALIGN.CENTER)
+
+    line(s, 7.18, 1.40, 7.18, 4.82, C.line, 0.8)
+    text(s, "最前列的 AlphaEarth 证明了什么", 7.48, 1.42, 4.45, 0.26, 15, C.ink, True)
+    text(
+        s,
+        "不是再训练一个单任务模型，而是把光学、雷达、Landsat、地形与生态观测融合成年度像素级嵌入。",
+        7.48,
+        1.86,
+        4.35,
+        0.48,
+        9,
+        C.body,
+    )
+    text(s, "1. 数据形态：从多源影像变成 64 维向量", 7.48, 2.60, 4.26, 0.20, 9, C.ink, True)
+    text(s, "2. 使用方式：从专家流程变成直接检索、分类、回归", 7.48, 3.02, 4.26, 0.20, 9, C.ink, True)
+    text(s, "3. 行业意义：地理嵌入正在成为遥感应用的新入口", 7.48, 3.44, 4.26, 0.20, 9, C.ink, True)
+    small_metric(s, "10 m", "像素级表征", 7.48, 4.10, C.blue, C.pale_blue)
+    small_metric(s, "64 维", "嵌入向量", 8.70, 4.10, C.green, C.mint)
+    small_metric(s, "1.4 万亿+", "年度足迹", 9.92, 4.10, C.purple, C.pale_purple)
+    small_metric(s, "2017-2024", "年度数据", 11.14, 4.10, C.amber, C.pale_amber)
+    text(s, "数据来源：Google Earth Engine Satellite Embedding 数据集", 7.52, 4.82, 4.36, 0.12, 5, C.muted)
+
+    text(s, "一个嵌入，已经覆盖多类下游任务", 0.90, 5.14, 5.00, 0.18, 10, C.ink, True)
+    aef_task(s, "相似性识别 / 变化检测", IMG["aef_change"], 0.86, 5.48)
+    aef_task(s, "目标检索 / 光伏识别", IMG["aef_target"], 4.88, 5.48)
+    aef_task(s, "土地分类 / 农用地识别", IMG["aef_crop"], 8.90, 5.48)
+    claim(s, "AlphaEarth 验证了方向：地理嵌入会成为遥感应用的基础层。", 6.82, C.blue)
 
     # 5. Commercial space window
     s = prs.slides.add_slide(blank)
