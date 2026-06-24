@@ -570,6 +570,7 @@ def build() -> Presentation:
     difference_card(s, "业务部署", "模型不开源", "可面向政企部署", 9.48, 3.76, C.green, C.mint)
     rect(s, 6.40, 5.72, 5.76, 0.58, RGBColor(255, 251, 235), C.amber)
     text(s, "阶段性结论：变化检测实验优于 AlphaEarth；目标识别仍需继续提升训练数据规模。", 6.70, 5.90, 5.16, 0.18, 10, C.amber, True, PP_ALIGN.CENTER)
+    text(s, "GitHub: github.com/OpenGeoScope/EarthEmbeddingExplorer", 8.02, 6.40, 4.12, 0.14, 6, C.blue, True, PP_ALIGN.RIGHT)
     claim(s, "AlphaEarth 证明方向，玄女把方向落到中国高分辨率、高频更新、可部署的业务场景。", 6.82, C.blue)
 
     # 6. Commercial space window
