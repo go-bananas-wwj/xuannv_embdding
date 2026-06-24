@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "assets"
 USER = ASSETS / "user_materials"
 PPT_MEDIA = USER / "harbin_yajiang_ppt_media"
+AEF = ASSETS / "aef_references"
 CACHE = ASSETS / "render_cache"
 OUT = ROOT / "outputs" / "玄女科技BP_前8页视觉返工_v0.2.pptx"
 
@@ -71,6 +72,9 @@ IMG = {
     "downstream_harbin_task": PPT_MEDIA / "image5.png",
     "downstream_harbin_cover": PPT_MEDIA / "image7.png",
     "downstream_harbin_landuse": PPT_MEDIA / "image8.png",
+    "aef_mosaic": AEF / "deepmind_aef_hero.jpg",
+    "aef_vector": AEF / "deepmind_aef_4.jpg",
+    "aef_carto": AEF / "carto_aef_cover.webp",
 }
 
 
@@ -361,6 +365,20 @@ def task_tile(slide, label: str, path: Path | None, x, y, w=1.28, h=0.96) -> Non
         text(slide, label, x, y + h + 0.08, w, 0.16, 7, C.body, True, PP_ALIGN.CENTER)
 
 
+def evidence_panel(slide, path: Path, heading: str, source: str, x, y, w, h) -> None:
+    rect(slide, x, y, w, h, C.white, C.line)
+    picture_crop(slide, path, x + 0.06, y + 0.06, w - 0.12, h - 0.44)
+    text(slide, heading, x + 0.12, y + h - 0.32, w - 0.24, 0.16, 8, C.ink, True)
+    text(slide, source, x + 0.12, y + h - 0.13, w - 0.24, 0.10, 5, C.muted)
+
+
+def positioning_row(slide, layer: str, players: str, role: str, x, y, w, fill, line_color, highlight=False) -> None:
+    rect(slide, x, y, w, 0.70, fill, line_color)
+    text(slide, layer, x + 0.18, y + 0.13, 1.45, 0.18, 9, line_color if highlight else C.ink, True)
+    text(slide, players, x + 1.70, y + 0.10, 2.24, 0.20, 8, C.body, True)
+    text(slide, role, x + 4.02, y + 0.11, w - 4.20, 0.24, 8, C.body)
+
+
 def metric(slide, number: str, label: str, x, y, w, color, fill) -> None:
     rect(slide, x, y, w, 1.0, fill, color)
     text(slide, number, x + 0.18, y + 0.13, w - 0.36, 0.30, 18, color, True, PP_ALIGN.CENTER)
@@ -447,20 +465,22 @@ def build() -> Presentation:
     # 4. Benchmark and timing
     s = prs.slides.add_slide(blank)
     bg(s)
-    title(s, "04", "谷歌已经验证地理嵌入方向，中国需要本土版本")
-    rect(s, 0.94, 1.30, 5.55, 4.65, C.off, C.line)
-    text(s, "谷歌卫星嵌入", 1.26, 1.72, 4.70, 0.28, 16, C.ink, True, PP_ALIGN.CENTER)
-    metric(s, "10 米", "全球年度嵌入", 1.30, 2.38, 1.28, C.blue, C.pale_blue)
-    metric(s, "64 维", "机器可调用表征", 2.80, 2.38, 1.28, C.green, C.mint)
-    metric(s, "八年", "连续年度覆盖", 4.30, 2.38, 1.38, C.purple, C.pale_purple)
-    text(s, "海外头部公司已将卫星影像从图像资产升级为机器可调用的基础表征。", 1.26, 4.05, 4.80, 0.42, 13, C.body, True, PP_ALIGN.CENTER)
-    rect(s, 6.84, 1.30, 5.55, 4.65, C.white, C.line)
-    text(s, "玄女的中国路径", 7.16, 1.72, 4.70, 0.28, 16, C.ink, True, PP_ALIGN.CENTER)
-    metric(s, "11 天", "支持高频巡查", 7.20, 2.38, 1.28, C.sky, C.pale_blue)
-    metric(s, "高分", "看清城市小目标", 8.70, 2.38, 1.28, C.green, C.mint)
-    metric(s, "国产算力", "可进入本土部署", 10.20, 2.38, 1.38, C.purple, C.pale_purple)
-    text(s, "中国客户需要本土数据、本土算力、本土业务流程里的地理智能底座。", 7.16, 4.05, 4.80, 0.46, 13, C.body, True, PP_ALIGN.CENTER)
-    claim(s, "商业航天解决“看见地球”，地理嵌入解决“理解地球”。", 6.25, C.blue)
+    title(s, "04", "全球已验证地理嵌入方向，中国需要本土底座")
+    text(s, "公开案例显示，遥感正在从“影像资产”升级为“机器可调用的地球表征”。", 1.04, 1.02, 10.8, 0.24, 10, C.muted)
+    evidence_panel(s, IMG["aef_mosaic"], "AlphaEarth：地球表征成为新入口", "来源：Google DeepMind", 0.86, 1.48, 3.05, 1.78)
+    evidence_panel(s, IMG["aef_vector"], "10 米像素 / 64 维嵌入向量", "来源：Google DeepMind", 4.10, 1.48, 2.55, 1.78)
+    evidence_panel(s, IMG["aef_carto"], "CARTO：嵌入进入空间工作流", "来源：CARTO", 0.86, 3.55, 5.79, 1.76)
+    metric(s, "1.4 万亿+", "年度嵌入足迹", 0.95, 5.66, 1.55, C.blue, C.pale_blue)
+    metric(s, "16 倍", "更低存储开销", 2.70, 5.66, 1.55, C.green, C.mint)
+    metric(s, "2017 至 2024", "连续年度数据", 4.45, 5.66, 1.72, C.purple, C.pale_purple)
+    line(s, 6.92, 1.42, 6.92, 5.82, C.line, 0.9)
+    text(s, "玄女站在哪一层？", 7.34, 1.46, 4.50, 0.26, 15, C.ink, True)
+    positioning_row(s, "影像数据层", "Maxar / Planet", "解决“看见地球”", 7.28, 2.02, 4.70, C.off, C.line)
+    positioning_row(s, "地理平台层", "Esri / 谷歌地球引擎 / CARTO", "解决管理、分析与调用", 7.28, 2.88, 4.70, C.off, C.line)
+    positioning_row(s, "嵌入趋势层", "谷歌 AlphaEarth", "证明地球表征是下一代入口", 7.28, 3.74, 4.70, C.pale_blue, C.blue)
+    positioning_row(s, "本土底座层", "玄女科技", "做中国遥感数据通用嵌入底座", 7.28, 4.60, 4.70, C.mint, C.green, True)
+    text(s, "中国路径：国产高分与雷达数据、本地化算力部署、政企遥感业务流程。", 7.38, 5.52, 4.42, 0.24, 9, C.body, True, PP_ALIGN.CENTER)
+    claim(s, "美国已验证地理智能路径，中国需要自己的遥感数据通用嵌入底座。", 6.45, C.blue)
 
     # 5. Commercial space window
     s = prs.slides.add_slide(blank)
