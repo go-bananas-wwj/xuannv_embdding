@@ -723,20 +723,53 @@ def build() -> Presentation:
     # 8. Angel users
     s = prs.slides.add_slide(blank)
     bg(s)
-    title(s, "08", "天使用户：政府、企业、高校，痛点都指向同一件事")
-    users = [
-        ("gov", "政府部门", "变化图斑太多", "需要证据链、优先级、核查闭环", C.pale_blue, C.blue),
-        ("biz", "遥感企业", "项目越多越重", "需要复用底座、少样本适配、降低人力", C.mint, C.green),
-        ("edu", "高校团队", "数据工程太重", "需要现成嵌入、预标注、难例检索", C.pale_purple, C.purple),
+    title(s, "08", "天使用户：三类人，三个高频场景")
+    text(s, "政府、企业和高校的需求表面不同，底层都指向同一件事：减少重复遥感工程，快速得到可核查结果。", 1.04, 1.02, 10.70, 0.24, 10, C.muted)
+    personas = [
+        (
+            IMG["persona_gov_new"],
+            "区县治理负责人",
+            "政府端",
+            "变化图斑多，核查链条长",
+            "建设用地变化、农用地占用、违法施工巡查",
+            "自动生成候选图斑、变化证据和核查优先级",
+            C.blue,
+            C.pale_blue,
+        ),
+        (
+            IMG["persona_biz_new"],
+            "遥感企业项目经理",
+            "B 端",
+            "项目越多，重复工程越重",
+            "为不同客户交付分类、分割、检测、变化监测",
+            "复用区域嵌入，少量标注适配任务头",
+            C.green,
+            C.mint,
+        ),
+        (
+            IMG["persona_uni_new"],
+            "高校遥感研究者",
+            "学校端",
+            "数据工程消耗研究时间",
+            "构建样本、做实验、验证模型、发表论文",
+            "提供现成嵌入、难例检索和预标注底座",
+            C.purple,
+            C.pale_purple,
+        ),
     ]
-    for i, (role, name, pain, value, fill, color) in enumerate(users):
-        x = 0.90 + i * 4.16
-        path = {"gov": IMG["persona_gov"], "biz": IMG["persona_biz"], "edu": IMG["persona_uni"]}[role]
-        persona_card(s, path, x, 1.40, 3.55, 3.0, fill, color)
-        text(s, name, x + 0.16, 4.58, 3.23, 0.24, 16, C.ink, True, PP_ALIGN.CENTER)
-        text(s, pain, x + 0.22, 5.08, 3.10, 0.20, 11, color, True, PP_ALIGN.CENTER)
-        text(s, value, x + 0.34, 5.48, 2.86, 0.34, 9, C.body, align=PP_ALIGN.CENTER)
-    claim(s, "三类用户表面不同，本质都是：不要每个任务重做一次遥感工程。", 6.23, C.ink)
+    for i, (path, role, tag, pain, task, help_text, color, fill) in enumerate(personas):
+        x = 0.78 + i * 4.18
+        picture_crop(s, path, x + 0.28, 1.42, 2.86, 2.34)
+        text(s, tag, x + 0.32, 3.92, 0.78, 0.18, 8, color, True, PP_ALIGN.CENTER)
+        line(s, x + 1.18, 4.02, x + 3.12, 4.02, color, 1.0)
+        text(s, role, x + 0.22, 4.18, 3.05, 0.24, 15, C.ink, True, PP_ALIGN.CENTER)
+        text(s, "痛点", x + 0.28, 4.72, 0.54, 0.14, 7, color, True, PP_ALIGN.CENTER)
+        text(s, pain, x + 0.92, 4.68, 2.24, 0.22, 9, C.body, True, PP_ALIGN.CENTER)
+        text(s, "任务", x + 0.28, 5.20, 0.54, 0.14, 7, color, True, PP_ALIGN.CENTER)
+        text(s, task, x + 0.92, 5.12, 2.24, 0.30, 8, C.body, align=PP_ALIGN.CENTER)
+        text(s, "玄女", x + 0.28, 5.78, 0.54, 0.14, 7, color, True, PP_ALIGN.CENTER)
+        text(s, help_text, x + 0.92, 5.70, 2.24, 0.30, 8, color, True, PP_ALIGN.CENTER)
+    claim(s, "共同需求：不再为每个遥感任务重新组织数据、标注和训练。", 6.36, C.blue)
 
     # 9. HMW and token analogy
     s = prs.slides.add_slide(blank)
