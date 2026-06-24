@@ -20,13 +20,24 @@ from pptx.util import Inches, Pt
 ROOT = Path(__file__).resolve().parents[1]
 ASSET_DIR = ROOT / "docs" / "presentation_assets"
 OUT_DIR = ROOT / "docs" / "presentations"
-OUT_PATH = OUT_DIR / "玄女科技BP_投资人版_v0.3_22页.pptx"
+OUT_PATH = OUT_DIR / "玄女科技BP_投资人版_v0.4_22页美化版.pptx"
 
 COVER = ASSET_DIR / "geo_embedding_cover_pastel.png"
 SPACE = ASSET_DIR / "space_data_to_intelligence.png"
 GOV = ASSET_DIR / "government_change_review.png"
 TEAM_WORK = ASSET_DIR / "remote_sensing_team_workflow.png"
 LAB = ASSET_DIR / "university_research_lab.png"
+OLD = ASSET_DIR / "old_bp_media"
+OLD_EARTH = OLD / "image1.png"
+OLD_OPTICAL = OLD / "image15.jpeg"
+OLD_SAR = OLD / "image16.png"
+OLD_EMBED = OLD / "image17.png"
+OLD_LANDSLIDE = OLD / "image18.png"
+OLD_STATION = OLD / "image28.png"
+OLD_TEAM_1 = OLD / "image30.png"
+OLD_TEAM_2 = OLD / "image31.jpeg"
+OLD_TEAM_3 = OLD / "image32.png"
+OLD_TEAM_4 = OLD / "image33.png"
 VIS = Path(
     "/data/xuannv_embedding/outputs/downstream/visualizations/"
     "harbin_stage2_v1_fold0/patch_000021_visualization.png"
@@ -114,7 +125,7 @@ def title(slide, page: int, heading: str, sub: str = "") -> None:
 
 
 def footer(slide, page: int) -> None:
-    text(slide, "玄女科技商业计划书 v0.3｜按 22 页内容稿重制", 0.72, 7.14, 6.2, 0.20, 7, C.muted)
+    text(slide, "玄女科技商业计划书 v0.4｜22 页内容稿美化版", 0.72, 7.14, 6.2, 0.20, 7, C.muted)
     text(slide, f"{page:02d}", 12.05, 7.12, 0.5, 0.20, 8, C.muted, align=PP_ALIGN.RIGHT)
 
 
@@ -163,6 +174,89 @@ def picture(slide, path: Path, x, y, w, h):
         text(slide, "素材待补", x, y + h / 2 - 0.12, w, 0.24, 11, C.muted, True, PP_ALIGN.CENTER)
 
 
+def line(slide, x1, y1, x2, y2, color=C.line, width=1.2):
+    shp = slide.shapes.add_connector(1, Inches(x1), Inches(y1), Inches(x2), Inches(y2))
+    shp.line.color.rgb = color
+    shp.line.width = Pt(width)
+    return shp
+
+
+def bar_chart(slide, labels: list[str], values: list[float], x, y, w, h, max_value=None, colors=None, suffix=""):
+    max_v = max_value or max(values)
+    colors = colors or [C.green, C.blue, C.lavender, C.sand]
+    line(slide, x, y + h, x + w, y + h, C.line, 1.0)
+    gap = w / (len(values) * 2 + 1)
+    bw = gap
+    for i, (lab, val) in enumerate(zip(labels, values)):
+        bx = x + gap + i * gap * 2
+        bh = h * (val / max_v)
+        rect(slide, bx, y + h - bh, bw, bh, colors[i % len(colors)], colors[i % len(colors)], rounded=False)
+        text(slide, f"{val:g}{suffix}", bx - 0.18, y + h - bh - 0.25, bw + 0.36, 0.18, 8, C.ink, True, PP_ALIGN.CENTER)
+        text(slide, lab, bx - 0.28, y + h + 0.10, bw + 0.56, 0.28, 7, C.muted, align=PP_ALIGN.CENTER)
+
+
+def horizontal_bar(slide, labels: list[str], values: list[float], x, y, w, row_h=0.42, max_value=None, colors=None, suffix=""):
+    max_v = max_value or max(values)
+    colors = colors or [C.green, C.blue, C.lavender]
+    for i, (lab, val) in enumerate(zip(labels, values)):
+        yy = y + i * row_h
+        text(slide, lab, x, yy + 0.05, 1.55, 0.18, 7, C.muted)
+        rect(slide, x + 1.65, yy + 0.08, w, 0.14, RGBColor(238, 242, 240), C.line, rounded=False)
+        rect(slide, x + 1.65, yy + 0.08, w * (val / max_v), 0.14, colors[i % len(colors)], colors[i % len(colors)], rounded=False)
+        text(slide, f"{val:g}{suffix}", x + 1.75 + w * (val / max_v), yy + 0.03, 0.8, 0.18, 7, C.ink, True)
+
+
+def pie_chart(slide, parts: list[tuple[str, float, RGBColor]], x, y, size):
+    start = 0
+    total = sum(v for _, v, _ in parts)
+    for lab, val, color in parts:
+        end = start + int(360 * val / total)
+        shp = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.PIE, Inches(x), Inches(y), Inches(size), Inches(size))
+        shp.adjustments[0] = start
+        shp.adjustments[1] = end
+        shp.fill.solid()
+        shp.fill.fore_color.rgb = color
+        shp.line.color.rgb = C.bg
+        start = end
+    rect(slide, x + size * 0.32, y + size * 0.32, size * 0.36, size * 0.36, C.bg, C.bg)
+    for i, (lab, val, color) in enumerate(parts):
+        yy = y + 0.18 + i * 0.38
+        rect(slide, x + size + 0.35, yy, 0.16, 0.16, color, color, rounded=False)
+        text(slide, f"{lab} {val:g}%", x + size + 0.58, yy - 0.03, 2.1, 0.18, 8, C.muted)
+
+
+def bubble(slide, label: str, value: str, x, y, size, color):
+    shp = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.OVAL, Inches(x), Inches(y), Inches(size), Inches(size))
+    shp.fill.solid()
+    shp.fill.fore_color.rgb = color
+    shp.fill.transparency = 12
+    shp.line.color.rgb = color
+    text(slide, value, x, y + size * 0.32, size, 0.22, 13, C.ink, True, PP_ALIGN.CENTER)
+    text(slide, label, x + 0.08, y + size * 0.56, size - 0.16, 0.25, 7, C.muted, align=PP_ALIGN.CENTER)
+
+
+def layered_stack(slide, layers: list[tuple[str, str, RGBColor]], x, y, w):
+    for i, (head, body, color) in enumerate(layers):
+        yy = y + i * 1.05
+        rect(slide, x + i * 0.28, yy, w - i * 0.56, 0.82, RGBColor(253, 253, 250), color)
+        text(slide, head, x + i * 0.28 + 0.18, yy + 0.12, w - i * 0.56 - 0.36, 0.18, 11, C.ink, True, PP_ALIGN.CENTER)
+        text(slide, body, x + i * 0.28 + 0.18, yy + 0.38, w - i * 0.56 - 0.36, 0.18, 7, C.muted, align=PP_ALIGN.CENTER)
+
+
+def cost_curve(slide, x, y, w, h):
+    line(slide, x, y + h, x + w, y + h, C.line, 1)
+    line(slide, x, y, x, y + h, C.line, 1)
+    # Traditional curve.
+    pts1 = [(x + 0.3, y + h - 0.45), (x + w * 0.36, y + h - 1.35), (x + w * 0.68, y + h - 2.25), (x + w - 0.25, y + 0.35)]
+    pts2 = [(x + 0.3, y + h - 0.7), (x + w * 0.36, y + h - 1.0), (x + w * 0.68, y + h - 1.25), (x + w - 0.25, y + h - 1.45)]
+    for pts, color, label in [(pts1, C.blue, "传统：任务越多成本线性上升"), (pts2, C.green, "玄女：底座复用后边际成本下降")]:
+        for a, b in zip(pts, pts[1:]):
+            line(slide, a[0], a[1], b[0], b[1], color, 2.4)
+        text(slide, label, pts[-1][0] - 2.65, pts[-1][1] - 0.28, 2.55, 0.20, 8, color, True)
+    text(slide, "任务数", x + w - 0.55, y + h + 0.14, 0.5, 0.18, 7, C.muted)
+    text(slide, "总成本", x - 0.15, y - 0.16, 0.6, 0.18, 7, C.muted)
+
+
 def mini_table(slide, rows: list[list[str]], x, y, col_w: list[float], row_h=0.48, size=7):
     total = sum(col_w)
     for r, row in enumerate(rows):
@@ -196,50 +290,56 @@ def build() -> Presentation:
 
     # 2
     s = prs.slides.add_slide(blank); bg(s); title(s, 2, "美国已经证明：地理智能可以长成大公司", "不同标杆证明不同环节：数据、监测、平台、地理嵌入趋势。")
-    rows = [
-        ["公司", "主营业务", "公开数据", "启发"],
-        ["Maxar", "高分影像 / 地理智能", "约 64 亿美元收购", "国家级数据基础设施"],
-        ["Planet", "日更影像 / 订阅分析", "FY2025 收入 2.444 亿美元", "高频影像可订阅"],
-        ["BlackSky", "实时地理空间情报", "2024 收入 1.021 亿美元", "快速响应是刚需"],
-        ["Esri", "GIS / 位置智能平台", "覆盖 50% 财富 500 强", "平台进入工作流"],
-        ["Google", "卫星嵌入数据集", "10 米 / 64 维 / 2017-2024", "嵌入层成为趋势"],
-    ]
-    mini_table(s, rows, 0.72, 1.55, [1.25, 2.25, 2.8, 4.7], 0.57, 7)
-    metric(s, "数据 + 平台 + 订阅", "美国路径的共同指向", 0.9, 5.62, 3.3, C.green)
-    metric(s, "本土化底座", "中国机会不等于复制美国公司", 5.0, 5.62, 3.3, C.blue)
-    metric(s, "AI 表征层", "玄女切入更靠近应用价值", 9.1, 5.62, 3.3, C.lavender)
+    picture(s, OLD_EARTH, 8.45, 1.18, 3.65, 2.05)
+    bubble(s, "Maxar\n收购估值", "64 亿美元", 0.95, 1.55, 1.55, C.green)
+    bubble(s, "Planet\nFY2025 收入", "2.444 亿", 2.85, 1.35, 1.85, C.blue)
+    bubble(s, "BlackSky\n2024 收入", "1.021 亿", 5.05, 1.72, 1.35, C.lavender)
+    bar_chart(s, ["数据", "监测", "平台", "嵌入"], [4, 3, 5, 2], 0.95, 4.28, 5.8, 1.05, max_value=5)
+    mini_table(s, [["标杆", "证明什么"], ["Maxar / Planet / BlackSky", "影像与实时监测存在持续需求"], ["Esri / CARTO", "地理平台可以进入政企工作流"], ["Google 卫星嵌入", "表征层正在成为下一代入口"]], 7.25, 3.78, [2.35, 3.35], 0.52, 8)
+    text(s, "玄女借鉴的是“AI 可用地理表征层”，不是复制任何一家美国公司的资产结构。", 1.0, 6.2, 11.2, 0.35, 15, C.dark_green, True, PP_ALIGN.CENTER)
     footer(s, 2)
 
     # 3
     s = prs.slides.add_slide(blank); bg(s); title(s, 3, "行业正在从“卖影像”走向“卖可调用的地球智能”")
-    picture(s, SPACE, 7.0, 1.35, 5.6, 4.0)
-    flow(s, ["影像时代", "监测时代", "平台时代", "嵌入时代"], 0.9, 2.0, 5.5, C.green)
-    card(s, "玄女的位置", "不是再造卫星公司，而是做应用价值更高的 AI 可用地理表征层。", 0.95, 3.0, 5.35, 1.05, C.blue)
-    card(s, "上游 / 下游", "上游接国产多源遥感数据；下游接城市治理、遥感公司、科研和行业任务。", 0.95, 4.32, 5.35, 1.05, C.lavender)
+    picture(s, SPACE, 7.15, 1.28, 5.25, 3.7)
+    stages = [("影像时代", "卖原始影像\n底图 / 授权"), ("监测时代", "卖变化监测\n目标识别 / 预警"), ("平台时代", "卖 GIS / 云平台\n接口 / 工作流"), ("嵌入时代", "卖可复用表征\n分类 / 检测 / 问答")]
+    for i, (h, b) in enumerate(stages):
+        x = 0.85 + i * 1.55
+        rect(s, x, 2.0, 1.22, 1.22, [C.sand, C.pale_blue, C.pale_green, C.pale_lav][i], [C.green, C.blue, C.green, C.lavender][i])
+        text(s, str(i + 1), x + 0.43, 2.12, 0.32, 0.22, 12, [C.green, C.blue, C.green, C.lavender][i], True, PP_ALIGN.CENTER)
+        text(s, h, x - 0.05, 3.42, 1.35, 0.22, 9, C.ink, True, PP_ALIGN.CENTER)
+        text(s, b, x - 0.15, 3.78, 1.55, 0.45, 7, C.muted, align=PP_ALIGN.CENTER)
+        if i < 3:
+            line(s, x + 1.22, 2.62, x + 1.55, 2.62, C.line, 1.6)
+    card(s, "玄女的位置", "不再只交付影像或单点分析，而是切入更靠近应用价值的 AI 可用地理表征层。", 0.95, 5.28, 5.75, 0.95, C.green)
     footer(s, 3)
 
     # 4
     s = prs.slides.add_slide(blank); bg(s); title(s, 4, "中国也到了这个窗口：商业航天解决“看见”，地理智能解决“理解”", "市场数字为广义产业和上游供给口径，不等同于玄女直接可获得收入。")
-    metric(s, "8501 亿元", "中国地理信息产业 2024 总产值", 0.95, 1.72, 3.55, C.green)
-    metric(s, "26.4→55.2 亿美元", "全球地球观测小卫星市场 2025-2030", 4.9, 1.72, 3.55, C.blue)
-    metric(s, "1027→2340 亿美元", "全球地理空间分析市场 2025-2033", 8.85, 1.72, 3.55, C.lavender)
-    three_points(s, [("数据供给", "商业航天、高分光学、SAR、无人机与北斗持续增长。"), ("场景密集", "自然资源、应急、农业、水利、能源、重大工程都要监测。"), ("支付基础", "已有政企采购和项目交付基础，需要更高复用效率。")], 3.75)
+    bubble(s, "中国地理信息产业\n广义基础", "8501 亿元", 0.95, 1.62, 1.9, C.green)
+    bubble(s, "EO 小卫星\n上游供给", "55.2 亿美元", 3.45, 1.52, 2.05, C.blue)
+    bubble(s, "地理空间分析\n广义大盘", "2340 亿美元", 6.1, 1.35, 2.35, C.lavender)
+    bar_chart(s, ["2025", "2030"], [26.4, 55.2], 9.35, 1.65, 2.55, 1.5, suffix="")
+    text(s, "EO 小卫星市场增长", 9.25, 3.48, 2.8, 0.20, 8, C.muted, align=PP_ALIGN.CENTER)
+    three_points(s, [("数据供给", "商业航天、高分光学、SAR、无人机与北斗持续增长。"), ("场景密集", "自然资源、应急、农业、水利、能源、重大工程都要监测。"), ("支付基础", "已有政企采购和项目交付基础，需要更高复用效率。")], 4.25)
     text(s, "中国的机会不是再多一批影像，而是把影像变成可复用的地理智能。", 1.0, 6.25, 11.0, 0.35, 17, C.dark_green, True, PP_ALIGN.CENTER)
     footer(s, 4)
 
     # 5
     s = prs.slides.add_slide(blank); bg(s); title(s, 5, "今天的遥感公司，主要还是靠项目、人力和数据交付赚钱")
-    rows = [["收入方式", "交付内容", "受限点"], ["数据销售", "影像 / 底图 / 时相", "价值停在数据层"], ["项目交付", "变化检测 / 制图 / 报告", "项目越多人越多"], ["平台授权", "软件 / 私有化部署", "智能任务仍需定制"], ["专业服务", "人工解译 / 标注 / 核查", "毛利被人力吞掉"], ["订阅接口", "监测服务 / 接口调用", "行业仍在早期"]]
-    mini_table(s, rows, 1.1, 1.55, [2.1, 4.2, 4.2], 0.62, 8)
+    rows = [["收入方式", "受限点"], ["数据销售", "价值停在数据层"], ["项目交付", "项目越多人越多"], ["平台授权", "智能任务仍需定制"], ["专业服务", "毛利被人力吞掉"], ["订阅接口", "行业仍在早期"]]
+    mini_table(s, rows, 0.95, 1.45, [2.25, 3.25], 0.55, 8)
+    pie_chart(s, [("数据销售", 18, C.green), ("项目交付", 42, C.blue), ("平台授权", 18, C.lavender), ("专业服务", 17, C.sand), ("订阅接口", 5, RGBColor(190, 212, 203))], 7.2, 1.55, 2.2)
+    text(s, "示意：传统收入仍以项目和服务为主", 7.1, 4.05, 4.4, 0.2, 9, C.muted, align=PP_ALIGN.CENTER)
     text(s, "行业不是没有需求，而是需求越多，传统交付方式越重。", 1.0, 6.15, 11.1, 0.38, 19, C.dark_green, True, PP_ALIGN.CENTER)
     footer(s, 5)
 
     # 6
     s = prs.slides.add_slide(blank); bg(s); title(s, 6, "真正的瓶颈不是数据少，而是每个任务都重做一遍")
-    flow(s, ["找数据", "预处理", "标注", "训练", "核查", "交付"], 1.1, 1.8, 10.8, C.blue)
-    metric(s, "80%", "天津案例：AI 辅助标注效率提升", 1.15, 3.25, 3.1, C.green)
-    metric(s, "200 万元+", "年均节省人力成本", 5.1, 3.25, 3.1, C.blue)
-    metric(s, "5000 万元", "近三年累计经济效益", 9.05, 3.25, 3.1, C.lavender)
+    flow(s, ["找数据", "预处理", "标注", "训练", "核查", "交付"], 0.95, 1.55, 11.2, C.blue)
+    bar_chart(s, ["标注效率", "年省成本", "三年效益"], [80, 200, 5000], 1.2, 3.35, 4.2, 1.65, max_value=5000, suffix="")
+    metric(s, "80%", "AI 辅助标注效率提升", 6.45, 3.1, 2.75, C.green)
+    metric(s, "200 万元+", "年均节省人力成本", 9.55, 3.1, 2.75, C.blue)
     text(s, "该案例证明标注环节有明确降本空间；玄女要把这种效率提升从单点工具扩展到多任务复用。", 1.0, 5.5, 11.1, 0.55, 18, C.ink, True, PP_ALIGN.CENTER)
     footer(s, 6)
 
@@ -279,16 +379,28 @@ def build() -> Presentation:
 
     # 11
     s = prs.slides.add_slide(blank); bg(s); title(s, 11, "从四类用户出发，我们的核心问题是什么？")
-    three_points(s, [("B 端", "项目越多，越依赖人力交付。"), ("政府", "图斑越多，越需要证据链。"), ("科研 / 地块", "想用遥感，但数据工程太重。")], 1.65)
-    text(s, "我们如何把爆发式增长的地球观测数据转化为可复用的地理智能底座，让不同用户不再为每个遥感任务重复采购、标注、建模和计算？", 1.0, 4.3, 11.1, 1.05, 27, C.ink, True, PP_ALIGN.CENTER)
+    # Four-quadrant pain map.
+    rect(s, 1.15, 1.55, 10.8, 3.5, C.white, C.line)
+    line(s, 6.55, 1.55, 6.55, 5.05, C.line, 1)
+    line(s, 1.15, 3.3, 11.95, 3.3, C.line, 1)
+    text(s, "B 端遥感公司\n项目越多，越依赖人力交付", 1.45, 2.12, 4.6, 0.45, 15, C.blue, True, PP_ALIGN.CENTER)
+    text(s, "政府部门\n图斑越多，越需要证据链", 6.95, 2.12, 4.6, 0.45, 15, C.green, True, PP_ALIGN.CENTER)
+    text(s, "地块用户\n有地理问题，但不会用遥感", 1.45, 3.82, 4.6, 0.45, 15, C.lavender, True, PP_ALIGN.CENTER)
+    text(s, "科研团队\n想法很多，但数据工程太重", 6.95, 3.82, 4.6, 0.45, 15, C.dark_green, True, PP_ALIGN.CENTER)
+    text(s, "如何把爆发式增长的地球观测数据转化为可复用的地理智能底座？", 1.0, 5.75, 11.1, 0.44, 22, C.ink, True, PP_ALIGN.CENTER)
     footer(s, 11)
 
     # 12
     s = prs.slides.add_slide(blank); bg(s); title(s, 12, "玄女的答案：先生成地理嵌入，再服务下游任务")
-    flow(s, ["多源观测", "地理嵌入", "任务组件", "变化候选", "业务交付"], 1.0, 1.62, 11.1, C.green)
-    rows = [["近期任务", "扩展能力"], ["施工工地 / 建筑变化", "缺失模态补齐"], ["农用地 / 违法用地线索", "地理检索"], ["垃圾裸地 / 灾害线索", "地理问答"]]
-    mini_table(s, rows, 2.05, 3.0, [4.5, 4.5], 0.66, 10)
-    text(s, "先把地球变成机器能复用的表示，再让所有任务调用这个表示。", 1.0, 5.9, 11.2, 0.38, 20, C.dark_green, True, PP_ALIGN.CENTER)
+    flow(s, ["多源观测", "地理嵌入", "任务组件", "变化候选", "业务交付"], 0.95, 1.42, 11.25, C.green)
+    # Hub-and-spoke task map.
+    center_x, center_y = 5.7, 3.55
+    bubble(s, "统一表征", "地理嵌入", center_x, center_y, 1.55, C.green)
+    spokes = [("施工工地", 2.0, 3.0, C.blue), ("建筑变化", 3.55, 4.85, C.lavender), ("农用地变化", 7.85, 4.85, C.green), ("灾害线索", 9.4, 3.0, C.blue), ("缺失补齐", 5.75, 5.45, C.sand)]
+    for lab, x, y, col in spokes:
+        line(s, center_x + 0.78, center_y + 0.78, x + 0.55, y + 0.55, C.line, 1.0)
+        bubble(s, lab, "", x, y, 1.1, col)
+    text(s, "先把地球变成机器能复用的表示，再让所有任务调用这个表示。", 1.0, 6.45, 11.2, 0.26, 16, C.dark_green, True, PP_ALIGN.CENTER)
     footer(s, 12)
 
     # 13
@@ -301,19 +413,19 @@ def build() -> Presentation:
 
     # 14
     s = prs.slides.add_slide(blank); bg(s); title(s, 14, "一次嵌入，多任务复用，改变遥感交付的成本曲线")
-    card(s, "传统模式", "总成本 ≈ 任务数 ×（数据处理 + 标注 + 建模 + 推理 + 核查 + 报告）", 0.95, 1.7, 5.4, 1.25, C.blue)
-    card(s, "玄女模式", "总成本 ≈ 区域底座成本 + 任务数 ×（少量样本 + 轻量适配 + 核查报告）", 6.95, 1.7, 5.4, 1.25, C.green)
-    three_points(s, [("时间", "跳过重复数据工程。"), ("算力 / 存储", "复用底座和中间表征。"), ("人力", "从逐图解译转向重点审核。")], 3.7)
+    cost_curve(s, 1.1, 1.55, 5.25, 3.65)
+    card(s, "传统模式", "总成本 ≈ 任务数 ×（数据处理 + 标注 + 建模 + 推理 + 核查 + 报告）", 7.05, 1.68, 4.9, 1.0, C.blue)
+    card(s, "玄女模式", "总成本 ≈ 区域底座成本 + 任务数 ×（少量样本 + 轻量适配 + 核查报告）", 7.05, 2.95, 4.9, 1.0, C.green)
+    horizontal_bar(s, ["时间", "存储", "算力", "人力"], [75, 60, 55, 70], 7.15, 4.4, 2.7, 0.42, max_value=100, suffix="%")
     text(s, "第一个任务验证价值，第二个任务开始复用；任务越多，底座越值钱。", 1.0, 6.05, 11.2, 0.36, 19, C.dark_green, True, PP_ALIGN.CENTER)
     footer(s, 14)
 
     # 15
     s = prs.slides.add_slide(blank); bg(s); title(s, 15, "产品形态：不是一个模型，而是城市地理智能底座")
-    card(s, "地理嵌入底座", "按区域、按月份持续生成地理嵌入。", 0.9, 1.6, 3.6, 1.28, C.green)
-    card(s, "任务组件库", "施工、建筑、农用地、违法用地、垃圾、灾害、生态。", 4.9, 1.6, 3.6, 1.28, C.blue)
-    card(s, "业务交付层", "图斑、证据链、报告、接口、驾驶舱。", 8.9, 1.6, 3.6, 1.28, C.lavender)
+    layered_stack(s, [("业务交付层", "图斑 / 证据链 / 报告 / 接口 / 驾驶舱", C.lavender), ("任务组件库", "施工 / 建筑 / 农用地 / 灾害 / 生态", C.blue), ("地理嵌入底座", "按区域、按月份持续生成可复用表征", C.green)], 1.25, 1.55, 6.0)
     rows = [["客户", "产品"], ["政府 / 新区", "年度变化监测"], ["遥感公司", "任务库授权 / 接口"], ["学校科研", "嵌入数据集 / 开发生态"], ["地块用户", "异常提醒 / 证据报告"]]
-    mini_table(s, rows, 2.05, 3.55, [3.2, 5.6], 0.5, 8)
+    mini_table(s, rows, 8.0, 1.65, [1.6, 2.85], 0.52, 8)
+    picture(s, OLD_STATION, 8.2, 4.55, 3.9, 1.55)
     footer(s, 15)
 
     # 16
@@ -358,26 +470,37 @@ def build() -> Presentation:
 
     # 20
     s = prs.slides.add_slide(blank); bg(s); title(s, 20, "为什么我们能做：多源时空地理嵌入模型架构")
-    flow(s, ["多源输入", "时空对齐", "编码器", "地理嵌入", "任务头"], 1.0, 1.7, 11.1, C.green)
-    three_points(s, [("多源输入", "S2、S1、Landsat、高分光学、高分 SAR、DEM、气象。"), ("稳定表征", "学习同一地点在不同时间、传感器下的地物表示。"), ("下游适配", "支持重建、补齐、变化检测、分类、分割。")], 3.1)
+    picture(s, OLD_OPTICAL, 0.85, 1.38, 2.05, 1.15)
+    picture(s, OLD_SAR, 0.85, 2.75, 2.05, 1.05)
+    picture(s, OLD_EMBED, 0.85, 4.0, 2.05, 1.05)
+    flow(s, ["多源输入", "时空对齐", "编码器", "地理嵌入", "任务头"], 3.35, 1.9, 8.5, C.green)
+    layered_stack(s, [("输入", "S2 / S1 / Landsat / 高分 / SAR / DEM / 气象", C.blue), ("表征", "跨时间、跨传感器的稳定地物表示", C.green), ("输出", "补齐 / 检测 / 分类 / 分割 / 问答", C.lavender)], 3.65, 3.35, 7.9)
     text(s, "我们不是把多源影像简单拼接，而是让模型学习同一地点在不同时间、不同传感器下的稳定表征。", 1.0, 5.95, 11.2, 0.4, 17, C.dark_green, True, PP_ALIGN.CENTER)
     footer(s, 20)
 
     # 21
     s = prs.slides.add_slide(blank); bg(s); title(s, 21, "商业模式：先用标杆项目拿信任，再用底座和任务库拿复用收入")
-    card(s, "近期", "标杆项目交付：哈尔滨新区、海淀、雅江；政府/园区/重大工程年度监测。", 0.9, 1.65, 3.6, 1.4, C.green)
-    card(s, "中期", "城市级地理嵌入底座订阅；多任务组件库授权；接口调用；私有化部署。", 4.9, 1.65, 3.6, 1.4, C.blue)
-    card(s, "长期", "数据方接入和分成；学校/开发者生态；地理智能应用市场。", 8.9, 1.65, 3.6, 1.4, C.lavender)
-    text(s, "政府合同是压舱石，B 端授权是现金流，接口和生态是放大器。", 1.0, 4.65, 11.2, 0.45, 24, C.ink, True, PP_ALIGN.CENTER)
+    # Revenue flywheel.
+    bubble(s, "政府合同", "压舱石", 1.2, 1.75, 1.55, C.green)
+    bubble(s, "B 端授权", "现金流", 4.05, 1.75, 1.55, C.blue)
+    bubble(s, "接口生态", "放大器", 6.9, 1.75, 1.55, C.lavender)
+    bubble(s, "数据反馈", "护城河", 9.75, 1.75, 1.55, C.sand)
+    line(s, 2.75, 2.52, 4.05, 2.52, C.line, 1.5)
+    line(s, 5.6, 2.52, 6.9, 2.52, C.line, 1.5)
+    line(s, 8.45, 2.52, 9.75, 2.52, C.line, 1.5)
+    rows = [["阶段", "收入方式"], ["近期", "标杆项目 / 年度监测"], ["中期", "城市底座订阅 / 任务库授权"], ["长期", "接口调用 / 数据分成 / 应用市场"]]
+    mini_table(s, rows, 2.25, 4.35, [2.0, 6.8], 0.5, 9)
+    text(s, "政府合同是压舱石，B 端授权是现金流，接口和生态是放大器。", 1.0, 6.35, 11.2, 0.32, 16, C.dark_green, True, PP_ALIGN.CENTER)
     footer(s, 21)
 
     # 22
     s = prs.slides.add_slide(blank); bg(s); title(s, 22, "融资 5000 万：把技术样板推成商业样板")
-    metric(s, "5000 万", "融资金额", 0.95, 1.55, 3.2, C.green)
-    metric(s, "18 个月", "样板和商业化周期", 5.05, 1.55, 3.2, C.blue)
-    metric(s, "5-8 个", "可复用下游任务", 9.15, 1.55, 3.2, C.lavender)
+    metric(s, "5000 万", "融资金额", 0.95, 1.38, 2.7, C.green)
+    metric(s, "18 个月", "样板和商业化周期", 3.95, 1.38, 2.7, C.blue)
+    metric(s, "5-8 个", "可复用下游任务", 6.95, 1.38, 2.7, C.lavender)
+    pie_chart(s, [("模型数据", 35, C.green), ("国产算力", 20, C.blue), ("任务库", 20, C.lavender), ("样板交付", 15, C.sand), ("商务团队", 10, RGBColor(190, 212, 203))], 10.05, 1.25, 1.55)
     rows = [["里程碑", "目标"], ["城市级样板", "哈尔滨新区多任务连续监测"], ["补充场景", "海淀复杂城市 / 雅江复杂地形"], ["商业结果", "1-2 个年度服务或 B 端授权意向 / 订单"], ["交付能力", "接口、任务库、报告流程可演示"]]
-    mini_table(s, rows, 1.6, 3.1, [3.2, 6.4], 0.5, 8)
+    mini_table(s, rows, 1.0, 3.25, [3.0, 6.2], 0.5, 8)
     text(s, "这轮融资不是为了做一组模型指标，而是为了证明地理嵌入底座可以规模化交付。", 1.0, 6.25, 11.2, 0.35, 17, C.dark_green, True, PP_ALIGN.CENTER)
     footer(s, 22)
 
