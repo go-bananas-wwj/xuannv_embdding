@@ -62,12 +62,14 @@ IMG = {
     "cloud": USER / "patch_000146_2025-06_vs_2025-08_detail.png",
     "semantic": USER / "harbin_semantic_preset_frame.png",
     "migration": USER / "harbin_migration_frame.png",
+    "migration_gif": USER / "harbin_migration_animated.gif",
     "persona_gov": ASSETS / "persona_government_v2.png",
     "persona_biz": ASSETS / "persona_enterprise_v2.png",
     "persona_uni": ASSETS / "persona_university_v2.png",
     "downstream_harbin_embedding": PPT_MEDIA / "image4.png",
     "downstream_harbin_task": PPT_MEDIA / "image5.png",
     "downstream_harbin_cover": PPT_MEDIA / "image7.png",
+    "downstream_harbin_landuse": PPT_MEDIA / "image8.png",
 }
 
 
@@ -159,6 +161,53 @@ def crop_to_ratio(path: Path, ratio: float) -> Path:
 
 def picture_crop(slide, path: Path, x, y, w, h):
     return picture(slide, crop_to_ratio(path, w / h), x, y, w, h)
+
+
+def picture_fit(slide, path: Path, x, y, w, h):
+    if not path.exists():
+        return picture(slide, path, x, y, w, h)
+    with Image.open(path) as im:
+        iw, ih = im.size
+    target = w / h
+    current = iw / ih
+    if current > target:
+        new_w = w
+        new_h = w / current
+        px = x
+        py = y + (h - new_h) / 2
+    else:
+        new_h = h
+        new_w = h * current
+        px = x + (w - new_w) / 2
+        py = y
+    return picture(slide, path, px, py, new_w, new_h)
+
+
+def diamond_image(path: Path, size=360) -> Path:
+    CACHE.mkdir(parents=True, exist_ok=True)
+    out = CACHE / f"diamond_{path.stem}_{size}.png"
+    if out.exists():
+        return out
+    im = Image.open(path).convert("RGB")
+    iw, ih = im.size
+    side = min(iw, ih)
+    left = (iw - side) // 2
+    top = (ih - side) // 2
+    im = im.crop((left, top, left + side, top + side)).resize((size, size))
+    canvas = Image.new("RGBA", (size, size), (255, 255, 255, 0))
+    mask = Image.new("L", (size, size), 0)
+    points = [(size // 2, 0), (size - 1, size // 2), (size // 2, size - 1), (0, size // 2)]
+    from PIL import ImageDraw
+
+    draw = ImageDraw.Draw(mask)
+    draw.polygon(points, fill=255)
+    canvas.paste(im, (0, 0), mask)
+    border = Image.new("RGBA", (size, size), (255, 255, 255, 0))
+    bdraw = ImageDraw.Draw(border)
+    bdraw.line(points + [points[0]], fill=(226, 232, 240, 255), width=5)
+    canvas.alpha_composite(border)
+    canvas.save(out)
+    return out
 
 
 def title(slide, no: str, heading: str, sub: str | None = None) -> None:
@@ -254,17 +303,11 @@ def persona_card(slide, path: Path, x, y, w, h, fill, color) -> None:
     picture_crop(slide, path, x + 0.42, y + 0.22, w - 0.84, h - 0.28)
 
 
-def diamond_stack(slide, x, y, labels: list[tuple[str, RGBColor]]) -> None:
-    for i, (label, color) in enumerate(labels):
-        dx = x + i * 0.26
-        dy = y + i * 0.30
-        shape = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.DIAMOND, Inches(dx), Inches(dy), Inches(1.28), Inches(0.84))
-        shape.fill.solid()
-        shape.fill.fore_color.rgb = color
-        shape.fill.transparency = 18
-        shape.line.color.rgb = color
-        shape.line.width = Pt(1.0)
-        text(slide, label, dx + 0.20, dy + 0.30, 0.88, 0.16, 7, C.ink, True, PP_ALIGN.CENTER)
+def diamond_stack(slide, x, y, items: list[tuple[str, Path]]) -> None:
+    for i, (label, path) in enumerate(items):
+        dy = y + i * 0.47
+        picture(slide, diamond_image(path), x, dy, 0.88, 0.88)
+        text(slide, label, x + 0.92, dy + 0.28, 1.22, 0.18, 8, C.body, True)
 
 
 def metric(slide, number: str, label: str, x, y, w, color, fill) -> None:
@@ -318,25 +361,25 @@ def build() -> Presentation:
     text(s, "下游任务", 9.86, 2.66, 1.40, 0.22, 12, C.purple, True, PP_ALIGN.CENTER)
     diamond_stack(
         s,
-        1.02,
-        3.20,
+        1.10,
+        2.96,
         [
-            ("光学", C.pale_blue),
-            ("雷达", C.mint),
-            ("高分", C.pale_purple),
-            ("高程", C.pale_amber),
-            ("时序", RGBColor(240, 253, 250)),
+            ("哨兵二号光学", IMG["s2"]),
+            ("雷达影像", IMG["s1"]),
+            ("高分光学", IMG["s2hr"]),
+            ("陆地卫星", IMG["landsat"]),
+            ("高程数据", IMG["dem"]),
         ],
     )
-    arrow(s, 3.52, 4.10, 4.75, 4.10, C.line, 1.7)
-    picture_crop(s, IMG["migration"], 4.80, 3.05, 3.10, 2.28)
-    arrow(s, 8.08, 4.10, 9.05, 4.10, C.line, 1.7)
-    picture_crop(s, IMG["downstream_harbin_embedding"], 9.12, 3.02, 1.42, 1.15)
-    picture_crop(s, IMG["downstream_harbin_task"], 10.66, 3.02, 1.42, 1.15)
-    picture_crop(s, IMG["downstream_harbin_cover"], 9.86, 4.30, 1.52, 1.16)
-    text(s, "区域表征", 9.12, 4.20, 1.42, 0.16, 7, C.body, True, PP_ALIGN.CENTER)
-    text(s, "任务识别", 10.66, 4.20, 1.42, 0.16, 7, C.body, True, PP_ALIGN.CENTER)
-    text(s, "多源底图", 9.86, 5.48, 1.52, 0.16, 7, C.body, True, PP_ALIGN.CENTER)
+    arrow(s, 3.42, 4.10, 4.34, 4.10, C.line, 1.7)
+    picture_fit(s, IMG["migration_gif"], 4.46, 2.94, 3.20, 2.72)
+    arrow(s, 7.82, 4.10, 8.72, 4.10, C.line, 1.7)
+    picture_fit(s, IMG["downstream_harbin_task"], 8.95, 3.00, 1.36, 1.16)
+    picture_fit(s, IMG["downstream_harbin_cover"], 10.45, 3.00, 1.36, 1.16)
+    picture_fit(s, IMG["downstream_harbin_landuse"], 9.70, 4.40, 1.46, 1.18)
+    text(s, "土地分类", 8.95, 4.25, 1.36, 0.16, 7, C.body, True, PP_ALIGN.CENTER)
+    text(s, "路网分割", 10.45, 4.25, 1.36, 0.16, 7, C.body, True, PP_ALIGN.CENTER)
+    text(s, "土地利用", 9.70, 5.64, 1.46, 0.16, 7, C.body, True, PP_ALIGN.CENTER)
     claim(s, "以区域级通用表征替代任务级重复建模，形成可持续复用的地理智能基础设施。", 6.22, C.blue)
 
     # 3. Same place, multiple observations
