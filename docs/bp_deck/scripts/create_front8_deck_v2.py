@@ -450,21 +450,20 @@ def step_chain(slide, label: str, steps: list[str], x: float, y: float, color, f
 
 
 def pain_card(slide, idx: str, head: str, body: str, x: float, y: float, color, fill) -> None:
-    rect(slide, x, y, 5.10, 1.04, C.white, C.line)
-    badge = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.OVAL, Inches(x + 0.18), Inches(y + 0.21), Inches(0.46), Inches(0.46))
+    rect(slide, x, y, 5.18, 1.10, C.white, C.line)
+    badge = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.OVAL, Inches(x + 0.20), Inches(y + 0.23), Inches(0.56), Inches(0.56))
     badge.fill.solid()
     badge.fill.fore_color.rgb = fill
     badge.line.color.rgb = color
     badge.line.width = Pt(1.0)
-    text(slide, idx, x + 0.18, y + 0.32, 0.46, 0.12, 8, color, True, PP_ALIGN.CENTER)
-    text(slide, head, x + 0.82, y + 0.18, 1.22, 0.18, 12, C.ink, True)
-    text(slide, body, x + 2.04, y + 0.17, 2.84, 0.36, 8, C.body)
+    text(slide, idx, x + 0.20, y + 0.38, 0.56, 0.14, 11, color, True, PP_ALIGN.CENTER)
+    text(slide, head, x + 0.96, y + 0.19, 1.46, 0.20, 14, C.ink, True)
+    text(slide, body, x + 2.36, y + 0.17, 2.58, 0.44, 9, C.body)
 
 
 def yajiang_task(slide, label: str, path: Path, x: float, y: float, w: float = 1.52, h: float = 1.03) -> None:
-    rect(slide, x, y, w, h, C.white, C.line)
-    picture_crop(slide, path, x + 0.05, y + 0.05, w - 0.10, h - 0.30)
-    text(slide, label, x + 0.06, y + h - 0.20, w - 0.12, 0.12, 6, C.body, True, PP_ALIGN.CENTER)
+    picture_fit(slide, path, x, y, w, h)
+    text(slide, label, x, y + h + 0.06, w, 0.12, 6, C.body, True, PP_ALIGN.CENTER)
 
 
 def build() -> Presentation:
@@ -654,26 +653,26 @@ def build() -> Presentation:
     title(s, "07", "全域底座到底解决什么痛点")
     text(s, "遥感项目真正难的不是做一个模型，而是让同一片区域的数据、表征和任务结果持续复用。", 1.04, 1.02, 10.70, 0.24, 10, C.muted)
 
-    text(s, "行业痛点", 0.88, 1.42, 2.0, 0.24, 15, C.ink, True)
-    pain_card(s, "01", "数据割裂", "不同模态、不同时间、不同区域反复处理，难以沉淀统一底座。", 0.86, 1.86, C.blue, C.pale_blue)
-    pain_card(s, "02", "任务重做", "分类、检测、检索、预测各自建模，每个任务都从头下载、标注、训练。", 0.86, 3.10, C.amber, C.pale_amber)
-    pain_card(s, "03", "结果难复用", "项目交付后只留下结果图，底层表征和经验无法持续服务新任务。", 0.86, 4.34, C.green, C.mint)
+    text(s, "全域底座解决的不是单点模型问题，而是规模化复用问题", 0.88, 1.42, 5.15, 0.24, 14, C.ink, True)
+    pain_card(s, "01", "数据难统一", "多源、多时相、多分辨率数据分散在不同流程里，难以形成统一表征。", 0.86, 1.90, C.blue, C.pale_blue)
+    pain_card(s, "02", "任务难复用", "每做一个下游任务，都要重新处理数据、重新标注、重新训练模型。", 0.86, 3.18, C.amber, C.pale_amber)
+    pain_card(s, "03", "能力难沉淀", "项目交付后通常只留下结果图，无法把区域知识沉淀成持续调用的能力。", 0.86, 4.46, C.green, C.mint)
     rect(s, 1.08, 5.76, 4.66, 0.50, C.pale_blue, C.blue)
     text(s, "全域底座的价值：把区域数据先沉淀成统一嵌入，再支撑多任务调用。", 1.28, 5.90, 4.26, 0.14, 9, C.blue, True, PP_ALIGN.CENTER)
 
     line(s, 6.22, 1.42, 6.22, 6.22, C.line, 0.8)
-    text(s, "雅江案例：一个区域嵌入，多类下游任务", 6.58, 1.42, 5.55, 0.26, 15, C.ink, True)
-    picture_crop(s, IMG["yajiang_embedding"], 6.62, 1.92, 2.05, 1.52)
-    text(s, "23-26 年季度嵌入数据可视化", 6.66, 3.56, 1.98, 0.14, 7, C.body, True, PP_ALIGN.CENTER)
-    rect(s, 8.96, 1.92, 3.20, 1.52, C.mint, C.green)
-    text(s, "同一套雅江嵌入数据集", 9.20, 2.18, 2.72, 0.20, 13, C.green, True, PP_ALIGN.CENTER)
-    text(s, "支撑空间聚类、高程回归、地物分类、检索、变化检测与坡度风险预测", 9.25, 2.70, 2.62, 0.36, 9, C.body, True, PP_ALIGN.CENTER)
-    yajiang_task(s, "空间聚类", IMG["yajiang_cluster"], 6.58, 3.92)
-    yajiang_task(s, "高程回归", IMG["yajiang_elevation"], 8.34, 3.92)
-    yajiang_task(s, "地物分类", IMG["yajiang_classification"], 10.10, 3.92)
-    yajiang_task(s, "嵌入检索", IMG["yajiang_retrieval"], 6.58, 5.12)
-    yajiang_task(s, "变化检测", IMG["yajiang_change"], 8.34, 5.12)
-    yajiang_task(s, "坡度风险预测", IMG["yajiang_risk"], 10.10, 5.12)
+    text(s, "雅江案例：同一套嵌入数据，支撑多类下游任务", 6.58, 1.42, 5.55, 0.26, 15, C.ink, True)
+    picture_fit(s, IMG["yajiang_retrieval"], 6.60, 1.92, 2.38, 1.26)
+    picture_fit(s, IMG["yajiang_embedding"], 9.30, 1.78, 2.18, 1.54)
+    text(s, "雅江嵌入区域范围", 6.62, 3.30, 2.34, 0.12, 7, C.body, True, PP_ALIGN.CENTER)
+    text(s, "23-26 年季度嵌入数据可视化", 9.30, 3.30, 2.18, 0.12, 7, C.body, True, PP_ALIGN.CENTER)
+    text(s, "利用嵌入数据集做下游任务", 7.78, 3.62, 2.62, 0.18, 10, C.green, True, PP_ALIGN.CENTER)
+    yajiang_task(s, "空间聚类", IMG["yajiang_cluster"], 6.42, 3.98, 1.70, 0.72)
+    yajiang_task(s, "高程回归", IMG["yajiang_elevation"], 8.38, 3.90, 1.20, 0.88)
+    yajiang_task(s, "地物分类", IMG["yajiang_classification"], 10.06, 3.96, 1.76, 0.78)
+    yajiang_task(s, "嵌入数据集检索", IMG["yajiang_retrieval"], 6.52, 5.10, 1.52, 0.78)
+    yajiang_task(s, "变化检测", IMG["yajiang_change"], 8.46, 5.00, 1.18, 0.90)
+    yajiang_task(s, "坡度风险预测", IMG["yajiang_risk"], 10.30, 5.00, 1.18, 0.90)
     claim(s, "全域底座不是多做几个模型，而是让一个区域嵌入持续服务多个业务问题。", 6.82, C.blue)
 
     # 8. Angel users
