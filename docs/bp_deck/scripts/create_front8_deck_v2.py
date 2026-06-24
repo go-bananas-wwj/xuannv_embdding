@@ -266,6 +266,43 @@ def pain_row(slide, icon_fn, head: str, body: str, x, y, color, fill) -> None:
     text(slide, body, x + 2.05, y + 0.14, 2.78, 0.46, 9, C.body)
 
 
+def soft_icon(slide, kind: str, x, y, color, fill) -> None:
+    bg_shape = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.OVAL, Inches(x), Inches(y), Inches(0.74), Inches(0.74))
+    bg_shape.fill.solid()
+    bg_shape.fill.fore_color.rgb = fill
+    bg_shape.line.fill.background()
+    cx = x + 0.37
+    if kind == "repeat":
+        for i in range(3):
+            rect(slide, x + 0.20 + i * 0.06, y + 0.22 + i * 0.06, 0.30, 0.18, C.white, color, rounded=False)
+        text(slide, "↻", x + 0.18, y + 0.34, 0.38, 0.20, 11, color, True, PP_ALIGN.CENTER)
+    elif kind == "compute":
+        rect(slide, x + 0.23, y + 0.23, 0.28, 0.28, C.white, color, rounded=False)
+        for dx, dy in [(0.14, 0.16), (0.56, 0.16), (0.14, 0.56), (0.56, 0.56)]:
+            dot = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.OVAL, Inches(x + dx), Inches(y + dy), Inches(0.05), Inches(0.05))
+            dot.fill.solid()
+            dot.fill.fore_color.rgb = C.amber
+            dot.line.fill.background()
+    else:
+        node = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.OVAL, Inches(cx - 0.07), Inches(y + 0.30), Inches(0.14), Inches(0.14))
+        node.fill.solid()
+        node.fill.fore_color.rgb = color
+        node.line.fill.background()
+        for px, py in [(x + 0.20, y + 0.18), (x + 0.54, y + 0.18), (x + 0.20, y + 0.56), (x + 0.54, y + 0.56)]:
+            line(slide, cx, y + 0.37, px, py, color, 0.8)
+            small = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.OVAL, Inches(px - 0.035), Inches(py - 0.035), Inches(0.07), Inches(0.07))
+            small.fill.solid()
+            small.fill.fore_color.rgb = C.white
+            small.line.color.rgb = color
+
+
+def insight_row(slide, kind: str, head: str, body: str, x, y, color, fill) -> None:
+    soft_icon(slide, kind, x, y + 0.05, color, fill)
+    text(slide, head, x + 0.95, y + 0.05, 4.15, 0.24, 14, C.ink, True)
+    text(slide, body, x + 0.95, y + 0.45, 4.05, 0.38, 9, C.body)
+    line(slide, x + 0.95, y + 0.98, x + 4.92, y + 0.98, C.line, 0.8)
+
+
 def flat_avatar(slide, x, y, role: str, color, accent) -> None:
     rect(slide, x, y, 3.55, 3.0, C.white, C.line)
     # soft background
@@ -400,10 +437,10 @@ def build() -> Presentation:
     bg(s)
     title(s, "03", "我们为什么要做这样一件事情")
     picture_fit(s, IMG["same_land_models"], 0.72, 1.22, 6.35, 4.86)
-    pain_row(s, icon_loop, "重复造轮子", "每个任务都重新找数据、清洗、标注、训练。", 7.62, 1.54, C.blue, C.pale_blue)
-    pain_row(s, icon_database, "数据孤岛", "光学、雷达、高程、气象各自成体系，难复用。", 7.62, 2.88, C.green, C.mint)
-    pain_row(s, icon_layers, "结果难复用", "一个项目一个结果，难沉淀成下次可调用的资产。", 7.62, 4.22, C.purple, C.pale_purple)
-    claim(s, "真正缺的不是更多影像，而是把同一块地连续、统一理解的能力。", 6.20, C.ink)
+    insight_row(s, "repeat", "同一批观测，被反复训练", "气象、分割、变化检测模型，各自重建底层特征。", 7.55, 1.55, C.blue, C.pale_blue)
+    insight_row(s, "compute", "成本耗在重复编码", "数据处理、标注、训练无法复用，任务越多成本越高。", 7.55, 3.02, C.green, C.mint)
+    insight_row(s, "embedding", "缺少通用嵌入层", "行业需要统一地理表征，连接多源观测与下游应用。", 7.55, 4.49, C.purple, C.pale_purple)
+    claim(s, "从每个任务重训，走向一次嵌入、多任务复用。", 6.22, C.ink)
 
     # 4. Benchmark and timing
     s = prs.slides.add_slide(blank)
