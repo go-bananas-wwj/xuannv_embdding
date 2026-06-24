@@ -307,24 +307,20 @@ def diamond_stack(slide, x, y, items: list[tuple[str, Path | None]]) -> None:
     for i, (label, path) in enumerate(items):
         dy = y + i * 0.47
         if path is None:
-            shape = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.DIAMOND, Inches(x), Inches(dy), Inches(0.88), Inches(0.88))
-            shape.fill.solid()
-            shape.fill.fore_color.rgb = C.off
-            shape.line.color.rgb = C.line
-            shape.line.width = Pt(1.0)
             text(slide, "…", x + 0.20, dy + 0.24, 0.48, 0.22, 18, C.muted, True, PP_ALIGN.CENTER)
         else:
             picture(slide, diamond_image(path), x, dy, 0.88, 0.88)
-        text(slide, label, x + 0.92, dy + 0.28, 1.22, 0.18, 8, C.body, True)
+        if label:
+            text(slide, label, x + 0.92, dy + 0.28, 1.22, 0.18, 8, C.body, True)
 
 
 def task_tile(slide, label: str, path: Path | None, x, y, w=1.28, h=0.96) -> None:
     if path is None:
-        rect(slide, x, y, w, h, C.off, C.line)
-        text(slide, "…", x, y + 0.22, w, 0.26, 22, C.muted, True, PP_ALIGN.CENTER)
+        text(slide, "…", x, y + 0.27, w, 0.26, 22, C.muted, True, PP_ALIGN.CENTER)
     else:
         picture_fit(slide, path, x, y, w, h)
-    text(slide, label, x, y + h + 0.08, w, 0.16, 7, C.body, True, PP_ALIGN.CENTER)
+    if label:
+        text(slide, label, x, y + h + 0.08, w, 0.16, 7, C.body, True, PP_ALIGN.CENTER)
 
 
 def metric(slide, number: str, label: str, x, y, w, color, fill) -> None:
@@ -376,26 +372,29 @@ def build() -> Presentation:
     text(s, "多元观测", 1.34, 2.66, 1.40, 0.22, 11, C.ink, True, PP_ALIGN.CENTER)
     text(s, "地理嵌入", 5.72, 2.66, 1.40, 0.22, 11, C.ink, True, PP_ALIGN.CENTER)
     text(s, "下游任务", 9.86, 2.66, 1.40, 0.22, 11, C.ink, True, PP_ALIGN.CENTER)
+    text(s, "→", 3.48, 2.66, 0.38, 0.20, 13, C.muted, True, PP_ALIGN.CENTER)
+    text(s, "→", 8.04, 2.66, 0.38, 0.20, 13, C.muted, True, PP_ALIGN.CENTER)
+    text(s, "玄女底座融合多元观测数据，生成统一地理嵌入，支撑不同下游任务复用。", 2.30, 2.90, 8.80, 0.20, 9, C.muted, align=PP_ALIGN.CENTER)
     diamond_stack(
         s,
         1.10,
-        2.96,
+        3.02,
         [
             ("哨兵二号光学", IMG["s2"]),
             ("雷达影像", IMG["s1"]),
             ("高分光学", IMG["s2hr"]),
-            ("更多数据", None),
+            ("", None),
             ("高程数据", IMG["dem"]),
         ],
     )
-    arrow(s, 3.42, 4.10, 4.34, 4.10, C.line, 1.7)
-    picture_fit(s, IMG["migration_gif"], 4.46, 2.94, 3.20, 2.72)
-    arrow(s, 7.82, 4.10, 8.72, 4.10, C.line, 1.7)
-    task_tile(s, "土地分类", IMG["downstream_harbin_task"], 8.88, 3.02, 1.28, 0.98)
-    task_tile(s, "路网分割", IMG["downstream_harbin_cover"], 10.72, 3.02, 1.28, 0.98)
-    task_tile(s, "土地利用", IMG["downstream_harbin_landuse"], 8.88, 4.48, 1.28, 0.98)
-    task_tile(s, "更多任务", None, 10.72, 4.48, 1.28, 0.98)
-    claim(s, "以区域级通用表征替代任务级重复建模，形成可持续复用的地理智能基础设施。", 6.22, C.blue)
+    arrow(s, 3.42, 4.14, 4.34, 4.14, C.line, 1.7)
+    picture_fit(s, IMG["migration_gif"], 4.46, 3.05, 3.20, 2.72)
+    arrow(s, 7.82, 4.14, 8.72, 4.14, C.line, 1.7)
+    task_tile(s, "土地分类", IMG["downstream_harbin_task"], 8.88, 3.08, 1.28, 0.98)
+    task_tile(s, "路网分割", IMG["downstream_harbin_cover"], 10.72, 3.08, 1.28, 0.98)
+    task_tile(s, "土地利用", IMG["downstream_harbin_landuse"], 8.88, 4.54, 1.28, 0.98)
+    task_tile(s, "", None, 10.72, 4.54, 1.28, 0.98)
+    claim(s, "一次融合生成统一嵌入，多任务持续复用。", 6.42, C.blue)
 
     # 3. Same place, multiple observations
     s = prs.slides.add_slide(blank)
