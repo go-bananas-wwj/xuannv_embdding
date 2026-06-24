@@ -474,6 +474,23 @@ def yajiang_task(slide, label: str, path: Path, x: float, y: float, w: float = 1
     text(slide, label, x, y + h + 0.06, w, 0.12, 6, C.body, True, PP_ALIGN.CENTER)
 
 
+def hmw_insight(slide, head: str, body: str, x: float, y: float, color, fill) -> None:
+    rect(slide, x, y, 3.24, 0.72, C.white, C.line)
+    marker = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.OVAL, Inches(x + 0.18), Inches(y + 0.22), Inches(0.28), Inches(0.28))
+    marker.fill.solid()
+    marker.fill.fore_color.rgb = fill
+    marker.line.color.rgb = color
+    marker.line.width = Pt(1.0)
+    text(slide, head, x + 0.58, y + 0.14, 2.42, 0.16, 10, C.ink, True)
+    text(slide, body, x + 0.58, y + 0.42, 2.42, 0.14, 7, C.body)
+
+
+def hmw_answer(slide, head: str, body: str, x: float, y: float, color, fill) -> None:
+    rect(slide, x, y, 3.14, 0.78, fill, color)
+    text(slide, head, x + 0.18, y + 0.14, 2.78, 0.16, 10, color, True, PP_ALIGN.CENTER)
+    text(slide, body, x + 0.22, y + 0.44, 2.70, 0.14, 7, C.body, True, PP_ALIGN.CENTER)
+
+
 def _set_xfrm(shape_el, x: float, y: float, w: float, h: float) -> None:
     xfrm = shape_el.find(".//a:xfrm", namespaces={"a": "http://schemas.openxmlformats.org/drawingml/2006/main"})
     if xfrm is None:
@@ -771,40 +788,66 @@ def build() -> Presentation:
         text(s, help_text, x + 0.92, 5.70, 2.24, 0.30, 8, color, True, PP_ALIGN.CENTER)
     claim(s, "共同需求：不再为每个遥感任务重新组织数据、标注和训练。", 6.36, C.blue)
 
-    # 9. HMW and token analogy
+    # 9. How might we
     s = prs.slides.add_slide(blank)
     bg(s)
-    title(s, "09", "我们的答案：把地球观测转成地理智能底座")
+    title(s, "09", "How might we：让地球观测成为可复用的地理智能")
     text(
         s,
-        "我们如何把爆发式增长的地球观测数据转化为可复用的地理智能底座，\n让不同用户不再为每个遥感任务重复采购、标注、建模和计算？",
-        1.04,
-        1.30,
-        11.25,
-        0.96,
-        24,
+        "把前面所有痛点收束成一个可行动的问题：如何让海量遥感数据不再停留在影像资产，\n而成为可调用、可复用、可持续迭代的智能底座？",
+        1.02,
+        1.25,
+        11.30,
+        0.52,
+        13,
+        C.body,
+        False,
+        PP_ALIGN.CENTER,
+    )
+    text(s, "来自前 8 页的洞察", 0.86, 2.18, 3.25, 0.24, 13, C.ink, True, PP_ALIGN.CENTER)
+    hmw_insight(s, "数据正在井喷", "商业航天推动多源、多时相观测持续增长。", 0.78, 2.72, C.blue, C.pale_blue)
+    hmw_insight(s, "应用仍是项目制", "下载、预处理、标注、训练在每个任务里重复发生。", 0.78, 3.72, C.amber, C.pale_amber)
+    hmw_insight(s, "用户需要结果闭环", "政府、企业、高校都需要更快得到可核查结果。", 0.78, 4.72, C.green, C.mint)
+    line(s, 4.45, 2.23, 4.45, 5.82, C.line, 0.8)
+    rect(s, 4.92, 2.46, 3.55, 2.18, C.pale_blue, C.blue)
+    text(
+        s,
+        "我们如何把爆发式增长的地球观测数据，\n转化为可复用的地理智能底座？",
+        5.16,
+        2.92,
+        3.08,
+        0.64,
+        16,
         C.ink,
         True,
         PP_ALIGN.CENTER,
     )
-    rect(s, 1.30, 3.22, 4.75, 1.38, C.pale_blue, C.blue)
-    text(s, "文本智能", 1.62, 3.48, 4.10, 0.24, 14, C.blue, True, PP_ALIGN.CENTER)
-    text(s, "文本 → 语义单元 → 理解 / 检索 / 生成", 1.62, 3.94, 4.10, 0.24, 11, C.body, True, PP_ALIGN.CENTER)
-    rect(s, 7.28, 3.22, 4.75, 1.38, C.mint, C.green)
-    text(s, "地球智能", 7.60, 3.48, 4.10, 0.24, 14, C.green, True, PP_ALIGN.CENTER)
-    text(s, "地球观测 → 地理嵌入 → 监测 / 核查 / 预警 / 决策", 7.60, 3.94, 4.10, 0.24, 10, C.body, True, PP_ALIGN.CENTER)
-    arrow(s, 6.18, 3.92, 7.05, 3.92, C.line, 1.4)
+    line(s, 5.36, 3.88, 8.02, 3.88, C.blue, 1.0)
     text(
         s,
-        "大模型先把文本转成语义单元，才能进行理解、检索、生成；\n玄女先把地球观测转成地理嵌入，才能进行监测、核查、预警和决策。",
-        1.16,
-        5.45,
-        11.0,
-        0.58,
-        15,
-        C.blue,
+        "让用户不再为每个遥感任务\n重复组织数据、标注和训练",
+        5.24,
+        4.08,
+        2.94,
+        0.32,
+        10,
+        C.body,
         True,
         PP_ALIGN.CENTER,
+    )
+    text(s, "文本先 token 化，地球观测先嵌入化。", 5.08, 5.05, 3.24, 0.20, 10, C.blue, True, PP_ALIGN.CENTER)
+    arrow(s, 4.16, 3.70, 4.78, 3.70, C.line, 1.2)
+    arrow(s, 8.58, 3.70, 9.20, 3.70, C.line, 1.2)
+    line(s, 8.88, 2.23, 8.88, 5.82, C.line, 0.8)
+    text(s, "玄女的回答", 9.42, 2.18, 3.10, 0.24, 13, C.ink, True, PP_ALIGN.CENTER)
+    hmw_answer(s, "统一嵌入", "把多源观测转成区域级地理表征", 9.42, 2.68, C.blue, C.pale_blue)
+    hmw_answer(s, "少量适配", "通过标注与任务头快速生成新任务", 9.42, 3.72, C.green, C.mint)
+    hmw_answer(s, "多任务复用", "分类、检测、检索、预测共享同一底座", 9.42, 4.76, C.purple, C.pale_purple)
+    claim(
+        s,
+        "玄女要做的，不是多做几个遥感模型，而是让遥感应用拥有自己的通用表征层。",
+        6.34,
+        C.blue,
     )
 
     return prs
