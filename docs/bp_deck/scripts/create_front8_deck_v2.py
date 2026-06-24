@@ -428,6 +428,19 @@ def difference_card(slide, head: str, aef: str, xuannv: str, x: float, y: float,
     rect(slide, x + 1.38, y + 0.72, 0.02, 0.42, fill, fill, rounded=False)
 
 
+def step_chain(slide, label: str, steps: list[str], x: float, y: float, color, fill) -> None:
+    text(slide, label, x, y + 0.13, 0.88, 0.14, 8, color, True, PP_ALIGN.CENTER)
+    start = x + 0.98
+    box_w = 0.72
+    gap = 0.18
+    for i, step in enumerate(steps):
+        sx = start + i * (box_w + gap)
+        rect(slide, sx, y, box_w, 0.42, fill, color)
+        text(slide, step, sx + 0.04, y + 0.12, box_w - 0.08, 0.12, 6, color, True, PP_ALIGN.CENTER)
+        if i < len(steps) - 1:
+            arrow(slide, sx + box_w + 0.03, y + 0.21, sx + box_w + gap - 0.03, y + 0.21, C.line, 0.7)
+
+
 def build() -> Presentation:
     prs = Presentation()
     prs.slide_width = Inches(13.333)
@@ -581,35 +594,24 @@ def build() -> Presentation:
     title(s, "06", "遥感应用正在迎来它的 GPT 时刻")
     text(s, "商业航天快速发展打开数据供给，应用层需要新的基础设施。", 1.04, 1.02, 10.70, 0.24, 10, C.muted)
 
-    picture_fit(s, IMG["space_data_boom"], 0.62, 1.28, 5.64, 3.24)
-    rect(s, 0.92, 1.46, 2.36, 0.46, C.pale_blue, C.blue)
-    text(s, "商业航天快速发展", 1.08, 1.58, 2.04, 0.14, 8, C.blue, True, PP_ALIGN.CENTER)
-    rect(s, 3.50, 1.46, 2.10, 0.46, C.mint, C.green)
-    text(s, "遥感数据海量增长", 3.66, 1.58, 1.78, 0.14, 8, C.green, True, PP_ALIGN.CENTER)
-    text(
-        s,
-        "火箭、零部件、卫星制造与发射环节正在快速成熟，遥感数据供给从稀缺走向高频、海量、多模态。像 GPT 需要先把文本转成 token，遥感也需要先把同一地物的多源、多时相观测转成可复用的地理嵌入。",
-        0.92,
-        4.72,
-        5.18,
-        0.88,
-        11,
-        C.body,
-    )
-    text(s, "地理嵌入，就是遥感数据进入规模化应用的 token。", 0.96, 5.92, 5.10, 0.22, 13, C.blue, True, PP_ALIGN.CENTER)
+    picture_fit(s, IMG["space_data_boom"], 0.58, 1.28, 5.78, 3.12)
+    arrow(s, 2.18, 4.12, 5.42, 2.08, C.blue, 2.0)
+    rect(s, 2.84, 3.26, 3.05, 0.48, C.pale_blue, C.blue)
+    text(s, "随着商业航天的发展，\n遥感数据迎来自己的井喷时刻", 3.02, 3.34, 2.68, 0.26, 8, C.blue, True, PP_ALIGN.CENTER)
+
+    rect(s, 0.86, 4.70, 5.42, 1.55, C.white, C.line)
+    text(s, "GPT 时刻的本质：数据规模 + 通用表征", 1.10, 4.92, 4.92, 0.18, 13, C.ink, True, PP_ALIGN.CENTER)
+    text(s, "商业航天让同一地物的多源、多时相影像持续堆上来。", 1.08, 5.34, 4.95, 0.16, 9, C.body, align=PP_ALIGN.CENTER)
+    text(s, "当数据规模足够大，行业需要像 token 一样的统一表征，把海量观测转成可复用的地理嵌入。", 1.08, 5.76, 4.95, 0.22, 10, C.blue, True, PP_ALIGN.CENTER)
 
     line(s, 6.58, 1.32, 6.58, 6.30, C.line, 0.8)
     text(s, "应用层：从项目制训练，到嵌入驱动的少样本适配", 6.92, 1.34, 5.42, 0.26, 14, C.ink, True)
-    rect(s, 6.98, 1.92, 2.38, 0.54, RGBColor(255, 251, 235), C.amber)
-    text(s, "传统实现", 7.16, 2.08, 0.86, 0.14, 8, C.amber, True, PP_ALIGN.CENTER)
-    text(s, "下载 - 标注 - 训练 - 重来", 8.02, 2.08, 1.20, 0.14, 6, C.body, True, PP_ALIGN.CENTER)
-    rect(s, 9.76, 1.92, 2.38, 0.54, C.mint, C.green)
-    text(s, "玄女实现", 9.94, 2.08, 0.86, 0.14, 8, C.green, True, PP_ALIGN.CENTER)
-    text(s, "嵌入 - 标注 - 任务头", 10.82, 2.08, 1.14, 0.14, 6, C.body, True, PP_ALIGN.CENTER)
+    step_chain(s, "传统实现", ["下载", "预处理", "标注", "训练", "重来"], 6.92, 1.92, C.amber, RGBColor(255, 251, 235))
+    step_chain(s, "玄女实现", ["嵌入", "少量标注", "任务头", "复用"], 6.92, 2.54, C.green, C.mint)
     movie = s.shapes.add_movie(
         str(IMG["annotation_video"]),
         Inches(7.04),
-        Inches(2.78),
+        Inches(3.24),
         Inches(5.06),
         Inches(2.84),
         poster_frame_image=str(IMG["annotation_poster"]),
@@ -617,7 +619,7 @@ def build() -> Presentation:
     )
     movie.line.color.rgb = C.line
     movie.line.width = Pt(0.8)
-    text(s, "自定义标注与任务头训练展示（点击播放）", 7.16, 5.82, 4.82, 0.18, 9, C.body, True, PP_ALIGN.CENTER)
+    text(s, "自定义标注与任务头训练展示（点击播放）", 7.16, 6.28, 4.82, 0.18, 9, C.body, True, PP_ALIGN.CENTER)
     claim(s, "当遥感数据像文本一样持续增长，地理嵌入就是遥感应用规模化的入口。", 6.82, C.blue)
 
     # 7. Three industry frictions
