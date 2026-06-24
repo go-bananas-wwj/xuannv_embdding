@@ -13,6 +13,7 @@ outputs/
 out/
 !docs/bp_deck/outputs/
 !docs/bp_deck/outputs/**
+docs/bp_deck/assets/render_cache/
 *.tiff
 *.tif
 *.npz
