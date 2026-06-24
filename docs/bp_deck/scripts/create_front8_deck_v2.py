@@ -82,7 +82,7 @@ IMG = {
     "aef_target": E4_AEF / "slide11_img01_ea269f1d.png",
     "aef_crop": E4_AEF / "slide18_img14_6da1eb9d.png",
     "og_text_search": OPENGEOSCOPE / "Text_Search.jpg",
-    "space_data_boom": ASSETS / "generated" / "commercial_space_data_boom.png",
+    "space_data_boom_arrow": ASSETS / "generated" / "commercial_space_data_boom_arrow.png",
     "annotation_video": ASSETS / "video" / "custom_annotation_demo.mov",
     "annotation_poster": ASSETS / "video" / "custom_annotation_demo_poster.png",
 }
@@ -429,16 +429,16 @@ def difference_card(slide, head: str, aef: str, xuannv: str, x: float, y: float,
 
 
 def step_chain(slide, label: str, steps: list[str], x: float, y: float, color, fill) -> None:
-    text(slide, label, x, y + 0.13, 0.88, 0.14, 8, color, True, PP_ALIGN.CENTER)
-    start = x + 0.98
-    box_w = 0.72
-    gap = 0.18
+    text(slide, label, x, y, 1.10, 0.16, 9, color, True)
+    start = x
+    gap = 0.12
+    box_w = (5.14 - gap * (len(steps) - 1)) / len(steps)
     for i, step in enumerate(steps):
         sx = start + i * (box_w + gap)
-        rect(slide, sx, y, box_w, 0.42, fill, color)
-        text(slide, step, sx + 0.04, y + 0.12, box_w - 0.08, 0.12, 6, color, True, PP_ALIGN.CENTER)
+        rect(slide, sx, y + 0.28, box_w, 0.42, fill, color)
+        text(slide, step, sx + 0.03, y + 0.40, box_w - 0.06, 0.12, 6, color, True, PP_ALIGN.CENTER)
         if i < len(steps) - 1:
-            arrow(slide, sx + box_w + 0.03, y + 0.21, sx + box_w + gap - 0.03, y + 0.21, C.line, 0.7)
+            arrow(slide, sx + box_w + 0.02, y + 0.49, sx + box_w + gap - 0.02, y + 0.49, C.line, 0.7)
 
 
 def build() -> Presentation:
@@ -594,32 +594,32 @@ def build() -> Presentation:
     title(s, "06", "遥感应用正在迎来它的 GPT 时刻")
     text(s, "商业航天快速发展打开数据供给，应用层需要新的基础设施。", 1.04, 1.02, 10.70, 0.24, 10, C.muted)
 
-    picture_fit(s, IMG["space_data_boom"], 0.58, 1.28, 5.78, 3.12)
-    arrow(s, 2.18, 4.12, 5.42, 2.08, C.blue, 2.0)
-    rect(s, 2.84, 3.26, 3.05, 0.48, C.pale_blue, C.blue)
-    text(s, "随着商业航天的发展，\n遥感数据迎来自己的井喷时刻", 3.02, 3.34, 2.68, 0.26, 8, C.blue, True, PP_ALIGN.CENTER)
+    picture_fit(s, IMG["space_data_boom_arrow"], 0.58, 1.28, 5.78, 3.12)
+    text(s, "随着商业航天的发展，遥感数据迎来自己的井喷时刻。", 3.12, 4.12, 2.72, 0.24, 10, C.blue, True, PP_ALIGN.CENTER)
 
     rect(s, 0.86, 4.70, 5.42, 1.55, C.white, C.line)
-    text(s, "GPT 时刻的本质：数据规模 + 通用表征", 1.10, 4.92, 4.92, 0.18, 13, C.ink, True, PP_ALIGN.CENTER)
-    text(s, "商业航天让同一地物的多源、多时相影像持续堆上来。", 1.08, 5.34, 4.95, 0.16, 9, C.body, align=PP_ALIGN.CENTER)
-    text(s, "当数据规模足够大，行业需要像 token 一样的统一表征，把海量观测转成可复用的地理嵌入。", 1.08, 5.76, 4.95, 0.22, 10, C.blue, True, PP_ALIGN.CENTER)
+    text(s, "地理嵌入：遥感数据的通用表征单元", 1.10, 4.92, 4.92, 0.18, 13, C.ink, True, PP_ALIGN.CENTER)
+    text(s, "我们为每个 10m x 10m 像素生成地理表征，把同一地物的多源、多时相观测压缩为统一嵌入。", 1.08, 5.30, 4.95, 0.22, 9, C.body, align=PP_ALIGN.CENTER)
+    text(s, "这类似 GPT 将文本转成 token：先形成可复用的基础表征，再支撑分类、变化检测、预测和问答。", 1.08, 5.76, 4.95, 0.22, 10, C.blue, True, PP_ALIGN.CENTER)
 
     line(s, 6.58, 1.32, 6.58, 6.30, C.line, 0.8)
     text(s, "应用层：从项目制训练，到嵌入驱动的少样本适配", 6.92, 1.34, 5.42, 0.26, 14, C.ink, True)
-    step_chain(s, "传统实现", ["下载", "预处理", "标注", "训练", "重来"], 6.92, 1.92, C.amber, RGBColor(255, 251, 235))
-    step_chain(s, "玄女实现", ["嵌入", "少量标注", "任务头", "复用"], 6.92, 2.54, C.green, C.mint)
+    step_chain(s, "传统实现", ["数据下载", "数据预处理", "人工标注", "模型训练", "交付"], 6.92, 1.82, C.amber, RGBColor(255, 251, 235))
+    text(s, "每个下游任务都要从头来一遍，工程链条长、标注成本高。", 6.98, 2.62, 5.02, 0.16, 8, C.body, True, PP_ALIGN.CENTER)
+    step_chain(s, "玄女实现", ["统一嵌入", "少量标注", "任务头", "多任务复用"], 6.92, 2.90, C.green, C.mint)
+    text(s, "底层表征可复用，只需面向新任务适配任务头。", 6.98, 3.70, 5.02, 0.16, 8, C.body, True, PP_ALIGN.CENTER)
     movie = s.shapes.add_movie(
         str(IMG["annotation_video"]),
         Inches(7.04),
-        Inches(3.24),
+        Inches(4.02),
         Inches(5.06),
-        Inches(2.84),
+        Inches(2.18),
         poster_frame_image=str(IMG["annotation_poster"]),
         mime_type="video/quicktime",
     )
     movie.line.color.rgb = C.line
     movie.line.width = Pt(0.8)
-    text(s, "自定义标注与任务头训练展示（点击播放）", 7.16, 6.28, 4.82, 0.18, 9, C.body, True, PP_ALIGN.CENTER)
+    text(s, "自定义标注与任务头训练展示（点击播放）", 7.16, 6.34, 4.82, 0.18, 9, C.body, True, PP_ALIGN.CENTER)
     claim(s, "当遥感数据像文本一样持续增长，地理嵌入就是遥感应用规模化的入口。", 6.82, C.blue)
 
     # 7. Three industry frictions
