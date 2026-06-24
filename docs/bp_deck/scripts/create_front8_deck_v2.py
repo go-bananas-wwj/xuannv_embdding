@@ -372,9 +372,6 @@ def build() -> Presentation:
     text(s, "多元观测", 1.34, 2.66, 1.40, 0.22, 11, C.ink, True, PP_ALIGN.CENTER)
     text(s, "地理嵌入", 5.72, 2.66, 1.40, 0.22, 11, C.ink, True, PP_ALIGN.CENTER)
     text(s, "下游任务", 9.86, 2.66, 1.40, 0.22, 11, C.ink, True, PP_ALIGN.CENTER)
-    text(s, "→", 3.48, 2.66, 0.38, 0.20, 13, C.muted, True, PP_ALIGN.CENTER)
-    text(s, "→", 8.04, 2.66, 0.38, 0.20, 13, C.muted, True, PP_ALIGN.CENTER)
-    text(s, "玄女底座融合多元观测数据，生成统一地理嵌入，支撑不同下游任务复用。", 2.30, 2.90, 8.80, 0.20, 9, C.muted, align=PP_ALIGN.CENTER)
     diamond_stack(
         s,
         1.10,
@@ -387,14 +384,15 @@ def build() -> Presentation:
             ("高程数据", IMG["dem"]),
         ],
     )
-    arrow(s, 3.42, 4.14, 4.34, 4.14, C.line, 1.7)
+    text(s, "→", 3.52, 4.03, 0.58, 0.34, 24, C.muted, True, PP_ALIGN.CENTER)
     picture_fit(s, IMG["migration_gif"], 4.46, 3.05, 3.20, 2.72)
-    arrow(s, 7.82, 4.14, 8.72, 4.14, C.line, 1.7)
+    text(s, "→", 8.02, 4.03, 0.58, 0.34, 24, C.muted, True, PP_ALIGN.CENTER)
     task_tile(s, "土地分类", IMG["downstream_harbin_task"], 8.88, 3.08, 1.28, 0.98)
     task_tile(s, "路网分割", IMG["downstream_harbin_cover"], 10.72, 3.08, 1.28, 0.98)
     task_tile(s, "土地利用", IMG["downstream_harbin_landuse"], 8.88, 4.54, 1.28, 0.98)
     task_tile(s, "", None, 10.72, 4.54, 1.28, 0.98)
-    claim(s, "一次融合生成统一嵌入，多任务持续复用。", 6.42, C.blue)
+    text(s, "玄女底座融合多元观测数据，生成统一地理嵌入，支撑不同下游任务复用。", 1.58, 5.92, 10.20, 0.22, 10, C.muted, align=PP_ALIGN.CENTER)
+    claim(s, "一次融合生成统一嵌入，多任务持续复用。", 6.54, C.blue)
 
     # 3. Same place, multiple observations
     s = prs.slides.add_slide(blank)
