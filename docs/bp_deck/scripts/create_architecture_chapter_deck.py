@@ -1,248 +1,378 @@
-"""Generate the Xuannv architecture and paradigm chapter deck.
+"""Generate the Xuannv technical-route chapter deck.
 
-This chapter follows the narrative plan after the case deck:
-paradigm shift -> technical principle -> architecture -> product/business
-architecture -> roadmap.
+This chapter intentionally starts after the general "one embedding, many
+downstream tasks" story already covered in the previous two decks.  It focuses
+on the underlying technical route: what is different, why it works, and why it
+can scale.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import fitz
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 from pptx import Presentation
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches
 
-from create_front8_deck_v2 import C, IMG, bg, title, text, rect, line, arrow, picture_fit
+from create_front8_deck_v2 import C, IMG, bg, picture_fit, text, title
 
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "outputs" / "玄女科技BP_架构原理章节_v0.2.pptx"
-CACHE = ROOT / "assets" / "render_cache"
-
-HAIDIAN = Path("/root/workspace/report/assets")
-YAJIANG_AGENT = Path("/root/.codex/attachments/071916f0-9ca0-4d8c-83f1-bcd404e7ea3c/e178b904e06c08479cd215ca230ff245.png")
-MODEL_REPORT = Path("/root/workspace/xuannv/reports/harbin_202512_202605/pdfs")
-
-
-def small_label(slide, value: str, x: float, y: float, w: float, color=C.body) -> None:
-    text(slide, value, x, y, w, 0.13, 7, color, True, PP_ALIGN.CENTER)
+ASSETS = ROOT / "assets"
+GENERATED = ASSETS / "generated"
+OLD = ASSETS / "old_bp_media"
+OUT = ROOT / "outputs" / "玄女科技BP_架构原理章节_v0.3.pptx"
+FONT_PATH = Path("/root/workspace/xuannv/fonts/NotoSansCJKsc-Regular.otf")
 
 
-def chip(slide, value: str, x: float, y: float, w: float, color=C.blue, fill=C.pale_blue) -> None:
-    rect(slide, x, y, w, 0.32, fill, color)
-    text(slide, value, x + 0.05, y + 0.085, w - 0.10, 0.08, 8, color, True, PP_ALIGN.CENTER)
+W, H = 2400, 1260
+BLUE = (37, 99, 235)
+SKY = (14, 165, 233)
+GREEN = (16, 185, 129)
+PURPLE = (124, 58, 237)
+AMBER = (245, 158, 11)
+INK = (15, 23, 42)
+BODY = (51, 65, 85)
+MUTED = (100, 116, 139)
+LINE = (226, 232, 240)
+OFF = (248, 250, 252)
+WHITE = (255, 255, 255)
+PALE_BLUE = (239, 246, 255)
+MINT = (236, 253, 245)
+PALE_PURPLE = (245, 243, 255)
+PALE_AMBER = (255, 251, 235)
 
 
-def slim_node(slide, value: str, x: float, y: float, w: float, color=C.blue, fill=C.pale_blue) -> None:
-    rect(slide, x, y, w, 0.48, fill, color)
-    text(slide, value, x + 0.08, y + 0.145, w - 0.16, 0.10, 8, color, True, PP_ALIGN.CENTER)
+def font(size: int) -> ImageFont.FreeTypeFont:
+    return ImageFont.truetype(str(FONT_PATH), size=size)
 
 
-def evidence_card(slide, label: str, image: Path, x: float, y: float, w: float, h: float, color=C.blue) -> None:
-    picture_fit(slide, image, x, y, w, h)
-    small_label(slide, label, x, y + h + 0.10, w, color)
+def draw_text(
+    d: ImageDraw.ImageDraw,
+    xy: tuple[int, int],
+    value: str,
+    size: int,
+    fill=INK,
+    anchor: str | None = None,
+    align: str = "left",
+    width: int | None = None,
+    spacing: int = 8,
+) -> None:
+    f = font(size)
+    if width is None:
+        d.text(xy, value, font=f, fill=fill, anchor=anchor)
+        return
+    lines: list[str] = []
+    current = ""
+    for ch in value:
+        test = current + ch
+        if d.textlength(test, font=f) <= width or not current:
+            current = test
+        else:
+            lines.append(current)
+            current = ch
+    if current:
+        lines.append(current)
+    d.multiline_text(xy, "\n".join(lines), font=f, fill=fill, spacing=spacing, align=align, anchor=anchor)
 
 
-def statement(slide, value: str, y: float, color=C.blue) -> None:
-    text(slide, value, 0.86, y, 11.60, 0.28, 15, color, True, PP_ALIGN.CENTER)
+def rounded(d: ImageDraw.ImageDraw, box, radius=28, fill=WHITE, outline=LINE, width=2) -> None:
+    d.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=width)
 
 
-def section_header(slide, value: str, x: float, y: float, color=C.blue) -> None:
-    text(slide, value, x, y, 3.00, 0.20, 14, color, True)
-    line(slide, x, y + 0.34, x + 1.34, y + 0.34, color, 1.0)
+def arrow(d: ImageDraw.ImageDraw, start, end, fill=BLUE, width=7) -> None:
+    d.line([start, end], fill=fill, width=width)
+    x1, y1 = start
+    x2, y2 = end
+    dx, dy = x2 - x1, y2 - y1
+    length = max((dx * dx + dy * dy) ** 0.5, 1)
+    ux, uy = dx / length, dy / length
+    px, py = -uy, ux
+    size = 24
+    points = [
+        (x2, y2),
+        (x2 - ux * size + px * size * 0.55, y2 - uy * size + py * size * 0.55),
+        (x2 - ux * size - px * size * 0.55, y2 - uy * size - py * size * 0.55),
+    ]
+    d.polygon(points, fill=fill)
 
 
-def render_pdf_page(pdf: Path, page: int, name: str, zoom: float = 1.2) -> Path:
-    CACHE.mkdir(parents=True, exist_ok=True)
-    out = CACHE / f"{name}_p{page + 1}.png"
-    if out.exists():
-        return out
-    doc = fitz.open(pdf)
-    pix = doc[page].get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
-    pix.save(out)
+def circle(d: ImageDraw.ImageDraw, cx, cy, r, fill=WHITE, outline=LINE, width=2) -> None:
+    d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=fill, outline=outline, width=width)
+
+
+def paste_fit(canvas: Image.Image, path: Path, box: tuple[int, int, int, int], rounded_radius: int = 0) -> None:
+    if not path.exists():
+        return
+    x1, y1, x2, y2 = box
+    img = Image.open(path).convert("RGB")
+    img = ImageOps.fit(img, (x2 - x1, y2 - y1), method=Image.Resampling.LANCZOS)
+    if rounded_radius:
+        mask = Image.new("L", img.size, 0)
+        md = ImageDraw.Draw(mask)
+        md.rounded_rectangle((0, 0, img.size[0], img.size[1]), radius=rounded_radius, fill=255)
+        canvas.paste(img, (x1, y1), mask)
+    else:
+        canvas.paste(img, (x1, y1))
+
+
+def label_pill(d, x, y, value, fill=PALE_BLUE, color=BLUE, w=None):
+    f = font(28)
+    if w is None:
+        w = int(d.textlength(value, font=f)) + 50
+    rounded(d, (x, y, x + w, y + 54), 27, fill, color, 2)
+    d.text((x + w // 2, y + 27), value, font=f, fill=color, anchor="mm")
+
+
+def base_canvas() -> Image.Image:
+    im = Image.new("RGB", (W, H), WHITE)
+    d = ImageDraw.Draw(im)
+    d.rectangle((0, 0, W, H), fill=WHITE)
+    return im
+
+
+def save(im: Image.Image, name: str) -> Path:
+    GENERATED.mkdir(parents=True, exist_ok=True)
+    out = GENERATED / name
+    im.save(out, quality=95)
     return out
+
+
+def draw_satellite(d, x, y, color=BLUE) -> None:
+    rounded(d, (x - 28, y - 18, x + 28, y + 18), 8, WHITE, color, 3)
+    d.rectangle((x - 92, y - 12, x - 38, y + 12), outline=color, width=3, fill=(239, 246, 255))
+    d.rectangle((x + 38, y - 12, x + 92, y + 12), outline=color, width=3, fill=(239, 246, 255))
+    d.line((x - 38, y, x - 28, y), fill=color, width=3)
+    d.line((x + 28, y, x + 38, y), fill=color, width=3)
+
+
+def make_paradigm() -> Path:
+    im = base_canvas()
+    d = ImageDraw.Draw(im)
+    draw_text(d, (220, 90), "传统任务模型", 54, INK)
+    draw_text(d, (1420, 90), "玄女底座模型", 54, INK)
+    draw_text(d, (220, 165), "一个任务、一套流程，能力难沉淀", 30, MUTED)
+    draw_text(d, (1420, 165), "一个底座、多任务调用，能力持续复用", 30, MUTED)
+
+    task_y = [340, 590, 840]
+    tasks = [("变化检测", AMBER), ("地物分类", PURPLE), ("报告生成", GREEN)]
+    for i, ((name, color), y) in enumerate(zip(tasks, task_y)):
+        paste_fit(im, [IMG["cloud"], IMG["worldcover"], OLD / "image15.jpeg"][i], (220, y, 430, y + 150), 22)
+        rounded(d, (480, y + 5, 780, y + 145), 34, WHITE, color, 3)
+        d.text((630, y + 56), "单任务模型", font=font(34), fill=color, anchor="mm")
+        d.text((630, y + 96), name, font=font(24), fill=BODY, anchor="mm")
+        arrow(d, (430, y + 75), (480, y + 75), color, 5)
+        arrow(d, (780, y + 75), (890, y + 75), color, 5)
+        draw_text(d, (905, y + 48), "重新标注\n重新训练", 25, BODY)
+    d.line((1050, 270, 1050, 1060), fill=LINE, width=4)
+
+    for i, path in enumerate([IMG["s2"], IMG["s1"], IMG["dem"], IMG["landsat"], IMG["s2hr"]]):
+        paste_fit(im, path, (1280 + i * 135, 300, 1385 + i * 135, 405), 18)
+    arrow(d, (1580, 430), (1580, 545), BLUE, 7)
+    rounded(d, (1330, 550, 1830, 720), 48, PALE_BLUE, BLUE, 4)
+    d.text((1580, 610), "DV 地理嵌入向量", font=font(46), fill=BLUE, anchor="mm")
+    d.text((1580, 670), "统一表征层", font=font(28), fill=BODY, anchor="mm")
+    for i, (name, color) in enumerate(tasks):
+        x = 1230 + i * 300
+        arrow(d, (1580, 720), (x + 105, 850), color, 5)
+        rounded(d, (x, 860, x + 210, 960), 28, WHITE, color, 3)
+        d.text((x + 105, 910), name, font=font(30), fill=color, anchor="mm")
+    draw_text(d, (1230, 1040), "新增任务主要训练轻量任务头，不重做完整底座", 34, INK)
+    return save(im, "arch_paradigm_task_to_foundation.png")
+
+
+def make_multimodal() -> Path:
+    im = base_canvas()
+    d = ImageDraw.Draw(im)
+    draw_text(d, (210, 85), "多模态自学习机制", 56, INK)
+    draw_text(d, (210, 165), "把同一地理位置的多源、多时序观测对齐到同一语义空间", 31, MUTED)
+    center = (1190, 640)
+    circle(d, *center, 190, PALE_BLUE, BLUE, 5)
+    d.text(center, "DV\n地理嵌入", font=font(58), fill=BLUE, anchor="mm", align="center")
+
+    inputs = [
+        ("光学影像", IMG["s2"], (420, 310), GREEN),
+        ("SAR 雷达", IMG["s1"], (420, 760), BLUE),
+        ("多光谱", IMG["landsat"], (1770, 310), PURPLE),
+        ("DEM 地形", IMG["dem"], (1770, 760), AMBER),
+    ]
+    for label, path, (x, y), color in inputs:
+        paste_fit(im, path, (x, y, x + 310, y + 230), 26)
+        rounded(d, (x, y, x + 310, y + 230), 26, fill=None, outline=color, width=4)
+        d.text((x + 155, y + 270), label, font=font(30), fill=color, anchor="mm")
+        arrow(d, (x + (310 if x < center[0] else 0), y + 115), center, color, 6)
+
+    for i, (label, color) in enumerate([("跨模态对齐", BLUE), ("时序一致性", GREEN), ("缺失模态补全", PURPLE)]):
+        label_pill(d, 865 + i * 300, 1000, label, [PALE_BLUE, MINT, PALE_PURPLE][i], color, 245)
+    draw_text(d, (875, 1110), "当云、雪、传感器缺测导致单一模态不完整时，模型仍可利用其他模态推断地理状态。", 34, INK, width=900)
+    return save(im, "arch_multimodal_self_learning.png")
+
+
+def make_same_land() -> Path:
+    im = base_canvas()
+    d = ImageDraw.Draw(im)
+    draw_text(d, (190, 80), "为什么遥感适合做通用嵌入", 56, INK)
+    draw_text(d, (190, 160), "同一地理位置会被不同卫星、不同时间、不同模态反复观测", 31, MUTED)
+
+    paste_fit(im, IMG["s2hr"], (190, 420, 760, 990), 34)
+    rounded(d, (190, 420, 760, 990), 34, fill=None, outline=LINE, width=4)
+    d.text((475, 1035), "同一地块", font=font(36), fill=INK, anchor="mm")
+
+    sat_positions = [(1080, 280), (1370, 210), (1660, 280)]
+    for x, y in sat_positions:
+        draw_satellite(d, x, y, BLUE)
+        d.line((x, y + 45, 480, 420), fill=(186, 230, 253), width=4)
+
+    thumbs = [(980, 470, IMG["s2"]), (1270, 470, IMG["s1"]), (1560, 470, IMG["landsat"]), (1125, 755, IMG["dem"]), (1415, 755, IMG["worldcover"])]
+    for x, y, path in thumbs:
+        paste_fit(im, path, (x, y, x + 230, y + 180), 22)
+        rounded(d, (x, y, x + 230, y + 180), 22, fill=None, outline=LINE, width=3)
+        arrow(d, (x + 115, y + 180), (1860, 735), SKY, 4)
+
+    rounded(d, (1840, 580, 2200, 900), 54, PALE_BLUE, BLUE, 5)
+    d.text((2020, 685), "DV", font=font(72), fill=BLUE, anchor="mm")
+    d.text((2020, 765), "地理嵌入向量", font=font(38), fill=BLUE, anchor="mm")
+    d.text((2020, 830), "位置稳定 · 语义可比", font=font(26), fill=BODY, anchor="mm")
+    draw_text(d, (945, 1045), "自然语言用 token 表示文本单元；玄女用地理嵌入表示地球观测单元。", 38, INK, width=980)
+    return save(im, "arch_same_land_to_embedding.png")
+
+
+def make_model_architecture() -> Path:
+    im = base_canvas()
+    d = ImageDraw.Draw(im)
+    draw_text(d, (190, 80), "模型架构：编码器、嵌入空间与任务头", 56, INK)
+    draw_text(d, (190, 160), "底层统一编码，中层沉淀通用嵌入，上层通过轻量任务头适配场景", 31, MUTED)
+
+    x0 = 190
+    for i, (label, path) in enumerate([("光学", IMG["s2"]), ("SAR", IMG["s1"]), ("DEM", IMG["dem"]), ("多光谱", IMG["landsat"])]):
+        y = 320 + i * 165
+        paste_fit(im, path, (x0, y, x0 + 170, y + 125), 18)
+        d.text((x0 + 235, y + 63), label, font=font(30), fill=BODY, anchor="mm")
+        arrow(d, (x0 + 330, y + 63), (720, 605), LINE, 4)
+
+    rounded(d, (720, 360, 1120, 850), 62, PALE_BLUE, BLUE, 5)
+    d.text((920, 510), "时空多模态\n编码器", font=font(52), fill=BLUE, anchor="mm", align="center")
+    for i, label in enumerate(["时空对齐", "跨模态融合", "自监督预训练"]):
+        label_pill(d, 785, 610 + i * 70, label, WHITE, BLUE, 270)
+
+    arrow(d, (1120, 605), (1340, 605), BLUE, 8)
+    rounded(d, (1340, 460, 1685, 750), 58, MINT, GREEN, 5)
+    d.text((1512, 555), "DV", font=font(70), fill=GREEN, anchor="mm")
+    d.text((1512, 635), "地理嵌入向量", font=font(40), fill=GREEN, anchor="mm")
+    d.text((1512, 700), "可复用表征资产", font=font(27), fill=BODY, anchor="mm")
+
+    for i, (label, color) in enumerate([("变化检测", BLUE), ("地物分类", GREEN), ("高程回归", AMBER), ("检索问答", PURPLE), ("报告生成", BLUE)]):
+        y = 300 + i * 145
+        arrow(d, (1685, 605), (1900, y + 55), color, 4)
+        rounded(d, (1900, y, 2200, y + 110), 32, WHITE, color, 3)
+        d.text((2050, y + 55), label, font=font(31), fill=color, anchor="mm")
+
+    d.line((210, 1055, 2190, 1055), fill=LINE, width=4)
+    draw_text(d, (230, 1100), "新增任务不重建整套模型，只在统一嵌入上训练或调用任务头。", 38, INK)
+    return save(im, "arch_model_encoder_embedding_heads.png")
+
+
+def make_scale_path() -> Path:
+    im = base_canvas()
+    d = ImageDraw.Draw(im)
+    draw_text(d, (190, 80), "技术路线为什么具备规模化潜力", 56, INK)
+    draw_text(d, (190, 160), "价值不只来自单点精度，而来自底座复用、数据闭环与跨行业扩展", 31, MUTED)
+
+    nodes = [
+        ("遥感多模态", "影像、SAR、DEM、时序", BLUE, PALE_BLUE),
+        ("DV 地理嵌入", "统一表征资产", GREEN, MINT),
+        ("社会经济数据", "人口、产业、交通、POI", PURPLE, PALE_PURPLE),
+        ("地理智能服务", "政务、产业、公众服务", AMBER, PALE_AMBER),
+    ]
+    for i, (head, sub, color, fill) in enumerate(nodes):
+        x = 230 + i * 520
+        circle(d, x + 150, 560, 130, fill, color, 5)
+        d.text((x + 150, 535), head, font=font(36), fill=color, anchor="mm")
+        d.text((x + 150, 590), sub, font=font(24), fill=BODY, anchor="mm")
+        if i < len(nodes) - 1:
+            arrow(d, (x + 290, 560), (x + 500, 560), LINE, 8)
+
+    paste_fit(im, OLD / "image10.jpeg", (230, 800, 570, 1040), 24)
+    paste_fit(im, OLD / "image14.jpeg", (690, 800, 1030, 1040), 24)
+    paste_fit(im, OLD / "image1.png", (1150, 800, 1490, 1040), 24)
+    paste_fit(im, IMG["semantic"], (1610, 800, 1950, 1040), 24)
+    for x, label, color in [(230, "区域治理", BLUE), (690, "资源评估", GREEN), (1150, "数字地球", PURPLE), (1610, "智能分析", AMBER)]:
+        d.text((x + 170, 1085), label, font=font(28), fill=color, anchor="mm")
+
+    draw_text(d, (360, 1135), "三年目标：从标杆项目验证，到 API/License 产品化，再到融合社会经济数据的普惠地理智能服务。", 36, INK, width=1680)
+    return save(im, "arch_scale_path_social_econ.png")
+
+
+def make_figures() -> dict[str, Path]:
+    return {
+        "paradigm": make_paradigm(),
+        "multimodal": make_multimodal(),
+        "same_land": make_same_land(),
+        "architecture": make_model_architecture(),
+        "scale": make_scale_path(),
+    }
+
+
+def bottom_claim(slide, value: str) -> None:
+    text(slide, value, 0.86, 6.78, 11.60, 0.28, 15, C.blue, True, PP_ALIGN.CENTER)
+
+
+def add_slide(prs: Presentation, no: str, heading: str, sub: str, figure: Path, claim: str) -> None:
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    bg(slide)
+    title(slide, no, heading)
+    text(slide, sub, 1.06, 1.02, 11.10, 0.34, 12, C.body, False, PP_ALIGN.CENTER)
+    picture_fit(slide, figure, 0.76, 1.46, 11.82, 5.08)
+    bottom_claim(slide, claim)
 
 
 def build() -> Presentation:
     prs = Presentation()
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
-    blank = prs.slide_layouts[6]
+    figures = make_figures()
 
-    haidian_patch = HAIDIAN / "compare_haidian_construction_patch_000198.png"
-    haidian_chart = HAIDIAN / "aef_vs_v1.0_v2.png"
-    harbin_report_cover = render_pdf_page(
-        MODEL_REPORT / "00-2025年12月-2026年5月哈尔滨新区城市管理卫星遥感监测总报告.pdf",
-        0,
-        "arch_harbin_report",
+    add_slide(
+        prs,
+        "19",
+        "技术范式差异：从任务模型到底座模型",
+        "传统遥感 AI 围绕单一任务重复建设；玄女将能力沉淀在统一地理嵌入中。",
+        figures["paradigm"],
+        "路线差异：不是多训练几个模型，而是建立可复用的遥感基础表征。",
     )
-
-    # 19. Paradigm shift
-    s = prs.slides.add_slide(blank)
-    bg(s)
-    title(s, "19", "从案例到范式：遥感应用从项目制走向底座化")
-    text(s, "前面的案例证明：同一套地理嵌入可以支撑变化检测、分类评测、智能体报告等多类真实任务。", 1.02, 1.14, 11.20, 0.28, 13, C.body, False, PP_ALIGN.CENTER)
-    section_header(s, "传统遥感项目制", 0.86, 1.62, C.amber)
-    for i, label in enumerate(["数据采购", "预处理", "专家标注", "单任务模型", "制图报告"]):
-        x = 0.94 + i * 1.02
-        slim_node(s, label, x, 2.26, 0.82, C.amber, C.pale_amber)
-        if i < 4:
-            arrow(s, x + 0.82, 2.50, x + 0.98, 2.50, C.amber, 1.0)
-    text(s, "痛点：新任务通常意味着重新组织数据、标注、模型和交付流程。", 1.00, 3.16, 4.86, 0.22, 11, C.body, True, PP_ALIGN.CENTER)
-    line(s, 6.30, 1.54, 6.30, 5.78, C.line, 0.9)
-    section_header(s, "玄女底座化交付", 6.84, 1.62, C.blue)
-    slim_node(s, "多源观测", 6.92, 2.18, 1.12, C.green, C.mint)
-    arrow(s, 8.04, 2.42, 8.40, 2.42, C.line, 1.2)
-    rect(s, 8.44, 2.02, 1.74, 0.80, C.pale_blue, C.blue)
-    text(s, "DV 地理嵌入向量", 8.62, 2.30, 1.38, 0.10, 9, C.blue, True, PP_ALIGN.CENTER)
-    arrow(s, 10.18, 2.42, 10.52, 2.42, C.line, 1.2)
-    slim_node(s, "多任务复用", 10.56, 2.18, 1.34, C.purple, C.pale_purple)
-    for label, x, color, fill in [
-        ("哈尔滨报告", 6.96, C.blue, C.pale_blue),
-        ("海淀评测", 8.26, C.green, C.mint),
-        ("雅江智能体", 9.56, C.purple, C.pale_purple),
-        ("更多任务", 10.86, C.amber, C.pale_amber),
-    ]:
-        chip(s, label, x, 3.16, 1.04, color, fill)
-    evidence_card(s, "自动报告", harbin_report_cover, 6.98, 3.90, 1.18, 1.46, C.blue)
-    evidence_card(s, "Benchmark", haidian_chart, 8.62, 3.94, 1.84, 1.18, C.green)
-    evidence_card(s, "智能体界面", YAJIANG_AGENT, 10.72, 3.92, 1.34, 1.22, C.purple)
-    statement(s, "玄女不是多做几个遥感项目，而是把遥感项目沉淀为可复用的地理智能基础设施。", 6.58)
-
-    # 20. Technical paradigm
-    s = prs.slides.add_slide(blank)
-    bg(s)
-    title(s, "20", "技术范式：从“图像学 + 专家规则”到“多模态自学习”")
-    text(s, "传统遥感依赖显性规则和专家经验；玄女让模型从多模态、多时序观测中学习隐性地理规律。", 1.02, 1.14, 11.20, 0.28, 13, C.body, False, PP_ALIGN.CENTER)
-    section_header(s, "传统图像学", 0.86, 1.62, C.amber)
-    for i, label in enumerate(["定义特征", "人工融合", "单任务训练", "换任务重做"]):
-        slim_node(s, label, 0.94 + i * 1.20, 2.24, 0.94, C.amber, C.pale_amber)
-        if i < 3:
-            arrow(s, 1.88 + i * 1.20, 2.48, 2.08 + i * 1.20, 2.48, C.amber, 1.0)
-    evidence_card(s, "影像", IMG["s2"], 1.14, 3.36, 1.08, 0.96, C.body)
-    evidence_card(s, "人工标签", IMG["worldcover"], 2.52, 3.36, 1.08, 0.96, C.body)
-    evidence_card(s, "单任务输出", IMG["building"], 3.90, 3.36, 1.08, 0.96, C.body)
-    text(s, "特点：知识写在规则里，能力随项目结束而难以沉淀。", 1.04, 5.16, 4.74, 0.20, 10, C.body, True, PP_ALIGN.CENTER)
-    line(s, 6.30, 1.54, 6.30, 5.78, C.line, 0.9)
-    section_header(s, "玄女自学习", 6.84, 1.62, C.blue)
-    for i, label in enumerate(["多模态对齐", "时空规律学习", "DV 地理嵌入", "任务激活"]):
-        slim_node(s, label, 6.92 + i * 1.28, 2.24, 1.08, C.blue if i != 1 else C.green, C.pale_blue if i != 1 else C.mint)
-        if i < 3:
-            arrow(s, 8.00 + i * 1.28, 2.48, 8.20 + i * 1.28, 2.48, C.blue, 1.0)
-    evidence_card(s, "高分影像", IMG["s2hr"], 7.06, 3.36, 1.08, 0.96, C.body)
-    evidence_card(s, "地形", IMG["dem"], 8.44, 3.36, 1.08, 0.96, C.body)
-    evidence_card(s, "语义结果", IMG["semantic"], 9.82, 3.36, 1.08, 0.96, C.body)
-    text(s, "特点：知识沉淀在表征里，新增任务通过轻量适配复用底座能力。", 7.02, 5.16, 4.76, 0.20, 10, C.body, True, PP_ALIGN.CENTER)
-    statement(s, "技术变化的本质：从人工解释影像，转向模型自学习地理规律。", 6.58)
-
-    # 21. Core principle
-    s = prs.slides.add_slide(blank)
-    bg(s)
-    title(s, "21", "核心原理：从“数字地球”到“嵌入地球”")
-    text(s, "数字地球解决数据存储；嵌入地球解决知识编码。玄女把同一地理位置的多源观测转成可计算的 DV 地理嵌入向量。", 1.02, 1.14, 11.20, 0.30, 13, C.body, False, PP_ALIGN.CENTER)
-    section_header(s, "1 数据图层", 0.86, 1.68, C.amber)
-    for i, (label, img) in enumerate([("光学", IMG["s2"]), ("SAR", IMG["s1"]), ("DEM", IMG["dem"])]):
-        evidence_card(s, label, img, 0.96 + i * 1.30, 2.24, 1.00, 0.92, C.body)
-    text(s, "分散、稀疏、依赖人工解释", 1.08, 3.72, 3.62, 0.16, 10, C.body, True, PP_ALIGN.CENTER)
-    arrow(s, 4.98, 3.00, 5.70, 3.00, C.line, 1.4)
-    section_header(s, "2 地理嵌入", 5.82, 1.68, C.blue)
-    rect(s, 5.92, 2.30, 2.30, 1.06, C.pale_blue, C.blue)
-    text(s, "DV 地理嵌入向量", 6.12, 2.66, 1.90, 0.12, 13, C.blue, True, PP_ALIGN.CENTER)
-    for i, label in enumerate(["时间", "空间", "频谱", "语义"]):
-        chip(s, label, 5.86 + i * 0.62, 3.78, 0.48, C.blue, C.white)
-    text(s, "统一、致密、可比较", 5.92, 4.46, 2.30, 0.16, 10, C.body, True, PP_ALIGN.CENTER)
-    arrow(s, 8.50, 3.00, 9.22, 3.00, C.line, 1.4)
-    section_header(s, "3 下游调用", 9.38, 1.68, C.green)
-    for i, label in enumerate(["变化检测", "地物分类", "检索问答", "报告生成"]):
-        chip(s, label, 9.50 + (i % 2) * 1.12, 2.40 + (i // 2) * 0.72, 0.94, C.green, C.mint)
-    text(s, "同一表征，多类任务复用", 9.48, 4.46, 2.38, 0.16, 10, C.body, True, PP_ALIGN.CENTER)
-    statement(s, "GPT 先把文本转成 token；玄女先把地球观测转成地理嵌入。", 6.58)
-
-    # 22. Model architecture
-    s = prs.slides.add_slide(blank)
-    bg(s)
-    title(s, "22", "模型架构：多模态观测进入统一地理嵌入空间")
-    text(s, "玄女底座将不同传感器、不同时间、不同分辨率的数据对齐到同一套 DV 地理嵌入向量，再由任务头完成不同下游任务。", 1.02, 1.14, 11.20, 0.30, 13, C.body, False, PP_ALIGN.CENTER)
-    text(s, "Input", 0.88, 1.70, 2.42, 0.18, 14, C.blue, True, PP_ALIGN.CENTER)
-    for i, (label, img) in enumerate([("可见光", IMG["s2"]), ("SAR", IMG["s1"]), ("DEM", IMG["dem"]), ("多光谱", IMG["landsat"])]):
-        evidence_card(s, label, img, 0.98 + (i % 2) * 1.18, 2.10 + (i // 2) * 1.28, 0.92, 0.82, C.body)
-    arrow(s, 3.30, 3.10, 4.00, 3.10, C.line, 1.4)
-    rect(s, 4.18, 2.12, 2.04, 1.92, C.pale_blue, C.blue)
-    text(s, "时空多模态编码器", 4.36, 2.50, 1.68, 0.18, 13, C.blue, True, PP_ALIGN.CENTER)
-    text(s, "时空对齐\n跨模态融合\n时序学习", 4.58, 2.94, 1.24, 0.44, 9, C.body, True, PP_ALIGN.CENTER)
-    arrow(s, 6.22, 3.10, 6.92, 3.10, C.line, 1.4)
-    rect(s, 7.10, 2.10, 2.00, 1.96, C.mint, C.green)
-    text(s, "DV 地理嵌入向量", 7.26, 2.52, 1.68, 0.18, 13, C.green, True, PP_ALIGN.CENTER)
-    text(s, "像素级 / 格网级\n可复用表征", 7.38, 2.98, 1.44, 0.36, 9, C.body, True, PP_ALIGN.CENTER)
-    arrow(s, 9.10, 3.10, 9.80, 3.10, C.line, 1.4)
-    text(s, "Task Heads", 9.92, 1.70, 2.46, 0.18, 14, C.blue, True, PP_ALIGN.CENTER)
-    for i, label in enumerate(["LUCC", "变化检测", "高程回归", "地物分类", "检索问答", "报告生成"]):
-        chip(s, label, 9.80 + (i % 2) * 1.14, 2.16 + (i // 2) * 0.66, 1.00, C.purple if i % 2 else C.blue, C.pale_purple if i % 2 else C.pale_blue)
-    line(s, 0.96, 4.78, 12.20, 4.78, C.line, 0.8)
-    text(s, "训练路线", 0.96, 5.20, 1.40, 0.18, 13, C.blue, True)
-    for i, label in enumerate(["多源数据汇聚", "自监督预训练", "通用地理嵌入", "场景增强", "报告/API"]):
-        slim_node(s, label, 2.42 + i * 1.72, 5.08, 1.28, C.blue if i != 3 else C.green, C.pale_blue if i != 3 else C.mint)
-        if i < 4:
-            arrow(s, 3.70 + i * 1.72, 5.32, 3.98 + i * 1.72, 5.32, C.line, 1.0)
-    statement(s, "能力复用来自统一嵌入空间，而不是为每个场景重新堆模型。", 6.58)
-
-    # 23. Product and business architecture
-    s = prs.slides.add_slide(blank)
-    bg(s)
-    title(s, "23", "产品架构：一个通用底座，支撑多类场景应用")
-    text(s, "玄女把数据、模型、任务头、智能体和报告工作流封装成可调用的产品能力。", 1.02, 1.14, 11.20, 0.28, 13, C.body, False, PP_ALIGN.CENTER)
-    for name, items, y, color, fill in [
-        ("数据层", "遥感 / DEM / 气象 / 社会经济 / 本土标签", 1.86, C.green, C.mint),
-        ("底座层", "多模态编码器 / DV 地理嵌入库 / 向量检索 / 任务头", 3.06, C.blue, C.pale_blue),
-        ("应用层", "政务监测 / 城市治理 / 水电站监测 / 智能体报告 / API", 4.26, C.purple, C.pale_purple),
-    ]:
-        rect(s, 0.96, y, 11.28, 0.82, fill, color)
-        text(s, name, 1.20, y + 0.22, 1.30, 0.16, 12, color, True)
-        text(s, items, 2.56, y + 0.22, 9.28, 0.16, 10, C.ink, True, PP_ALIGN.RIGHT)
-    arrow(s, 6.60, 2.70, 6.60, 3.02, C.line, 1.2)
-    arrow(s, 6.60, 3.90, 6.60, 4.22, C.line, 1.2)
-    text(s, "业务范式变化", 0.96, 5.48, 2.20, 0.18, 13, C.blue, True)
-    for i, (old, new) in enumerate([("专家项目制", "底座调用式"), ("一次性交付", "持续服务"), ("人力扩张", "数据闭环")]):
-        text(s, old, 3.10 + i * 2.88, 5.46, 1.02, 0.14, 9, C.amber, True, PP_ALIGN.CENTER)
-        arrow(s, 4.10 + i * 2.88, 5.54, 4.48 + i * 2.88, 5.54, C.line, 1.0)
-        text(s, new, 4.56 + i * 2.88, 5.46, 1.02, 0.14, 9, C.blue, True, PP_ALIGN.CENTER)
-    statement(s, "商业价值来自底座复用：把高成本定制服务，变成可持续调用的地理智能能力。", 6.58)
-
-    # 24. Roadmap and public benefit
-    s = prs.slides.add_slide(blank)
-    bg(s)
-    title(s, "24", "三年路径：从技术验证到地理智能普惠化")
-    text(s, "未来的玄女底座不仅理解遥感影像，也将接入人口、产业、交通、用地、夜光等社会经济数据，让地理智能进入更多公共服务和商业场景。", 1.02, 1.14, 11.20, 0.30, 13, C.body, False, PP_ALIGN.CENTER)
-    years = [
-        ("2026", "技术验证", "中国区域 DV 地理嵌入底座验证；形成标杆案例。", "试点收入"),
-        ("2027", "商业验证", "行业模型、API/License、智能体报告产品化。", "千万级目标"),
-        ("2028", "规模化", "融合社会经济数据，扩展到公共服务和大众场景。", "亿元级目标"),
-    ]
-    for i, (yr, head, body, money) in enumerate(years):
-        x = 0.92 + i * 4.02
-        rect(s, x, 1.98, 3.34, 2.18, C.white, C.line)
-        text(s, yr, x + 0.20, 2.20, 0.80, 0.24, 18, C.blue if i < 2 else C.green, True)
-        text(s, head, x + 1.04, 2.26, 1.88, 0.16, 13, C.ink, True, PP_ALIGN.RIGHT)
-        text(s, body, x + 0.24, 2.78, 2.86, 0.46, 9, C.body, True, PP_ALIGN.CENTER)
-        chip(s, money, x + 0.86, 3.54, 1.56, C.blue if i < 2 else C.green, C.pale_blue if i < 2 else C.mint)
-        if i < 2:
-            arrow(s, x + 3.34, 3.08, x + 3.76, 3.08, C.line, 1.2)
-    section_header(s, "社会经济数据接入", 0.96, 4.70, C.blue)
-    for i, label in enumerate(["人口", "产业", "交通", "用地", "夜光", "POI"]):
-        chip(s, label, 3.02 + i * 0.86, 4.66, 0.64, C.green, C.mint)
-    text(s, "让模型从“看见地表变化”，进一步走向“理解变化背后的社会经济活动”。", 1.00, 5.32, 6.38, 0.22, 12, C.ink, True)
-    for label, sub, x, color, fill in [
-        ("基层治理", "更低门槛", 8.02, C.blue, C.pale_blue),
-        ("中小企业", "按需调用", 9.64, C.green, C.mint),
-        ("公众服务", "普惠应用", 11.26, C.purple, C.pale_purple),
-    ]:
-        rect(s, x, 4.86, 1.36, 0.70, fill, color)
-        text(s, label, x + 0.08, 5.02, 1.20, 0.12, 11, color, True, PP_ALIGN.CENTER)
-        text(s, sub, x + 0.08, 5.34, 1.20, 0.10, 7, C.body, True, PP_ALIGN.CENTER)
-    statement(s, "长期愿景：让遥感能力像用地图一样简单，让地理智能成为社会经济运行的基础服务。", 6.58)
-
+    add_slide(
+        prs,
+        "20",
+        "为什么能做：多模态自学习机制",
+        "模型通过同一地理位置的多源观测互相校准，学习稳定的地理语义。",
+        figures["multimodal"],
+        "能力来源：跨模态对齐、时序一致性与缺失模态补全共同形成鲁棒表征。",
+    )
+    add_slide(
+        prs,
+        "21",
+        "核心原理：同一地块的长期、跨源表征学习",
+        "遥感不是孤立图片，而是同一地球表面的反复观测；这使通用嵌入成为可能。",
+        figures["same_land"],
+        "GPT 将文本单元 token 化；玄女将地球观测单元嵌入化。",
+    )
+    add_slide(
+        prs,
+        "22",
+        "模型架构：编码器、嵌入空间与任务头",
+        "底层统一编码，中层形成 DV 地理嵌入向量，上层用轻量任务头服务不同场景。",
+        figures["architecture"],
+        "新增任务复用同一表征资产，训练成本和交付周期随任务数量下降。",
+    )
+    add_slide(
+        prs,
+        "23",
+        "技术路线为什么具备规模化潜力",
+        "从遥感多模态到社会经济数据融合，玄女底座可以扩展为更广泛的地理智能服务。",
+        figures["scale"],
+        "长期方向：让地理智能从专业项目走向政务、产业与公众可调用的基础服务。",
+    )
     return prs
 
 
