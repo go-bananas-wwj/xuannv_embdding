@@ -153,6 +153,15 @@ def build() -> Presentation:
     model_total = MODEL_REPORT / "00-2025年12月-2026年5月哈尔滨新区城市管理卫星遥感监测总报告.pdf"
     manual_cover = render_pdf_page(manual_total, 0, "manual_total")
     model_cover = render_pdf_page(model_total, 0, "model_total")
+    model_construction_page = render_pdf_page(
+        MODEL_REPORT / "01-2025年12月-2026年5月哈尔滨新区建筑工地卫星遥感监测报告.pdf", 5, "model_construction_p6"
+    )
+    model_building_page = render_pdf_page(
+        MODEL_REPORT / "02-2025年12月-2026年5月哈尔滨新区建筑变化卫星遥感监测报告.pdf", 5, "model_building_p6"
+    )
+    model_farmland_page = render_pdf_page(
+        MODEL_REPORT / "03-2025年12月-2026年5月哈尔滨新区耕地非农非粮卫星遥感监测报告.pdf", 5, "model_farmland_p6"
+    )
     manual_pages = report_page_counts(MANUAL_REPORT)
     model_pages = report_page_counts(MODEL_REPORT)
     harbin_map = HARBIN_REPORT_ROOT / "pdf_maps" / "all_categories_map.png"
@@ -232,17 +241,27 @@ def build() -> Presentation:
     manual_steps = ["接到监测任务", "下载影像与底图", "预处理与配准", "人工解译/核查", "制图统计", "撰写审核归档"]
     for idx, step in enumerate(manual_steps, 1):
         flow_step(s, idx, step, 0.62, 2.42 + (idx - 1) * 0.40, C.amber, C.pale_amber, 3.28)
+        if idx < len(manual_steps):
+            arrow(s, 2.26, 2.76 + (idx - 1) * 0.40, 2.26, 2.82 + (idx - 1) * 0.40, C.line, 0.8)
     text(s, "玄女自动化流程", 0.62, 4.90, 3.36, 0.16, 10, C.blue, True)
     xuannv_steps = ["选择区域/任务", "调用嵌入与任务头", "自动制图统计", "生成报告", "人工复核提交"]
     for idx, step in enumerate(xuannv_steps, 1):
         flow_step(s, idx, step, 0.62, 5.10 + (idx - 1) * 0.36, C.blue, C.pale_blue, 3.28)
+        if idx < len(xuannv_steps):
+            arrow(s, 2.26, 5.44 + (idx - 1) * 0.36, 2.26, 5.49 + (idx - 1) * 0.36, C.line, 0.8)
     line(s, 4.18, 1.48, 4.18, 6.58, C.line, 0.9)
-    text(s, "自动生成报告样例", 4.54, 1.62, 3.88, 0.20, 14, C.blue, True, PP_ALIGN.CENTER)
-    picture_fit(s, model_cover, 4.86, 2.02, 3.24, 3.16)
-    text(s, "2025 年 12 月 - 2026 年 5 月", 4.72, 5.34, 3.52, 0.16, 9, C.blue, True, PP_ALIGN.CENTER)
-    text(s, f"已生成 5 份专题报告，共 {model_pages} 页", 4.72, 5.64, 3.52, 0.18, 9, C.body, True, PP_ALIGN.CENTER)
+    text(s, "自动生成报告样例", 4.42, 1.62, 4.10, 0.20, 14, C.blue, True, PP_ALIGN.CENTER)
+    picture_fit(s, model_cover, 4.44, 2.00, 1.36, 1.86)
+    picture_fit(s, model_construction_page, 6.02, 2.00, 1.10, 1.52)
+    picture_fit(s, model_building_page, 7.22, 2.00, 1.10, 1.52)
+    picture_fit(s, model_farmland_page, 6.02, 3.82, 1.10, 1.52)
+    picture_fit(s, harbin_map, 7.22, 3.82, 1.10, 1.52)
+    small_label(s, "总报告封面", 4.44, 4.02, 1.36, C.blue)
+    small_label(s, "专题内页", 6.02, 5.48, 1.10, C.blue)
+    small_label(s, "点位分布", 7.22, 5.48, 1.10, C.blue)
+    text(s, f"已生成 5 份专题报告，共 {model_pages} 页；覆盖建筑工地、建筑变化、耕地非农非粮、垃圾渣土等专题。", 4.42, 5.88, 4.10, 0.34, 8, C.body, True, PP_ALIGN.CENTER)
     line(s, 8.70, 1.48, 8.70, 6.58, C.line, 0.9)
-    text(s, "给投资人算一笔账", 9.10, 1.62, 3.20, 0.22, 16, C.blue, True, PP_ALIGN.CENTER)
+    text(s, "交付效率测算", 9.10, 1.62, 3.20, 0.22, 16, C.blue, True, PP_ALIGN.CENTER)
     text(s, "以一次月度/周期监测报告为例，按遥感工程师、制图与报告撰写人力的保守估算。", 9.04, 2.02, 3.28, 0.34, 9, C.body, True, PP_ALIGN.CENTER)
     metric(s, "10-15 天", "传统交付周期", 9.02, 2.66, C.amber, C.pale_amber, 1.50)
     metric(s, "4-6 万元", "传统综合成本", 10.78, 2.66, C.amber, C.pale_amber, 1.50)
