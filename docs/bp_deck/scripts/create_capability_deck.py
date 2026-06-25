@@ -197,18 +197,18 @@ def build() -> Presentation:
     rect(s, 0.62, 4.84, 3.12, 1.10, C.pale_blue, C.blue)
     text(s, "核心价值", 0.82, 5.02, 2.72, 0.14, 10, C.blue, True, PP_ALIGN.CENTER)
     text(s, "从旧标签中学习稳定地物知识，在新影像上完成更贴近真实地物的划分。", 0.82, 5.27, 2.72, 0.34, 8, C.body, True, PP_ALIGN.CENTER)
-    line(s, 4.16, 1.40, 4.16, 5.72, C.line, 0.9)
-    text(s, "旧标签复用后的新影像划分效果", 4.62, 1.24, 7.58, 0.20, 13, C.blue, True, PP_ALIGN.CENTER)
+    line(s, 4.16, 1.32, 4.16, 5.94, C.line, 0.9)
+    text(s, "旧标签复用后的新影像划分效果", 4.62, 1.18, 7.58, 0.18, 13, C.blue, True, PP_ALIGN.CENTER)
     positions = [
-        ("水体识别", multi_imgs["水体识别"], 4.62, 1.62, 3.56, 0.94),
-        ("建筑提取", multi_imgs["建筑提取"], 4.62, 3.00, 3.56, 0.94),
-        ("地表分类", multi_imgs["地表分类"], 4.62, 4.38, 3.56, 0.94),
-        ("施工工地变化", multi_imgs["施工工地"], 8.62, 1.86, 3.56, 1.30),
-        ("耕地非农非粮", multi_imgs["耕地变化"], 8.62, 3.90, 3.56, 1.30),
+        ("水体识别", multi_imgs["水体识别"], 4.50, 1.48, 3.82, 1.06),
+        ("建筑提取", multi_imgs["建筑提取"], 4.50, 2.98, 3.82, 1.06),
+        ("地表分类", multi_imgs["地表分类"], 4.50, 4.48, 3.82, 1.06),
+        ("施工工地变化", multi_imgs["施工工地"], 8.58, 1.68, 3.82, 1.48),
+        ("耕地非农非粮", multi_imgs["耕地变化"], 8.58, 3.88, 3.82, 1.48),
     ]
     for name, path, x, y, w, h in positions:
         task_thumb(s, name, path, x, y, w, h)
-    text(s, "旧标签不再只是一次性标注资产：玄女底座从旧标签中提取可迁移地物知识，并将同一套地理嵌入复用到水体、建筑、地表分类与变化检测等多类任务。", 0.86, 6.08, 11.60, 0.36, 14, C.blue, True, PP_ALIGN.CENTER)
+    text(s, "旧标签不再只是一次性标注资产：玄女底座从旧标签中提取可迁移地物知识，并将同一套地理嵌入复用到水体、建筑、地表分类与变化检测等多类任务。", 0.86, 6.24, 11.60, 0.24, 12, C.blue, True, PP_ALIGN.CENTER)
 
     # 13. Harbin report delivery
     s = prs.slides.add_slide(blank)
