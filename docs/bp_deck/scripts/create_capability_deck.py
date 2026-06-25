@@ -96,9 +96,24 @@ def flow_step(slide, index: int, value: str, x: float, y: float, color=C.blue, f
     text(slide, value, x + 0.36, y + 0.09, w - 0.48, 0.12, 8, C.ink, True)
 
 
-def flow_node(slide, value: str, x: float, y: float, color=C.blue, fill=C.pale_blue, w: float = 0.96, h: float = 0.42) -> None:
+def flow_node(
+    slide,
+    value: str,
+    x: float,
+    y: float,
+    color=C.blue,
+    fill=C.pale_blue,
+    w: float = 1.02,
+    h: float = 0.62,
+    duration: str = "",
+    note: str = "",
+) -> None:
     rect(slide, x, y, w, h, fill, color)
-    text(slide, value, x + 0.06, y + 0.09, w - 0.12, h - 0.16, 7, color, True, PP_ALIGN.CENTER)
+    text(slide, value, x + 0.06, y + 0.08, w - 0.12, 0.12, 7, color, True, PP_ALIGN.CENTER)
+    if duration:
+        text(slide, duration, x + 0.06, y + 0.27, w - 0.12, 0.10, 7, C.ink, True, PP_ALIGN.CENTER)
+    if note:
+        text(slide, note, x + 0.06, y + 0.44, w - 0.12, 0.08, 5, C.muted, True, PP_ALIGN.CENTER)
 
 
 def metric(slide, value: str, label: str, x: float, y: float, color=C.blue, fill=C.pale_blue, w: float = 1.72) -> None:
@@ -243,38 +258,40 @@ def build() -> Presentation:
     bg(s)
     title(s, "13", "哈尔滨新区：从检测结果到政府可用报告")
     text(s, "模型价值最终要落到交付：把变化检测、统计制图和业务解释组织成政府客户可阅读、可复核、可归档的报告。", 1.02, 1.14, 11.20, 0.30, 13, C.body, False, PP_ALIGN.CENTER)
-    text(s, "用户历程", 0.62, 1.62, 3.60, 0.20, 16, C.blue, True)
+    text(s, "用户旅程对比", 0.62, 1.62, 3.60, 0.20, 16, C.blue, True)
     line(s, 0.62, 1.98, 2.20, 1.98, C.blue, 1.0)
-    text(s, "传统人工流程", 0.62, 2.16, 3.36, 0.16, 10, C.ink, True)
+    text(s, "传统人工流程", 0.62, 2.12, 1.56, 0.16, 10, C.ink, True)
+    text(s, "10-15 天 / 多人串行", 2.22, 2.12, 1.54, 0.16, 8, C.amber, True, PP_ALIGN.RIGHT)
     manual_nodes = [
-        ("接到任务", 0.62, 2.48),
-        ("下载影像", 1.75, 2.48),
-        ("预处理", 2.88, 2.48),
-        ("人工解译", 2.88, 3.20),
-        ("制图统计", 1.75, 3.20),
-        ("审核归档", 0.62, 3.20),
+        ("接到任务", "0.5 天", "拆需求", 0.54, 2.42),
+        ("下载影像", "1-2 天", "等数据", 1.72, 2.42),
+        ("预处理", "1-2 天", "配准清洗", 2.90, 2.42),
+        ("人工解译", "5-8 天", "逐图核查", 2.90, 3.30),
+        ("制图统计", "2-3 天", "反复整理", 1.72, 3.30),
+        ("审核归档", "1-2 天", "多轮返工", 0.54, 3.30),
     ]
-    for value, x, y in manual_nodes:
-        flow_node(s, value, x, y, C.amber, C.pale_amber)
-    arrow(s, 1.58, 2.69, 1.73, 2.69, C.line, 0.8)
-    arrow(s, 2.71, 2.69, 2.86, 2.69, C.line, 0.8)
-    arrow(s, 3.36, 2.90, 3.36, 3.18, C.line, 0.8)
-    arrow(s, 2.88, 3.41, 2.73, 3.41, C.line, 0.8)
-    arrow(s, 1.75, 3.41, 1.60, 3.41, C.line, 0.8)
-    text(s, "玄女自动化流程", 0.62, 4.20, 3.36, 0.16, 10, C.blue, True)
+    for value, duration, note, x, y in manual_nodes:
+        flow_node(s, value, x, y, C.amber, C.pale_amber, duration=duration, note=note)
+    arrow(s, 1.56, 2.73, 1.70, 2.73, C.line, 0.8)
+    arrow(s, 2.74, 2.73, 2.88, 2.73, C.line, 0.8)
+    arrow(s, 3.41, 3.04, 3.41, 3.28, C.line, 0.8)
+    arrow(s, 2.90, 3.61, 2.76, 3.61, C.line, 0.8)
+    arrow(s, 1.72, 3.61, 1.58, 3.61, C.line, 0.8)
+    text(s, "玄女自动化流程", 0.62, 4.32, 1.56, 0.16, 10, C.blue, True)
+    text(s, "0.5-1 天 / 底座复用", 2.18, 4.32, 1.58, 0.16, 8, C.blue, True, PP_ALIGN.RIGHT)
     xuannv_nodes = [
-        ("选择任务", 0.62, 4.52),
-        ("调用底座", 1.75, 4.52),
-        ("自动统计", 2.88, 4.52),
-        ("生成报告", 1.75, 5.24),
-        ("人工复核", 0.62, 5.24),
+        ("选择任务", "5 分钟", "低门槛", 0.54, 4.62),
+        ("调用底座", "自动推理", "免重训", 1.72, 4.62),
+        ("自动统计", "分钟级", "自动制图", 2.90, 4.62),
+        ("生成报告", "10 分钟", "自动成文", 1.72, 5.48),
+        ("人工复核", "0.5 天", "确认提交", 0.54, 5.48),
     ]
-    for value, x, y in xuannv_nodes:
-        flow_node(s, value, x, y, C.blue, C.pale_blue)
-    arrow(s, 1.58, 4.73, 1.73, 4.73, C.line, 0.8)
-    arrow(s, 2.71, 4.73, 2.86, 4.73, C.line, 0.8)
-    arrow(s, 3.36, 4.94, 2.25, 5.22, C.line, 0.8)
-    arrow(s, 1.75, 5.45, 1.60, 5.45, C.line, 0.8)
+    for value, duration, note, x, y in xuannv_nodes:
+        flow_node(s, value, x, y, C.blue, C.pale_blue, duration=duration, note=note)
+    arrow(s, 1.56, 4.93, 1.70, 4.93, C.line, 0.8)
+    arrow(s, 2.74, 4.93, 2.88, 4.93, C.line, 0.8)
+    arrow(s, 3.41, 5.24, 2.26, 5.47, C.line, 0.8)
+    arrow(s, 1.72, 5.79, 1.58, 5.79, C.line, 0.8)
     line(s, 4.18, 1.48, 4.18, 6.58, C.line, 0.9)
     text(s, "自动生成报告样例", 4.42, 1.62, 4.10, 0.20, 14, C.blue, True, PP_ALIGN.CENTER)
     report_tiles = [
