@@ -30,9 +30,9 @@ HAIDIAN = Path("/root/workspace/report/assets")
 YAJIANG = ROOT / "assets" / "user_materials" / "yajiang_case"
 YAJIANG_AGENT = Path("/root/.codex/attachments/071916f0-9ca0-4d8c-83f1-bcd404e7ea3c/e178b904e06c08479cd215ca230ff245.png")
 REGION_OUTLINES = {
-    "harbin": ROOT / "assets" / "generated" / "practice_region_harbin_outline.png",
-    "haidian": ROOT / "assets" / "generated" / "practice_region_haidian_outline.png",
-    "yajiang": ROOT / "assets" / "generated" / "practice_region_yajiang_outline.png",
+    "harbin": ROOT / "assets" / "generated" / "practice_region_harbin_demand.png",
+    "haidian": ROOT / "assets" / "generated" / "practice_region_haidian_demand.png",
+    "yajiang": ROOT / "assets" / "generated" / "practice_region_yajiang_demand.png",
 }
 TMP = Path("/tmp/xuannv_capability_deck_assets")
 
@@ -124,8 +124,8 @@ def build() -> Presentation:
     # 10. Overview
     s = prs.slides.add_slide(blank)
     bg(s)
-    title(s, "10", "玄女底座现有工程实践案例")
-    text(s, "围绕政务城市治理、复杂城市变化评测与水电站监测三类场景，玄女底座已形成面向不同区域的工程实践。", 1.02, 1.14, 11.20, 0.28, 13, C.body, False, PP_ALIGN.CENTER)
+    title(s, "10", "现有工程实践案例")
+    text(s, "政务城市治理  |  城市变化评测  |  水电站监测", 1.02, 1.12, 11.20, 0.26, 17, C.blue, True, PP_ALIGN.CENTER)
     case_card(s, "哈尔滨新区", "政府客户 · 城市治理", "多专题持续监测与城市管理报告更新", REGION_OUTLINES["harbin"], 0.86, C.blue, C.pale_blue)
     case_card(s, "海淀区", "城市核心区 · 任务评测", "复杂城市纹理下，对标国际地理嵌入能力", REGION_OUTLINES["haidian"], 4.82, C.green, C.mint)
     case_card(s, "雅江区域", "水电站周边 · 安全监测", "水电站周边态势监测与遥感分析报告", REGION_OUTLINES["yajiang"], 8.78, C.purple, C.pale_purple)
