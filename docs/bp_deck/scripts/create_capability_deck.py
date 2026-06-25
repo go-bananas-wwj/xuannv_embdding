@@ -16,7 +16,7 @@ from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
 
-from create_front8_deck_v2 import C, bg, title, text, rect, line, arrow, picture_crop, picture_fit, claim
+from create_front8_deck_v2 import C, bg, title, text, rect, line, arrow, picture, picture_crop, picture_fit, claim
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -161,15 +161,15 @@ def build() -> Presentation:
     text(s, "地理嵌入融合变化前后 RGB 与表征差异，模型不只看云下影像，而是比较区域语义变化。", 1.04, 5.78, 2.94, 0.18, 8, C.body, True, PP_ALIGN.CENTER)
     col_labels = ["变化前 RGB", "变化后 RGB", "变化前嵌入", "变化后嵌入", "变化概率"]
     for j, label_value in enumerate(col_labels):
-        text(s, label_value, 4.94 + j * 1.50, 1.45, 1.36, 0.12, 7, C.muted, True, PP_ALIGN.CENTER)
+        text(s, label_value, 4.88 + j * 1.504, 1.45, 1.42, 0.12, 7, C.muted, True, PP_ALIGN.CENTER)
     for i, img in enumerate(cloud_imgs):
-        y = 1.78 + i * 1.54
-        picture_fit(s, img, 4.88, y, 7.52, 1.20)
+        y = 1.70 + i * 1.60
+        picture(s, img, 4.88, y, 7.52, 1.62)
         image_pill(s, f"样例 {i + 1}", 4.96, y + 0.08, C.blue if i == 0 else (C.green if i == 1 else C.purple), C.pale_blue if i == 0 else (C.mint if i == 1 else C.pale_purple))
-    outline_callout(s, "云雾遮挡", 6.28, 1.92, 1.22, 0.70, RED)
-    outline_callout(s, "云雾遮挡", 5.00, 3.44, 1.22, 0.78, RED)
-    outline_callout(s, "云雾遮挡", 4.98, 5.04, 1.28, 0.70, RED)
-    claim(s, "玄女底座提高的是业务可用性：真实遥感数据不完美，但系统仍要稳定产出。", 6.48, C.blue)
+    outline_callout(s, "云雾遮挡", 6.46, 1.86, 1.18, 0.78, RED)
+    outline_callout(s, "云雾遮挡", 4.98, 3.36, 1.32, 0.90, RED)
+    outline_callout(s, "云雾遮挡", 4.98, 5.10, 1.30, 0.78, RED)
+    claim(s, "玄女底座提高的是业务可用性：真实遥感数据不完美，但系统仍要稳定产出。", 6.84, C.blue)
 
     # 12. Harbin multi-task reuse
     s = prs.slides.add_slide(blank)
