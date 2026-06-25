@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "assets"
 GENERATED = ASSETS / "generated"
 OLD = ASSETS / "old_bp_media"
-OUT = ROOT / "outputs" / "玄女科技BP_架构原理章节_v0.3.pptx"
+OUT = ROOT / "outputs" / "玄女科技BP_架构原理章节_v0.4.pptx"
 FONT_PATH = Path("/root/workspace/xuannv/fonts/NotoSansCJKsc-Regular.otf")
 
 
@@ -276,31 +276,63 @@ def make_model_architecture() -> Path:
 def make_scale_path() -> Path:
     im = base_canvas()
     d = ImageDraw.Draw(im)
-    draw_text(d, (190, 80), "技术路线为什么具备规模化潜力", 56, INK)
-    draw_text(d, (190, 160), "价值不只来自单点精度，而来自底座复用、数据闭环与跨行业扩展", 31, MUTED)
 
-    nodes = [
-        ("遥感多模态", "影像、SAR、DEM、时序", BLUE, PALE_BLUE),
-        ("DV 地理嵌入", "统一表征资产", GREEN, MINT),
-        ("社会经济数据", "人口、产业、交通、POI", PURPLE, PALE_PURPLE),
-        ("地理智能服务", "政务、产业、公众服务", AMBER, PALE_AMBER),
+    # A light timeline, closer to investor BP roadmap pages than a dense table.
+    d.line((340, 270, 2060, 270), fill=LINE, width=10)
+    stages = [
+        {
+            "year": "2026",
+            "stage": "技术验证",
+            "headline": "中国区域底座验证",
+            "milestones": ["中国区域 DV 地理嵌入底座", "哈尔滨、海淀、雅江标杆案例", "国产数据与多模态验证"],
+            "result": "形成标杆交付与试点收入",
+            "color": BLUE,
+            "fill": PALE_BLUE,
+            "img": IMG["cloud"],
+        },
+        {
+            "year": "2027",
+            "stage": "商业验证",
+            "headline": "行业模型产品化",
+            "milestones": ["政务/能源/城市治理任务头", "API、License 与智能体报告", "启动更大范围模型训练"],
+            "result": "行业客户复制，收入目标千万级",
+            "color": GREEN,
+            "fill": MINT,
+            "img": IMG["semantic"],
+        },
+        {
+            "year": "2028",
+            "stage": "规模化",
+            "headline": "地理智能普惠化",
+            "milestones": ["融合人口、产业、交通、POI", "从遥感理解到社会经济理解", "覆盖政务、产业与公众服务"],
+            "result": "规模化服务，收入目标亿元级",
+            "color": PURPLE,
+            "fill": PALE_PURPLE,
+            "img": OLD / "image1.png",
+        },
     ]
-    for i, (head, sub, color, fill) in enumerate(nodes):
-        x = 230 + i * 520
-        circle(d, x + 150, 560, 130, fill, color, 5)
-        d.text((x + 150, 535), head, font=font(36), fill=color, anchor="mm")
-        d.text((x + 150, 590), sub, font=font(24), fill=BODY, anchor="mm")
-        if i < len(nodes) - 1:
-            arrow(d, (x + 290, 560), (x + 500, 560), LINE, 8)
 
-    paste_fit(im, OLD / "image10.jpeg", (230, 800, 570, 1040), 24)
-    paste_fit(im, OLD / "image14.jpeg", (690, 800, 1030, 1040), 24)
-    paste_fit(im, OLD / "image1.png", (1150, 800, 1490, 1040), 24)
-    paste_fit(im, IMG["semantic"], (1610, 800, 1950, 1040), 24)
-    for x, label, color in [(230, "区域治理", BLUE), (690, "资源评估", GREEN), (1150, "数字地球", PURPLE), (1610, "智能分析", AMBER)]:
-        d.text((x + 170, 1085), label, font=font(28), fill=color, anchor="mm")
+    for i, item in enumerate(stages):
+        x = 210 + i * 720
+        color = item["color"]
+        fill = item["fill"]
+        circle(d, x + 160, 270, 42, fill, color, 5)
+        d.text((x + 160, 270), str(i + 1), font=font(38), fill=color, anchor="mm")
+        d.text((x + 160, 150), item["year"], font=font(78), fill=color, anchor="mm")
+        d.text((x + 160, 215), item["stage"], font=font(33), fill=INK, anchor="mm")
 
-    draw_text(d, (360, 1135), "三年目标：从标杆项目验证，到 API/License 产品化，再到融合社会经济数据的普惠地理智能服务。", 36, INK, width=1680)
+        rounded(d, (x, 365, x + 500, 885), 42, WHITE, LINE, 2)
+        paste_fit(im, item["img"], (x + 32, 395, x + 468, 610), 24)
+        d.text((x + 250, 670), item["headline"], font=font(40), fill=color, anchor="mm")
+        y = 735
+        for m in item["milestones"]:
+            d.ellipse((x + 76, y + 8, x + 92, y + 24), fill=color)
+            draw_text(d, (x + 112, y), m, 26, BODY, width=330)
+            y += 48
+        rounded(d, (x + 55, 930, x + 445, 1010), 38, fill, color, 2)
+        d.text((x + 250, 970), item["result"], font=font(27), fill=color, anchor="mm")
+
+    draw_text(d, (320, 1105), "三年路径清晰：技术验证降低不确定性，行业复制验证商业化，社会经济数据融合打开规模化空间。", 36, INK, width=1850)
     return save(im, "arch_scale_path_social_econ.png")
 
 
@@ -368,10 +400,10 @@ def build() -> Presentation:
     add_slide(
         prs,
         "23",
-        "技术路线为什么具备规模化潜力",
-        "从遥感多模态到社会经济数据融合，玄女底座可以扩展为更广泛的地理智能服务。",
+        "发展规划：三年三阶段里程碑",
+        "围绕技术成熟度、商业转化和规模化应用，形成清晰可验证的三年推进路径。",
         figures["scale"],
-        "长期方向：让地理智能从专业项目走向政务、产业与公众可调用的基础服务。",
+        "三年路径：技术验证 → 商业验证 → 规模化应用，风险可控、节奏清晰。",
     )
     return prs
 
