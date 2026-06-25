@@ -29,6 +29,7 @@ HARBIN_REPORT_ROOT = Path("/root/workspace/xuannv/reports/harbin_202512_202605")
 HAIDIAN = Path("/root/workspace/report/assets")
 YAJIANG = ROOT / "assets" / "user_materials" / "yajiang_case"
 YAJIANG_AGENT = Path("/root/.codex/attachments/071916f0-9ca0-4d8c-83f1-bcd404e7ea3c/e178b904e06c08479cd215ca230ff245.png")
+REGIONS_VIS = ROOT / "assets" / "generated" / "capability_regions_network_v1.png"
 TMP = Path("/tmp/xuannv_capability_deck_assets")
 
 
@@ -58,16 +59,14 @@ def metric(slide, value: str, label: str, x: float, y: float, color=C.blue, fill
     text(slide, label, x + 0.10, y + 0.47, w - 0.20, 0.14, 7, C.body, True, PP_ALIGN.CENTER)
 
 
-def case_card(slide, name: str, scene: str, proof: str, x: float, color, fill) -> None:
-    rect(slide, x, 1.78, 3.70, 3.72, C.white, C.line)
-    rect(slide, x + 0.28, 2.08, 0.54, 0.54, fill, color)
-    text(slide, name, x + 0.98, 2.13, 2.24, 0.22, 15, C.ink, True)
-    line(slide, x + 0.36, 2.88, x + 3.30, 2.88, C.line, 0.8)
-    text(slide, "场景", x + 0.38, 3.12, 0.52, 0.13, 7, color, True, PP_ALIGN.CENTER)
-    text(slide, scene, x + 1.00, 3.05, 2.22, 0.28, 9, C.body, True)
-    text(slide, "证明", x + 0.38, 3.94, 0.52, 0.13, 7, color, True, PP_ALIGN.CENTER)
-    text(slide, proof, x + 1.00, 3.86, 2.28, 0.38, 9, C.body, True)
-    text(slide, "底座 + 任务 + 报告", x + 0.42, 4.82, 2.86, 0.17, 9, color, True, PP_ALIGN.CENTER)
+def case_card(slide, name: str, scene: str, need: str, x: float, color, fill) -> None:
+    rect(slide, x, 4.38, 3.70, 1.54, C.white, C.line)
+    rect(slide, x + 0.24, 4.66, 0.40, 0.40, fill, color)
+    text(slide, name, x + 0.82, 4.66, 2.40, 0.20, 13, C.ink, True)
+    text(slide, "合作场景", x + 0.30, 5.16, 0.70, 0.13, 6, color, True, PP_ALIGN.CENTER)
+    text(slide, scene, x + 1.10, 5.10, 2.22, 0.18, 8, C.body, True)
+    text(slide, "核心需求", x + 0.30, 5.56, 0.70, 0.13, 6, color, True, PP_ALIGN.CENTER)
+    text(slide, need, x + 1.10, 5.48, 2.28, 0.24, 8, C.body, True)
 
 
 def task_thumb(slide, label: str, path: Path, x: float, y: float, w: float, h: float) -> None:
@@ -121,12 +120,13 @@ def build() -> Presentation:
     # 10. Overview
     s = prs.slides.add_slide(blank)
     bg(s)
-    title(s, "10", "三个场景，验证玄女底座的可用性、可比性与可交付性")
-    text(s, "后半段不讲概念堆叠，而用真实场景证明：地理嵌入可以进入任务评测、政务交付和智能体应用。", 1.02, 1.14, 11.20, 0.28, 13, C.body, False, PP_ALIGN.CENTER)
-    case_card(s, "哈尔滨新区", "政府客户：城市治理卫星遥感监测", "复杂观测可用、多任务可复用、报告可自动生成", 0.86, C.blue, C.pale_blue)
-    case_card(s, "海淀区", "高密度城市纹理下的下游任务评测", "与 AEF 2025 官方嵌入正面对标", 4.82, C.green, C.mint)
-    case_card(s, "雅江区域", "雅江水电站周边监测与分析", "嵌入接入智能体，生成遥感分析报告", 8.78, C.purple, C.pale_purple)
-    claim(s, "三个案例共同证明：玄女正在形成“地理嵌入底座 + 任务库 + 报告智能体”的产品闭环。", 6.34, C.blue)
+    title(s, "10", "能力案例：三个合作区域的真实需求")
+    text(s, "以下选取哈尔滨新区、海淀区与雅江区域三个合作场景，分别对应政务监测、城市变化评测与水电站安全监测需求。", 1.02, 1.14, 11.20, 0.28, 13, C.body, False, PP_ALIGN.CENTER)
+    picture_crop(s, REGIONS_VIS, 1.02, 1.70, 11.30, 2.26)
+    case_card(s, "哈尔滨新区", "政府客户：城市治理遥感监测", "多专题持续监测，并形成可归档报告", 0.86, C.blue, C.pale_blue)
+    case_card(s, "海淀区", "复杂城市纹理下游评测", "用本土任务指标对标国际地理嵌入", 4.82, C.green, C.mint)
+    case_card(s, "雅江区域", "雅江水电站周边监测", "通过智能体生成可交互遥感分析报告", 8.78, C.purple, C.pale_purple)
+    text(s, "后续三组案例将分别展开其数据条件、任务需求与交付形态。", 1.02, 6.46, 11.20, 0.18, 10, C.blue, True, PP_ALIGN.CENTER)
 
     # 11. Harbin cloud robustness
     s = prs.slides.add_slide(blank)
