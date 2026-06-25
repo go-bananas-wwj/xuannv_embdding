@@ -211,7 +211,7 @@ def build() -> Presentation:
     metric(s, "多类", "下游任务示例", 1.08, 6.12, C.blue, C.pale_blue, 1.58)
     metric(s, "旧标签", "知识复用", 3.34, 6.12, C.green, C.mint, 1.58)
     metric(s, "一次表征", "多次复用", 5.60, 6.12, C.purple, C.pale_purple, 1.58)
-    text(s, "Ground Truth 可来自旧年份或旧数据源；玄女底座提取的是可迁移的地物表征，而不是机械复制旧标签。", 7.78, 6.20, 4.26, 0.24, 9, C.blue, True, PP_ALIGN.CENTER)
+    text(s, "旧标签提供监督，模型学习可迁移地物表征。", 7.48, 6.20, 4.82, 0.18, 9, C.blue, True, PP_ALIGN.CENTER)
 
     # 13. Harbin report delivery
     s = prs.slides.add_slide(blank)
