@@ -46,6 +46,20 @@ def small_label(slide, value: str, x: float, y: float, w: float, color=C.body) -
     text(slide, value, x, y, w, 0.13, 7, color, True, PP_ALIGN.CENTER)
 
 
+def outline_callout(slide, label_text: str, x: float, y: float, w: float, h: float, color=C.amber) -> None:
+    box = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h))
+    box.fill.background()
+    box.line.color.rgb = color
+    box.line.width = Pt(2.0)
+    rect(slide, x, y - 0.20, 0.86, 0.20, C.pale_amber, color)
+    text(slide, label_text, x + 0.06, y - 0.145, 0.74, 0.08, 6, color, True, PP_ALIGN.CENTER)
+
+
+def image_pill(slide, label_text: str, x: float, y: float, color=C.blue, fill=C.pale_blue) -> None:
+    rect(slide, x, y, 0.70, 0.24, fill, color)
+    text(slide, label_text, x + 0.07, y + 0.075, 0.56, 0.08, 6, color, True, PP_ALIGN.CENTER)
+
+
 def bullet(slide, head: str, body: str, x: float, y: float, color=C.blue, fill=C.pale_blue, w: float = 3.66) -> None:
     rect(slide, x, y, w, 0.78, C.white, C.line)
     dot = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.OVAL, Inches(x + 0.20), Inches(y + 0.26), Inches(0.26), Inches(0.26))
@@ -133,16 +147,22 @@ def build() -> Presentation:
     s = prs.slides.add_slide(blank)
     bg(s)
     title(s, "11", "哈尔滨新区：有云遮挡，仍能识别变化区域")
-    section_label(s, "政府客户的真实难题", 0.86, 1.34, C.blue)
-    text(s, "城市治理依赖持续监测，但光学影像经常受云、雪、雾和季节差异影响。传统流程遇到影像质量问题，往往需要重新筛数据、换时相、补人工判断。", 0.86, 1.84, 3.70, 0.88, 13, C.ink, True)
+    text(s, "政府客户的真实难题", 0.86, 1.34, 3.60, 0.24, 15, C.blue, True)
+    line(s, 0.86, 1.76, 2.62, 1.76, C.blue, 1.1)
+    text(s, "云、雾、雪会遮挡关键地物；城市治理仍需要连续、稳定的变化检测结果。", 0.86, 2.02, 3.68, 0.46, 15, C.ink, True)
     bullet(s, "缺失模态下仍可推理", "不依赖单张完美影像完成判断", 0.86, 3.18, C.blue, C.pale_blue)
     bullet(s, "跨模态保留变化信号", "RGB 与嵌入共同支撑变化检测", 0.86, 4.18, C.green, C.mint)
     bullet(s, "减少人工重跑", "影像质量波动不直接造成流程停摆", 0.86, 5.18, C.purple, C.pale_purple)
-    text(s, "每个样例列含义：变化前 RGB / 变化后 RGB / 变化前嵌入 / 变化后嵌入 / 模型预测变化区域", 5.06, 1.36, 7.16, 0.18, 9, C.muted, True, PP_ALIGN.CENTER)
+    col_labels = ["变化前 RGB", "变化后 RGB", "变化前嵌入", "变化后嵌入", "变化概率"]
+    for j, label_value in enumerate(col_labels):
+        text(s, label_value, 4.94 + j * 1.50, 1.45, 1.36, 0.12, 7, C.muted, True, PP_ALIGN.CENTER)
     for i, img in enumerate(cloud_imgs):
-        y = 1.82 + i * 1.44
-        picture_fit(s, img, 5.10, y, 7.02, 1.10)
-        small_label(s, f"云遮挡变化检测样例 {i + 1}", 5.10, y + 1.18, 7.02)
+        y = 1.78 + i * 1.54
+        picture_fit(s, img, 4.88, y, 7.52, 1.20)
+        image_pill(s, f"样例 {i + 1}", 4.96, y + 0.08, C.blue if i == 0 else (C.green if i == 1 else C.purple), C.pale_blue if i == 0 else (C.mint if i == 1 else C.pale_purple))
+    outline_callout(s, "云雾遮挡", 6.30, 1.88, 1.18, 0.72, C.amber)
+    outline_callout(s, "云雾遮挡", 5.00, 3.43, 1.18, 0.80, C.amber)
+    outline_callout(s, "云雾遮挡", 5.00, 5.02, 1.22, 0.72, C.amber)
     claim(s, "玄女底座提高的是业务可用性：真实遥感数据不完美，但系统仍要稳定产出。", 6.48, C.blue)
 
     # 12. Harbin multi-task reuse
