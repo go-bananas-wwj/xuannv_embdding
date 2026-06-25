@@ -272,11 +272,11 @@ def build() -> Presentation:
     ]
     for value, duration, note, x, y in manual_nodes:
         flow_node(s, value, x, y, C.amber, C.pale_amber, duration=duration, note=note)
-    arrow(s, 1.56, 2.73, 1.70, 2.73, C.line, 0.8)
-    arrow(s, 2.74, 2.73, 2.88, 2.73, C.line, 0.8)
-    arrow(s, 3.41, 3.04, 3.41, 3.28, C.line, 0.8)
-    arrow(s, 2.90, 3.61, 2.76, 3.61, C.line, 0.8)
-    arrow(s, 1.72, 3.61, 1.58, 3.61, C.line, 0.8)
+    arrow(s, 1.56, 2.73, 1.70, 2.73, C.amber, 1.35)
+    arrow(s, 2.74, 2.73, 2.88, 2.73, C.amber, 1.35)
+    arrow(s, 3.41, 3.04, 3.41, 3.28, C.amber, 1.35)
+    arrow(s, 2.90, 3.61, 2.76, 3.61, C.amber, 1.35)
+    arrow(s, 1.72, 3.61, 1.58, 3.61, C.amber, 1.35)
     text(s, "玄女自动化流程", 0.62, 4.32, 1.56, 0.16, 10, C.blue, True)
     text(s, "0.5-1 天 / 底座复用", 2.18, 4.32, 1.58, 0.16, 8, C.blue, True, PP_ALIGN.RIGHT)
     xuannv_nodes = [
@@ -288,10 +288,13 @@ def build() -> Presentation:
     ]
     for value, duration, note, x, y in xuannv_nodes:
         flow_node(s, value, x, y, C.blue, C.pale_blue, duration=duration, note=note)
-    arrow(s, 1.56, 4.93, 1.70, 4.93, C.line, 0.8)
-    arrow(s, 2.74, 4.93, 2.88, 4.93, C.line, 0.8)
-    arrow(s, 3.41, 5.24, 2.26, 5.47, C.line, 0.8)
-    arrow(s, 1.72, 5.79, 1.58, 5.79, C.line, 0.8)
+    arrow(s, 1.56, 4.93, 1.70, 4.93, C.blue, 1.35)
+    arrow(s, 2.74, 4.93, 2.88, 4.93, C.blue, 1.35)
+    line(s, 3.41, 5.24, 3.41, 5.79, C.blue, 1.35)
+    arrow(s, 3.41, 5.79, 2.76, 5.79, C.blue, 1.35)
+    text(s, "↓", 3.31, 5.36, 0.20, 0.12, 10, C.blue, True, PP_ALIGN.CENTER)
+    text(s, "←", 3.00, 5.62, 0.20, 0.12, 10, C.blue, True, PP_ALIGN.CENTER)
+    arrow(s, 1.72, 5.79, 1.58, 5.79, C.blue, 1.35)
     line(s, 4.18, 1.48, 4.18, 6.58, C.line, 0.9)
     text(s, "自动生成报告样例", 4.42, 1.62, 4.10, 0.20, 14, C.blue, True, PP_ALIGN.CENTER)
     report_tiles = [
