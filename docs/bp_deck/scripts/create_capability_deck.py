@@ -30,9 +30,9 @@ HAIDIAN = Path("/root/workspace/report/assets")
 YAJIANG = ROOT / "assets" / "user_materials" / "yajiang_case"
 YAJIANG_AGENT = Path("/root/.codex/attachments/071916f0-9ca0-4d8c-83f1-bcd404e7ea3c/e178b904e06c08479cd215ca230ff245.png")
 REGION_OUTLINES = {
-    "harbin": ROOT / "assets" / "generated" / "practice_region_harbin_original.png",
-    "haidian": ROOT / "assets" / "generated" / "practice_region_haidian_original.png",
-    "yajiang": ROOT / "assets" / "generated" / "practice_region_yajiang_original.png",
+    "harbin": ROOT / "assets" / "generated" / "practice_region_harbin_whitefit.png",
+    "haidian": ROOT / "assets" / "generated" / "practice_region_haidian_whitefit.png",
+    "yajiang": ROOT / "assets" / "generated" / "practice_region_yajiang_whitefit.png",
 }
 TMP = Path("/tmp/xuannv_capability_deck_assets")
 
@@ -65,7 +65,7 @@ def metric(slide, value: str, label: str, x: float, y: float, color=C.blue, fill
 
 def case_card(slide, name: str, scene: str, need: str, image: Path, x: float, color, fill) -> None:
     text(slide, name, x + 0.20, 1.72, 3.25, 0.28, 17, C.ink, True, PP_ALIGN.CENTER)
-    picture_crop(slide, image, x + 0.42, 2.16, 2.84, 2.12)
+    picture_fit(slide, image, x + 0.30, 2.08, 3.08, 2.16)
     line(slide, x + 0.40, 4.58, x + 3.28, 4.58, color, 1.1)
     rect(slide, x + 0.30, 4.88, 3.06, 0.44, fill, color)
     text(slide, scene, x + 0.46, 5.02, 2.72, 0.14, 9, color, True, PP_ALIGN.CENTER)
