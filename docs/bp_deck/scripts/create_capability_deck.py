@@ -30,9 +30,9 @@ HAIDIAN = Path("/root/workspace/report/assets")
 YAJIANG = ROOT / "assets" / "user_materials" / "yajiang_case"
 YAJIANG_AGENT = Path("/root/.codex/attachments/071916f0-9ca0-4d8c-83f1-bcd404e7ea3c/e178b904e06c08479cd215ca230ff245.png")
 REGION_OUTLINES = {
-    "harbin": ROOT / "assets" / "generated" / "practice_region_harbin_demand.png",
-    "haidian": ROOT / "assets" / "generated" / "practice_region_haidian_demand.png",
-    "yajiang": ROOT / "assets" / "generated" / "practice_region_yajiang_demand.png",
+    "harbin": ROOT / "assets" / "generated" / "practice_region_harbin_original.png",
+    "haidian": ROOT / "assets" / "generated" / "practice_region_haidian_original.png",
+    "yajiang": ROOT / "assets" / "generated" / "practice_region_yajiang_original.png",
 }
 TMP = Path("/tmp/xuannv_capability_deck_assets")
 
@@ -64,13 +64,12 @@ def metric(slide, value: str, label: str, x: float, y: float, color=C.blue, fill
 
 
 def case_card(slide, name: str, scene: str, need: str, image: Path, x: float, color, fill) -> None:
-    text(slide, name, x + 0.20, 1.62, 3.25, 0.28, 17, C.ink, True, PP_ALIGN.CENTER)
-    picture_fit(slide, image, x + 0.34, 2.08, 3.00, 2.05)
-    line(slide, x + 0.38, 4.42, x + 3.30, 4.42, color, 1.1)
-    rect(slide, x + 0.28, 4.68, 3.08, 0.46, fill, color)
-    text(slide, scene, x + 0.46, 4.82, 2.72, 0.14, 8, color, True, PP_ALIGN.CENTER)
-    text(slide, "需求", x + 0.40, 5.48, 0.52, 0.13, 7, color, True, PP_ALIGN.CENTER)
-    text(slide, need, x + 1.00, 5.40, 2.34, 0.28, 9, C.body, True, PP_ALIGN.CENTER)
+    text(slide, name, x + 0.20, 1.72, 3.25, 0.28, 17, C.ink, True, PP_ALIGN.CENTER)
+    picture_crop(slide, image, x + 0.42, 2.16, 2.84, 2.12)
+    line(slide, x + 0.40, 4.58, x + 3.28, 4.58, color, 1.1)
+    rect(slide, x + 0.30, 4.88, 3.06, 0.44, fill, color)
+    text(slide, scene, x + 0.46, 5.02, 2.72, 0.14, 9, color, True, PP_ALIGN.CENTER)
+    text(slide, need, x + 0.40, 5.58, 2.88, 0.34, 11, C.ink, True, PP_ALIGN.CENTER)
 
 
 def task_thumb(slide, label: str, path: Path, x: float, y: float, w: float, h: float) -> None:
@@ -125,7 +124,7 @@ def build() -> Presentation:
     s = prs.slides.add_slide(blank)
     bg(s)
     title(s, "10", "现有工程实践案例")
-    text(s, "政务城市治理  |  城市变化评测  |  水电站监测", 1.02, 1.12, 11.20, 0.26, 17, C.blue, True, PP_ALIGN.CENTER)
+    text(s, "玄女底座已围绕政府城市治理、复杂城市变化评测与水电站周边监测，形成面向真实区域的工程实践。", 1.02, 1.12, 11.20, 0.34, 15, C.blue, True, PP_ALIGN.CENTER)
     case_card(s, "哈尔滨新区", "政府客户 · 城市治理", "多专题持续监测与城市管理报告更新", REGION_OUTLINES["harbin"], 0.86, C.blue, C.pale_blue)
     case_card(s, "海淀区", "城市核心区 · 任务评测", "复杂城市纹理下，对标国际地理嵌入能力", REGION_OUTLINES["haidian"], 4.82, C.green, C.mint)
     case_card(s, "雅江区域", "水电站周边 · 安全监测", "水电站周边态势监测与遥感分析报告", REGION_OUTLINES["yajiang"], 8.78, C.purple, C.pale_purple)
