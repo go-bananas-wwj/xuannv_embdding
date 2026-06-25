@@ -11,6 +11,7 @@ from pathlib import Path
 
 import fitz
 from pptx import Presentation
+from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
@@ -35,6 +36,8 @@ REGION_OUTLINES = {
     "yajiang": ROOT / "assets" / "generated" / "practice_region_yajiang_whitefit.png",
 }
 TMP = Path("/tmp/xuannv_capability_deck_assets")
+RED = RGBColor(220, 38, 38)
+PALE_RED = RGBColor(254, 242, 242)
 
 
 def section_label(slide, value: str, x: float, y: float, color=C.blue) -> None:
@@ -46,13 +49,13 @@ def small_label(slide, value: str, x: float, y: float, w: float, color=C.body) -
     text(slide, value, x, y, w, 0.13, 7, color, True, PP_ALIGN.CENTER)
 
 
-def outline_callout(slide, label_text: str, x: float, y: float, w: float, h: float, color=C.amber) -> None:
+def outline_callout(slide, label_text: str, x: float, y: float, w: float, h: float, color=RED) -> None:
     box = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h))
     box.fill.background()
     box.line.color.rgb = color
     box.line.width = Pt(2.0)
-    rect(slide, x, y - 0.20, 0.86, 0.20, C.pale_amber, color)
-    text(slide, label_text, x + 0.06, y - 0.145, 0.74, 0.08, 6, color, True, PP_ALIGN.CENTER)
+    rect(slide, x, y - 0.22, 0.92, 0.22, PALE_RED, color)
+    text(slide, label_text, x + 0.06, y - 0.155, 0.80, 0.08, 6, color, True, PP_ALIGN.CENTER)
 
 
 def image_pill(slide, label_text: str, x: float, y: float, color=C.blue, fill=C.pale_blue) -> None:
@@ -147,12 +150,15 @@ def build() -> Presentation:
     s = prs.slides.add_slide(blank)
     bg(s)
     title(s, "11", "哈尔滨新区：有云遮挡，仍能识别变化区域")
-    text(s, "政府客户的真实难题", 0.86, 1.34, 3.60, 0.24, 15, C.blue, True)
-    line(s, 0.86, 1.76, 2.62, 1.76, C.blue, 1.1)
-    text(s, "云、雾、雪会遮挡关键地物；城市治理仍需要连续、稳定的变化检测结果。", 0.86, 2.02, 3.68, 0.46, 15, C.ink, True)
-    bullet(s, "缺失模态下仍可推理", "不依赖单张完美影像完成判断", 0.86, 3.18, C.blue, C.pale_blue)
-    bullet(s, "跨模态保留变化信号", "RGB 与嵌入共同支撑变化检测", 0.86, 4.18, C.green, C.mint)
-    bullet(s, "减少人工重跑", "影像质量波动不直接造成流程停摆", 0.86, 5.18, C.purple, C.pale_purple)
+    text(s, "政府客户的真实难题", 0.86, 1.24, 3.22, 0.26, 17, C.blue, True)
+    line(s, 0.86, 1.66, 2.66, 1.66, C.blue, 1.1)
+    text(s, "云、雾、雪遮挡关键地物，城市治理仍需要连续、稳定的变化检测结果。", 0.86, 1.90, 3.36, 0.40, 14, C.ink, True)
+    bullet(s, "缺失模态下仍可推理", "不依赖单张完美影像完成判断", 0.86, 2.72, C.blue, C.pale_blue, 3.30)
+    bullet(s, "跨模态保留变化信号", "RGB 与嵌入共同支撑变化检测", 0.86, 3.56, C.green, C.mint, 3.30)
+    bullet(s, "减少人工重跑", "影像质量波动不直接造成流程停摆", 0.86, 4.40, C.purple, C.pale_purple, 3.30)
+    rect(s, 0.86, 5.36, 3.30, 0.72, C.pale_blue, C.blue)
+    text(s, "为什么能识别？", 1.06, 5.52, 2.90, 0.14, 10, C.blue, True, PP_ALIGN.CENTER)
+    text(s, "地理嵌入融合变化前后 RGB 与表征差异，模型不只看云下影像，而是比较区域语义变化。", 1.04, 5.78, 2.94, 0.18, 8, C.body, True, PP_ALIGN.CENTER)
     col_labels = ["变化前 RGB", "变化后 RGB", "变化前嵌入", "变化后嵌入", "变化概率"]
     for j, label_value in enumerate(col_labels):
         text(s, label_value, 4.94 + j * 1.50, 1.45, 1.36, 0.12, 7, C.muted, True, PP_ALIGN.CENTER)
@@ -160,9 +166,9 @@ def build() -> Presentation:
         y = 1.78 + i * 1.54
         picture_fit(s, img, 4.88, y, 7.52, 1.20)
         image_pill(s, f"样例 {i + 1}", 4.96, y + 0.08, C.blue if i == 0 else (C.green if i == 1 else C.purple), C.pale_blue if i == 0 else (C.mint if i == 1 else C.pale_purple))
-    outline_callout(s, "云雾遮挡", 6.30, 1.88, 1.18, 0.72, C.amber)
-    outline_callout(s, "云雾遮挡", 5.00, 3.43, 1.18, 0.80, C.amber)
-    outline_callout(s, "云雾遮挡", 5.00, 5.02, 1.22, 0.72, C.amber)
+    outline_callout(s, "云雾遮挡", 6.28, 1.92, 1.22, 0.70, RED)
+    outline_callout(s, "云雾遮挡", 5.00, 3.44, 1.22, 0.78, RED)
+    outline_callout(s, "云雾遮挡", 4.98, 5.04, 1.28, 0.70, RED)
     claim(s, "玄女底座提高的是业务可用性：真实遥感数据不完美，但系统仍要稳定产出。", 6.48, C.blue)
 
     # 12. Harbin multi-task reuse
