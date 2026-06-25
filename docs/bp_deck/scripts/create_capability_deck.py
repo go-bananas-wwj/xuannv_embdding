@@ -64,12 +64,12 @@ def metric(slide, value: str, label: str, x: float, y: float, color=C.blue, fill
 
 
 def case_card(slide, name: str, scene: str, need: str, image: Path, x: float, color, fill) -> None:
-    text(slide, name, x + 0.20, 1.72, 3.25, 0.28, 17, C.ink, True, PP_ALIGN.CENTER)
-    picture_fit(slide, image, x + 0.30, 2.08, 3.08, 2.16)
-    line(slide, x + 0.40, 4.58, x + 3.28, 4.58, color, 1.1)
-    rect(slide, x + 0.30, 4.88, 3.06, 0.44, fill, color)
-    text(slide, scene, x + 0.46, 5.02, 2.72, 0.14, 9, color, True, PP_ALIGN.CENTER)
-    text(slide, need, x + 0.40, 5.58, 2.88, 0.34, 11, C.ink, True, PP_ALIGN.CENTER)
+    text(slide, name, x + 0.20, 1.90, 3.25, 0.28, 17, C.ink, True, PP_ALIGN.CENTER)
+    picture_fit(slide, image, x + 0.06, 2.26, 3.56, 2.42)
+    line(slide, x + 0.32, 4.96, x + 3.36, 4.96, color, 1.1)
+    rect(slide, x + 0.26, 5.22, 3.14, 0.48, fill, color)
+    text(slide, scene, x + 0.44, 5.37, 2.78, 0.14, 10, color, True, PP_ALIGN.CENTER)
+    text(slide, need, x + 0.26, 5.94, 3.14, 0.40, 12, C.ink, True, PP_ALIGN.CENTER)
 
 
 def task_thumb(slide, label: str, path: Path, x: float, y: float, w: float, h: float) -> None:
@@ -124,7 +124,7 @@ def build() -> Presentation:
     s = prs.slides.add_slide(blank)
     bg(s)
     title(s, "10", "现有工程实践案例")
-    text(s, "玄女底座已围绕政府城市治理、复杂城市变化评测与水电站周边监测，形成面向真实区域的工程实践。", 1.02, 1.12, 11.20, 0.34, 15, C.blue, True, PP_ALIGN.CENTER)
+    text(s, "玄女底座已围绕政府城市治理、复杂城市变化评测与水电站周边监测，形成面向真实区域的工程实践。", 1.02, 1.18, 11.20, 0.34, 15, C.blue, True, PP_ALIGN.CENTER)
     case_card(s, "哈尔滨新区", "政府客户 · 城市治理", "多专题持续监测与城市管理报告更新", REGION_OUTLINES["harbin"], 0.86, C.blue, C.pale_blue)
     case_card(s, "海淀区", "城市核心区 · 任务评测", "复杂城市纹理下，对标国际地理嵌入能力", REGION_OUTLINES["haidian"], 4.82, C.green, C.mint)
     case_card(s, "雅江区域", "水电站周边 · 安全监测", "水电站周边态势监测与遥感分析报告", REGION_OUTLINES["yajiang"], 8.78, C.purple, C.pale_purple)
