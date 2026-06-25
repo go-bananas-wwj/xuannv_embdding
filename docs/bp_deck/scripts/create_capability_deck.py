@@ -96,6 +96,11 @@ def flow_step(slide, index: int, value: str, x: float, y: float, color=C.blue, f
     text(slide, value, x + 0.36, y + 0.09, w - 0.48, 0.12, 8, C.ink, True)
 
 
+def flow_node(slide, value: str, x: float, y: float, color=C.blue, fill=C.pale_blue, w: float = 0.96, h: float = 0.42) -> None:
+    rect(slide, x, y, w, h, fill, color)
+    text(slide, value, x + 0.06, y + 0.09, w - 0.12, h - 0.16, 7, color, True, PP_ALIGN.CENTER)
+
+
 def metric(slide, value: str, label: str, x: float, y: float, color=C.blue, fill=C.pale_blue, w: float = 1.72) -> None:
     rect(slide, x, y, w, 0.78, fill, color)
     text(slide, value, x + 0.10, y + 0.13, w - 0.20, 0.22, 15, color, True, PP_ALIGN.CENTER)
@@ -161,6 +166,9 @@ def build() -> Presentation:
     )
     model_farmland_page = render_pdf_page(
         MODEL_REPORT / "03-2025年12月-2026年5月哈尔滨新区耕地非农非粮卫星遥感监测报告.pdf", 5, "model_farmland_p6"
+    )
+    model_trash_page = render_pdf_page(
+        MODEL_REPORT / "04-2025年12月-2026年5月哈尔滨新区无序堆放垃圾渣土卫星遥感监测报告.pdf", 5, "model_trash_p6"
     )
     manual_pages = report_page_counts(MANUAL_REPORT)
     model_pages = report_page_counts(MODEL_REPORT)
@@ -237,29 +245,50 @@ def build() -> Presentation:
     text(s, "模型价值最终要落到交付：把变化检测、统计制图和业务解释组织成政府客户可阅读、可复核、可归档的报告。", 1.02, 1.14, 11.20, 0.30, 13, C.body, False, PP_ALIGN.CENTER)
     text(s, "用户历程", 0.62, 1.62, 3.60, 0.20, 16, C.blue, True)
     line(s, 0.62, 1.98, 2.20, 1.98, C.blue, 1.0)
-    text(s, "传统人工流程", 0.62, 2.18, 3.36, 0.16, 10, C.ink, True)
-    manual_steps = ["接到监测任务", "下载影像与底图", "预处理与配准", "人工解译/核查", "制图统计", "撰写审核归档"]
-    for idx, step in enumerate(manual_steps, 1):
-        flow_step(s, idx, step, 0.62, 2.42 + (idx - 1) * 0.40, C.amber, C.pale_amber, 3.28)
-        if idx < len(manual_steps):
-            arrow(s, 2.26, 2.76 + (idx - 1) * 0.40, 2.26, 2.82 + (idx - 1) * 0.40, C.line, 0.8)
-    text(s, "玄女自动化流程", 0.62, 4.90, 3.36, 0.16, 10, C.blue, True)
-    xuannv_steps = ["选择区域/任务", "调用嵌入与任务头", "自动制图统计", "生成报告", "人工复核提交"]
-    for idx, step in enumerate(xuannv_steps, 1):
-        flow_step(s, idx, step, 0.62, 5.10 + (idx - 1) * 0.36, C.blue, C.pale_blue, 3.28)
-        if idx < len(xuannv_steps):
-            arrow(s, 2.26, 5.44 + (idx - 1) * 0.36, 2.26, 5.49 + (idx - 1) * 0.36, C.line, 0.8)
+    text(s, "传统人工流程", 0.62, 2.16, 3.36, 0.16, 10, C.ink, True)
+    manual_nodes = [
+        ("接到任务", 0.62, 2.48),
+        ("下载影像", 1.75, 2.48),
+        ("预处理", 2.88, 2.48),
+        ("人工解译", 2.88, 3.20),
+        ("制图统计", 1.75, 3.20),
+        ("审核归档", 0.62, 3.20),
+    ]
+    for value, x, y in manual_nodes:
+        flow_node(s, value, x, y, C.amber, C.pale_amber)
+    arrow(s, 1.58, 2.69, 1.73, 2.69, C.line, 0.8)
+    arrow(s, 2.71, 2.69, 2.86, 2.69, C.line, 0.8)
+    arrow(s, 3.36, 2.90, 3.36, 3.18, C.line, 0.8)
+    arrow(s, 2.88, 3.41, 2.73, 3.41, C.line, 0.8)
+    arrow(s, 1.75, 3.41, 1.60, 3.41, C.line, 0.8)
+    text(s, "玄女自动化流程", 0.62, 4.20, 3.36, 0.16, 10, C.blue, True)
+    xuannv_nodes = [
+        ("选择任务", 0.62, 4.52),
+        ("调用底座", 1.75, 4.52),
+        ("自动统计", 2.88, 4.52),
+        ("生成报告", 1.75, 5.24),
+        ("人工复核", 0.62, 5.24),
+    ]
+    for value, x, y in xuannv_nodes:
+        flow_node(s, value, x, y, C.blue, C.pale_blue)
+    arrow(s, 1.58, 4.73, 1.73, 4.73, C.line, 0.8)
+    arrow(s, 2.71, 4.73, 2.86, 4.73, C.line, 0.8)
+    arrow(s, 3.36, 4.94, 2.25, 5.22, C.line, 0.8)
+    arrow(s, 1.75, 5.45, 1.60, 5.45, C.line, 0.8)
     line(s, 4.18, 1.48, 4.18, 6.58, C.line, 0.9)
     text(s, "自动生成报告样例", 4.42, 1.62, 4.10, 0.20, 14, C.blue, True, PP_ALIGN.CENTER)
-    picture_fit(s, model_cover, 4.44, 2.00, 1.36, 1.86)
-    picture_fit(s, model_construction_page, 6.02, 2.00, 1.10, 1.52)
-    picture_fit(s, model_building_page, 7.22, 2.00, 1.10, 1.52)
-    picture_fit(s, model_farmland_page, 6.02, 3.82, 1.10, 1.52)
-    picture_fit(s, harbin_map, 7.22, 3.82, 1.10, 1.52)
-    small_label(s, "总报告封面", 4.44, 4.02, 1.36, C.blue)
-    small_label(s, "专题内页", 6.02, 5.48, 1.10, C.blue)
-    small_label(s, "点位分布", 7.22, 5.48, 1.10, C.blue)
-    text(s, f"已生成 5 份专题报告，共 {model_pages} 页；覆盖建筑工地、建筑变化、耕地非农非粮、垃圾渣土等专题。", 4.42, 5.88, 4.10, 0.34, 8, C.body, True, PP_ALIGN.CENTER)
+    report_tiles = [
+        ("总报告", model_cover, 4.42, 2.02),
+        ("建筑工地", model_construction_page, 5.78, 2.02),
+        ("建筑变化", model_building_page, 7.14, 2.02),
+        ("耕地非农非粮", model_farmland_page, 4.42, 3.98),
+        ("垃圾渣土", model_trash_page, 5.78, 3.98),
+        ("点位分布", harbin_map, 7.14, 3.98),
+    ]
+    for label, img, x, y in report_tiles:
+        picture_fit(s, img, x, y, 1.10, 1.48)
+        small_label(s, label, x, y + 1.60, 1.10, C.blue)
+    text(s, f"已生成 5 份专题报告，共 {model_pages} 页，覆盖多类城市治理任务。", 4.42, 5.98, 4.10, 0.24, 8, C.body, True, PP_ALIGN.CENTER)
     line(s, 8.70, 1.48, 8.70, 6.58, C.line, 0.9)
     text(s, "交付效率测算", 9.10, 1.62, 3.20, 0.22, 16, C.blue, True, PP_ALIGN.CENTER)
     text(s, "以一次月度/周期监测报告为例，按遥感工程师、制图与报告撰写人力的保守估算。", 9.04, 2.02, 3.28, 0.34, 9, C.body, True, PP_ALIGN.CENTER)
