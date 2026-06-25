@@ -208,10 +208,7 @@ def build() -> Presentation:
     ]
     for name, path, x, y, w, h in positions:
         task_thumb(s, name, path, x, y, w, h)
-    metric(s, "多类", "下游任务示例", 1.08, 6.12, C.blue, C.pale_blue, 1.58)
-    metric(s, "旧标签", "知识复用", 3.34, 6.12, C.green, C.mint, 1.58)
-    metric(s, "一次表征", "多次复用", 5.60, 6.12, C.purple, C.pale_purple, 1.58)
-    text(s, "旧标签提供监督，模型学习可迁移地物表征。", 7.48, 6.20, 4.82, 0.18, 9, C.blue, True, PP_ALIGN.CENTER)
+    text(s, "旧标签不再只是一次性标注资产：玄女底座从旧标签中提取可迁移地物知识，并将同一套地理嵌入复用到水体、建筑、地表分类与变化检测等多类任务。", 0.86, 6.08, 11.60, 0.36, 14, C.blue, True, PP_ALIGN.CENTER)
 
     # 13. Harbin report delivery
     s = prs.slides.add_slide(blank)
