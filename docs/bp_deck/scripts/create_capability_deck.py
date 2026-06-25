@@ -74,6 +74,17 @@ def bullet(slide, head: str, body: str, x: float, y: float, color=C.blue, fill=C
     text(slide, body, x + 0.62, y + 0.44, w - 0.92, 0.18, 8, C.body)
 
 
+def compact_bullet(slide, head: str, body: str, x: float, y: float, color=C.blue, fill=C.pale_blue, w: float = 3.30) -> None:
+    rect(slide, x, y, w, 0.58, C.white, C.line)
+    dot = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.OVAL, Inches(x + 0.18), Inches(y + 0.19), Inches(0.20), Inches(0.20))
+    dot.fill.solid()
+    dot.fill.fore_color.rgb = fill
+    dot.line.color.rgb = color
+    dot.line.width = Pt(0.9)
+    text(slide, head, x + 0.50, y + 0.10, w - 0.72, 0.14, 9, C.ink, True)
+    text(slide, body, x + 0.50, y + 0.34, w - 0.72, 0.12, 7, C.body)
+
+
 def metric(slide, value: str, label: str, x: float, y: float, color=C.blue, fill=C.pale_blue, w: float = 1.72) -> None:
     rect(slide, x, y, w, 0.78, fill, color)
     text(slide, value, x + 0.10, y + 0.13, w - 0.20, 0.22, 15, color, True, PP_ALIGN.CENTER)
@@ -153,12 +164,12 @@ def build() -> Presentation:
     text(s, "政府客户的真实难题", 0.86, 1.24, 3.22, 0.26, 17, C.blue, True)
     line(s, 0.86, 1.66, 2.66, 1.66, C.blue, 1.1)
     text(s, "云、雾、雪遮挡关键地物，城市治理仍需要连续、稳定的变化检测结果。", 0.86, 1.90, 3.36, 0.40, 14, C.ink, True)
-    bullet(s, "缺失模态下仍可推理", "不依赖单张完美影像完成判断", 0.86, 2.72, C.blue, C.pale_blue, 3.30)
-    bullet(s, "跨模态保留变化信号", "RGB 与嵌入共同支撑变化检测", 0.86, 3.56, C.green, C.mint, 3.30)
-    bullet(s, "减少人工重跑", "影像质量波动不直接造成流程停摆", 0.86, 4.40, C.purple, C.pale_purple, 3.30)
-    rect(s, 0.86, 5.36, 3.30, 0.72, C.pale_blue, C.blue)
-    text(s, "为什么能识别？", 1.06, 5.52, 2.90, 0.14, 10, C.blue, True, PP_ALIGN.CENTER)
-    text(s, "地理嵌入融合变化前后 RGB 与表征差异，模型不只看云下影像，而是比较区域语义变化。", 1.04, 5.78, 2.94, 0.18, 8, C.body, True, PP_ALIGN.CENTER)
+    compact_bullet(s, "缺失模态下仍可推理", "不依赖单张完美影像完成判断", 0.86, 2.58, C.blue, C.pale_blue, 3.30)
+    compact_bullet(s, "跨模态保留变化信号", "RGB 与嵌入共同支撑变化检测", 0.86, 3.25, C.green, C.mint, 3.30)
+    compact_bullet(s, "减少人工重跑", "影像质量波动不直接造成流程停摆", 0.86, 3.92, C.purple, C.pale_purple, 3.30)
+    rect(s, 0.86, 4.78, 3.30, 1.28, C.pale_blue, C.blue)
+    text(s, "为什么能识别？", 1.06, 4.96, 2.90, 0.14, 10, C.blue, True, PP_ALIGN.CENTER)
+    text(s, "玄女底座训练时融入多模态遥感数据。即使某一模态被云雾遮挡或暂时缺失，其他模态仍可提供有效约束，辅助推导缺失信息；再对比变化前后的地理嵌入差异，即可稳定识别真实变化区域。", 1.06, 5.22, 2.90, 0.54, 8, C.body, True, PP_ALIGN.CENTER)
     col_labels = ["变化前 RGB", "变化后 RGB", "变化前嵌入", "变化后嵌入", "变化概率"]
     for j, label_value in enumerate(col_labels):
         text(s, label_value, 4.88 + j * 1.504, 1.45, 1.42, 0.12, 7, C.muted, True, PP_ALIGN.CENTER)
