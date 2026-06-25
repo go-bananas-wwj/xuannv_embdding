@@ -22,9 +22,10 @@ ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "assets"
 GENERATED = ASSETS / "generated"
 OLD = ASSETS / "old_bp_media"
-OUT = ROOT / "outputs" / "玄女科技BP_架构原理章节_v0.4.pptx"
+OUT = ROOT / "outputs" / "玄女科技BP_架构原理章节_v0.5.pptx"
 FONT_PATH = Path("/root/workspace/xuannv/fonts/NotoSansCJKsc-Regular.otf")
 ROADMAP_IMAGEGEN = GENERATED / "arch_roadmap_imagegen_base.png"
+CLOSING_IMAGEGEN = GENERATED / "arch_closing_satellite_imagegen.png"
 
 
 W, H = 2400, 1260
@@ -325,6 +326,17 @@ def add_slide(prs: Presentation, no: str, heading: str, sub: str, figure: Path, 
     bottom_claim(slide, claim)
 
 
+def add_closing_slide(prs: Presentation) -> None:
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    bg(slide)
+    if CLOSING_IMAGEGEN.exists():
+        slide.shapes.add_picture(str(CLOSING_IMAGEGEN), Inches(0), Inches(0), width=Inches(13.333), height=Inches(7.5))
+    text(slide, "玄女科技", 0.86, 0.86, 2.20, 0.24, 13, C.blue, True)
+    text(slide, "重新定义认知地球的方式", 0.86, 1.36, 6.90, 0.64, 28, C.ink, True)
+    text(slide, "做中国的遥感数据通用嵌入底座", 0.90, 2.18, 6.35, 0.38, 17, C.body, True)
+    text(slide, "地球观测一次表征 - 多次复用", 0.92, 6.60, 5.90, 0.26, 14, C.blue, True)
+
+
 def build() -> Presentation:
     prs = Presentation()
     prs.slide_width = Inches(13.333)
@@ -371,6 +383,7 @@ def build() -> Presentation:
         figures["scale"],
         "三年路径：技术验证 → 商业验证 → 规模化应用，风险可控、节奏清晰。",
     )
+    add_closing_slide(prs)
     return prs
 
 
