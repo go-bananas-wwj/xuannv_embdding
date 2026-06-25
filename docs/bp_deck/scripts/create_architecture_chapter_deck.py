@@ -24,6 +24,7 @@ GENERATED = ASSETS / "generated"
 OLD = ASSETS / "old_bp_media"
 OUT = ROOT / "outputs" / "玄女科技BP_架构原理章节_v0.4.pptx"
 FONT_PATH = Path("/root/workspace/xuannv/fonts/NotoSansCJKsc-Regular.otf")
+ROADMAP_IMAGEGEN = GENERATED / "arch_roadmap_imagegen_base.png"
 
 
 W, H = 2400, 1260
@@ -274,65 +275,30 @@ def make_model_architecture() -> Path:
 
 
 def make_scale_path() -> Path:
-    im = base_canvas()
+    if ROADMAP_IMAGEGEN.exists():
+        im = ImageOps.fit(Image.open(ROADMAP_IMAGEGEN).convert("RGB"), (W, H), method=Image.Resampling.LANCZOS)
+        # Keep the image airy like the cover page, but add a very light veil so
+        # the stage labels stay legible.
+        veil = Image.new("RGBA", (W, H), (255, 255, 255, 72))
+        im = Image.alpha_composite(im.convert("RGBA"), veil).convert("RGB")
+    else:
+        im = base_canvas()
     d = ImageDraw.Draw(im)
 
-    # A light timeline, closer to investor BP roadmap pages than a dense table.
-    d.line((340, 270, 2060, 270), fill=LINE, width=10)
     stages = [
-        {
-            "year": "2026",
-            "stage": "技术验证",
-            "headline": "中国区域底座验证",
-            "milestones": ["中国区域 DV 地理嵌入底座", "哈尔滨、海淀、雅江标杆案例", "国产数据与多模态验证"],
-            "result": "形成标杆交付与试点收入",
-            "color": BLUE,
-            "fill": PALE_BLUE,
-            "img": IMG["cloud"],
-        },
-        {
-            "year": "2027",
-            "stage": "商业验证",
-            "headline": "行业模型产品化",
-            "milestones": ["政务/能源/城市治理任务头", "API、License 与智能体报告", "启动更大范围模型训练"],
-            "result": "行业客户复制，收入目标千万级",
-            "color": GREEN,
-            "fill": MINT,
-            "img": IMG["semantic"],
-        },
-        {
-            "year": "2028",
-            "stage": "规模化",
-            "headline": "地理智能普惠化",
-            "milestones": ["融合人口、产业、交通、POI", "从遥感理解到社会经济理解", "覆盖政务、产业与公众服务"],
-            "result": "规模化服务，收入目标亿元级",
-            "color": PURPLE,
-            "fill": PALE_PURPLE,
-            "img": OLD / "image1.png",
-        },
+        ("2026", "技术验证", "中国区域底座验证", "标杆案例 + 试点收入", BLUE, PALE_BLUE, 420),
+        ("2027", "商业验证", "行业模型产品化", "API / License / 智能体报告", GREEN, MINT, 1200),
+        ("2028", "规模化", "地理智能普惠化", "融合社会经济数据", PURPLE, PALE_PURPLE, 1980),
     ]
+    for year, stage, head, result, color, fill, cx in stages:
+        rounded(d, (cx - 245, 88, cx + 245, 246), 42, WHITE, (226, 232, 240), 2)
+        d.text((cx - 145, 142), year, font=font(58), fill=color, anchor="mm")
+        d.text((cx + 92, 128), stage, font=font(30), fill=INK, anchor="mm")
+        d.text((cx + 92, 174), head, font=font(24), fill=BODY, anchor="mm")
+        rounded(d, (cx - 178, 1000, cx + 178, 1070), 35, fill, color, 2)
+        d.text((cx, 1035), result, font=font(25), fill=color, anchor="mm")
 
-    for i, item in enumerate(stages):
-        x = 210 + i * 720
-        color = item["color"]
-        fill = item["fill"]
-        circle(d, x + 160, 270, 42, fill, color, 5)
-        d.text((x + 160, 270), str(i + 1), font=font(38), fill=color, anchor="mm")
-        d.text((x + 160, 150), item["year"], font=font(78), fill=color, anchor="mm")
-        d.text((x + 160, 215), item["stage"], font=font(33), fill=INK, anchor="mm")
-
-        rounded(d, (x, 365, x + 500, 885), 42, WHITE, LINE, 2)
-        paste_fit(im, item["img"], (x + 32, 395, x + 468, 610), 24)
-        d.text((x + 250, 670), item["headline"], font=font(40), fill=color, anchor="mm")
-        y = 735
-        for m in item["milestones"]:
-            d.ellipse((x + 76, y + 8, x + 92, y + 24), fill=color)
-            draw_text(d, (x + 112, y), m, 26, BODY, width=330)
-            y += 48
-        rounded(d, (x + 55, 930, x + 445, 1010), 38, fill, color, 2)
-        d.text((x + 250, 970), item["result"], font=font(27), fill=color, anchor="mm")
-
-    draw_text(d, (320, 1105), "三年路径清晰：技术验证降低不确定性，行业复制验证商业化，社会经济数据融合打开规模化空间。", 36, INK, width=1850)
+    draw_text(d, (365, 1140), "三年路径：技术验证 → 商业验证 → 规模化应用；从遥感底座走向融合社会经济数据的地理智能服务。", 34, INK, width=1680)
     return save(im, "arch_scale_path_social_econ.png")
 
 
