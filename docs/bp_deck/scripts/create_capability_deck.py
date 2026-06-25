@@ -85,6 +85,17 @@ def compact_bullet(slide, head: str, body: str, x: float, y: float, color=C.blue
     text(slide, body, x + 0.50, y + 0.34, w - 0.72, 0.12, 7, C.body)
 
 
+def flow_step(slide, index: int, value: str, x: float, y: float, color=C.blue, fill=C.pale_blue, w: float = 3.34) -> None:
+    rect(slide, x, y, w, 0.34, C.white, C.line)
+    dot = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.OVAL, Inches(x + 0.10), Inches(y + 0.08), Inches(0.18), Inches(0.18))
+    dot.fill.solid()
+    dot.fill.fore_color.rgb = fill
+    dot.line.color.rgb = color
+    dot.line.width = Pt(0.8)
+    text(slide, f"{index}", x + 0.11, y + 0.105, 0.16, 0.06, 5, color, True, PP_ALIGN.CENTER)
+    text(slide, value, x + 0.36, y + 0.09, w - 0.48, 0.12, 8, C.ink, True)
+
+
 def metric(slide, value: str, label: str, x: float, y: float, color=C.blue, fill=C.pale_blue, w: float = 1.72) -> None:
     rect(slide, x, y, w, 0.78, fill, color)
     text(slide, value, x + 0.10, y + 0.13, w - 0.20, 0.22, 15, color, True, PP_ALIGN.CENTER)
@@ -213,24 +224,34 @@ def build() -> Presentation:
     # 13. Harbin report delivery
     s = prs.slides.add_slide(blank)
     bg(s)
-    title(s, "13", "从检测结果到政府可用报告：已更新至 2026 年 5 月")
-    text(s, "哈尔滨新区是政府客户场景。玄女调用模型自动生成最新监测报告，将多任务检测结果组织成可阅读、可复核、可归档的交付物。", 1.02, 1.14, 11.20, 0.30, 13, C.body, False, PP_ALIGN.CENTER)
-    text(s, "传统人工报告", 0.94, 1.78, 3.72, 0.24, 13, C.ink, True, PP_ALIGN.CENTER)
-    picture_fit(s, manual_cover, 1.12, 2.14, 3.40, 2.76)
-    text(s, "2025 年下半年", 1.20, 5.04, 3.20, 0.16, 9, C.body, True, PP_ALIGN.CENTER)
-    text(s, "正式完整，但制作耗时耗力，后续更新压力大", 1.06, 5.34, 3.48, 0.30, 8, C.body, True, PP_ALIGN.CENTER)
-    line(s, 4.94, 1.88, 4.94, 5.86, C.line, 0.8)
-    text(s, "玄女模型自动生成报告", 5.26, 1.78, 3.72, 0.24, 13, C.blue, True, PP_ALIGN.CENTER)
-    picture_fit(s, model_cover, 5.44, 2.14, 3.40, 2.76)
-    text(s, "2025 年 12 月 - 2026 年 5 月", 5.52, 5.04, 3.20, 0.16, 9, C.blue, True, PP_ALIGN.CENTER)
-    text(s, "自动汇总多任务结果，降低制图、统计和撰写压力", 5.38, 5.34, 3.50, 0.30, 8, C.body, True, PP_ALIGN.CENTER)
-    picture_fit(s, harbin_map, 9.38, 2.08, 2.84, 2.60)
-    small_label(s, "2026 报告点位分布图", 9.38, 4.82, 2.84)
-    metric(s, "6 份", "传统报告", 9.10, 5.42, C.amber, C.pale_amber, 1.34)
-    metric(s, f"{manual_pages} 页", "人工规模", 10.62, 5.42, C.amber, C.pale_amber, 1.34)
-    metric(s, "5 份", "模型报告", 9.10, 6.16, C.blue, C.pale_blue, 1.34)
-    metric(s, f"{model_pages} 页", "自动生成", 10.62, 6.16, C.blue, C.pale_blue, 1.34)
-    claim(s, "真正的产品化能力，是把遥感分析结果变成可持续交付的业务文档。", 6.86, C.blue)
+    title(s, "13", "哈尔滨新区：从检测结果到政府可用报告")
+    text(s, "模型价值最终要落到交付：把变化检测、统计制图和业务解释组织成政府客户可阅读、可复核、可归档的报告。", 1.02, 1.14, 11.20, 0.30, 13, C.body, False, PP_ALIGN.CENTER)
+    text(s, "用户历程", 0.62, 1.62, 3.60, 0.20, 16, C.blue, True)
+    line(s, 0.62, 1.98, 2.20, 1.98, C.blue, 1.0)
+    text(s, "传统人工流程", 0.62, 2.18, 3.36, 0.16, 10, C.ink, True)
+    manual_steps = ["接到监测任务", "下载影像与底图", "预处理与配准", "人工解译/核查", "制图统计", "撰写审核归档"]
+    for idx, step in enumerate(manual_steps, 1):
+        flow_step(s, idx, step, 0.62, 2.42 + (idx - 1) * 0.40, C.amber, C.pale_amber, 3.28)
+    text(s, "玄女自动化流程", 0.62, 4.90, 3.36, 0.16, 10, C.blue, True)
+    xuannv_steps = ["选择区域/任务", "调用嵌入与任务头", "自动制图统计", "生成报告", "人工复核提交"]
+    for idx, step in enumerate(xuannv_steps, 1):
+        flow_step(s, idx, step, 0.62, 5.10 + (idx - 1) * 0.36, C.blue, C.pale_blue, 3.28)
+    line(s, 4.18, 1.48, 4.18, 6.58, C.line, 0.9)
+    text(s, "自动生成报告样例", 4.54, 1.62, 3.88, 0.20, 14, C.blue, True, PP_ALIGN.CENTER)
+    picture_fit(s, model_cover, 4.86, 2.02, 3.24, 3.16)
+    text(s, "2025 年 12 月 - 2026 年 5 月", 4.72, 5.34, 3.52, 0.16, 9, C.blue, True, PP_ALIGN.CENTER)
+    text(s, f"已生成 5 份专题报告，共 {model_pages} 页", 4.72, 5.64, 3.52, 0.18, 9, C.body, True, PP_ALIGN.CENTER)
+    line(s, 8.70, 1.48, 8.70, 6.58, C.line, 0.9)
+    text(s, "给投资人算一笔账", 9.10, 1.62, 3.20, 0.22, 16, C.blue, True, PP_ALIGN.CENTER)
+    text(s, "以一次月度/周期监测报告为例，按遥感工程师、制图与报告撰写人力的保守估算。", 9.04, 2.02, 3.28, 0.34, 9, C.body, True, PP_ALIGN.CENTER)
+    metric(s, "10-15 天", "传统交付周期", 9.02, 2.66, C.amber, C.pale_amber, 1.50)
+    metric(s, "4-6 万元", "传统综合成本", 10.78, 2.66, C.amber, C.pale_amber, 1.50)
+    metric(s, "0.5-1 天", "玄女交付周期", 9.02, 3.60, C.blue, C.pale_blue, 1.50)
+    metric(s, "千元级", "玄女边际成本", 10.78, 3.60, C.blue, C.pale_blue, 1.50)
+    rect(s, 9.02, 4.62, 3.26, 0.92, C.pale_blue, C.blue)
+    text(s, "节省结果", 9.20, 4.78, 2.90, 0.14, 10, C.blue, True, PP_ALIGN.CENTER)
+    text(s, "报告生产从“项目制人力交付”变成“模型驱动的持续交付”。", 9.22, 5.06, 2.86, 0.22, 8, C.body, True, PP_ALIGN.CENTER)
+    text(s, "时间节省约 90%+，单次报告成本下降一个数量级。", 0.86, 6.94, 11.60, 0.22, 14, C.blue, True, PP_ALIGN.CENTER)
 
     # 14. Haidian benchmark
     s = prs.slides.add_slide(blank)
