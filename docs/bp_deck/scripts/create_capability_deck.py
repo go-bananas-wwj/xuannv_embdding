@@ -169,14 +169,15 @@ def build() -> Presentation:
     compact_bullet(s, "减少人工重跑", "影像质量波动不直接造成流程停摆", 0.86, 3.92, C.purple, C.pale_purple, 3.30)
     rect(s, 0.86, 4.78, 3.30, 1.28, C.pale_blue, C.blue)
     text(s, "为什么能识别？", 1.06, 4.96, 2.90, 0.14, 10, C.blue, True, PP_ALIGN.CENTER)
-    text(s, "玄女底座训练时融入多模态遥感数据。即使某一模态被云雾遮挡或暂时缺失，其他模态仍可提供有效约束，辅助推导缺失信息；再对比变化前后的地理嵌入差异，即可稳定识别真实变化区域。", 1.06, 5.22, 2.90, 0.54, 8, C.body, True, PP_ALIGN.CENTER)
+    text(s, "训练阶段融合多模态遥感数据；单一模态被云雾遮挡时，其他模态仍可补充约束。对比变化前后地理嵌入差异，即可识别真实变化区域。", 1.06, 5.23, 2.90, 0.42, 8, C.body, True, PP_ALIGN.CENTER)
     col_labels = ["变化前 RGB", "变化后 RGB", "变化前嵌入", "变化后嵌入", "变化概率"]
     for j, label_value in enumerate(col_labels):
         text(s, label_value, 4.88 + j * 1.504, 1.45, 1.42, 0.12, 7, C.muted, True, PP_ALIGN.CENTER)
+    sample_names = ["样例一", "样例二", "样例三"]
     for i, img in enumerate(cloud_imgs):
         y = 1.70 + i * 1.60
         picture(s, img, 4.88, y, 7.52, 1.62)
-        image_pill(s, f"样例 {i + 1}", 4.96, y + 0.08, C.blue if i == 0 else (C.green if i == 1 else C.purple), C.pale_blue if i == 0 else (C.mint if i == 1 else C.pale_purple))
+        image_pill(s, sample_names[i], 4.12, y + 0.68, C.blue if i == 0 else (C.green if i == 1 else C.purple), C.pale_blue if i == 0 else (C.mint if i == 1 else C.pale_purple))
     outline_callout(s, "云雾遮挡", 6.46, 1.86, 1.18, 0.78, RED)
     outline_callout(s, "云雾遮挡", 4.98, 3.36, 1.32, 0.90, RED)
     outline_callout(s, "云雾遮挡", 4.98, 5.10, 1.30, 0.78, RED)
