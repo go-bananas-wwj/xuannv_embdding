@@ -191,27 +191,25 @@ def build() -> Presentation:
     text(s, "政府客户的真实难题", 0.62, 1.24, 3.08, 0.26, 17, C.blue, True)
     line(s, 0.62, 1.66, 2.42, 1.66, C.blue, 1.1)
     text(s, "城市治理不是单一模型问题，而是水体、建筑、地表、施工工地和耕地变化等多任务并行。", 0.62, 1.90, 3.12, 0.46, 14, C.ink, True)
-    compact_bullet(s, "一个嵌入服务多类任务", "同一区域表征可被多个任务头复用", 0.62, 2.64, C.blue, C.pale_blue, 3.12)
-    compact_bullet(s, "旧标签仍能提供监督", "2021 年 WorldCover 与旧建筑数据可迁移验证", 0.62, 3.31, C.green, C.mint, 3.12)
-    compact_bullet(s, "新增任务不必重建工程", "减少重复下载、标注、训练与调参", 0.62, 3.98, C.purple, C.pale_purple, 3.12)
+    compact_bullet(s, "旧标签复用", "旧标签局部过时，也能提供可迁移监督", 0.62, 2.64, C.blue, C.pale_blue, 3.12)
+    compact_bullet(s, "一次表征，多次复用", "同一区域嵌入可服务多类任务头", 0.62, 3.31, C.green, C.mint, 3.12)
+    compact_bullet(s, "支持多类下游任务", "从水体、建筑扩展到变化与分类任务", 0.62, 3.98, C.purple, C.pale_purple, 3.12)
     rect(s, 0.62, 4.84, 3.12, 1.10, C.pale_blue, C.blue)
     text(s, "核心价值", 0.82, 5.02, 2.72, 0.14, 10, C.blue, True, PP_ALIGN.CENTER)
-    text(s, "先沉淀区域级通用表征，再按业务需求快速接入不同下游任务。", 0.82, 5.30, 2.72, 0.30, 8, C.body, True, PP_ALIGN.CENTER)
+    text(s, "从旧标签中学习稳定地物知识，在新影像上完成更贴近真实地物的划分。", 0.82, 5.27, 2.72, 0.34, 8, C.body, True, PP_ALIGN.CENTER)
     line(s, 4.16, 1.40, 4.16, 6.46, C.line, 0.9)
-    text(s, "真实任务样例", 5.18, 1.24, 6.92, 0.20, 13, C.blue, True, PP_ALIGN.CENTER)
+    text(s, "旧标签复用后的新影像划分效果", 4.70, 1.24, 7.38, 0.20, 13, C.blue, True, PP_ALIGN.CENTER)
     positions = [
-        ("水体识别", multi_imgs["水体识别"], 5.18, 1.72, 2.10, 1.34),
-        ("建筑提取", multi_imgs["建筑提取"], 7.62, 1.72, 2.10, 1.34),
-        ("地表分类", multi_imgs["地表分类"], 10.06, 1.72, 2.10, 1.34),
-        ("施工工地变化", multi_imgs["施工工地"], 5.18, 4.10, 3.16, 1.16),
-        ("耕地非农非粮", multi_imgs["耕地变化"], 8.98, 4.10, 3.16, 1.16),
+        ("水体识别", multi_imgs["水体识别"], 4.70, 1.66, 7.46, 1.62),
+        ("建筑提取", multi_imgs["建筑提取"], 4.70, 3.58, 7.46, 1.62),
     ]
     for name, path, x, y, w, h in positions:
         task_thumb(s, name, path, x, y, w, h)
-    metric(s, "5 类", "下游任务示例", 5.18, 5.86, C.blue, C.pale_blue, 1.42)
-    metric(s, "旧标签", "仍可迁移验证", 6.96, 5.86, C.green, C.mint, 1.42)
-    metric(s, "一次表征", "多任务复用", 8.74, 5.86, C.purple, C.pale_purple, 1.42)
-    text(s, "从“一事一模型”转向“一套底座、多任务复用”。", 10.38, 6.05, 1.78, 0.24, 9, C.blue, True, PP_ALIGN.CENTER)
+    text(s, "Ground Truth 可来自旧年份或旧数据源；玄女底座提取的是可迁移的地物表征，而不是机械复制旧标签。", 4.70, 5.50, 7.46, 0.20, 9, C.body, True, PP_ALIGN.CENTER)
+    metric(s, "多类", "下游任务示例", 4.90, 5.96, C.blue, C.pale_blue, 1.42)
+    metric(s, "旧标签", "知识复用", 6.72, 5.96, C.green, C.mint, 1.42)
+    metric(s, "一次表征", "多次复用", 8.54, 5.96, C.purple, C.pale_purple, 1.42)
+    text(s, "从“一事一模型”转向“一套底座、多任务复用”。", 10.12, 6.16, 1.98, 0.20, 9, C.blue, True, PP_ALIGN.CENTER)
 
     # 13. Harbin report delivery
     s = prs.slides.add_slide(blank)
