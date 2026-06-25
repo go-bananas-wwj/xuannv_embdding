@@ -197,19 +197,21 @@ def build() -> Presentation:
     rect(s, 0.62, 4.84, 3.12, 1.10, C.pale_blue, C.blue)
     text(s, "核心价值", 0.82, 5.02, 2.72, 0.14, 10, C.blue, True, PP_ALIGN.CENTER)
     text(s, "从旧标签中学习稳定地物知识，在新影像上完成更贴近真实地物的划分。", 0.82, 5.27, 2.72, 0.34, 8, C.body, True, PP_ALIGN.CENTER)
-    line(s, 4.16, 1.40, 4.16, 6.46, C.line, 0.9)
-    text(s, "旧标签复用后的新影像划分效果", 4.70, 1.24, 7.38, 0.20, 13, C.blue, True, PP_ALIGN.CENTER)
+    line(s, 4.16, 1.40, 4.16, 5.72, C.line, 0.9)
+    text(s, "旧标签复用后的新影像划分效果", 4.62, 1.24, 7.58, 0.20, 13, C.blue, True, PP_ALIGN.CENTER)
     positions = [
-        ("水体识别", multi_imgs["水体识别"], 4.70, 1.66, 7.46, 1.62),
-        ("建筑提取", multi_imgs["建筑提取"], 4.70, 3.58, 7.46, 1.62),
+        ("水体识别", multi_imgs["水体识别"], 4.62, 1.66, 3.56, 1.56),
+        ("建筑提取", multi_imgs["建筑提取"], 4.62, 3.58, 3.56, 1.56),
+        ("地表分类", multi_imgs["地表分类"], 8.62, 1.66, 3.56, 0.94),
+        ("施工工地变化", multi_imgs["施工工地"], 8.62, 3.00, 3.56, 0.94),
+        ("耕地非农非粮", multi_imgs["耕地变化"], 8.62, 4.34, 3.56, 0.94),
     ]
     for name, path, x, y, w, h in positions:
         task_thumb(s, name, path, x, y, w, h)
-    text(s, "Ground Truth 可来自旧年份或旧数据源；玄女底座提取的是可迁移的地物表征，而不是机械复制旧标签。", 4.70, 5.50, 7.46, 0.20, 9, C.body, True, PP_ALIGN.CENTER)
-    metric(s, "多类", "下游任务示例", 4.90, 5.96, C.blue, C.pale_blue, 1.42)
-    metric(s, "旧标签", "知识复用", 6.72, 5.96, C.green, C.mint, 1.42)
-    metric(s, "一次表征", "多次复用", 8.54, 5.96, C.purple, C.pale_purple, 1.42)
-    text(s, "从“一事一模型”转向“一套底座、多任务复用”。", 10.12, 6.16, 1.98, 0.20, 9, C.blue, True, PP_ALIGN.CENTER)
+    metric(s, "多类", "下游任务示例", 1.08, 6.12, C.blue, C.pale_blue, 1.58)
+    metric(s, "旧标签", "知识复用", 3.34, 6.12, C.green, C.mint, 1.58)
+    metric(s, "一次表征", "多次复用", 5.60, 6.12, C.purple, C.pale_purple, 1.58)
+    text(s, "Ground Truth 可来自旧年份或旧数据源；玄女底座提取的是可迁移的地物表征，而不是机械复制旧标签。", 7.78, 6.20, 4.26, 0.24, 9, C.blue, True, PP_ALIGN.CENTER)
 
     # 13. Harbin report delivery
     s = prs.slides.add_slide(blank)
