@@ -51,6 +51,12 @@ def parse_args() -> argparse.Namespace:
         default=Path("/data/xuannv_embedding/experiments/v2_202512_202605/benchmarks"),
     )
     parser.add_argument(
+        "--benchmark-root",
+        type=Path,
+        default=None,
+        help="Existing or explicit benchmark directory. Overrides benchmark-base/run-id.",
+    )
+    parser.add_argument(
         "--config",
         type=Path,
         default=Path("downstreams/configs/v2_acceptance_quick_concat_diff.yaml"),
@@ -110,7 +116,7 @@ def main() -> None:
     args = parse_args()
     timestamp = args.timestamp or dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     run_id = f"{args.run_name}_{timestamp}"
-    benchmark_root = args.benchmark_base / run_id
+    benchmark_root = args.benchmark_root or args.benchmark_base / run_id
     benchmark_root.mkdir(parents=True, exist_ok=True)
     env = build_env(args.npu)
 
