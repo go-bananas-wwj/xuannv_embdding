@@ -100,6 +100,11 @@ def main() -> None:
         help="跳过测试集概率 GeoTIFF 导出；用于快速诊断。",
     )
     p.add_argument(
+        "--save-predictions",
+        action="store_true",
+        help="强制保存测试集概率 GeoTIFF；覆盖配置中的 save_predictions: false。",
+    )
+    p.add_argument(
         "--eval-every",
         type=int,
         default=None,
@@ -287,7 +292,11 @@ def main() -> None:
             json.dump(test_metrics, f, ensure_ascii=False, indent=2)
 
         # 保存测试集概率图
-        if not args.skip_predictions and cfg["training"].get("save_predictions", True):
+        should_save_predictions = (
+            args.save_predictions
+            or (not args.skip_predictions and cfg["training"].get("save_predictions", True))
+        )
+        if should_save_predictions:
             save_test_predictions(
                 model,
                 test_loader,
