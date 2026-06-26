@@ -146,17 +146,36 @@ def select_masks(mask_dir: Path, top_k: int, random_k: int, seed: int) -> list[P
     return selected
 
 
+def resolve_source_context(
+    patch_id: str,
+    data_root: Path,
+    processed_root: Path | None,
+) -> tuple[str, Path, str | None]:
+    for region in ("haidian", "harbin"):
+        prefix = f"{region}_"
+        if patch_id.startswith(prefix):
+            source_root = processed_root / region if processed_root is not None else data_root
+            return patch_id[len(prefix):], source_root, region
+    return patch_id, data_root, None
+
+
 def make_figure(
     task: str,
     mask_path: Path,
     data_root: Path,
+    processed_root: Path | None,
     out_dir: Path,
 ) -> dict[str, Any]:
     patch_id = base_patch_id(mask_path)
+    source_patch_id, source_data_root, source_region = resolve_source_context(
+        patch_id,
+        data_root,
+        processed_root,
+    )
     preferred_month = mask_month(mask_path)
     mask, mask_meta = read_mask(mask_path)
-    highres_path = find_highres(data_root, patch_id, preferred_month)
-    s2_path = find_s2(data_root, patch_id, preferred_month)
+    highres_path = find_highres(source_data_root, source_patch_id, preferred_month)
+    s2_path = find_s2(source_data_root, source_patch_id, preferred_month)
     highres, highres_meta = load_rgb(highres_path, "highres")
     s2, s2_meta = load_rgb(s2_path, "s2")
 
@@ -194,6 +213,9 @@ def make_figure(
     return {
         "task": task,
         "patch_id": patch_id,
+        "source_patch_id": source_patch_id,
+        "source_region": source_region,
+        "source_data_root": str(source_data_root),
         "mask": mask_meta,
         "highres": highres_meta,
         "s2": s2_meta,
@@ -219,6 +241,8 @@ def write_index(records: list[dict[str, Any]], out_dir: Path) -> None:
                 f"- positive_fraction: `{mask['positive_fraction']:.6f}`",
                 f"- mask_crs: `{mask['crs']}`",
                 f"- mask_bounds: `{mask['bounds']}`",
+                f"- source_region: `{rec['source_region']}`",
+                f"- source_patch_id: `{rec['source_patch_id']}`",
                 f"- highres: `{rec['highres']['path'] if rec['highres'] else None}`",
                 f"- s2: `{rec['s2']['path'] if rec['s2'] else None}`",
                 "",
@@ -237,6 +261,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--task", required=True)
     parser.add_argument("--data-root", type=Path, required=True)
+    parser.add_argument(
+        "--processed-root",
+        type=Path,
+        default=None,
+        help="processed root used to resolve region-prefixed ids like haidian_patch_000001.",
+    )
     parser.add_argument("--mask-dir", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--top-k", type=int, default=6)
@@ -248,7 +278,13 @@ def main() -> None:
     if not masks:
         raise SystemExit(f"No positive masks found in {args.mask_dir}")
     records = [
-        make_figure(args.task, mask_path, args.data_root, args.out_dir)
+        make_figure(
+            args.task,
+            mask_path,
+            args.data_root,
+            args.processed_root,
+            args.out_dir,
+        )
         for mask_path in masks
     ]
     write_index(records, args.out_dir)
