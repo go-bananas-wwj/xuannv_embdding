@@ -56,6 +56,42 @@ def now_utc() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def latest_epoch_from_train_log(output_dir: Path) -> int | None:
+    latest: int | None = None
+    for log_path in sorted((output_dir / "logs").glob("train*.log")):
+        with log_path.open("r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                marker = " INFO epoch "
+                if marker not in line:
+                    continue
+                tail = line.split(marker, 1)[1]
+                epoch_text = tail.split(":", 1)[0]
+                if epoch_text.isdigit():
+                    latest = max(latest or 0, int(epoch_text))
+    return latest
+
+
+def latest_epoch_from_checkpoints(output_dir: Path, total_epochs: int) -> int | None:
+    if (output_dir / f"epoch_{total_epochs}.pt").exists():
+        return total_epochs - 1
+    latest: int | None = None
+    for path in output_dir.glob("epoch_*.pt"):
+        epoch_text = path.stem.removeprefix("epoch_")
+        if epoch_text.isdigit():
+            latest = max(latest or 0, int(epoch_text) - 1)
+    return latest
+
+
+def latest_epoch(output_dir: Path, total_epochs: int) -> int | None:
+    values = [
+        latest_epoch_from_status(output_dir),
+        latest_epoch_from_train_log(output_dir),
+        latest_epoch_from_checkpoints(output_dir, total_epochs),
+    ]
+    valid = [value for value in values if value is not None]
+    return max(valid) if valid else None
+
+
 def run_command(cmd: list[str]) -> None:
     print("+ " + " ".join(cmd), flush=True)
     subprocess.run(cmd, check=True, text=True)
@@ -77,15 +113,15 @@ def wait_for_training(
                 "round": round_idx,
                 "time_utc": now_utc(),
                 "train_session": train_session,
-                "latest_epoch": latest_epoch_from_status(output_dir),
+                "latest_epoch": latest_epoch(output_dir, total_epochs),
             },
         )
         time.sleep(poll_seconds)
 
-    latest_epoch = latest_epoch_from_status(output_dir)
-    if latest_epoch is not None and latest_epoch + 1 < total_epochs:
+    observed_epoch = latest_epoch(output_dir, total_epochs)
+    if observed_epoch is not None and observed_epoch + 1 < total_epochs:
         raise RuntimeError(
-            f"训练提前结束: session={train_session}, latest_epoch={latest_epoch}"
+            f"训练提前结束: session={train_session}, latest_epoch={observed_epoch}"
         )
 
 
