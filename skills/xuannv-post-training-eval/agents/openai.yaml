@@ -1,0 +1,7 @@
+interface:
+  display_name: "Xuannv Post-Training Eval"
+  short_description: "Evaluate Xuannv embeddings after training"
+  default_prompt: "Use $xuannv-post-training-eval to evaluate the latest Xuannv embedding export."
+
+policy:
+  allow_implicit_invocation: true
