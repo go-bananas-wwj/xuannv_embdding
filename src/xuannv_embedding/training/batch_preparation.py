@@ -58,6 +58,7 @@ def _weighted_temporal_mean(frames: torch.Tensor, mask: torch.Tensor) -> torch.T
 def prepare_batch(
     batch: dict[str, Any],
     target_heads: dict[str, dict[str, Any]],
+    source_dropout_probs: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """将 collate 后的 batch 转换为 AEFModel / Trainer 需要的格式。
 
@@ -77,6 +78,8 @@ def prepare_batch(
         target_heads: 配置中的 target_heads，每个 head 至少包含
             ``loss_type``（``continuous`` / ``categorical``）与 ``channels``，
             可选 ``source`` 与 ``weight``。
+        source_dropout_probs: 仅作用于模型输入的 source dropout 概率。target 已在
+            dropout 前构造，因此不会丢失重建监督。
 
     返回:
         转换后的 batch 字典，包含 ``highres_frames`` 与 ``highres_masks`` 两个字典
@@ -227,6 +230,40 @@ def prepare_batch(
         if source == "worldcover":
             source_frames.pop(source)
             source_masks.pop(source)
+
+    dropout_probs = source_dropout_probs or {}
+    for source, prob in dropout_probs.items():
+        if prob <= 0.0:
+            continue
+        if prob >= 1.0:
+            keep = None
+        elif source in source_frames:
+            batch_size = source_frames[source].shape[0]
+            keep = (
+                torch.rand(batch_size, device=source_frames[source].device) >= prob
+            ).float()
+        elif source in highres_frames:
+            batch_size = highres_frames[source].shape[0]
+            keep = (
+                torch.rand(batch_size, device=highres_frames[source].device) >= prob
+            ).float()
+        else:
+            continue
+
+        if source in source_frames:
+            if keep is None:
+                source_frames[source] = torch.zeros_like(source_frames[source])
+                source_masks[source] = torch.zeros_like(source_masks[source])
+            else:
+                source_frames[source] = source_frames[source] * keep[:, None, None, None, None]
+                source_masks[source] = source_masks[source] * keep[:, None]
+        if source in highres_frames:
+            if keep is None:
+                highres_frames[source] = torch.zeros_like(highres_frames[source])
+                highres_masks[source] = torch.zeros_like(highres_masks[source])
+            else:
+                highres_frames[source] = highres_frames[source] * keep[:, None, None, None]
+                highres_masks[source] = highres_masks[source] * keep[:, None, None, None]
 
     return {
         "patch_ids": patch_ids,

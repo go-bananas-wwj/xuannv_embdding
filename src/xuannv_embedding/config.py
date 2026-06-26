@@ -29,6 +29,7 @@ class DataConfig:
     num_months: int = 17
     months: list[str] = field(default_factory=lambda: [])
     sources: list[str] = field(default_factory=lambda: ["s2", "s1", "landsat"])
+    source_dropout_probs: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -196,6 +197,7 @@ class Config:
                 num_months=data_cfg.get("num_months", 17),
                 months=data_cfg.get("months", []),
                 sources=data_cfg.get("sources", ["s2", "s1", "landsat"]),
+                source_dropout_probs=data_cfg.get("source_dropout_probs", {}),
             ),
             experiment=ExperimentConfig(
                 name=experiment_cfg["name"],

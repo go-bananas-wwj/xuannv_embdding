@@ -169,7 +169,12 @@ def _build_loader(
 
     def training_collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
         collated = collate_fn(batch)
-        return prepare_batch(collated, target_heads)
+        source_dropout_probs = cfg.data.source_dropout_probs if split == "train" else {}
+        return prepare_batch(
+            collated,
+            target_heads,
+            source_dropout_probs=source_dropout_probs,
+        )
 
     shuffle = (split == "train") and (sampler is None)
     drop_last = split == "train"
