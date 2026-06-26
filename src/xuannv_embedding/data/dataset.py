@@ -36,6 +36,7 @@ class MonthlyEmbeddingDataset(Dataset):
         num_months: int = 17,
         ref_year: int = 2025,
         ref_month: int = 1,
+        statistics_dirs_by_region: dict[str, Path] | None = None,
     ) -> None:
         """初始化 Dataset。
 
@@ -58,6 +59,10 @@ class MonthlyEmbeddingDataset(Dataset):
         self.ref_year = ref_year
         self.ref_month = ref_month
         self.month_bins = self._generate_month_bins()
+        self.statistics_dirs_by_region = {
+            region: Path(path)
+            for region, path in (statistics_dirs_by_region or {}).items()
+        }
 
         self.root_dir = self.manifest_path.parent
         self.manifest: list[dict[str, Any]] = self._load_manifest()
@@ -65,6 +70,7 @@ class MonthlyEmbeddingDataset(Dataset):
             self.manifest = self.manifest[: self.max_patches]
 
         self.statistics: dict[str, dict[str, Any]] = {}
+        self.statistics_by_region: dict[str, dict[str, dict[str, Any]]] = {}
         self.source_channels: dict[str, int] = {}
         self._load_statistics()
 
@@ -95,9 +101,10 @@ class MonthlyEmbeddingDataset(Dataset):
         with self.manifest_path.open("r", encoding="utf-8") as f:
             manifest: list[dict[str, Any]] = json.load(f)
 
+        metadata_keys = {"patch_id", "region", "source_patch_id"}
         for entry in manifest:
             for key, value in entry.items():
-                if key == "patch_id":
+                if key in metadata_keys:
                     continue
                 if isinstance(value, list):
                     entry[key] = [Path(p) for p in value]
@@ -107,17 +114,49 @@ class MonthlyEmbeddingDataset(Dataset):
                     entry[key] = Path(value)
         return manifest
 
+    @staticmethod
+    def _statistics_source_candidates(source: str) -> list[str]:
+        candidates = [source]
+        for suffix in ("_haidian", "_harbin"):
+            if source.endswith(suffix):
+                candidates.append(source[: -len(suffix)])
+        return list(dict.fromkeys(candidates))
+
+    def _load_stats_file(self, directory: Path, source: str) -> dict[str, Any] | None:
+        for candidate in self._statistics_source_candidates(source):
+            stat_path = directory / f"{candidate}_stats.json"
+            if stat_path.exists():
+                with stat_path.open("r", encoding="utf-8") as f:
+                    return json.load(f)
+        return None
+
     def _load_statistics(self) -> None:
         """加载各 source 的 mean/std 统计量，并记录波段数。"""
         for source in self.sources:
-            stat_path = self.statistics_dir / f"{source}_stats.json"
-            if stat_path.exists():
-                with stat_path.open("r", encoding="utf-8") as f:
-                    stats: dict[str, Any] = json.load(f)
+            stats = self._load_stats_file(self.statistics_dir, source)
+            if stats is not None:
                 self.statistics[source] = stats
                 self.source_channels[source] = len(stats.get("mean", []))
             else:
-                logger.warning("统计量文件不存在: %s，将跳过该 source 归一化", stat_path)
+                logger.warning(
+                    "统计量文件不存在: %s/{%s}_stats.json，将跳过该 source 全局归一化",
+                    self.statistics_dir,
+                    ",".join(self._statistics_source_candidates(source)),
+                )
+
+            for region, directory in self.statistics_dirs_by_region.items():
+                region_stats = self._load_stats_file(directory, source)
+                if region_stats is None:
+                    continue
+                self.statistics_by_region.setdefault(region, {})[source] = region_stats
+                self.source_channels.setdefault(source, len(region_stats.get("mean", [])))
+
+    def _stats_for(self, region: str | None, source: str) -> dict[str, Any] | None:
+        if region is not None:
+            region_stats = self.statistics_by_region.get(region, {}).get(source)
+            if region_stats is not None:
+                return region_stats
+        return self.statistics.get(source)
 
     def _infer_geometry(self) -> None:
         """推断每个 source 的通道数与空间尺寸。"""
@@ -153,6 +192,7 @@ class MonthlyEmbeddingDataset(Dataset):
         """
         entry = self.manifest[idx]
         patch_id: str = entry["patch_id"]
+        region = entry.get("region")
 
         sample: dict[str, Any] = {
             "patch_id": patch_id,
@@ -197,8 +237,8 @@ class MonthlyEmbeddingDataset(Dataset):
                 # 将影像中的 NaN/Inf 填充为 0；有效性由独立的 source_masks 控制。
                 if np.issubdtype(array.dtype, np.floating):
                     array = np.nan_to_num(array, nan=0.0, posinf=0.0, neginf=0.0)
-                if source in self.statistics:
-                    stats = self.statistics[source]
+                stats = self._stats_for(region, source)
+                if stats is not None:
                     array = normalize(array, stats["mean"], stats["std"])
 
                 frame_list.append(torch.from_numpy(array))

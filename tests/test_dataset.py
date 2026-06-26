@@ -224,3 +224,60 @@ def test_monthly_binning_with_synthetic_data(tmp_path: Path) -> None:
         sample["timestamps"]["worldcover"],
         torch.tensor([202501, 202502], dtype=torch.long),
     )
+
+
+def test_mixed_region_manifest_uses_region_statistics(tmp_path: Path) -> None:
+    """混合区域 manifest 应保留 region 字段，并按 region 选择统计量。"""
+    processed = tmp_path / "processed"
+    manifest_root = processed / "v2"
+    manifest_root.mkdir(parents=True)
+
+    for region, value in (("haidian", 10.0), ("harbin", 20.0)):
+        _write_tiff(
+            processed / region / "patches" / "s2" / f"s2_20251201_patch_000000.tif",
+            np.full((1, 4, 4), value, dtype=np.float32),
+        )
+        stats_dir = tmp_path / "statistics" / region
+        stats_dir.mkdir(parents=True)
+        stats_dir.joinpath("s2_stats.json").write_text(
+            '{"mean": [%.1f], "std": [2.0]}' % value,
+            encoding="utf-8",
+        )
+
+    manifest = [
+        {
+            "region": "haidian",
+            "patch_id": "haidian_patch_000000",
+            "source_patch_id": "patch_000000",
+            "s2": ["../haidian/patches/s2/s2_20251201_patch_000000.tif"],
+        },
+        {
+            "region": "harbin",
+            "patch_id": "harbin_patch_000000",
+            "source_patch_id": "patch_000000",
+            "s2": ["../harbin/patches/s2/s2_20251201_patch_000000.tif"],
+        },
+    ]
+    import json
+
+    manifest_path = manifest_root / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    dataset = MonthlyEmbeddingDataset(
+        manifest_path=manifest_path,
+        statistics_dir=tmp_path / "statistics" / "fallback",
+        statistics_dirs_by_region={
+            "haidian": tmp_path / "statistics" / "haidian",
+            "harbin": tmp_path / "statistics" / "harbin",
+        },
+        sources=["s2"],
+        num_months=1,
+        ref_year=2025,
+        ref_month=12,
+        patch_size=4,
+    )
+
+    assert dataset[0]["patch_id"] == "haidian_patch_000000"
+    assert dataset[1]["patch_id"] == "harbin_patch_000000"
+    assert torch.allclose(dataset[0]["source_frames"]["s2"], torch.zeros(1, 1, 4, 4))
+    assert torch.allclose(dataset[1]["source_frames"]["s2"], torch.zeros(1, 1, 4, 4))

@@ -28,6 +28,13 @@ def build_dataloader(
         statistics_dir = cfg.statistics_dir
     else:
         statistics_dir = cfg.root.parent / "statistics" / cfg.region
+    if cfg.months:
+        ref_year_str, ref_month_str = cfg.months[0].split("-", 1)
+        ref_year = int(ref_year_str)
+        ref_month = int(ref_month_str)
+    else:
+        ref_year = 2025
+        ref_month = 1
 
     dataset = MonthlyEmbeddingDataset(
         manifest_path=cfg.manifest_path,
@@ -36,6 +43,9 @@ def build_dataloader(
         patch_size=cfg.patch_size,
         max_patches=cfg.max_patches,
         num_months=cfg.num_months,
+        ref_year=ref_year,
+        ref_month=ref_month,
+        statistics_dirs_by_region=cfg.statistics_dirs_by_region,
     )
 
     shuffle = split == "train"
