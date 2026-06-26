@@ -22,11 +22,16 @@ Summary:
 
 Known coverage gaps recorded in metadata:
 
-- Haidian `highres_optical` covers `202512-202604`; `202605` is missing.
+- Haidian `highres_optical_haidian` covers `202512-202604`; `202605` is missing.
 - Harbin `s2` covers `202512`; `202601-202605` are missing.
 - Harbin `landsat` covers `202512`; `202601-202605` are missing.
-- Harbin `highres_optical` covers `202512` and `202605`; `202601-202604` are missing.
-- Harbin has no `highres_sar` in the current processed manifest.
+- Harbin `highres_optical_harbin` covers `202512` and `202605`;
+  `202601-202604` are missing.
+- Harbin has no `highres_sar_haidian` equivalent in the current processed manifest.
+
+High-resolution optical sources are intentionally region-specific in V2 because
+Haidian has 4 channels and Harbin has 3 channels. Keeping them separate prevents
+mixed-channel batches while retaining unified low-resolution source names.
 
 These gaps are intentional availability-mask cases for V2. The manifest builder
 does not synthesize missing observations.

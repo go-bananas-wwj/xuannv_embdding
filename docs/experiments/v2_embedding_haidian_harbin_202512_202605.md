@@ -36,10 +36,12 @@ resolution and keep V1.0's change-task strengths.
 
 - Allowed months: `202512`, `202601`, `202602`, `202603`, `202604`, `202605`.
 - Regions: `haidian`, `harbin`.
-- Preferred source names:
-  `s2`, `s1`, `landsat`, `worldcover`, `highres_optical`, `highres_sar`.
-- Region is represented by a `region` field or parent directory, not by source
-  suffixes such as `highres_optical_harbin`.
+- Preferred low-resolution source names:
+  `s2`, `s1`, `landsat`, `worldcover`.
+- High-resolution source names remain region-specific because channel counts
+  differ by region:
+  `highres_optical_haidian` has 4 channels, `highres_optical_harbin` has
+  3 channels, and `highres_sar_haidian` has 1 channel.
 - Missing high-resolution observations are represented by availability masks and
   recorded in manifest metadata. Do not synthesize missing months.
 - Before training, run a dry-run that reports per-region/per-source month
