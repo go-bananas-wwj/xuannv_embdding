@@ -74,14 +74,16 @@ def reconstruction_loss(
     return masked_sum / (masked_count + eps)
 
 
-def batch_uniformity_loss(emb: torch.Tensor) -> torch.Tensor:
+def batch_uniformity_loss(emb: torch.Tensor, temperature: float = 2.0) -> torch.Tensor:
     """计算 batch 内场景级嵌入的均匀性损失。
 
-    先将每个嵌入 L2 归一化到单位球面，再计算 pairwise squared distance 的
-    非对角均值。值越大表示嵌入在球面上分布越分散。
+    先将每个嵌入 L2 归一化到单位球面，再计算 Wang-Isola 风格的
+    ``log(mean(exp(-temperature * pairwise_squared_distance)))``。该值在嵌入
+    更分散时更小，因此可以用正权重直接加到总损失里进行最小化。
 
     Args:
         emb: 场景级嵌入，形状 ``[B, D]`` 或月度 ``[B, T, D]``。
+        temperature: 距离温度，值越大越强调近邻排斥。
 
     Returns:
         标量张量，表示均匀性损失。
@@ -99,18 +101,25 @@ def batch_uniformity_loss(emb: torch.Tensor) -> torch.Tensor:
     squared_dist = 2.0 - 2.0 * similarity
 
     # 排除对角线。
-    diag_mask = 1.0 - torch.eye(batch_size, device=emb.device, dtype=emb.dtype)
     off_diag_count = batch_size * (batch_size - 1)
     if off_diag_count == 0:
         return torch.tensor(0.0, device=emb.device, dtype=emb.dtype)
 
-    return (squared_dist * diag_mask).sum() / off_diag_count
+    diag_mask = ~torch.eye(batch_size, device=emb.device, dtype=torch.bool)
+    off_diag_dist = squared_dist[diag_mask]
+    return torch.log(torch.exp(-temperature * off_diag_dist).mean())
 
 
 class TotalLoss(nn.Module):
-    """AEF 训练总损失：加权重建损失 + batch uniformity 损失。"""
+    """AEF 训练总损失：加权重建损失 + 可配置 batch uniformity 损失。"""
 
-    def __init__(self, target_cfg: dict[str, dict]) -> None:
+    def __init__(
+        self,
+        target_cfg: dict[str, dict],
+        uniformity_weight: float = 1.0,
+        uniformity_warmup_epochs: int = 0,
+        uniformity_temperature: float = 2.0,
+    ) -> None:
         """初始化。
 
         Args:
@@ -127,6 +136,22 @@ class TotalLoss(nn.Module):
         """
         super().__init__()
         self.target_cfg = target_cfg
+        self.uniformity_weight = float(uniformity_weight)
+        self.uniformity_warmup_epochs = int(uniformity_warmup_epochs)
+        self.uniformity_temperature = float(uniformity_temperature)
+        self.current_epoch = 0
+
+    def set_epoch(self, epoch: int) -> None:
+        """设置当前 epoch，用于 uniformity 权重 warmup。"""
+        self.current_epoch = int(epoch)
+
+    def _current_uniformity_weight(self) -> float:
+        if self.uniformity_weight == 0.0:
+            return 0.0
+        if self.uniformity_warmup_epochs <= 0:
+            return self.uniformity_weight
+        progress = min(1.0, float(self.current_epoch + 1) / self.uniformity_warmup_epochs)
+        return self.uniformity_weight * progress
 
     def forward(
         self,
@@ -164,13 +189,24 @@ class TotalLoss(nn.Module):
             recon_losses[f"recon_{name}"] = loss
             total_recon = total_recon + weighted
 
-        uniformity = batch_uniformity_loss(output.embedding)
-        total = total_recon + uniformity
+        uniformity = batch_uniformity_loss(
+            output.embedding,
+            temperature=self.uniformity_temperature,
+        )
+        uniformity_weight = self._current_uniformity_weight()
+        weighted_uniformity = uniformity * uniformity_weight
+        total = total_recon + weighted_uniformity
 
         result: dict[str, torch.Tensor] = {
             "total": total,
             "recon": total_recon,
             "uniformity": uniformity,
+            "uniformity_weighted": weighted_uniformity,
+            "uniformity_weight": torch.tensor(
+                uniformity_weight,
+                device=output.embedding.device,
+                dtype=output.embedding.dtype,
+            ),
         }
         result.update(recon_losses)
         return result

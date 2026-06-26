@@ -68,6 +68,9 @@ class TrainingConfig:
     amp: bool = True
     gradient_checkpointing: bool = True
     log_every: int = 0
+    uniformity_weight: float = 1.0
+    uniformity_warmup_epochs: int = 0
+    uniformity_temperature: float = 2.0
 
 
 @dataclass
@@ -217,6 +220,9 @@ class Config:
                 amp=training_cfg.get("amp", True),
                 gradient_checkpointing=training_cfg.get("gradient_checkpointing", True),
                 log_every=training_cfg.get("log_every", 0),
+                uniformity_weight=training_cfg.get("uniformity_weight", 1.0),
+                uniformity_warmup_epochs=training_cfg.get("uniformity_warmup_epochs", 0),
+                uniformity_temperature=training_cfg.get("uniformity_temperature", 2.0),
             ),
         )
 

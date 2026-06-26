@@ -261,6 +261,13 @@ class Trainer:
                     "train/loss_total": losses["total"].item(),
                     "train/loss_recon": losses["recon"].item(),
                     "train/loss_uniformity": losses["uniformity"].item(),
+                    "train/loss_uniformity_weighted": losses.get(
+                        "uniformity_weighted", losses["uniformity"]
+                    ).item(),
+                    "train/uniformity_weight": losses.get(
+                        "uniformity_weight",
+                        torch.tensor(1.0, device=self.device),
+                    ).item(),
                     "train/lr": self.optimizer.param_groups[0]["lr"],
                 }
                 for name, value in losses.items():
@@ -294,6 +301,10 @@ class Trainer:
                 "train/loss_total": metrics["total"],
                 "train/loss_recon": metrics["recon"],
                 "train/loss_uniformity": metrics["uniformity"],
+                "train/loss_uniformity_weighted": metrics.get(
+                    "uniformity_weighted", metrics["uniformity"]
+                ),
+                "train/uniformity_weight": metrics.get("uniformity_weight", 1.0),
                 "train/lr": self.optimizer.param_groups[0]["lr"],
             }
             for name, value in metrics.items():
@@ -349,7 +360,12 @@ class Trainer:
         metrics["val_loss"] = metrics.get("total", 0.0)
 
         if self._is_main_process():
-            val_metrics: dict[str, float] = {"val/loss_total": metrics["val_loss"]}
+            val_metrics: dict[str, float] = {
+                "val/loss_total": metrics["val_loss"],
+                "val/loss_uniformity": metrics.get("uniformity", 0.0),
+                "val/loss_uniformity_weighted": metrics.get("uniformity_weighted", 0.0),
+                "val/uniformity_weight": metrics.get("uniformity_weight", 0.0),
+            }
             for name, value in metrics.items():
                 if name.startswith("recon_"):
                     val_metrics[f"val/{name}"] = value
@@ -396,6 +412,8 @@ class Trainer:
         try:
             for epoch in range(self.epoch, total_epochs):
                 self.epoch = epoch
+                if hasattr(self.criterion, "set_epoch"):
+                    self.criterion.set_epoch(epoch)
                 if self.train_sampler is not None:
                     self.train_sampler.set_epoch(epoch)
                 train_metrics = self.train_epoch()

@@ -249,7 +249,12 @@ def main() -> None:
         }
         for name, head_cfg in cfg.model.target_heads.items()
     }
-    criterion = TotalLoss(target_cfg)
+    criterion = TotalLoss(
+        target_cfg,
+        uniformity_weight=cfg.training.uniformity_weight,
+        uniformity_warmup_epochs=cfg.training.uniformity_warmup_epochs,
+        uniformity_temperature=cfg.training.uniformity_temperature,
+    )
 
     train_loader = _build_loader(
         cfg,
