@@ -95,6 +95,17 @@ def main() -> None:
     p.add_argument("--fold", type=int, default=None, help="只跑单个 fold 调试")
     p.add_argument("--fraction", type=float, default=None)
     p.add_argument(
+        "--skip-predictions",
+        action="store_true",
+        help="跳过测试集概率 GeoTIFF 导出；用于快速诊断。",
+    )
+    p.add_argument(
+        "--eval-every",
+        type=int,
+        default=None,
+        help="每 N 个 epoch 做一次验证；默认读取 training.eval_every 或 1。",
+    )
+    p.add_argument(
         "--allow-create-split",
         action="store_true",
         help="允许在 split_5fold.json 缺失时自动生成；正式验收默认禁止。",
@@ -104,6 +115,9 @@ def main() -> None:
     cfg = load_config(args.config)
     set_seed(cfg["experiment"]["seed"])
     device = get_downstream_device(cfg["experiment"].get("device", "auto"))
+    eval_every = args.eval_every or int(cfg["training"].get("eval_every", 1))
+    if eval_every <= 0:
+        raise ValueError(f"eval_every 必须为正整数，实际得到 {eval_every}")
 
     region = args.region if args.region else args.label_root.parent.name
     emb_region_root = args.embedding_root / region
@@ -165,26 +179,34 @@ def main() -> None:
             temporal_mode=temporal_mode,
         )
 
+        num_workers = int(cfg["training"].get("num_workers", 0))
+        loader_kwargs = {
+            "num_workers": num_workers,
+            "collate_fn": collate_embeddings,
+            "persistent_workers": num_workers > 0,
+        }
+        if num_workers > 0:
+            loader_kwargs["prefetch_factor"] = int(
+                cfg["training"].get("prefetch_factor", 2)
+            )
+
         train_loader = DataLoader(
             train_ds,
             batch_size=cfg["training"]["batch_size"],
             shuffle=True,
-            num_workers=cfg["training"].get("num_workers", 0),
-            collate_fn=collate_embeddings,
+            **loader_kwargs,
         )
         val_loader = DataLoader(
             val_ds,
             batch_size=cfg["training"]["batch_size"],
             shuffle=False,
-            num_workers=cfg["training"].get("num_workers", 0),
-            collate_fn=collate_embeddings,
+            **loader_kwargs,
         )
         test_loader = DataLoader(
             test_ds,
             batch_size=cfg["training"]["batch_size"],
             shuffle=False,
-            num_workers=cfg["training"].get("num_workers", 0),
-            collate_fn=collate_embeddings,
+            **loader_kwargs,
         )
 
         model = task.build_head().to(device)
@@ -201,6 +223,7 @@ def main() -> None:
         best_miou = -1.0
         best_threshold = 0.5
         patience_counter = 0
+        best_epoch = -1
         best_state: dict[str, torch.Tensor] | None = None
         for epoch in range(cfg["training"]["epochs"]):
             model.train()
@@ -217,6 +240,15 @@ def main() -> None:
             scheduler.step()
             train_loss /= len(train_loader)
 
+            should_eval = (epoch + 1) % eval_every == 0 or epoch == 0
+            if not should_eval:
+                logger.info(
+                    "Epoch %d train_loss=%.4f val_miou=skipped",
+                    epoch,
+                    train_loss,
+                )
+                continue
+
             val_metrics = task.evaluate(model, val_loader, device)
             logger.info(
                 "Epoch %d train_loss=%.4f val_miou=%.4f",
@@ -229,6 +261,7 @@ def main() -> None:
                 best_miou = val_metrics["miou"]
                 best_threshold = float(val_metrics.get("best_threshold", 0.5))
                 patience_counter = 0
+                best_epoch = epoch
                 best_state = model.state_dict()
                 (out_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
                 torch.save(best_state, out_dir / "checkpoints" / "best.pt")
@@ -243,7 +276,7 @@ def main() -> None:
         model.load_state_dict(best_state)
         test_metrics = task.evaluate(model, test_loader, device, threshold=best_threshold)
         test_metrics["fold"] = fold_idx
-        test_metrics["best_epoch"] = epoch - patience_counter
+        test_metrics["best_epoch"] = best_epoch
         test_metrics["val_threshold"] = best_threshold
         test_metrics["months"] = months
         test_metrics["temporal_mode"] = temporal_mode
@@ -254,7 +287,14 @@ def main() -> None:
             json.dump(test_metrics, f, ensure_ascii=False, indent=2)
 
         # 保存测试集概率图
-        save_test_predictions(model, test_loader, device, out_dir / "predictions", mask_dir)
+        if not args.skip_predictions and cfg["training"].get("save_predictions", True):
+            save_test_predictions(
+                model,
+                test_loader,
+                device,
+                out_dir / "predictions",
+                mask_dir,
+            )
 
     # 汇总
     with open(args.output_root / "summary_5fold.json", "w", encoding="utf-8") as f:
