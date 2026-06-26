@@ -1,10 +1,10 @@
 experiment:
-  name: v2_embedding_haidian_harbin_202512_202605_gated_fusion
+  name: v2_embedding_haidian_harbin_202512_202605_gated_fusion_sanity
   seed: 42
-  output_dir: /data/xuannv_embedding/outputs/v2_embedding_202512_202605/gated_fusion_bs4_uniformity_dropout
-  use_wandb: true
+  output_dir: /data/xuannv_embedding/outputs/v2_embedding_202512_202605/gated_fusion_sanity_bs4
+  use_wandb: false
   wandb_project: xuannv-embedding-v2
-  wandb_run_name: v2_embedding_202512_202605_gated_fusion_bs4
+  wandb_run_name: v2_embedding_202512_202605_gated_fusion_sanity_bs4
 
 model:
   embed_dim: 64
@@ -62,18 +62,18 @@ model:
       weight: 0.5
 
 training:
-  epochs: 100
+  epochs: 1
   lr: 0.0001
   weight_decay: 0.05
-  warmup_epochs: 5
+  warmup_epochs: 1
   gradient_accumulation_steps: 2
-  save_every: 10
-  eval_every: 10
+  save_every: 1
+  eval_every: 1
   amp: true
   gradient_checkpointing: true
-  log_every: 50
+  log_every: 1
   uniformity_weight: 0.01
-  uniformity_warmup_epochs: 10
+  uniformity_warmup_epochs: 1
   uniformity_temperature: 2.0
 
 data:
@@ -84,8 +84,8 @@ data:
   statistics_dirs_by_region:
     haidian: /data/xuannv_embedding/statistics/haidian
     harbin: /data/xuannv_embedding/statistics/harbin
-  num_samples: 744
-  max_patches:
+  num_samples: 48
+  max_patches: 48
   batch_size: 4
   num_workers: 8
   patch_size: 128
