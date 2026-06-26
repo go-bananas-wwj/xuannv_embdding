@@ -137,7 +137,7 @@ class MonthlyEmbeddingDataset(Dataset):
             if stats is not None:
                 self.statistics[source] = stats
                 self.source_channels[source] = len(stats.get("mean", []))
-            else:
+            elif not self.statistics_dirs_by_region:
                 logger.warning(
                     "统计量文件不存在: %s/{%s}_stats.json，将跳过该 source 全局归一化",
                     self.statistics_dir,
