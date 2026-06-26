@@ -10,6 +10,8 @@ def test_perfect_prediction() -> None:
     m = compute_segmentation_metrics(logits, target)
     assert m["miou"] == 1.0
     assert m["f1_0.5"] == 1.0
+    assert m["auc_roc"] == 1.0
+    assert "best_threshold" in m
 
 
 def test_compute_segmentation_metrics_3d() -> None:
@@ -69,6 +71,16 @@ def test_return_curve() -> None:
     assert "recall_curve" in m
     assert m["precision_curve"].size > 0
     assert m["recall_curve"].size > 0
+
+
+def test_threshold_keeps_f1_05_separate() -> None:
+    target = np.array([[0, 1]], dtype=np.int64)
+    logits = np.array([[-0.2, 0.2]], dtype=np.float32)
+    m_default = compute_segmentation_metrics(logits, target, threshold=0.5)
+    m_high = compute_segmentation_metrics(logits, target, threshold=0.7)
+    assert m_default["f1_0.5"] == m_high["f1_0.5"]
+    assert m_high["f1_at_threshold"] < m_default["f1_at_threshold"]
+    assert m_high["threshold"] == 0.7
 
 
 def test_visualization_overlay() -> None:

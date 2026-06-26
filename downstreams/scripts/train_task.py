@@ -68,6 +68,11 @@ def main() -> None:
     p.add_argument("--output-root", type=Path, required=True)
     p.add_argument("--fold", type=int, default=None, help="只跑单个 fold 调试")
     p.add_argument("--fraction", type=float, default=None)
+    p.add_argument(
+        "--allow-create-split",
+        action="store_true",
+        help="允许在 split_5fold.json 缺失时自动生成；正式验收默认禁止。",
+    )
     args = p.parse_args()
 
     cfg = load_config(args.config)
@@ -79,7 +84,12 @@ def main() -> None:
     mask_dir = args.label_root / "masks"
     split_path = args.label_root / "split_5fold.json"
     if not split_path.exists():
-        logger.info("split_5fold.json 不存在，自动生成")
+        if not args.allow_create_split:
+            raise FileNotFoundError(
+                f"固定 split 不存在: {split_path}。正式验收禁止自动生成；"
+                "调试时可显式传 --allow-create-split。"
+            )
+        logger.info("split_5fold.json 不存在，按显式参数自动生成")
         split = create_stratified_folds(mask_dir, seed=cfg["experiment"]["seed"])
         with open(split_path, "w", encoding="utf-8") as f:
             json.dump(split, f, ensure_ascii=False, indent=2)
@@ -101,25 +111,32 @@ def main() -> None:
         if args.fraction is not None:
             frac_str = str(args.fraction)
             train_ids = split["fractions"][frac_str][f"fold_{fold_idx}"]
+        months = cfg["training"].get("months")
+        if months is None:
+            months = [cfg["training"]["month"]]
+        temporal_mode = cfg["training"].get("temporal_mode", "single")
 
         train_ds = EmbeddingDataset(
             emb_region_root,
             args.label_root,
             train_ids,
-            month=cfg["training"]["month"],
+            months=months,
+            temporal_mode=temporal_mode,
             augment=True,
         )
         val_ds = EmbeddingDataset(
             emb_region_root,
             args.label_root,
             fold_info["val"],
-            month=cfg["training"]["month"],
+            months=months,
+            temporal_mode=temporal_mode,
         )
         test_ds = EmbeddingDataset(
             emb_region_root,
             args.label_root,
             fold_info["test"],
-            month=cfg["training"]["month"],
+            months=months,
+            temporal_mode=temporal_mode,
         )
 
         train_loader = DataLoader(
@@ -156,6 +173,7 @@ def main() -> None:
         loss_fn = task.build_loss()
 
         best_miou = -1.0
+        best_threshold = 0.5
         patience_counter = 0
         best_state: dict[str, torch.Tensor] | None = None
         for epoch in range(cfg["training"]["epochs"]):
@@ -183,6 +201,7 @@ def main() -> None:
 
             if val_metrics["miou"] > best_miou:
                 best_miou = val_metrics["miou"]
+                best_threshold = float(val_metrics.get("best_threshold", 0.5))
                 patience_counter = 0
                 best_state = model.state_dict()
                 (out_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
@@ -196,9 +215,12 @@ def main() -> None:
         # 测试
         assert best_state is not None
         model.load_state_dict(best_state)
-        test_metrics = task.evaluate(model, test_loader, device)
+        test_metrics = task.evaluate(model, test_loader, device, threshold=best_threshold)
         test_metrics["fold"] = fold_idx
         test_metrics["best_epoch"] = epoch - patience_counter
+        test_metrics["val_threshold"] = best_threshold
+        test_metrics["months"] = months
+        test_metrics["temporal_mode"] = temporal_mode
         test_metrics["region"] = region
         test_metrics["fraction"] = args.fraction
         summary.append(test_metrics)

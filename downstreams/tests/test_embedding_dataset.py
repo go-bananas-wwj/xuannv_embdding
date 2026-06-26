@@ -43,6 +43,47 @@ def test_embedding_dataset(tmp_path: Path) -> None:
     assert batch["embedding_map"].shape == (2, 64, 16, 16)
 
 
+def test_embedding_dataset_concat_diff(tmp_path: Path) -> None:
+    emb_root = tmp_path / "embeddings"
+    label_root = tmp_path / "labels"
+    mask_dir = label_root / "masks"
+    mask_dir.mkdir(parents=True)
+
+    patch_id = "patch_000000"
+    (emb_root / patch_id).mkdir(parents=True)
+    emb_t1 = torch.ones(2, 4, 4)
+    emb_t2 = torch.full((2, 4, 4), 3.0)
+    torch.save(emb_t1, emb_root / patch_id / "202512_embedding_map.pt")
+    torch.save(emb_t2, emb_root / patch_id / "202605_embedding_map.pt")
+
+    mask = np.zeros((4, 4), dtype=np.uint8)
+    with rasterio.open(
+        mask_dir / f"{patch_id}.tif",
+        "w",
+        driver="GTiff",
+        height=4,
+        width=4,
+        count=1,
+        dtype=mask.dtype,
+        crs=None,
+        transform=rasterio.Affine.identity(),
+    ) as dst:
+        dst.write(mask, 1)
+
+    ds = EmbeddingDataset(
+        emb_root,
+        label_root,
+        [patch_id],
+        months=[202512, 202605],
+        temporal_mode="concat_diff",
+    )
+    sample = ds[0]
+    assert sample["embedding_map"].shape == (6, 4, 4)
+    assert torch.equal(sample["embedding_map"][:2], emb_t1)
+    assert torch.equal(sample["embedding_map"][2:4], emb_t2)
+    assert torch.equal(sample["embedding_map"][4:], torch.full((2, 4, 4), 2.0))
+
+
 def test_embedding_missing_embedding(tmp_path: Path) -> None:
     """embedding 文件不存在时抛出 FileNotFoundError。"""
     label_root = tmp_path / "labels"
