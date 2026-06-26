@@ -74,6 +74,31 @@ torchrun --nproc_per_node=6 scripts/train/train.py \
 - NPU `as_strided` and non-finite-check warnings were emitted by `torch_npu`,
   but the 1-epoch sanity completed successfully.
 
+Full 6-NPU gated fusion training result on 2026-06-26:
+
+- Command used NPU `0,1,2,3,4,5` with per-NPU batch size `4`.
+- Training was launched in tmux session `xuannv_v2_train`; the session exited
+  after successful completion.
+- Output directory:
+  `/data/xuannv_embedding/outputs/v2_embedding_202512_202605/gated_fusion_bs4_uniformity_dropout`
+- Validation trajectory:
+  - epoch 9: `2.685731`
+  - epoch 19: `2.522732`
+  - epoch 29: `2.341984`
+  - epoch 39: `2.171747`
+  - epoch 49: `2.085322`
+  - epoch 59: `2.034969`
+  - epoch 69: `2.013439`
+  - epoch 79: `2.005691`
+  - epoch 89: `2.000825`
+  - epoch 99: `2.001047`
+- Best checkpoint: `best.pt` from epoch 89 with `val_loss=2.000825`.
+- Final checkpoint: `epoch_100.pt` with `val_loss=2.001047`.
+- Recommendation: use `best.pt` for embedding export because it is slightly
+  better than the final epoch.
+- NPU memory remained well within capacity; typical per-rank process memory was
+  about `19.2 GB`, and NPU memory returned to idle after training.
+
 ## Next Commands
 
 Training on 6 Ascend NPUs:
@@ -120,5 +145,5 @@ python scripts/report/compare_v2_acceptance.py \
 
 ## Not Yet Run
 
-Full 100-epoch 6-NPU training, embedding export, and five-task 5-fold acceptance
-have not been run in this implementation pass.
+Embedding export and five-task 5-fold acceptance have not been run in this
+implementation pass.
