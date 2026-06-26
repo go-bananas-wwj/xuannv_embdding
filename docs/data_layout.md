@@ -8,7 +8,9 @@
 
 - **`raw/<region>/<source>/`**：从外部源**原样下载**的数据，未对齐、未切 patch。
 - **`processed/<region>/`**：已对齐到统一网格并切成 128×128 patch 的数据，可直接输入模型。
-- **`outputs/`**：训练产物（checkpoints、logs、eval）。
+- **`outputs/`**：训练产物（checkpoints、logs、eval）。需要长期保护的权重见 `docs/checkpoint_registry.md`。
+- **`embeddings/`**：由 checkpoint + 输入数据重新生成的推理产物，默认不长期保存。
+- **`cache/`**：可重新生成的预处理缓存，默认不长期保存。
 - **`logs/`**：下载/预处理原始日志。
 - **`statistics/<region>/`**：各 source 的 mean/std 统计量。
 
@@ -18,6 +20,8 @@
 /data/xuannv_embedding/
 ├── logs/                          # 下载/预处理日志
 ├── outputs/                       # 训练输出
+├── embeddings/                    # 预生成 embedding（可重建，按需生成）
+├── cache/                         # 预处理缓存（可重建，按需生成）
 ├── processed/                     # 预处理后的数据
 │   ├── harbin/
 │   │   ├── patches/               # 时序影像 patch（当前仅 s2）
@@ -76,5 +80,5 @@
 ## 下游任务与 Embedding 产物
 
 - **`downstream/labels/<region>/<task>/`**：labelme 原始标注、对齐后的 mask、`split_5fold.json`、`label_meta.json`。
-- **`embeddings/YYYYMMDD_<exp>_<sha>/`**：预生成 embedding，含 per-patch `{month}_embedding_map.pt`、`{month}_scene_embedding.pt` 与 `meta.json`。
+- **`embeddings/YYYYMMDD_<exp>_<sha>/`**：预生成 embedding，含 per-patch `{month}_embedding_map.pt`、`{month}_scene_embedding.pt` 与 `meta.json`。该目录是派生产物，可由 checkpoint、配置和输入数据重建。
 - **`outputs/downstream/<task>_<region>_<date>_<suffix>/`**：下游训练输出，含 `fold_*/{metrics.json,predictions/,checkpoints/,visualizations/}` 与 `summary_5fold.json`。
