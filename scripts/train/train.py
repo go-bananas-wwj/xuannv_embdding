@@ -140,6 +140,14 @@ def _build_loader(
     is_distributed: bool,
 ) -> DataLoader:
     """构造训练或验证 DataLoader，内置 ``prepare_batch`` 转换。"""
+    if cfg.data.months:
+        ref_year_str, ref_month_str = cfg.data.months[0].split("-", 1)
+        ref_year = int(ref_year_str)
+        ref_month = int(ref_month_str)
+    else:
+        ref_year = 2025
+        ref_month = 1
+
     dataset = MonthlyEmbeddingDataset(
         manifest_path=cfg.data.manifest_path,
         statistics_dir=cfg.data.statistics_dir,
@@ -147,6 +155,9 @@ def _build_loader(
         patch_size=cfg.data.patch_size,
         max_patches=cfg.data.max_patches,
         num_months=cfg.model.num_months,
+        ref_year=ref_year,
+        ref_month=ref_month,
+        statistics_dirs_by_region=cfg.data.statistics_dirs_by_region,
     )
 
     sampler = None

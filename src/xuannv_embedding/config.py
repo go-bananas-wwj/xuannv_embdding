@@ -21,6 +21,7 @@ class DataConfig:
     manifest_path: Path
     num_samples: int | None = None  # 仅作为元数据，实际样本数由 dataset 长度决定
     statistics_dir: Path | None = None
+    statistics_dirs_by_region: dict[str, Path] = field(default_factory=dict)
     max_patches: int | None = None
     batch_size: int = 4
     num_workers: int = 8
@@ -175,6 +176,10 @@ class Config:
             statistics_dir = root.parent / "statistics" / region
         else:
             statistics_dir = Path(statistics_dir)
+        statistics_dirs_by_region = {
+            key: Path(value)
+            for key, value in data_cfg.get("statistics_dirs_by_region", {}).items()
+        }
 
         return cls(
             data=DataConfig(
@@ -183,6 +188,7 @@ class Config:
                 manifest_path=Path(data_cfg["manifest_path"]),
                 num_samples=data_cfg.get("num_samples"),
                 statistics_dir=statistics_dir,
+                statistics_dirs_by_region=statistics_dirs_by_region,
                 max_patches=data_cfg.get("max_patches"),
                 batch_size=data_cfg.get("batch_size", 4),
                 num_workers=data_cfg.get("num_workers", 8),
