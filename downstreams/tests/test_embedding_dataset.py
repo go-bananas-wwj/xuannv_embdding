@@ -116,6 +116,39 @@ def test_embedding_dataset_region_prefixed_embedding_root(tmp_path: Path) -> Non
     assert torch.equal(sample["embedding_map"], emb)
 
 
+def test_embedding_dataset_joint_region_falls_back_to_source_region(tmp_path: Path) -> None:
+    """construction_joint 可按 patch_id 前缀回退到 haidian/harbin sibling embedding。"""
+    embedding_root = tmp_path / "embeddings"
+    emb_root = embedding_root / "construction_joint"
+    source_root = embedding_root / "harbin"
+    label_root = tmp_path / "labels"
+    mask_dir = label_root / "masks"
+    mask_dir.mkdir(parents=True)
+
+    patch_id = "harbin_patch_000159"
+    (source_root / patch_id).mkdir(parents=True)
+    emb = torch.randn(64, 16, 16)
+    torch.save(emb, source_root / patch_id / "202605_embedding_map.pt")
+
+    mask = np.zeros((16, 16), dtype=np.uint8)
+    with rasterio.open(
+        mask_dir / f"{patch_id}.tif",
+        "w",
+        driver="GTiff",
+        height=16,
+        width=16,
+        count=1,
+        dtype=mask.dtype,
+        crs=None,
+        transform=rasterio.Affine.identity(),
+    ) as dst:
+        dst.write(mask, 1)
+
+    ds = EmbeddingDataset(emb_root, label_root, [patch_id], month=202605)
+    sample = ds[0]
+    assert torch.equal(sample["embedding_map"], emb)
+
+
 def test_embedding_dataset_month_suffixed_masks_use_latest(tmp_path: Path) -> None:
     """当 mask 带 YYYYMM 后缀时，应选择最新月份 mask。"""
     emb_root = tmp_path / "embeddings"
