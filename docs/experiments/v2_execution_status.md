@@ -119,6 +119,71 @@ Embedding export result on 2026-06-26:
   - pixel-wise embedding norms averaged `1.0` for checked Haidian and Harbin
     samples.
 
+Downstream 5-fold acceptance result on 2026-06-26:
+
+- Frozen embedding run:
+  `/data/xuannv_embedding/embeddings/v2_202512_202605/20260626_v2_embedding_haidian_harbin_202512_202605_gated_fusion_best_acceptance`
+- Benchmark root:
+  `/data/xuannv_embedding/experiments/v2_202512_202605/benchmarks/20260626_gated_fusion_best_acceptance`
+- Logs:
+  `/data/xuannv_embedding/logs/v2_202512_202605/downstream_20260626_gated_fusion_best_acceptance`
+- Downstream config:
+  `downstreams/configs/v2_acceptance_concat_diff.yaml`
+- Input representation: months `[202512, 202605]`, temporal mode
+  `concat_diff`, embedding channels `192`.
+- All five downstream tasks completed and wrote `summary_5fold.json`.
+- V1.0 comparison reports:
+  - `/data/xuannv_embedding/experiments/v2_202512_202605/benchmarks/20260626_gated_fusion_best_acceptance/comparison_vs_v1.0.json`
+  - `/data/xuannv_embedding/experiments/v2_202512_202605/benchmarks/20260626_gated_fusion_best_acceptance/comparison_vs_v1.0.md`
+
+| Task | Region | AUC | F1_best | mIoU | Acceptance |
+|---|---|---:|---:|---:|---|
+| construction | haidian | 0.9280 | 0.4442 | 0.2256 | pass |
+| construction_joint | haidian+harbin | 0.8638 | 0.3217 | 0.1441 | pass |
+| building_change | harbin | 0.5717 | 0.0058 | 0.0017 | fail |
+| farm_change | harbin | 0.7122 | 0.0076 | 0.0022 | fail |
+| rubbish | harbin | 0.7335 | 0.0101 | 0.0010 | fail |
+
+Macro acceptance:
+
+- Overall pass: `False`.
+- Macro AUC: `0.7618` vs threshold `0.8433` -> fail.
+- Macro F1_best: `0.1579` vs threshold `0.1524` -> pass.
+- Macro mIoU: `0.0749` vs threshold `0.0434` -> pass.
+
+Interpretation:
+
+- The exported gated-fusion embedding is usable for construction-related
+  segmentation. Haidian construction has strong ranking quality
+  (`AUC=0.9280`), and joint Haidian+Harbin construction remains above the
+  acceptance threshold (`AUC=0.8638`) despite large fold variance.
+- Construction thresholds are high: mean selected threshold is about `0.874`
+  for Haidian construction and `0.777` for joint construction, while mean
+  best-F1 thresholds are about `0.969` and `0.966`. This suggests the frozen
+  embedding separates positives mainly at the high-confidence tail; downstream
+  deployment should tune thresholds per task instead of using `0.5`.
+- Harbin change-style tasks (`building_change`, `farm_change`, `rubbish`) do
+  not yet produce usable masks. They have very low AP/F1/mIoU, with best epochs
+  concentrated near the beginning, indicating the current frozen embedding plus
+  shallow decoder is not learning stable rare-change segmentation.
+- The non-random AUC on `farm_change` and `rubbish` (`0.71-0.73`) indicates
+  weak ordering signal is present, but the class imbalance and label sparsity
+  dominate thresholded segmentation quality.
+
+Recommended next experiment:
+
+1. Keep the gated-fusion embedding as the current construction baseline.
+2. For Harbin change tasks, run task-specific diagnostics before another long
+   embedding training job: inspect positive-pixel rates per fold, visualize
+   prediction probability maps, and verify label-month semantics for the
+   `202512 -> 202605` pair.
+3. Try downstream-side ablations first because they are cheaper than retraining
+   the embedding: per-task threshold calibration, lower/controlled positive
+   weighting, focal/Tversky-style loss, and `single_month` or `diff_only`
+   temporal inputs.
+4. If change-task metrics remain near zero after downstream ablations, add a
+   change-aware objective or harder temporal contrast during embedding training.
+
 ## Next Commands
 
 Training on 6 Ascend NPUs:
@@ -162,7 +227,3 @@ python scripts/report/compare_v2_acceptance.py \
   --benchmark-root /data/xuannv_embedding/experiments/v2_202512_202605/benchmarks/{run_id} \
   --output /data/xuannv_embedding/experiments/v2_202512_202605/benchmarks/{run_id}/comparison_vs_v1.0.json
 ```
-
-## Not Yet Run
-
-Five-task 5-fold acceptance has not been run in this implementation pass.
