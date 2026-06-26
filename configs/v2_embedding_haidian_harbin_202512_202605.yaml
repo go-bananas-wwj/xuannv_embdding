@@ -16,6 +16,7 @@ model:
     precision_dim: 128
     num_blocks: 6
     num_heads: 8
+    temporal_fusion: gated_sum
   sensor_channels:
     s2: 12
     s1: 2

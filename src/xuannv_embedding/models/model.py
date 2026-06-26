@@ -22,6 +22,7 @@ from xuannv_embedding.models.highres_fusion import AvailabilityAwareFusion
 from xuannv_embedding.models.sensor_encoders import (
     NativeResolutionHighResEncoder,
     SensorEncoderBank,
+    SourceAwareTemporalFusion,
 )
 
 logger = logging.getLogger(__name__)
@@ -88,6 +89,7 @@ class AEFModel(nn.Module):
             "precision_dim": 128,
             "num_blocks": 6,
             "num_heads": num_space_heads,
+            "temporal_fusion": "concat",
         }
         for key, value in stp_defaults.items():
             stp_cfg.setdefault(key, value)
@@ -107,6 +109,17 @@ class AEFModel(nn.Module):
 
         self.temporal_source_order = list(temporal_channels.keys())
         self.temporal_stem_bank = SensorEncoderBank(temporal_channels, stem_dim)
+        self.temporal_fusion_mode = stp_cfg["temporal_fusion"]
+        if self.temporal_fusion_mode not in {"concat", "gated_sum"}:
+            raise ValueError(
+                "stp.temporal_fusion 仅支持 'concat' 或 'gated_sum'，"
+                f"实际为 {self.temporal_fusion_mode!r}"
+            )
+        self.temporal_fusion = (
+            SourceAwareTemporalFusion(self.temporal_source_order, stem_dim)
+            if self.temporal_fusion_mode == "gated_sum"
+            else None
+        )
         self.highres_encoders = nn.ModuleDict(
             {
                 source: NativeResolutionHighResEncoder(in_ch, embed_dim)
@@ -114,7 +127,11 @@ class AEFModel(nn.Module):
             }
         )
 
-        total_stem_channels = stem_dim * len(temporal_channels)
+        total_stem_channels = (
+            stem_dim
+            if self.temporal_fusion_mode == "gated_sum"
+            else stem_dim * len(temporal_channels)
+        )
         self.total_stem_channels = total_stem_channels
         self.stp_encoder = STPEncoder(
             input_channels=total_stem_channels,
@@ -195,6 +212,8 @@ class AEFModel(nn.Module):
             device=first_x.device, dtype=first_x.dtype,
         )
         masks: list[torch.Tensor] = []
+        encoded_sources: dict[str, torch.Tensor] = {}
+        encoded_masks: dict[str, torch.Tensor] = {}
 
         for source in temporal_sources:
             x = source_frames[source]
@@ -208,11 +227,21 @@ class AEFModel(nn.Module):
             mask_5d = mask[:, :, None, None, None]
             x_enc = x_enc * mask_5d
 
-            source_idx = self.temporal_source_order.index(source)
-            start = source_idx * self.stem_dim
-            end = start + self.stem_dim
-            temporal_input[..., start:end] = x_enc.permute(0, 1, 3, 4, 2)
+            if self.temporal_fusion_mode == "concat":
+                source_idx = self.temporal_source_order.index(source)
+                start = source_idx * self.stem_dim
+                end = start + self.stem_dim
+                temporal_input[..., start:end] = x_enc.permute(0, 1, 3, 4, 2)
+            else:
+                encoded_sources[source] = x_enc
+                encoded_masks[source] = mask
             masks.append(mask)
+
+        if self.temporal_fusion_mode == "gated_sum":
+            if self.temporal_fusion is None:
+                raise RuntimeError("gated_sum 模式缺少 temporal_fusion 模块")
+            fused = self.temporal_fusion(encoded_sources, encoded_masks, temporal_sources)
+            temporal_input = fused.permute(0, 1, 3, 4, 2)
 
         # 2) 合并时间有效性掩码。
         combined_mask = torch.stack(masks, dim=0).amax(dim=0)  # (B, T)

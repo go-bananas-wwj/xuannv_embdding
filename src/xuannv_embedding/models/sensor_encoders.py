@@ -107,6 +107,84 @@ class SensorEncoderBank(nn.Module):
         return self.encoders[source](x)
 
 
+class SourceAwareTemporalFusion(nn.Module):
+    """Fuse per-source temporal stems with source embeddings and availability gates.
+
+    Each source keeps its own stem encoder, then this module adds a learned source
+    embedding and computes a per-sample/per-time gate from the spatially pooled
+    feature plus that source embedding. Invalid source steps receive zero weight.
+    """
+
+    def __init__(self, sources: list[str], stem_dim: int) -> None:
+        super().__init__()
+        if not sources:
+            raise ValueError("SourceAwareTemporalFusion requires at least one source")
+        self.sources = list(sources)
+        self.stem_dim = stem_dim
+        self.source_to_idx = {source: idx for idx, source in enumerate(self.sources)}
+        self.source_embeddings = nn.Parameter(torch.zeros(len(self.sources), stem_dim))
+        self.gate = nn.Sequential(
+            nn.LayerNorm(stem_dim * 2),
+            nn.Linear(stem_dim * 2, stem_dim),
+            nn.GELU(),
+            nn.Linear(stem_dim, 1),
+        )
+
+    def forward(
+        self,
+        features: dict[str, torch.Tensor],
+        masks: dict[str, torch.Tensor],
+        source_order: list[str],
+    ) -> torch.Tensor:
+        """Return fused features with shape ``(B, T, C, H, W)``.
+
+        Args:
+            features: Per-source encoded tensors, each ``(B, T, C, H, W)``.
+            masks: Per-source availability masks, each ``(B, T)``.
+            source_order: Ordered source list to fuse for this batch.
+        """
+        if not source_order:
+            raise ValueError("source_order 不能为空")
+
+        enriched_features: list[torch.Tensor] = []
+        gate_inputs: list[torch.Tensor] = []
+        valid_masks: list[torch.Tensor] = []
+
+        for source in source_order:
+            if source not in self.source_to_idx:
+                raise KeyError(f"未知融合 source: {source!r}")
+            x = features[source]
+            mask = masks[source].to(dtype=x.dtype, device=x.device)
+            B, T, C, H, W = x.shape
+            if C != self.stem_dim:
+                raise ValueError(
+                    f"source {source!r} 的通道数应为 {self.stem_dim}，实际为 {C}"
+                )
+
+            source_idx = self.source_to_idx[source]
+            source_emb = self.source_embeddings[source_idx].to(dtype=x.dtype)
+            x_with_source = x + source_emb.view(1, 1, C, 1, 1)
+            pooled = x_with_source.mean(dim=[3, 4])
+            source_context = source_emb.view(1, 1, C).expand(B, T, C)
+            gate_inputs.append(torch.cat([pooled, source_context], dim=-1))
+            enriched_features.append(x_with_source)
+            valid_masks.append(mask)
+
+        gate_input = torch.stack(gate_inputs, dim=2)  # (B, T, S, 2C)
+        logits = self.gate(gate_input).squeeze(-1)  # (B, T, S)
+        valid = torch.stack(valid_masks, dim=2) > 0
+        logits = logits.masked_fill(~valid, float("-inf"))
+
+        any_valid = valid.any(dim=2, keepdim=True)
+        logits = torch.where(any_valid, logits, torch.zeros_like(logits))
+        weights = F.softmax(logits, dim=2)
+        weights = torch.where(valid, weights, torch.zeros_like(weights))
+
+        stacked = torch.stack(enriched_features, dim=2)  # (B, T, S, C, H, W)
+        fused = (stacked * weights[:, :, :, None, None, None]).sum(dim=2)
+        return fused
+
+
 class NativeResolutionHighResEncoder(nn.Module):
     """原生分辨率高分数据源编码器（阶段二使用）。
 
