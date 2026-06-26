@@ -120,6 +120,8 @@ def main() -> None:
         target_heads=aef_target_heads,
         stem_dim=cfg.model.stem_dim,
         num_months=cfg.model.num_months,
+        ref_year=cfg.model.ref_year,
+        ref_month=cfg.model.ref_month,
         stp=cfg.model.stp,
     )
 

@@ -415,6 +415,26 @@ def test_monthly_embedding_module_shape_and_mask() -> None:
     assert not torch.isnan(monthly_feats).any()
 
 
+def test_monthly_embedding_module_custom_ref_month() -> None:
+    """自定义参考月应把跨年月份映射到连续月度 bin。"""
+    module = MonthlyEmbeddingModule(
+        in_channels=8,
+        embed_dim=16,
+        num_months=2,
+        ref_year=2025,
+        ref_month=12,
+    )
+    feats = torch.randn(1, 2, 4, 4, 8)
+    timestamps = torch.tensor([[202512, 202601]], dtype=torch.long)
+    mask = torch.ones(1, 2)
+
+    monthly_feats, monthly_mask = module(feats, timestamps, mask)
+
+    assert monthly_feats.shape == (1, 2, 4, 4, 16)
+    assert monthly_mask.tolist() == [[1.0, 1.0]]
+    assert module._yyyymm_to_index(timestamps).tolist() == [[0, 1]]
+
+
 def test_monthly_embedding_module_missing_token_used() -> None:
     """缺失月份的特征应接近可学习 missing_token，而有观测月份应与之不同。"""
     batch_size, time_steps, height, width, in_channels = 1, 2, 4, 4, 8
@@ -439,6 +459,32 @@ def test_monthly_embedding_module_missing_token_used() -> None:
     assert not torch.allclose(monthly_feats[0, 2], missing_token.squeeze(0), atol=1e-6)
     assert monthly_mask[0, 0].item() == 1.0
     assert monthly_mask[0, 1].item() == 0.0
+
+
+def test_aef_model_raises_when_all_valid_timestamps_out_of_month_range() -> None:
+    """所有有效观测越界时，AEFModel 不应静默输出全 missing_token 月度特征。"""
+    model = AEFModel(
+        sensor_channels={"s2": 3},
+        embed_dim=8,
+        target_heads={"s2_recon": ("continuous", 3)},
+        stem_dim=8,
+        stp={
+            "space_dim": 16,
+            "time_dim": 16,
+            "precision_dim": 16,
+            "num_blocks": 1,
+            "num_heads": 2,
+        },
+        num_months=2,
+        ref_year=2025,
+        ref_month=12,
+    )
+    source_frames = {"s2": torch.randn(1, 2, 3, 16, 16)}
+    source_masks = {"s2": torch.ones(1, 2)}
+    timestamps = torch.tensor([[202501, 202502]], dtype=torch.long)
+
+    with pytest.raises(ValueError, match="月度范围外"):
+        model(source_frames, source_masks, timestamps)
 
 
 def test_aef_model_forward() -> None:

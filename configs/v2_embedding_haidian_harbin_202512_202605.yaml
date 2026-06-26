@@ -10,6 +10,8 @@ model:
   embed_dim: 64
   stem_dim: 32
   num_months: 6
+  ref_year: 2025
+  ref_month: 12
   stp:
     space_dim: 512
     time_dim: 256

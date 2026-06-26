@@ -55,6 +55,8 @@ class AEFModel(nn.Module):
         stp: dict[str, Any] | None = None,
         num_space_heads: int = 8,
         num_months: int = 17,
+        ref_year: int = 2025,
+        ref_month: int = 1,
         gradient_checkpointing: bool = False,
     ) -> None:
         """初始化 AEFModel。
@@ -73,6 +75,8 @@ class AEFModel(nn.Module):
                 ``precision_dim``、``num_blocks``、``num_heads``。缺失项使用默认值。
             num_space_heads: ``stp["num_heads"]`` 的默认值。
             num_months: 月度 bin 数量，阶段一默认为 17（2025-01 至 2026-05）。
+            ref_year: 月度 bin 起始年份，应与数据集首月一致。
+            ref_month: 月度 bin 起始月份，应与数据集首月一致。
             gradient_checkpointing: 是否启用 STP 编码器的梯度检查点。
         """
         super().__init__()
@@ -81,6 +85,8 @@ class AEFModel(nn.Module):
         self.target_heads = target_heads
         self.stem_dim = stem_dim
         self.num_months = num_months
+        self.ref_year = ref_year
+        self.ref_month = ref_month
 
         stp_cfg = dict(stp) if stp is not None else {}
         stp_defaults = {
@@ -147,6 +153,8 @@ class AEFModel(nn.Module):
             in_channels=stp_cfg["precision_dim"],
             embed_dim=embed_dim,
             num_months=num_months,
+            ref_year=ref_year,
+            ref_month=ref_month,
         )
         self.upsample_head = EmbeddingUpsampleHead(embed_dim, embed_dim)
         self.highres_fusion = AvailabilityAwareFusion(embed_dim)
@@ -245,6 +253,7 @@ class AEFModel(nn.Module):
 
         # 2) 合并时间有效性掩码。
         combined_mask = torch.stack(masks, dim=0).amax(dim=0)  # (B, T)
+        self._validate_month_range(global_timestamps, combined_mask)
 
         # 3) STP 编码器输出 1/2L 精度特征，同时拿回原始输入尺寸。
         feats, _ = self.stp_encoder(
@@ -315,3 +324,26 @@ class AEFModel(nn.Module):
             reconstructions[name] = out.view(Bm, M, C_out, H, W)
 
         return AEFOutput(embedding_map=emb_map, embedding=emb, reconstructions=reconstructions)
+
+    def _validate_month_range(self, timestamps: torch.Tensor, mask: torch.Tensor) -> None:
+        """避免所有有效观测静默落到月度 bin 范围外。"""
+        valid_obs = mask.bool()
+        if not bool(valid_obs.any().item()):
+            return
+        month_index = self.monthly_embed._yyyymm_to_index(timestamps)
+        in_range = (month_index >= 0) & (month_index < self.num_months)
+        if bool((valid_obs & in_range).any().item()):
+            return
+
+        observed = timestamps[valid_obs].detach().cpu().unique().tolist()
+        observed_preview = ", ".join(str(int(v)) for v in observed[:8])
+        if len(observed) > 8:
+            observed_preview += ", ..."
+        end_month = self.ref_month + self.num_months - 1
+        end_year = self.ref_year + (end_month - 1) // 12
+        end_month = ((end_month - 1) % 12) + 1
+        raise ValueError(
+            "所有有效 timestamps 都落在 MonthlyEmbeddingModule 月度范围外: "
+            f"observed=[{observed_preview}], "
+            f"range={self.ref_year}-{self.ref_month:02d}..{end_year}-{end_month:02d}"
+        )
