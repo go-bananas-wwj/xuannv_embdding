@@ -12,6 +12,10 @@ Branch:
 - Train-only source dropout that preserves reconstruction targets.
 - Self-contained V2 embedding config:
   `configs/v2_embedding_haidian_harbin_202512_202605.yaml`
+- Self-contained 6-NPU sanity config:
+  `configs/v2_embedding_haidian_harbin_202512_202605_gated_sanity.yaml`
+- Source-aware gated temporal fusion is enabled for the V2 run
+  (`stp.temporal_fusion: gated_sum`).
 - Bitemporal downstream dataset support for `[202512, 202605]` and
   `concat_diff`.
 - ROC-AUC, validation threshold selection, and V1.0 acceptance comparison
@@ -45,12 +49,38 @@ Latest verification results:
 - Downstream tests: `54 passed`
 - V2 config: no `_base_`; manifest points to `/data/xuannv_embedding/processed/v2_haidian_harbin_202512_202605/`; months are `2025-12` through `2026-05`.
 
+6-NPU gated fusion sanity result on 2026-06-26:
+
+- Command used NPU `0,1,2,3,4,5` with per-NPU batch size `4`.
+- Correct environment form:
+
+```bash
+ASCEND_RT_VISIBLE_DEVICES=0,1,2,3,4,5 \
+PYTHONPATH=/root/workspace/xuannv/src:$PYTHONPATH \
+torchrun --nproc_per_node=6 scripts/train/train.py \
+  --config configs/v2_embedding_haidian_harbin_202512_202605_gated_sanity.yaml
+```
+
+- Important environment note: do not replace `PYTHONPATH` with only the project
+  `src` path on Ascend. CANN's `tbe` path must remain in `PYTHONPATH`; otherwise
+  the first NPU convolution fails with `ModuleNotFoundError: No module named
+  'tbe'`.
+- Result: `epoch 0: train_loss=3.350532, val_loss=3.328531`.
+- Checkpoints:
+  `/data/xuannv_embedding/outputs/v2_embedding_202512_202605/gated_fusion_sanity_bs4/epoch_1.pt`
+  and `best.pt`.
+- Observed HBM during training was about `10.4 GB / 65.5 GB` per NPU; process
+  memory was about `6.8-7.0 GB` per rank.
+- NPU `as_strided` and non-finite-check warnings were emitted by `torch_npu`,
+  but the 1-epoch sanity completed successfully.
+
 ## Next Commands
 
 Training on 6 Ascend NPUs:
 
 ```bash
-PYTHONPATH=/root/workspace/xuannv/src \
+ASCEND_RT_VISIBLE_DEVICES=0,1,2,3,4,5 \
+PYTHONPATH=/root/workspace/xuannv/src:$PYTHONPATH \
 torchrun --nproc_per_node=6 scripts/train/train.py \
   --config configs/v2_embedding_haidian_harbin_202512_202605.yaml
 ```
@@ -90,5 +120,5 @@ python scripts/report/compare_v2_acceptance.py \
 
 ## Not Yet Run
 
-Full 6-NPU training, embedding export, and five-task 5-fold acceptance have not
-been run in this implementation pass.
+Full 100-epoch 6-NPU training, embedding export, and five-task 5-fold acceptance
+have not been run in this implementation pass.
