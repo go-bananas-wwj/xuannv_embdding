@@ -91,6 +91,31 @@ def test_prepare_batch_continuous_target() -> None:
     )
 
 
+def test_prepare_batch_source_dropout_keeps_targets() -> None:
+    """source dropout 只应作用于模型输入，不能删除重建 target。"""
+    frames = torch.ones(1, NUM_MONTHS, 1, 2, 2)
+    batch = {
+        "patch_ids": ["p0"],
+        "source_frames": {"s2": frames.clone()},
+        "source_masks": {"s2": torch.ones(1, NUM_MONTHS)},
+        "timestamps": MONTH_TENSOR.unsqueeze(0),
+    }
+    target_heads = {
+        "s2_recon": {
+            "loss_type": "continuous",
+            "channels": 1,
+            "weight": 1.0,
+        }
+    }
+
+    out = prepare_batch(batch, target_heads, source_dropout_probs={"s2": 1.0})
+
+    assert torch.equal(out["source_frames"]["s2"], torch.zeros_like(frames))
+    assert torch.equal(out["source_masks"]["s2"], torch.zeros(1, NUM_MONTHS))
+    assert torch.equal(out["targets"]["s2_recon"], frames)
+    assert torch.equal(out["target_masks"]["s2_recon"], torch.ones(1, NUM_MONTHS))
+
+
 def test_prepare_batch_categorical_target() -> None:
     """categorical head 应通过 argmax 生成逐月 (B, T, H, W) target 与空间掩码。"""
     # (B=1, T=NUM_MONTHS, C=3, H=2, W=2)
