@@ -17,8 +17,9 @@ DEFAULT_SOURCES = (
     "s1",
     "landsat",
     "worldcover",
-    "highres_optical",
-    "highres_sar",
+    "highres_optical_haidian",
+    "highres_optical_harbin",
+    "highres_sar_haidian",
 )
 
 
@@ -76,12 +77,14 @@ def _load_region_manifest(region_dir: Path) -> list[dict[str, Any]]:
     raise FileNotFoundError(f"No manifest found under {region_dir}")
 
 
-def _paths_for_source(entry: dict[str, Any], source: str) -> list[str]:
+def _paths_for_source(entry: dict[str, Any], source: str, region: str) -> list[str]:
     value = entry.get(source)
-    if value is None and source == "highres_optical":
-        value = entry.get("highres_optical_harbin") or entry.get("highres_optical_haidian")
-    if value is None and source == "highres_sar":
-        value = entry.get("highres_sar_harbin") or entry.get("highres_sar_haidian")
+    if value is None and source == "highres_optical_haidian" and region == "haidian":
+        value = entry.get("highres_optical")
+    if value is None and source == "highres_optical_harbin" and region == "harbin":
+        value = entry.get("highres_optical")
+    if value is None and source == "highres_sar_haidian" and region == "haidian":
+        value = entry.get("highres_sar")
     if value is None:
         return []
     if isinstance(value, list):
@@ -155,7 +158,7 @@ def _build_manifest(
                 "source_patch_id": patch_id,
             }
             for source in sources:
-                raw_paths = _paths_for_source(entry, source)
+                raw_paths = _paths_for_source(entry, source, region)
                 selected = _filter_paths(raw_paths, source, allowed_months)
                 rel_paths = [str(Path("..") / region / p) for p in selected]
                 out[source] = rel_paths
