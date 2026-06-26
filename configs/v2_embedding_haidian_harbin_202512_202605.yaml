@@ -1,0 +1,113 @@
+experiment:
+  name: v2_embedding_haidian_harbin_202512_202605_baseline
+  seed: 42
+  output_dir: /data/xuannv_embedding/outputs/v2_embedding_202512_202605/baseline_uniformity_dropout
+  use_wandb: true
+  wandb_project: xuannv-embedding-v2
+  wandb_run_name: v2_embedding_202512_202605_baseline
+
+model:
+  embed_dim: 64
+  stem_dim: 32
+  num_months: 6
+  stp:
+    space_dim: 512
+    time_dim: 256
+    precision_dim: 128
+    num_blocks: 6
+    num_heads: 8
+  sensor_channels:
+    s2: 12
+    s1: 2
+    landsat: 7
+    highres_optical_haidian: 3
+    highres_optical_harbin: 3
+    highres_sar_haidian: 1
+  target_heads:
+    s2_recon:
+      source: s2
+      loss_type: continuous
+      channels: 12
+      weight: 1.0
+    s1_recon:
+      source: s1
+      loss_type: continuous
+      channels: 2
+      weight: 1.0
+    landsat_recon:
+      source: landsat
+      loss_type: continuous
+      channels: 7
+      weight: 1.0
+    worldcover:
+      source: worldcover
+      loss_type: categorical
+      channels: 9
+      weight: 0.5
+    highres_optical_haidian_recon:
+      source: highres_optical_haidian
+      loss_type: continuous
+      channels: 3
+      weight: 0.5
+    highres_optical_harbin_recon:
+      source: highres_optical_harbin
+      loss_type: continuous
+      channels: 3
+      weight: 0.5
+    highres_sar_haidian_recon:
+      source: highres_sar_haidian
+      loss_type: continuous
+      channels: 1
+      weight: 0.5
+
+training:
+  epochs: 100
+  lr: 0.0001
+  weight_decay: 0.05
+  warmup_epochs: 5
+  gradient_accumulation_steps: 2
+  save_every: 10
+  eval_every: 10
+  amp: true
+  gradient_checkpointing: true
+  log_every: 50
+  uniformity_weight: 0.01
+  uniformity_warmup_epochs: 10
+  uniformity_temperature: 2.0
+
+data:
+  root: /data/xuannv_embedding/processed/v2_haidian_harbin_202512_202605
+  region: mixed_haidian_harbin
+  manifest_path: /data/xuannv_embedding/processed/v2_haidian_harbin_202512_202605/manifest_v2_202512_202605.json
+  statistics_dir: /data/xuannv_embedding/statistics/v2_haidian_harbin_202512_202605
+  statistics_dirs_by_region:
+    haidian: /data/xuannv_embedding/statistics/haidian
+    harbin: /data/xuannv_embedding/statistics/harbin
+  num_samples: 744
+  max_patches:
+  batch_size: 2
+  num_workers: 8
+  patch_size: 128
+  num_months: 6
+  months:
+  - 2025-12
+  - 2026-01
+  - 2026-02
+  - 2026-03
+  - 2026-04
+  - 2026-05
+  sources:
+  - s2
+  - s1
+  - landsat
+  - worldcover
+  - highres_optical_haidian
+  - highres_optical_harbin
+  - highres_sar_haidian
+  source_dropout_probs:
+    s2: 0.1
+    s1: 0.1
+    landsat: 0.1
+    highres_optical_haidian: 0.2
+    highres_optical_harbin: 0.2
+    highres_sar_haidian: 0.2

@@ -30,8 +30,9 @@ Known coverage gaps recorded in metadata:
 - Harbin has no `highres_sar_haidian` equivalent in the current processed manifest.
 
 High-resolution optical sources are intentionally region-specific in V2 because
-Haidian has 4 channels and Harbin has 3 channels. Keeping them separate prevents
-mixed-channel batches while retaining unified low-resolution source names.
+their native spatial resolutions differ by region even though both currently have
+3 channels. Keeping them separate prevents mixed-resolution highres assumptions
+while retaining unified low-resolution source names.
 
 These gaps are intentional availability-mask cases for V2. The manifest builder
 does not synthesize missing observations.

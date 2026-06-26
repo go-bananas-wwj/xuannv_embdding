@@ -39,9 +39,10 @@ resolution and keep V1.0's change-task strengths.
 - Preferred low-resolution source names:
   `s2`, `s1`, `landsat`, `worldcover`.
 - High-resolution source names remain region-specific because channel counts
-  differ by region:
-  `highres_optical_haidian` has 4 channels, `highres_optical_harbin` has
-  3 channels, and `highres_sar_haidian` has 1 channel.
+  and native resolutions must be validated per region:
+  `highres_optical_haidian` has 3 channels at 427x427,
+  `highres_optical_harbin` has 3 channels at 2560x2560, and
+  `highres_sar_haidian` has 1 channel.
 - Missing high-resolution observations are represented by availability masks and
   recorded in manifest metadata. Do not synthesize missing months.
 - Before training, run a dry-run that reports per-region/per-source month
