@@ -133,17 +133,17 @@ def test_reconstruction_loss_ce_ignores_class_zero() -> None:
 
 
 def test_batch_uniformity_loss() -> None:
-    """验证 embedding 更分散时 uniformity loss 更大。"""
-    # 所有向量相同，距离为 0，损失最小。
+    """验证 embedding 更分散时 uniformity loss 更小，适合直接最小化。"""
+    # 所有向量相同，距离为 0，损失接近 0。
     emb_same = torch.ones(4, 8)
     loss_same = batch_uniformity_loss(emb_same)
 
-    # 随机向量通常更分散。
+    # 随机向量通常更分散，因此 Wang-Isola uniformity loss 更小。
     torch.manual_seed(42)
     emb_random = torch.randn(4, 8)
     loss_random = batch_uniformity_loss(emb_random)
 
-    assert loss_same < loss_random
+    assert loss_random < loss_same
     # 相同向量损失应接近 0。
     assert torch.allclose(loss_same, torch.tensor(0.0), atol=1e-6)
 
@@ -185,7 +185,7 @@ def test_total_loss() -> None:
     assert "recon_s2_recon" in losses
     assert "recon_worldcover" in losses
 
-    expected_total = losses["recon"] + losses["uniformity"]
+    expected_total = losses["recon"] + losses["uniformity_weighted"]
     assert torch.allclose(losses["total"], expected_total)
 
     # recon 应为加权求和。
@@ -222,7 +222,7 @@ def test_batch_uniformity_loss_temporal() -> None:
     emb_random = torch.randn(2, 4, 8)
     loss_random = batch_uniformity_loss(emb_random)
 
-    assert loss_same < loss_random
+    assert loss_random < loss_same
     assert torch.allclose(loss_same, torch.tensor(0.0), atol=1e-6)
 
 
