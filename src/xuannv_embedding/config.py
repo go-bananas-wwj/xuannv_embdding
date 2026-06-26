@@ -53,6 +53,8 @@ class ModelConfig:
     target_heads: dict[str, dict[str, Any]]
     stem_dim: int = 32
     num_months: int = 17
+    ref_year: int = 2025
+    ref_month: int = 1
     stp: dict[str, Any] = field(default_factory=dict)
 
 
@@ -169,6 +171,20 @@ class Config:
                 f"配置 {path} 中 data.num_months ({data_num_months}) 与 "
                 f"model.num_months ({model_num_months}) 不一致，必须相等"
             )
+        data_ref_year, data_ref_month = _month_ref_from_data_months(
+            data_cfg.get("months", []), path
+        )
+        explicit_ref_year = "ref_year" in model_cfg
+        explicit_ref_month = "ref_month" in model_cfg
+        model_ref_year = model_cfg.get("ref_year", data_ref_year)
+        model_ref_month = model_cfg.get("ref_month", data_ref_month)
+        if explicit_ref_year or explicit_ref_month:
+            if (model_ref_year, model_ref_month) != (data_ref_year, data_ref_month):
+                raise ConfigError(
+                    f"配置 {path} 中 model.ref_year/ref_month "
+                    f"({model_ref_year}-{model_ref_month:02d}) 与 data.months[0] "
+                    f"({data_ref_year}-{data_ref_month:02d}) 不一致"
+                )
 
         root = Path(data_cfg["root"])
         region = data_cfg["region"]
@@ -216,6 +232,8 @@ class Config:
                 target_heads=model_cfg["target_heads"],
                 stem_dim=model_cfg.get("stem_dim", 32),
                 num_months=model_cfg.get("num_months", 17),
+                ref_year=model_ref_year,
+                ref_month=model_ref_month,
                 stp=stp_cfg,
             ),
             training=TrainingConfig(
@@ -254,6 +272,26 @@ def _validate_required_keys(
     for key in keys:
         if key not in section:
             raise ConfigError(f"配置文件 {path} 的 `{section_name}` 缺少必填字段: {key}")
+
+
+def _month_ref_from_data_months(months: list[str], path: str | Path) -> tuple[int, int]:
+    """从 data.months[0] 解析模型和数据集共享的月度 bin 起点。"""
+    if not months:
+        return 2025, 1
+    first_month = months[0]
+    try:
+        year_str, month_str = first_month.split("-", 1)
+        year = int(year_str)
+        month = int(month_str)
+    except (AttributeError, ValueError) as exc:
+        raise ConfigError(
+            f"配置 {path} 中 data.months[0] 必须为 YYYY-MM 格式，实际为 {first_month!r}"
+        ) from exc
+    if not 1 <= month <= 12:
+        raise ConfigError(
+            f"配置 {path} 中 data.months[0] 月份必须在 1..12，实际为 {first_month!r}"
+        )
+    return year, month
 
 
 def _load_yaml_with_base(path: Path, loaded: set[str] | None = None) -> dict[str, Any]:

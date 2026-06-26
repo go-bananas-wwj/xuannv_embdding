@@ -40,6 +40,8 @@ def load_model_for_inference(
         target_heads=aef_target_heads,
         stem_dim=cfg.model.stem_dim,
         num_months=cfg.model.num_months,
+        ref_year=cfg.model.ref_year,
+        ref_month=cfg.model.ref_month,
         stp=cfg.model.stp,
         gradient_checkpointing=False,  # 推理关闭
     )
@@ -76,8 +78,8 @@ def build_inference_loader(cfg: Config, region: str, split: str = "all") -> Data
         sources=cfg.data.sources,
         patch_size=cfg.data.patch_size,
         num_months=cfg.model.num_months,
-        ref_year=int(cfg.data.months[0].split("-", 1)[0]) if cfg.data.months else 2025,
-        ref_month=int(cfg.data.months[0].split("-", 1)[1]) if cfg.data.months else 1,
+        ref_year=cfg.model.ref_year,
+        ref_month=cfg.model.ref_month,
         region_filter=region_filter,
     )
 

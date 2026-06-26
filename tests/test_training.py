@@ -72,6 +72,89 @@ model:
         Config.from_yaml(derived)
 
 
+def test_config_model_ref_defaults_to_data_first_month(tmp_path: Path) -> None:
+    """未显式配置 model.ref_year/ref_month 时，应跟随 data.months[0]。"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+experiment:
+  name: ref_month_default_test
+data:
+  root: /data/xuannv_embedding/processed/base
+  region: base
+  manifest_path: /data/xuannv_embedding/processed/base/manifest.json
+  num_months: 6
+  months:
+  - 2025-12
+  - 2026-01
+model:
+  embed_dim: 64
+  num_months: 6
+  sensor_channels:
+    s2: 12
+  target_heads:
+    s2_recon:
+      loss_type: continuous
+      channels: 12
+training:
+  epochs: 1
+  lr: 1.0e-4
+  weight_decay: 0.05
+  warmup_epochs: 0
+  gradient_accumulation_steps: 1
+  save_every: 1
+  eval_every: 1
+""",
+        encoding="utf-8",
+    )
+
+    cfg = Config.from_yaml(config_path)
+
+    assert cfg.model.ref_year == 2025
+    assert cfg.model.ref_month == 12
+
+
+def test_config_model_ref_conflict_with_data_first_month(tmp_path: Path) -> None:
+    """显式配置的模型参考月与数据首月冲突时应报错。"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+experiment:
+  name: ref_month_conflict_test
+data:
+  root: /data/xuannv_embedding/processed/base
+  region: base
+  manifest_path: /data/xuannv_embedding/processed/base/manifest.json
+  num_months: 6
+  months:
+  - 2025-12
+model:
+  embed_dim: 64
+  num_months: 6
+  ref_year: 2025
+  ref_month: 1
+  sensor_channels:
+    s2: 12
+  target_heads:
+    s2_recon:
+      loss_type: continuous
+      channels: 12
+training:
+  epochs: 1
+  lr: 1.0e-4
+  weight_decay: 0.05
+  warmup_epochs: 0
+  gradient_accumulation_steps: 1
+  save_every: 1
+  eval_every: 1
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="data.months\\[0\\]"):
+        Config.from_yaml(config_path)
+
+
 def test_reconstruction_loss_l1() -> None:
     """验证 L1 掩码重建损失计算正确。"""
     batch_size, channels, height, width = 2, 3, 4, 4
