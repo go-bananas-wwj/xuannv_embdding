@@ -45,6 +45,17 @@ python downstreams/scripts/train_task.py \
   --skip-predictions
 ```
 
+Smoke result:
+
+- Command above was run for `construction` fold 0 on NPU 0.
+- Runtime: about 39 seconds (`16:07:04` to `16:07:43`).
+- Early stopped at epoch 17; best epoch was 5.
+- Test metrics: `AUC=0.9143`, `F1_best=0.3931`, `mIoU=0.0912`.
+- No prediction GeoTIFF directory was written, confirming
+  `--skip-predictions` works.
+- Output:
+  `/data/xuannv_embedding/experiments/v2_202512_202605/benchmarks/quick_smoke/construction/summary_5fold.json`
+
 ## Label Visualization
 
 Added:
