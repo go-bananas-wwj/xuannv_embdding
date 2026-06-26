@@ -101,6 +101,7 @@ class ConstructionSegmentationTask(BaseTask):
         model: nn.Module,
         loader: DataLoader,
         device: torch.device,
+        threshold: float = 0.5,
     ) -> dict[str, float]:
         model.eval()
         all_logits: list[torch.Tensor] = []
@@ -114,4 +115,4 @@ class ConstructionSegmentationTask(BaseTask):
                 all_masks.append(mask.cpu())
         logits = torch.cat([x.flatten() for x in all_logits])
         targets = torch.cat([x.flatten() for x in all_masks])
-        return compute_segmentation_metrics(logits, targets)
+        return compute_segmentation_metrics(logits, targets, threshold=threshold)
