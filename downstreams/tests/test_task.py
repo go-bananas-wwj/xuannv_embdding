@@ -4,7 +4,11 @@ from pathlib import Path
 
 import pytest
 import torch
-from downstreams.tasks.construction_segmentation import ConstructionSegmentationTask, FocalDiceLoss
+from downstreams.tasks.construction_segmentation import (
+    BCEDiceTverskyLoss,
+    ConstructionSegmentationTask,
+    FocalDiceLoss,
+)
 from downstreams.utils.config import load_config
 from torch import nn
 from torch.utils.data import DataLoader
@@ -64,6 +68,26 @@ def test_build_loss_bce() -> None:
     task = ConstructionSegmentationTask(cfg)
     loss_fn = task.build_loss()
     assert isinstance(loss_fn, nn.BCEWithLogitsLoss)
+
+
+def test_build_loss_bce_dice_tversky() -> None:
+    cfg = {
+        "training": {
+            "head_type": "linear",
+            "loss": "bce_dice_tversky",
+            "pos_weight": 10.0,
+            "tversky_beta": 0.7,
+        },
+        "data": {"embed_dim": 4, "num_classes": 2},
+    }
+    task = ConstructionSegmentationTask(cfg)
+    loss_fn = task.build_loss()
+    assert isinstance(loss_fn, BCEDiceTverskyLoss)
+    logits = torch.randn(2, 4, 4, requires_grad=True)
+    target = torch.randint(0, 2, (2, 4, 4)).float()
+    loss = loss_fn(logits, target)
+    loss.backward()
+    assert loss.ndim == 0
 
 
 def test_build_loss_unknown() -> None:

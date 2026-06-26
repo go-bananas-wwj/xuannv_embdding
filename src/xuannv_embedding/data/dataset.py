@@ -37,6 +37,7 @@ class MonthlyEmbeddingDataset(Dataset):
         ref_year: int = 2025,
         ref_month: int = 1,
         statistics_dirs_by_region: dict[str, Path] | None = None,
+        region_filter: str | None = None,
     ) -> None:
         """初始化 Dataset。
 
@@ -63,9 +64,14 @@ class MonthlyEmbeddingDataset(Dataset):
             region: Path(path)
             for region, path in (statistics_dirs_by_region or {}).items()
         }
+        self.region_filter = region_filter
 
         self.root_dir = self.manifest_path.parent
         self.manifest: list[dict[str, Any]] = self._load_manifest()
+        if self.region_filter is not None:
+            self.manifest = [
+                entry for entry in self.manifest if entry.get("region") == self.region_filter
+            ]
         if self.max_patches is not None:
             self.manifest = self.manifest[: self.max_patches]
 

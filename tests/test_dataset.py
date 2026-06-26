@@ -281,3 +281,20 @@ def test_mixed_region_manifest_uses_region_statistics(tmp_path: Path) -> None:
     assert dataset[1]["patch_id"] == "harbin_patch_000000"
     assert torch.allclose(dataset[0]["source_frames"]["s2"], torch.zeros(1, 1, 4, 4))
     assert torch.allclose(dataset[1]["source_frames"]["s2"], torch.zeros(1, 1, 4, 4))
+
+    harbin_only = MonthlyEmbeddingDataset(
+        manifest_path=manifest_path,
+        statistics_dir=tmp_path / "statistics" / "fallback",
+        statistics_dirs_by_region={
+            "haidian": tmp_path / "statistics" / "haidian",
+            "harbin": tmp_path / "statistics" / "harbin",
+        },
+        sources=["s2"],
+        num_months=1,
+        ref_year=2025,
+        ref_month=12,
+        patch_size=4,
+        region_filter="harbin",
+    )
+    assert len(harbin_only) == 1
+    assert harbin_only[0]["patch_id"] == "harbin_patch_000000"

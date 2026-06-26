@@ -33,6 +33,28 @@ class FocalDiceLoss(nn.Module):
         return focal.mean() + _dice_loss(logits, target)
 
 
+class BCEDiceTverskyLoss(nn.Module):
+    def __init__(self, pos_weight: float = 1.0, tversky_beta: float = 0.7) -> None:
+        super().__init__()
+        self.register_buffer("pos_weight", torch.tensor(float(pos_weight)))
+        self.tversky_beta = float(tversky_beta)
+
+    def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        target = target.float()
+        bce = nn.functional.binary_cross_entropy_with_logits(
+            logits,
+            target,
+            pos_weight=self.pos_weight.to(logits.device),
+        )
+        probs = torch.sigmoid(logits)
+        tp = (probs * target).sum()
+        fp = (probs * (1.0 - target)).sum()
+        fn = ((1.0 - probs) * target).sum()
+        alpha = 1.0 - self.tversky_beta
+        tversky = (tp + 1e-6) / (tp + alpha * fp + self.tversky_beta * fn + 1e-6)
+        return bce + _dice_loss(logits, target) + (1.0 - tversky)
+
+
 class ConstructionSegmentationTask(BaseTask):
     def __init__(self, config: dict[str, Any]) -> None:
         super().__init__(config)
@@ -71,6 +93,11 @@ class ConstructionSegmentationTask(BaseTask):
             elif loss_name == "bce":
                 pos_weight = torch.tensor(training.get("pos_weight", 1.0))
                 self._loss = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+            elif loss_name == "bce_dice_tversky":
+                self._loss = BCEDiceTverskyLoss(
+                    pos_weight=training.get("pos_weight", 1.0),
+                    tversky_beta=training.get("tversky_beta", 0.7),
+                )
             else:
                 raise ValueError(f"未知 loss 类型: {loss_name}")
         return self._loss
