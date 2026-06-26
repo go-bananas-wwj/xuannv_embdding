@@ -99,6 +99,26 @@ Full 6-NPU gated fusion training result on 2026-06-26:
 - NPU memory remained well within capacity; typical per-rank process memory was
   about `19.2 GB`, and NPU memory returned to idle after training.
 
+Embedding export result on 2026-06-26:
+
+- Checkpoint:
+  `/data/xuannv_embedding/outputs/v2_embedding_202512_202605/gated_fusion_bs4_uniformity_dropout/best.pt`
+- Output directory:
+  `/data/xuannv_embedding/embeddings/v2_202512_202605/20260626_v2_embedding_haidian_harbin_202512_202605_gated_fusion_best_acceptance`
+- Exported patches:
+  - `haidian`: 320 patches
+  - `harbin`: 424 patches
+- Exported embedding map files:
+  - `haidian`: 1920 files (`320 patches x 6 months`)
+  - `harbin`: 2544 files (`424 patches x 6 months`)
+- Export size: about `105 GB`.
+- Integrity spot check:
+  - `202512_embedding_map.pt` and `202605_embedding_map.pt` shapes are
+    `(64, 128, 128)`.
+  - scene embedding shape is `(64,)`.
+  - pixel-wise embedding norms averaged `1.0` for checked Haidian and Harbin
+    samples.
+
 ## Next Commands
 
 Training on 6 Ascend NPUs:
@@ -116,7 +136,7 @@ Export frozen embeddings after selecting a checkpoint:
 PYTHONPATH=/root/workspace/xuannv/src:/root/workspace/xuannv/downstreams \
 python downstreams/scripts/precompute_embeddings.py \
   --config configs/v2_embedding_haidian_harbin_202512_202605.yaml \
-  --checkpoint /data/xuannv_embedding/outputs/v2_embedding_202512_202605/baseline_uniformity_dropout/best.pt \
+  --checkpoint /data/xuannv_embedding/outputs/v2_embedding_202512_202605/gated_fusion_bs4_uniformity_dropout/best.pt \
   --regions haidian harbin \
   --output-root /data/xuannv_embedding/embeddings/v2_202512_202605 \
   --suffix acceptance
@@ -145,5 +165,4 @@ python scripts/report/compare_v2_acceptance.py \
 
 ## Not Yet Run
 
-Embedding export and five-task 5-fold acceptance have not been run in this
-implementation pass.
+Five-task 5-fold acceptance has not been run in this implementation pass.
