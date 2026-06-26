@@ -142,6 +142,7 @@ class Config:
             "precision_dim": 128,
             "num_blocks": 6,
             "num_heads": 8,
+            "temporal_fusion": "concat",
         }
         for key, value in stp_defaults.items():
             stp_cfg.setdefault(key, value)

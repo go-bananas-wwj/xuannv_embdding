@@ -23,6 +23,7 @@ from xuannv_embedding.models.sensor_encoders import (
     NativeResolutionHighResEncoder,
     SensorEncoder,
     SensorEncoderBank,
+    SourceAwareTemporalFusion,
 )
 from xuannv_embedding.models.time_encoding import TimeEncoding, WindowCode
 
@@ -70,6 +71,45 @@ def test_sensor_encoder_bank_unknown_source() -> None:
         bank(x, source="landsat")
 
 
+def test_source_aware_temporal_fusion_shape_and_masks() -> None:
+    """SourceAwareTemporalFusion 应保持 stem 维度，并让无效 source 权重为 0。"""
+    batch_size, time_steps, channels, height, width = 2, 3, 8, 4, 4
+    fusion = SourceAwareTemporalFusion(["s2", "s1"], stem_dim=channels)
+    features = {
+        "s2": torch.randn(batch_size, time_steps, channels, height, width),
+        "s1": torch.randn(batch_size, time_steps, channels, height, width),
+    }
+    masks = {
+        "s2": torch.ones(batch_size, time_steps),
+        "s1": torch.zeros(batch_size, time_steps),
+    }
+
+    out = fusion(features, masks, ["s2", "s1"])
+
+    expected = features["s2"] + fusion.source_embeddings[0].view(1, 1, channels, 1, 1)
+    assert out.shape == (batch_size, time_steps, channels, height, width)
+    assert torch.allclose(out, expected, atol=1e-6)
+
+
+def test_source_aware_temporal_fusion_all_masked_returns_zero() -> None:
+    """当某个时间步所有 source 都不可用时，融合输出应为 0 且无 NaN。"""
+    batch_size, time_steps, channels, height, width = 1, 2, 8, 4, 4
+    fusion = SourceAwareTemporalFusion(["s2", "s1"], stem_dim=channels)
+    features = {
+        "s2": torch.randn(batch_size, time_steps, channels, height, width),
+        "s1": torch.randn(batch_size, time_steps, channels, height, width),
+    }
+    masks = {
+        "s2": torch.zeros(batch_size, time_steps),
+        "s1": torch.zeros(batch_size, time_steps),
+    }
+
+    out = fusion(features, masks, ["s2", "s1"])
+
+    assert not torch.isnan(out).any()
+    assert torch.allclose(out, torch.zeros_like(out), atol=0.0)
+
+
 def test_native_resolution_highres_encoder() -> None:
     """NativeResolutionHighResEncoder 应将任意输入下采样并池化到目标分辨率。"""
     batch_size = 2
@@ -114,6 +154,48 @@ def test_aef_model_uses_native_resolution_highres_encoder() -> None:
     for encoder in model.highres_encoders.values():
         assert isinstance(encoder, NativeResolutionHighResEncoder)
         assert encoder.out_channels == embed_dim
+
+
+def test_aef_model_uses_gated_temporal_fusion() -> None:
+    """gated_sum 模式应启用源感知融合，并保持 STP 输入通道为 stem_dim。"""
+    sensor_channels = {"s2": 10, "s1": 2, "landsat": 6}
+    embed_dim = 16
+    stem_dim = 8
+    target_heads = {"s2_recon": ("continuous", 10)}
+    model = AEFModel(
+        sensor_channels,
+        embed_dim,
+        target_heads,
+        stem_dim=stem_dim,
+        stp={
+            "space_dim": 64,
+            "time_dim": 32,
+            "precision_dim": 32,
+            "num_blocks": 1,
+            "num_heads": 2,
+            "temporal_fusion": "gated_sum",
+        },
+        num_months=2,
+    )
+
+    assert isinstance(model.temporal_fusion, SourceAwareTemporalFusion)
+    assert model.total_stem_channels == stem_dim
+    assert model.stp_encoder.input_projection.in_features == stem_dim
+
+    batch_size, time_steps, height, width = 1, 2, 16, 16
+    source_frames = {
+        "s2": torch.randn(batch_size, time_steps, 10, height, width),
+        "s1": torch.randn(batch_size, time_steps, 2, height, width),
+        "landsat": torch.randn(batch_size, time_steps, 6, height, width),
+    }
+    source_masks = {k: torch.ones(batch_size, time_steps) for k in source_frames}
+    source_masks["s1"][:, 1] = 0
+    timestamps = _make_yyyymm_timestamps(batch_size, time_steps, start=202501)
+
+    out = model(source_frames, source_masks, timestamps)
+
+    assert out.embedding_map.shape == (batch_size, 2, embed_dim, height, width)
+    assert out.reconstructions["s2_recon"].shape == (batch_size, 2, 10, height, width)
 
 
 def test_vmf_bottleneck() -> None:
@@ -683,5 +765,3 @@ def test_aef_model_skips_empty_temporal_source() -> None:
     timestamps = _make_yyyymm_timestamps(batch_size, 2, start=202501)
     out = model(source_frames, source_masks, timestamps)
     assert out.embedding_map.shape == (batch_size, num_months, embed_dim, height, width)
-
-
