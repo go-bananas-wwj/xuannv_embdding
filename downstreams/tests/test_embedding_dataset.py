@@ -84,6 +84,74 @@ def test_embedding_dataset_concat_diff(tmp_path: Path) -> None:
     assert torch.equal(sample["embedding_map"][4:], torch.full((2, 4, 4), 2.0))
 
 
+def test_embedding_dataset_region_prefixed_embedding_root(tmp_path: Path) -> None:
+    """区域混合导出的 embedding 目录带 region 前缀时，仍可用基础 patch id 读取。"""
+    emb_root = tmp_path / "embeddings" / "harbin"
+    label_root = tmp_path / "labels"
+    mask_dir = label_root / "masks"
+    mask_dir.mkdir(parents=True)
+
+    patch_id = "patch_000000"
+    prefixed_patch_id = "harbin_patch_000000"
+    (emb_root / prefixed_patch_id).mkdir(parents=True)
+    emb = torch.randn(64, 16, 16)
+    torch.save(emb, emb_root / prefixed_patch_id / "202605_embedding_map.pt")
+
+    mask = np.zeros((16, 16), dtype=np.uint8)
+    with rasterio.open(
+        mask_dir / f"{patch_id}.tif",
+        "w",
+        driver="GTiff",
+        height=16,
+        width=16,
+        count=1,
+        dtype=mask.dtype,
+        crs=None,
+        transform=rasterio.Affine.identity(),
+    ) as dst:
+        dst.write(mask, 1)
+
+    ds = EmbeddingDataset(emb_root, label_root, [patch_id], month=202605)
+    sample = ds[0]
+    assert torch.equal(sample["embedding_map"], emb)
+
+
+def test_embedding_dataset_month_suffixed_masks_use_latest(tmp_path: Path) -> None:
+    """当 mask 带 YYYYMM 后缀时，应选择最新月份 mask。"""
+    emb_root = tmp_path / "embeddings"
+    label_root = tmp_path / "labels"
+    mask_dir = label_root / "masks"
+    mask_dir.mkdir(parents=True)
+
+    patch_id = "patch_000000"
+    (emb_root / patch_id).mkdir(parents=True)
+    emb = torch.randn(64, 16, 16)
+    torch.save(emb, emb_root / patch_id / "202605_embedding_map.pt")
+
+    old_mask = np.zeros((16, 16), dtype=np.uint8)
+    new_mask = np.ones((16, 16), dtype=np.uint8)
+    for name, mask in [
+        (f"{patch_id}_202512.tif", old_mask),
+        (f"{patch_id}_202605.tif", new_mask),
+    ]:
+        with rasterio.open(
+            mask_dir / name,
+            "w",
+            driver="GTiff",
+            height=16,
+            width=16,
+            count=1,
+            dtype=mask.dtype,
+            crs=None,
+            transform=rasterio.Affine.identity(),
+        ) as dst:
+            dst.write(mask, 1)
+
+    ds = EmbeddingDataset(emb_root, label_root, [patch_id], month=202605)
+    sample = ds[0]
+    assert torch.equal(sample["mask"], torch.ones(16, 16, dtype=torch.long))
+
+
 def test_embedding_missing_embedding(tmp_path: Path) -> None:
     """embedding 文件不存在时抛出 FileNotFoundError。"""
     label_root = tmp_path / "labels"

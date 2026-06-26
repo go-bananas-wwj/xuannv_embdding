@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
 import rasterio
 import torch
 from torch.utils.data import Dataset
+
+_MONTH_SUFFIX_RE = re.compile(r"^(?P<patch>.+)_(?P<month>\d{6})$")
+
+
+def _valid_yyyymm(value: str) -> bool:
+    year = int(value[:4])
+    month = int(value[4:])
+    return 1900 <= year <= 2100 and 1 <= month <= 12
 
 
 class EmbeddingDataset(Dataset):
@@ -28,13 +37,14 @@ class EmbeddingDataset(Dataset):
         self.temporal_mode = temporal_mode
         self.augment = augment
         self.mask_dir = self.label_root / "masks"
+        self.region_prefix = self.embedding_root.name
 
     def __len__(self) -> int:
         return len(self.patch_ids)
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
         patch_id = self.patch_ids[idx]
-        mask_path = self.mask_dir / f"{patch_id}.tif"
+        mask_path = self._resolve_mask_path(patch_id)
 
         if not mask_path.exists():
             raise FileNotFoundError(f"mask 不存在: {mask_path}")
@@ -57,8 +67,43 @@ class EmbeddingDataset(Dataset):
             "patch_id": patch_id,
         }
 
+    def _base_patch_id(self, patch_id: str) -> str:
+        match = _MONTH_SUFFIX_RE.match(patch_id)
+        if match is None or not _valid_yyyymm(match.group("month")):
+            return patch_id
+        return match.group("patch")
+
+    def _resolve_mask_path(self, patch_id: str) -> Path:
+        exact = self.mask_dir / f"{patch_id}.tif"
+        if exact.exists():
+            return exact
+
+        candidates = sorted(self.mask_dir.glob(f"{patch_id}_*.tif"))
+        if not candidates:
+            return exact
+
+        def _month(path: Path) -> int:
+            match = _MONTH_SUFFIX_RE.match(path.stem)
+            if match is None or not _valid_yyyymm(match.group("month")):
+                return -1
+            return int(match.group("month"))
+
+        return max(candidates, key=_month)
+
+    def _resolve_patch_dir(self, patch_id: str) -> Path:
+        base_id = self._base_patch_id(patch_id)
+        candidates = [
+            self.embedding_root / patch_id,
+            self.embedding_root / base_id,
+            self.embedding_root / f"{self.region_prefix}_{base_id}",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return candidates[0]
+
     def _load_month_embedding(self, patch_id: str, month: str) -> torch.Tensor:
-        emb_path = self.embedding_root / patch_id / f"{month}_embedding_map.pt"
+        emb_path = self._resolve_patch_dir(patch_id) / f"{month}_embedding_map.pt"
         if not emb_path.exists():
             raise FileNotFoundError(f"embedding 不存在: {emb_path}")
         return torch.load(emb_path, map_location="cpu", weights_only=True)  # (D, H, W)

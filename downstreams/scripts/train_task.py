@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +21,31 @@ from torch.utils.data import DataLoader
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
+_MONTH_SUFFIX_RE = re.compile(r"^(?P<patch>.+)_(?P<month>\d{6})$")
+
+
+def _valid_yyyymm(value: str) -> bool:
+    year = int(value[:4])
+    month = int(value[4:])
+    return 1900 <= year <= 2100 and 1 <= month <= 12
+
+
+def resolve_mask_path(mask_dir: Path, patch_id: str) -> Path:
+    """Resolve exact masks or month-suffixed masks for a split patch id."""
+    exact = mask_dir / f"{patch_id}.tif"
+    if exact.exists():
+        return exact
+    candidates = sorted(mask_dir.glob(f"{patch_id}_*.tif"))
+    if not candidates:
+        return exact
+
+    def _month(path: Path) -> int:
+        match = _MONTH_SUFFIX_RE.match(path.stem)
+        if match is None or not _valid_yyyymm(match.group("month")):
+            return -1
+        return int(match.group("month"))
+
+    return max(candidates, key=_month)
 
 
 def save_test_predictions(
@@ -39,7 +65,7 @@ def save_test_predictions(
             logits = model(emb)[:, 1]
             probs = torch.sigmoid(logits).cpu().numpy()
             for b, patch_id in enumerate(patch_ids):
-                mask_path = mask_dir / f"{patch_id}.tif"
+                mask_path = resolve_mask_path(mask_dir, patch_id)
                 with rasterio.open(mask_path) as src:
                     profile = src.profile.copy()
                 profile.update(
