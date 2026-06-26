@@ -97,6 +97,10 @@ class EmbeddingDataset(Dataset):
             self.embedding_root / base_id,
             self.embedding_root / f"{self.region_prefix}_{base_id}",
         ]
+        for source_region in ("haidian", "harbin"):
+            prefix = f"{source_region}_"
+            if base_id.startswith(prefix):
+                candidates.append(self.embedding_root.parent / source_region / base_id)
         for candidate in candidates:
             if candidate.exists():
                 return candidate
