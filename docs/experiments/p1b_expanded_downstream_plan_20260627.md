@@ -57,8 +57,8 @@
 |---|---|---|---|---|---|---|
 | `building_osm_segmentation` | OSM 建筑物分割 | OSM `building=*` polygon | 二分类分割 | OSM 建筑覆盖率不稳定；需要与 patch CRS 严格对齐 | mIoU、boundary F1、F1_best | `osm_gt`，不是人工精标 |
 | `road_osm_extraction` | OSM 路网提取 | OSM `highway=*` line | 细线二分类分割 | 需要按道路等级缓冲成面；普通 IoU 对细线不友好 | relaxed F1、buffer IoU、skeleton recall | `osm_gt`，道路宽度为近似 |
-| `building_foundation_pseudo` | 建筑物基础模型伪标签分割 | Locate Anything 或 GroundingDINO+SAM2/SAM2，对高分影像推理 | 二分类分割 | 伪标签可能误检，需要 OSM/WorldCover/人工抽检过滤 | precision sample QA、F1 vs OSM overlap、可视化通过率 | `pseudo_gt` |
-| `road_foundation_pseudo` | 道路基础模型伪标签提取 | Locate Anything 或其他 open-vocabulary segmentation，对高分影像推理 | 细线/面分割 | 道路易被阴影、裸地、屋顶混淆；需要人工抽检 | relaxed overlap vs OSM、人工抽检通过率 | `pseudo_gt` |
+| `building_foundation_pseudo` | 建筑物基础模型伪标签分割 | NVIDIA LocateAnything 产 bbox/point，SAM2 或裁剪细化产 mask；也可对照 GroundingDINO+SAM2 | 二分类分割 | LocateAnything 本身输出 box/point，不直接输出 mask；伪标签需 OSM/WorldCover/人工抽检过滤 | precision sample QA、F1 vs OSM overlap、可视化通过率 | `pseudo_gt` |
+| `road_foundation_pseudo` | 道路基础模型伪标签提取 | LocateAnything 产 road/street/highway bbox/point，结合 SAM2/线状后处理产 mask；也可对照其他 open-vocabulary segmentation | 细线/面分割 | 道路细长，box 到 mask 的转换难；易被阴影、裸地、屋顶混淆；需要人工抽检 | relaxed overlap vs OSM、人工抽检通过率 | `pseudo_gt` |
 
 ### 3.3 第二批：补强标签后做的任务
 
@@ -103,7 +103,7 @@
 | `downstreams/downstreams/metrics/segmentation.py` | 增加 multi-class mIoU、per-class IoU、macro F1；增加 road relaxed metric 预留 | 支持土地覆盖和路网任务。 |
 | `downstreams/configs/` | 新增完整自包含配置，禁止 `_base_` | 符合项目配置规范。 |
 | `scripts/data/` | 新增 OSM 下载/裁剪/栅格化脚本，优先用 Overpass API 或本地 OSM PBF | 生成建筑物和道路 mask。 |
-| `scripts/data/` | 新增基础模型伪标签导入接口，支持 Locate Anything / GroundingDINO+SAM2/SAM2 输出转 mask | 生成并审核建筑/道路伪标签。 |
+| `scripts/data/` | 新增基础模型伪标签导入接口，支持 LocateAnything bbox/point 输出解析、SAM2 mask 细化，以及 GroundingDINO+SAM2 对照路线 | 生成并审核建筑/道路伪标签。 |
 | `scripts/qa/` | 新增 OSM/伪标签抽检 contact sheet 和覆盖率统计 | 防止把脏伪标签当真值。 |
 | `scripts/scale/` 或 `scripts/report/` | 新增 expanded downstream suite runner | 一键跑多任务、出报告和可视化。 |
 | `scripts/report/build_p1b_presentation_package.py` | 扩展到能力矩阵 | 把新任务加入汇报包。 |
@@ -260,22 +260,35 @@
 - 输出：`processed/{region}/labels/road_osm/masks/{patch_id}.tif`。
 - 指标：除 IoU 外，必须报告 relaxed F1 / skeleton recall，因为道路是细线任务。
 
-### 11.2 Locate Anything / GroundingDINO+SAM2 伪标签
+### 11.2 LocateAnything / GroundingDINO+SAM2 伪标签
 
-我没有确认到一个公开、稳定、官方名为 NVIDIA `Locate Anything` 的资料入口。因此执行时把它设计成可插拔接口：如果你能提供模型权重或调用方式，就接入该模型；如果不能，则用公开 open-vocabulary grounding + segmentation 组合替代，例如 GroundingDINO 检测 `building` / `road`，再用 SAM2 生成 mask。
+已确认 NVIDIA LocateAnything 是公开研究项目，论文题为 `LocateAnything: Fast and High-Quality Vision-Language Grounding with Parallel Box Decoding`，项目页、GitHub、Hugging Face 模型和 demo 均已公开。它是 vision-language grounding / detection 模型，输入图像和自然语言 query，输出 bounding box 或 point；坐标以 0-1000 的相对整数形式表示。当前公开 `nvidia/LocateAnything-3B` 权重可以用于 object detection / phrase grounding / point localization，但官方说明当前权重暂不支持 visual prompt inference。
+
+因此本项目不把 LocateAnything 当作直接分割模型，而是把它放在伪标签流水线的第一步：先定位建筑/道路候选区域，再用 SAM2 或高分影像后处理细化为 mask。GroundingDINO+SAM2 保留为对照路线。
 
 伪标签生成流程：
 
 1. 输入高分影像 patch。
 2. prompt：建筑用 `building, rooftop, house, warehouse`；道路用 `road, street, highway, paved road`。
-3. 输出候选 mask、置信度和 prompt 元数据。
-4. 与 OSM / WorldCover 做一致性过滤。
-5. 抽样生成 contact sheet 人工检查。
-6. 通过 QA 后才进入下游训练，标记为 `pseudo_gt`。
+3. LocateAnything 输出候选 bbox/point、置信度和 prompt 元数据。
+4. 将 bbox/point 转成 SAM2 prompt，生成候选 mask；道路任务额外做细线/连通性后处理。
+5. 与 OSM / WorldCover 做一致性过滤。
+6. 抽样生成 contact sheet 人工检查。
+7. 通过 QA 后才进入下游训练，标记为 `pseudo_gt`。
+
+执行注意：LocateAnything 依赖 GPU 推理环境，HF batch runtime 支持批量推理；若当前 Ascend NPU 环境不兼容，需要单独使用 CUDA 机器或 Hugging Face demo/API 生成伪标签，再把结果导入本项目。
 
 ### 11.3 汇报口径
 
 - `osm_gt`：可追溯、可解释，但可能漏标或时效不一致。
-- `pseudo_gt`：视觉效果可能更贴近高分影像，但不是人工真值，必须展示抽检结果。
+- `pseudo_gt`：视觉效果可能更贴近高分影像，但不是人工真值，必须展示抽检结果；LocateAnything 只负责候选定位，mask 仍需 SAM2/后处理生成。
 - `weak_gt`：WorldCover 派生标签，适合展示宏观能力，不适合声称精细轮廓。
 - `strong_gt`：本地人工/可信矢量审核标签，才能作为最终强结论。
+
+
+## 12. 外部参考
+
+- NVIDIA LocateAnything 项目页：`https://research.nvidia.com/labs/lpr/locate-anything/`
+- LocateAnything GitHub：`https://github.com/NVlabs/Eagle/tree/main/Embodied`
+- LocateAnything HF 模型：`https://huggingface.co/nvidia/LocateAnything-3B`
+- LocateAnything HF Demo：`https://huggingface.co/spaces/nvidia/LocateAnything`
