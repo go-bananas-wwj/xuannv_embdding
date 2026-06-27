@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Visualize OSM downstream predictions, GT masks, and P1B embeddings."""
+"""Visualize OSM downstream predictions, GT masks, and P1B embeddings.
+
+The diagnostic sheets intentionally include thresholded masks and TP/FP/FN
+maps because ROC-AUC can look high on sparse masks while the segmentation is
+still dominated by background or false positives.
+"""
 
 from __future__ import annotations
 
@@ -42,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, default=None)
     parser.add_argument("--tasks", nargs="+", default=list(TASKS))
     parser.add_argument("--month", default="202605")
-    parser.add_argument("--samples-per-task", type=int, default=4)
+    parser.add_argument("--samples-per-task", type=int, default=8)
     return parser.parse_args()
 
 
@@ -130,6 +135,68 @@ def load_prediction(pred_path: Path) -> np.ndarray:
         return src.read(1)
 
 
+def load_threshold(pred_path: Path) -> float:
+    metrics_path = pred_path.parent.parent / "metrics.json"
+    if not metrics_path.exists():
+        return 0.5
+    data = json.loads(metrics_path.read_text(encoding="utf-8"))
+    return float(data.get("val_threshold", data.get("threshold", 0.5)))
+
+
+def load_summary_metrics(task_root: Path) -> dict[str, Any]:
+    summary_path = task_root / "summary.json"
+    if summary_path.exists():
+        data = json.loads(summary_path.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            if len(data) == 1 and isinstance(data[0], dict):
+                return data[0]
+            numeric_keys = {key for row in data if isinstance(row, dict) for key, value in row.items() if isinstance(value, (int, float))}
+            return {key: float(np.mean([row[key] for row in data if isinstance(row, dict) and key in row])) for key in numeric_keys}
+        if isinstance(data, dict):
+            return data
+    metrics_files = sorted(task_root.glob("fold_*/metrics.json"))
+    if not metrics_files:
+        return {}
+    return json.loads(metrics_files[0].read_text(encoding="utf-8"))
+
+
+def binary_metrics(pred_bool: np.ndarray, gt_bool: np.ndarray) -> dict[str, float | int]:
+    pred_bool = pred_bool.astype(bool)
+    gt_bool = gt_bool.astype(bool)
+    tp = int(np.logical_and(pred_bool, gt_bool).sum())
+    fp = int(np.logical_and(pred_bool, ~gt_bool).sum())
+    fn = int(np.logical_and(~pred_bool, gt_bool).sum())
+    tn = int(np.logical_and(~pred_bool, ~gt_bool).sum())
+    precision = tp / max(tp + fp, 1)
+    recall = tp / max(tp + fn, 1)
+    f1 = 2.0 * precision * recall / max(precision + recall, 1e-12)
+    iou = tp / max(tp + fp + fn, 1)
+    return {
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "tn": tn,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "iou": iou,
+        "pred_positive_pixels": int(pred_bool.sum()),
+        "pred_positive_ratio": float(pred_bool.mean()),
+        "gt_positive_pixels": int(gt_bool.sum()),
+        "gt_positive_ratio": float(gt_bool.mean()),
+    }
+
+
+def make_error_map(pred_bool: np.ndarray, gt_bool: np.ndarray) -> np.ndarray:
+    pred_bool = pred_bool.astype(bool)
+    gt_bool = gt_bool.astype(bool)
+    out = np.ones((*gt_bool.shape, 3), dtype=np.float32) * 0.92
+    out[np.logical_and(pred_bool, gt_bool)] = (0.08, 0.62, 0.20)  # TP
+    out[np.logical_and(pred_bool, ~gt_bool)] = (1.00, 0.55, 0.00)  # FP
+    out[np.logical_and(~pred_bool, gt_bool)] = (0.92, 0.05, 0.08)  # FN
+    return out
+
+
 def positive_pixels(label_root: Path, patch_id: str) -> int:
     mask_path = label_root / "masks" / f"{patch_id}.tif"
     if not mask_path.exists():
@@ -139,13 +206,43 @@ def positive_pixels(label_root: Path, patch_id: str) -> int:
 
 def select_predictions(run_root: Path, task: str, label_root: Path, samples_per_task: int) -> list[Path]:
     pred_paths = sorted((run_root / task).glob("fold_*/predictions/*_prob.tif"))
-    scored: list[tuple[int, float, Path]] = []
+    scored: list[dict[str, Any]] = []
     for pred_path in pred_paths:
         patch_id = pred_path.stem.removesuffix("_prob")
+        gt_path = label_root / "masks" / f"{patch_id}.tif"
+        if not gt_path.exists():
+            continue
         pred = load_prediction(pred_path)
-        scored.append((positive_pixels(label_root, patch_id), float(np.nanmax(pred)), pred_path))
-    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    return [item[2] for item in scored[:samples_per_task]]
+        gt = read_mask(gt_path) > 0
+        threshold = load_threshold(pred_path)
+        metrics_thr = binary_metrics(pred >= threshold, gt)
+        metrics_05 = binary_metrics(pred >= 0.5, gt)
+        scored.append(
+            {
+                "path": pred_path,
+                "gt_positive": positive_pixels(label_root, patch_id),
+                "pred_max": float(np.nanmax(pred)),
+                "f1_threshold": float(metrics_thr["f1"]),
+                "f1_05": float(metrics_05["f1"]),
+                "fp_threshold": int(metrics_thr["fp"]),
+                "fn_threshold": int(metrics_thr["fn"]),
+            }
+        )
+    positives = [item for item in scored if item["gt_positive"] > 0]
+    top_positive = sorted(positives, key=lambda item: item["gt_positive"], reverse=True)
+    worst_f1 = sorted(positives, key=lambda item: (item["f1_threshold"], -item["fp_threshold"] - item["fn_threshold"]))
+    high_fp = sorted(positives, key=lambda item: item["fp_threshold"], reverse=True)
+    high_score = sorted(scored, key=lambda item: item["pred_max"], reverse=True)
+
+    selected: list[Path] = []
+    for group in (top_positive, worst_f1, high_fp, high_score):
+        for item in group:
+            path = item["path"]
+            if path not in selected:
+                selected.append(path)
+            if len(selected) >= samples_per_task:
+                return selected
+    return selected
 
 
 def show_panel(ax: plt.Axes, image: np.ndarray | None, title: str, cmap: str | None = None) -> None:
@@ -176,40 +273,55 @@ def make_visual(
     gt_path = label_root / "masks" / f"{patch_id}.tif"
     highres = load_highres(processed_root, region, patch_id, month)
     emb_pca = embedding_pca(load_embedding(embedding_root, region, patch_id, month))
-    pred = stretch(load_prediction(pred_path), lower=0.0, upper=100.0)
+    pred_raw = load_prediction(pred_path)
+    pred = stretch(pred_raw, lower=0.0, upper=100.0)
     gt = (read_mask(gt_path) > 0).astype(np.float32) if gt_path.exists() else None
-    pred_binary = (load_prediction(pred_path) >= 0.5).astype(np.float32)
+    threshold = load_threshold(pred_path)
+    pred_binary_05 = (pred_raw >= 0.5).astype(np.float32)
+    pred_binary_thr = (pred_raw >= threshold).astype(np.float32)
+    gt_for_metrics = gt.astype(bool) if gt is not None else np.zeros_like(pred_binary_thr, dtype=bool)
+    metrics_05 = binary_metrics(pred_binary_05 > 0, gt_for_metrics)
+    metrics_thr = binary_metrics(pred_binary_thr > 0, gt_for_metrics)
+    error_map = make_error_map(pred_binary_thr > 0, gt_for_metrics)
     gt_overlay = overlay_mask(highres, gt if gt is not None else np.zeros((128, 128)), (1.0, 0.05, 0.05))
-    pred_overlay = overlay_mask(highres, pred_binary, (0.05, 0.85, 1.0))
 
     panels = [
         (highres, f"High-res {month}", None),
         (emb_pca, f"P1B Emb PCA {month}", None),
         (pred, "Prediction Prob", "viridis"),
+        (pred_binary_05, "Pred >= 0.50", "gray"),
+        (pred_binary_thr, f"Pred >= {threshold:.3f}", "gray"),
         (gt, "OSM GT", "Reds"),
-        (pred_overlay, "Pred Overlay", None),
+        (error_map, "TP/FP/FN @thr", None),
         (gt_overlay, "GT Overlay", None),
     ]
-    fig, axes = plt.subplots(1, len(panels), figsize=(3.0 * len(panels), 3.3))
+    fig, axes = plt.subplots(1, len(panels), figsize=(3.0 * len(panels), 3.35))
     for ax, (image, title, cmap) in zip(axes, panels, strict=True):
         show_panel(ax, image, title, cmap)
-    fig.suptitle(f"{task} | {patch_id}", fontsize=11)
+    fig.suptitle(
+        f"{task} | {patch_id} | F1@0.5={metrics_05['f1']:.3f} | "
+        f"F1@thr={metrics_thr['f1']:.3f} | GT={metrics_thr['gt_positive_ratio']:.3f} | "
+        f"Pred@thr={metrics_thr['pred_positive_ratio']:.3f}",
+        fontsize=10,
+    )
     fig.tight_layout()
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    out_path = output_dir / f"{task}_{patch_id}_osm_contact.png"
+    out_path = output_dir / f"{task}_{patch_id}_osm_diagnostic.png"
     fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
-    gt_positive = int(gt.sum()) if gt is not None else 0
     return {
         "task": task,
         "region": region,
         "label_task": label_task,
         "patch_id": patch_id,
+        "fold": pred_path.parent.parent.name,
         "figure": str(out_path),
         "prediction": str(pred_path),
         "gt_mask": str(gt_path) if gt_path.exists() else None,
-        "gt_positive_pixels": gt_positive,
+        "threshold": threshold,
+        "metrics_at_0_5": metrics_05,
+        "metrics_at_val_threshold": metrics_thr,
         "missing": {
             "highres": highres is None,
             "embedding": emb_pca is None,
@@ -219,16 +331,42 @@ def make_visual(
 
 
 def write_index(records: list[dict[str, Any]], output_root: Path) -> None:
-    lines = ["# P1B OSM Downstream Contact Sheets", ""]
+    lines = [
+        "# P1B OSM Downstream Diagnostic Sheets",
+        "",
+        "Legend: TP is green, FP is orange, FN is red. These sheets expose background-dominance and threshold-calibration problems that ROC-AUC can hide.",
+        "",
+        "## Task Metrics",
+        "",
+    ]
+    task_roots = {record["task"]: Path(record["prediction"]).parents[2] for record in records}
+    for task in sorted(task_roots):
+        summary = load_summary_metrics(task_roots[task])
+        if not summary:
+            continue
+        lines.append(
+            f"- `{task}`: AUC={summary.get('auc_roc', 0):.4f}, "
+            f"F1@0.5={summary.get('f1_0.5', 0):.4f}, "
+            f"F1@val_thr={summary.get('f1_at_threshold', 0):.4f}, "
+            f"mIoU={summary.get('miou', 0):.4f}, "
+            f"val_thr={summary.get('threshold', summary.get('val_threshold', 0)):.4f}"
+        )
+    lines.append("")
     for record in records:
         fig = Path(record["figure"])
+        m05 = record["metrics_at_0_5"]
+        mthr = record["metrics_at_val_threshold"]
         lines.extend(
             [
                 f"## {record['task']} / {record['patch_id']}",
                 "",
                 f"- region: `{record['region']}`",
                 f"- label_task: `{record['label_task']}`",
-                f"- gt_positive_pixels: `{record['gt_positive_pixels']}`",
+                f"- fold: `{record['fold']}`",
+                f"- val_threshold: `{record['threshold']:.6f}`",
+                f"- GT positive ratio: `{mthr['gt_positive_ratio']:.6f}`",
+                f"- Pred positive ratio @0.5: `{m05['pred_positive_ratio']:.6f}`, F1: `{m05['f1']:.4f}`",
+                f"- Pred positive ratio @val_threshold: `{mthr['pred_positive_ratio']:.6f}`, F1: `{mthr['f1']:.4f}`, FP: `{mthr['fp']}`, FN: `{mthr['fn']}`",
                 f"- prediction: `{record['prediction']}`",
                 f"- gt_mask: `{record['gt_mask']}`",
                 f"- missing: `{record['missing']}`",
@@ -246,7 +384,7 @@ def write_index(records: list[dict[str, Any]], output_root: Path) -> None:
 
 def main() -> None:
     args = parse_args()
-    output_root = args.output_root or args.run_root / "osm_contact_sheets"
+    output_root = args.output_root or args.run_root / "osm_diagnostic_sheets"
     records: list[dict[str, Any]] = []
     for task in args.tasks:
         info = TASKS[task]
@@ -265,7 +403,7 @@ def main() -> None:
                 )
             )
     write_index(records, output_root)
-    print(f"saved {len(records)} contact sheets to {output_root}")
+    print(f"saved {len(records)} diagnostic sheets to {output_root}")
 
 
 if __name__ == "__main__":
