@@ -197,6 +197,23 @@ def make_error_map(pred_bool: np.ndarray, gt_bool: np.ndarray) -> np.ndarray:
     return out
 
 
+def red_binary_mask(mask: np.ndarray | None) -> np.ndarray | None:
+    if mask is None:
+        return None
+    mask_bool = mask.astype(bool)
+    out = np.ones((*mask_bool.shape, 3), dtype=np.float32)
+    out[mask_bool] = (0.92, 0.05, 0.08)
+    return out
+
+
+def red_probability_map(prob: np.ndarray) -> np.ndarray:
+    prob = np.clip(np.nan_to_num(prob.astype(np.float32), nan=0.0), 0.0, 1.0)
+    out = np.ones((*prob.shape, 3), dtype=np.float32)
+    red = np.array((0.92, 0.05, 0.08), dtype=np.float32)
+    out = out * (1.0 - prob[..., None]) + red * prob[..., None]
+    return out
+
+
 def positive_pixels(label_root: Path, patch_id: str) -> int:
     mask_path = label_root / "masks" / f"{patch_id}.tif"
     if not mask_path.exists():
@@ -275,6 +292,7 @@ def make_visual(
     emb_pca = embedding_pca(load_embedding(embedding_root, region, patch_id, month))
     pred_raw = load_prediction(pred_path)
     pred = stretch(pred_raw, lower=0.0, upper=100.0)
+    pred_red = red_probability_map(pred)
     gt = (read_mask(gt_path) > 0).astype(np.float32) if gt_path.exists() else None
     threshold = load_threshold(pred_path)
     pred_binary_05 = (pred_raw >= 0.5).astype(np.float32)
@@ -288,10 +306,10 @@ def make_visual(
     panels = [
         (highres, f"High-res {month}", None),
         (emb_pca, f"P1B Emb PCA {month}", None),
-        (pred, "Prediction Prob", "viridis"),
-        (pred_binary_05, "Pred >= 0.50", "gray"),
-        (pred_binary_thr, f"Pred >= {threshold:.3f}", "gray"),
-        (gt, "OSM GT", "Reds"),
+        (pred_red, "Prediction Prob", None),
+        (red_binary_mask(pred_binary_05), "Pred >= 0.50", None),
+        (red_binary_mask(pred_binary_thr), f"Pred >= {threshold:.3f}", None),
+        (red_binary_mask(gt), "OSM GT", None),
         (error_map, "TP/FP/FN @thr", None),
         (gt_overlay, "GT Overlay", None),
     ]
