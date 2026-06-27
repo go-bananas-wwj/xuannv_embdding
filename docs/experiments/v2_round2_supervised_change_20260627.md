@@ -63,3 +63,31 @@ mIoU.
   signal than Round1. The largest remaining weakness is calibration at threshold
   0.5 for `construction_joint` and still-low absolute mIoU on sparse Harbin
   change classes.
+
+## Preserved Artifacts
+
+This run is the current Round2 baseline for later upgrades. Keep the following
+artifacts as the frozen comparison target.
+
+| Artifact | Path | Size / Notes |
+|---|---|---|
+| Training output | `/data/xuannv_embedding/outputs/v2_round2_supervised_change_20260627_050500` | 7.2G |
+| Best checkpoint | `/data/xuannv_embedding/outputs/v2_round2_supervised_change_20260627_050500/best.pt` | same payload as `epoch_100.pt` |
+| Final checkpoint | `/data/xuannv_embedding/outputs/v2_round2_supervised_change_20260627_050500/epoch_100.pt` | final epoch checkpoint |
+| Training log | `/data/xuannv_embedding/outputs/v2_round2_supervised_change_20260627_050500/logs/train.log` | 100 epochs completed |
+| Export log | `/data/xuannv_embedding/outputs/v2_round2_supervised_change_20260627_050500/logs/export_embeddings.log` | embedding export completed |
+| Post-training eval log | `/data/xuannv_embedding/outputs/v2_round2_supervised_change_20260627_050500/logs/post_training_eval.log` | quick downstream eval completed |
+| Embedding export | `/data/xuannv_embedding/embeddings/v2_202512_202605/20260627_v2_round2_supervised_change_20260627_050500_best_round2_supervised_best` | 105G |
+| Benchmark output | `/data/xuannv_embedding/experiments/v2_202512_202605/benchmarks/v2_round2_supervised_change_20260627_050500_20260627_072030` | 63M |
+| Original visualization index | `/data/xuannv_embedding/experiments/v2_202512_202605/benchmarks/v2_round2_supervised_change_20260627_050500_20260627_072030/visualizations/index.md` | prediction strips |
+| GT visualization index | `/data/xuannv_embedding/experiments/v2_202512_202605/benchmarks/v2_round2_supervised_change_20260627_050500_20260627_072030/visualizations_with_gt/index.md` | prediction strips plus GT panel |
+
+### Checksums
+
+| File | SHA256 |
+|---|---|
+| `/data/xuannv_embedding/outputs/v2_round2_supervised_change_20260627_050500/best.pt` | `f24a6723878926c1e98557296129668cddf7e2c5496af7c077c63ba8c952a815` |
+| `/data/xuannv_embedding/outputs/v2_round2_supervised_change_20260627_050500/epoch_100.pt` | `f24a6723878926c1e98557296129668cddf7e2c5496af7c077c63ba8c952a815` |
+| `/data/xuannv_embedding/embeddings/v2_202512_202605/20260627_v2_round2_supervised_change_20260627_050500_best_round2_supervised_best/meta.json` | `de9b08da4733064ff65a290d23d95379b6fdf88e06b199f5f3a91cdf3ecc8cef` |
+| `/data/xuannv_embedding/experiments/v2_202512_202605/benchmarks/v2_round2_supervised_change_20260627_050500_20260627_072030/comparison_vs_aef.json` | `8b8d9e5ba76ec08a39c5a0291a7c2afd76f33742de282bb4100122ad882140f7` |
+| `/data/xuannv_embedding/experiments/v2_202512_202605/benchmarks/v2_round2_supervised_change_20260627_050500_20260627_072030/visualizations_with_gt/metadata.json` | `40912b6092bba7481e143a63ead1177bc59cf282be6a94c602c3423d5ee32e89` |
