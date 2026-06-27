@@ -88,11 +88,12 @@ def build_env(npu: str) -> dict[str, str]:
     return env
 
 
-def write_report(benchmark_root: Path, run_id: str, tasks: list[str]) -> None:
+def write_report(benchmark_root: Path, run_id: str, tasks: list[str], mode: str) -> None:
     lines = [
         f"# Post Training Evaluation - {run_id}",
         "",
         f"Benchmark root: `{benchmark_root}`",
+        f"Evaluation mode: `{mode}`",
         "",
         "## Outputs",
         "",
@@ -104,8 +105,12 @@ def write_report(benchmark_root: Path, run_id: str, tasks: list[str]) -> None:
         "",
     ]
     for task in tasks:
-        summary = benchmark_root / task / "summary_5fold.json"
-        lines.append(f"- {task}: `{summary}`")
+        summary = benchmark_root / task / "summary.json"
+        meta = benchmark_root / task / "summary_meta.json"
+        legacy = benchmark_root / task / "summary_5fold.json"
+        lines.append(
+            f"- {task}: `{summary}` (`{legacy.name}` is a compatibility alias; meta `{meta}`)"
+        )
     (benchmark_root / "POST_TRAINING_REPORT.md").write_text(
         "\n".join(lines) + "\n",
         encoding="utf-8",
@@ -188,7 +193,8 @@ def main() -> None:
             env,
         )
 
-    write_report(benchmark_root, run_id, args.tasks)
+    mode = "full_5fold" if args.all_folds else f"quick_fold_{args.fold}"
+    write_report(benchmark_root, run_id, args.tasks, mode)
     print(f"post-training evaluation complete: {benchmark_root}")
 
 

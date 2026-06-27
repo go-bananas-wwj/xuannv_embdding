@@ -26,7 +26,7 @@ def _parse_args() -> argparse.Namespace:
         "--benchmark-root",
         type=Path,
         required=True,
-        help="Directory containing task subdirs with summary_5fold.json.",
+        help="Directory containing task subdirs with summary.json or legacy summary_5fold.json.",
     )
     parser.add_argument(
         "--output",
@@ -94,7 +94,9 @@ def main() -> None:
     macro_values = {"auc_roc": [], "f1_best": [], "miou": []}
 
     for task, baseline in V1_BASELINE.items():
-        summary_path = args.benchmark_root / task / "summary_5fold.json"
+        summary_path = args.benchmark_root / task / "summary.json"
+        if not summary_path.exists():
+            summary_path = args.benchmark_root / task / "summary_5fold.json"
         if not summary_path.exists():
             tasks[task] = {"pass": False, "error": f"missing {summary_path}"}
             continue

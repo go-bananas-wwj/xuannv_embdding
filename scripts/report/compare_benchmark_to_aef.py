@@ -52,7 +52,9 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def task_summary(root: Path, task: str) -> dict[str, Any] | None:
-    path = root / task / "summary_5fold.json"
+    path = root / task / "summary.json"
+    if not path.exists():
+        path = root / task / "summary_5fold.json"
     if not path.exists():
         return None
     return summarize(load_rows(path))
