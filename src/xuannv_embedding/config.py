@@ -75,6 +75,9 @@ class TrainingConfig:
     uniformity_weight: float = 1.0
     uniformity_warmup_epochs: int = 0
     uniformity_temperature: float = 2.0
+    temporal_endpoint_weight: float = 0.0
+    temporal_endpoint_warmup_epochs: int = 0
+    temporal_endpoint_margin: float = 0.15
 
 
 @dataclass
@@ -250,6 +253,11 @@ class Config:
                 uniformity_weight=training_cfg.get("uniformity_weight", 1.0),
                 uniformity_warmup_epochs=training_cfg.get("uniformity_warmup_epochs", 0),
                 uniformity_temperature=training_cfg.get("uniformity_temperature", 2.0),
+                temporal_endpoint_weight=training_cfg.get("temporal_endpoint_weight", 0.0),
+                temporal_endpoint_warmup_epochs=training_cfg.get(
+                    "temporal_endpoint_warmup_epochs", 0
+                ),
+                temporal_endpoint_margin=training_cfg.get("temporal_endpoint_margin", 0.15),
             ),
         )
 

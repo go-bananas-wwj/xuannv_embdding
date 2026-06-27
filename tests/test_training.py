@@ -20,6 +20,7 @@ from xuannv_embedding.training.losses import (
     TotalLoss,
     batch_uniformity_loss,
     reconstruction_loss,
+    temporal_endpoint_separation_loss,
 )
 from xuannv_embedding.training.optimizer import build_optimizer, build_scheduler
 from xuannv_embedding.training.trainer import Trainer
@@ -112,6 +113,50 @@ training:
 
     assert cfg.model.ref_year == 2025
     assert cfg.model.ref_month == 12
+
+
+def test_config_temporal_endpoint_defaults_and_overrides(tmp_path: Path) -> None:
+    """验证端点月份分离损失的配置字段默认值与显式覆盖。"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+experiment:
+  name: temporal_endpoint_config_test
+data:
+  root: /data/xuannv_embedding/processed/base
+  region: base
+  manifest_path: /data/xuannv_embedding/processed/base/manifest.json
+  num_months: 2
+  months: [2025-12, 2026-01]
+model:
+  embed_dim: 64
+  num_months: 2
+  sensor_channels:
+    s2: 12
+  target_heads:
+    s2_recon:
+      loss_type: continuous
+      channels: 12
+training:
+  epochs: 1
+  lr: 1.0e-4
+  weight_decay: 0.05
+  warmup_epochs: 0
+  gradient_accumulation_steps: 1
+  save_every: 1
+  eval_every: 1
+  temporal_endpoint_weight: 0.04
+  temporal_endpoint_warmup_epochs: 5
+  temporal_endpoint_margin: 0.2
+""",
+        encoding="utf-8",
+    )
+
+    cfg = Config.from_yaml(config_path)
+
+    assert cfg.training.temporal_endpoint_weight == 0.04
+    assert cfg.training.temporal_endpoint_warmup_epochs == 5
+    assert cfg.training.temporal_endpoint_margin == 0.2
 
 
 def test_config_model_ref_conflict_with_data_first_month(tmp_path: Path) -> None:
@@ -307,6 +352,20 @@ def test_batch_uniformity_loss_temporal() -> None:
 
     assert loss_random < loss_same
     assert torch.allclose(loss_same, torch.tensor(0.0), atol=1e-6)
+
+
+def test_temporal_endpoint_separation_loss() -> None:
+    """首末月 embedding 太近时产生损失，距离超过 margin 后损失为 0。"""
+    collapsed = torch.zeros(2, 3, 4)
+    collapsed[:, :, 0] = 1.0
+    loss_collapsed = temporal_endpoint_separation_loss(collapsed, margin=0.2)
+
+    separated = collapsed.clone()
+    separated[:, -1, 0] = -1.0
+    loss_separated = temporal_endpoint_separation_loss(separated, margin=0.2)
+
+    assert torch.allclose(loss_collapsed, torch.tensor(0.2), atol=1e-6)
+    assert torch.allclose(loss_separated, torch.tensor(0.0), atol=1e-6)
 
 
 def test_checkpoint_save_load() -> None:

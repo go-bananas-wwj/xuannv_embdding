@@ -265,6 +265,9 @@ def main() -> None:
         uniformity_weight=cfg.training.uniformity_weight,
         uniformity_warmup_epochs=cfg.training.uniformity_warmup_epochs,
         uniformity_temperature=cfg.training.uniformity_temperature,
+        temporal_endpoint_weight=cfg.training.temporal_endpoint_weight,
+        temporal_endpoint_warmup_epochs=cfg.training.temporal_endpoint_warmup_epochs,
+        temporal_endpoint_margin=cfg.training.temporal_endpoint_margin,
     )
 
     train_loader = _build_loader(
