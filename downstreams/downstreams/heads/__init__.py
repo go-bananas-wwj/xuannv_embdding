@@ -4,6 +4,7 @@ from downstreams.heads.classification_head import ClassificationHead
 from downstreams.heads.linear_probe import LinearProbeHead
 from downstreams.heads.segmentation_head import (
     FCNHead,
+    MLPProbeHead,
     UNetHead,
     UperNetHead,
     build_segmentation_head,
@@ -12,6 +13,7 @@ from downstreams.heads.segmentation_head import (
 __all__ = [
     "TaskHead",
     "LinearProbeHead",
+    "MLPProbeHead",
     "FCNHead",
     "UNetHead",
     "UperNetHead",

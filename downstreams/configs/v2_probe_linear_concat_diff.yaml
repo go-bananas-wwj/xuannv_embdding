@@ -1,0 +1,30 @@
+experiment:
+  name: v2_probe_linear_concat_diff
+  seed: 42
+  device: auto
+
+training:
+  epochs: 30
+  lr: 0.0001
+  weight_decay: 0.001
+  batch_size: 32
+  num_workers: 4
+  prefetch_factor: 2
+  early_stop_patience: 6
+  eval_every: 2
+  save_predictions: false
+  head_type: linear
+  loss: bce_dice_tversky
+  pos_weight: 20.0
+  tversky_beta: 0.6
+  label_fraction: 1.0
+  months:
+  - 202512
+  - 202605
+  temporal_mode: concat_diff
+  early_stop_metric: f1_best
+  use_threshold_tuning: true
+
+data:
+  embed_dim: 192
+  num_classes: 2
