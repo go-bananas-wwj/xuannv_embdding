@@ -22,6 +22,7 @@ class DataConfig:
     num_samples: int | None = None  # 仅作为元数据，实际样本数由 dataset 长度决定
     statistics_dir: Path | None = None
     statistics_dirs_by_region: dict[str, Path] = field(default_factory=dict)
+    supervised_label_roots: dict[str, Path] = field(default_factory=dict)
     max_patches: int | None = None
     batch_size: int = 4
     num_workers: int = 8
@@ -86,6 +87,11 @@ class TrainingConfig:
     temporal_contrast_sources: list[str] = field(
         default_factory=lambda: ["s2_recon", "s1_recon", "landsat_recon"]
     )
+    supervised_change_weight: float = 0.0
+    supervised_change_warmup_epochs: int = 0
+    supervised_change_pos_margin: float = 0.35
+    supervised_change_neg_margin: float = 0.05
+    supervised_change_tasks: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -209,6 +215,9 @@ class Config:
             key: Path(value)
             for key, value in data_cfg.get("statistics_dirs_by_region", {}).items()
         }
+        supervised_label_roots = {
+            key: Path(value) for key, value in data_cfg.get("supervised_label_roots", {}).items()
+        }
 
         return cls(
             data=DataConfig(
@@ -218,6 +227,7 @@ class Config:
                 num_samples=data_cfg.get("num_samples"),
                 statistics_dir=statistics_dir,
                 statistics_dirs_by_region=statistics_dirs_by_region,
+                supervised_label_roots=supervised_label_roots,
                 max_patches=data_cfg.get("max_patches"),
                 batch_size=data_cfg.get("batch_size", 4),
                 num_workers=data_cfg.get("num_workers", 8),
@@ -281,6 +291,17 @@ class Config:
                     "temporal_contrast_sources",
                     ["s2_recon", "s1_recon", "landsat_recon"],
                 ),
+                supervised_change_weight=training_cfg.get("supervised_change_weight", 0.0),
+                supervised_change_warmup_epochs=training_cfg.get(
+                    "supervised_change_warmup_epochs", 0
+                ),
+                supervised_change_pos_margin=training_cfg.get(
+                    "supervised_change_pos_margin", 0.35
+                ),
+                supervised_change_neg_margin=training_cfg.get(
+                    "supervised_change_neg_margin", 0.05
+                ),
+                supervised_change_tasks=training_cfg.get("supervised_change_tasks", []),
             ),
         )
 

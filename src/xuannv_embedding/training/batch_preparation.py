@@ -265,7 +265,7 @@ def prepare_batch(
                 highres_frames[source] = highres_frames[source] * keep[:, None, None, None]
                 highres_masks[source] = highres_masks[source] * keep[:, None, None, None]
 
-    return {
+    prepared = {
         "patch_ids": patch_ids,
         "source_frames": source_frames,
         "source_masks": source_masks,
@@ -275,3 +275,7 @@ def prepare_batch(
         "targets": targets,
         "target_masks": target_masks,
     }
+    if "supervised_labels" in batch:
+        prepared["supervised_labels"] = batch["supervised_labels"]
+        prepared["supervised_label_masks"] = batch.get("supervised_label_masks", {})
+    return prepared

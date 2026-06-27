@@ -31,6 +31,16 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
         "source_masks": {},
         "timestamps": {},
     }
+    if "supervised_labels" in batch[0]:
+        label_tasks = list(batch[0]["supervised_labels"].keys())
+        collated["supervised_labels"] = {
+            task: torch.stack([item["supervised_labels"][task] for item in batch])
+            for task in label_tasks
+        }
+        collated["supervised_label_masks"] = {
+            task: torch.stack([item["supervised_label_masks"][task] for item in batch])
+            for task in label_tasks
+        }
 
     for source in source_names:
         frames_list = [item["source_frames"][source] for item in batch]

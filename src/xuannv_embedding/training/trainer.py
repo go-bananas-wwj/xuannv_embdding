@@ -172,6 +172,19 @@ class Trainer:
             highres_masks=highres_masks,
         )
 
+    def _compute_losses(self, output: Any, batch: dict[str, Any]) -> dict[str, torch.Tensor]:
+        """Call the criterion with optional supervised labels when present."""
+        supervised_labels = batch.get("supervised_labels")
+        if supervised_labels is None:
+            return self.criterion(output, batch["targets"], batch["target_masks"])
+        return self.criterion(
+            output,
+            batch["targets"],
+            batch["target_masks"],
+            supervised_labels,
+            batch.get("supervised_label_masks"),
+        )
+
     def _log_to_wandb(self, metrics: dict[str, float], step: int | None = None) -> None:
         """在主进程向 WANDB 发送指标。"""
         if self._wandb_run is None:
@@ -247,11 +260,7 @@ class Trainer:
 
             with self.autocast:
                 output = self._forward(batch)
-                losses = self.criterion(
-                    output,
-                    batch["targets"],
-                    batch["target_masks"],
-                )
+                losses = self._compute_losses(output, batch)
             loss = losses["total"]
 
             # 梯度累积：按累积步数缩放损失。
@@ -330,6 +339,34 @@ class Trainer:
                         "temporal_contrast_change_pixels",
                         torch.tensor(0.0, device=self.device),
                     ).item(),
+                    "train/loss_supervised_change": losses.get(
+                        "supervised_change",
+                        torch.tensor(0.0, device=self.device),
+                    ).item(),
+                    "train/loss_supervised_change_positive": losses.get(
+                        "supervised_change_positive",
+                        torch.tensor(0.0, device=self.device),
+                    ).item(),
+                    "train/loss_supervised_change_negative": losses.get(
+                        "supervised_change_negative",
+                        torch.tensor(0.0, device=self.device),
+                    ).item(),
+                    "train/loss_supervised_change_weighted": losses.get(
+                        "supervised_change_weighted",
+                        torch.tensor(0.0, device=self.device),
+                    ).item(),
+                    "train/supervised_change_weight": losses.get(
+                        "supervised_change_weight",
+                        torch.tensor(0.0, device=self.device),
+                    ).item(),
+                    "train/supervised_change_positive_pixels": losses.get(
+                        "supervised_change_positive_pixels",
+                        torch.tensor(0.0, device=self.device),
+                    ).item(),
+                    "train/supervised_change_negative_pixels": losses.get(
+                        "supervised_change_negative_pixels",
+                        torch.tensor(0.0, device=self.device),
+                    ).item(),
                     "train/lr": self.optimizer.param_groups[0]["lr"],
                 }
                 for name, value in losses.items():
@@ -391,6 +428,25 @@ class Trainer:
                 "train/temporal_contrast_change_pixels": metrics.get(
                     "temporal_contrast_change_pixels", 0.0
                 ),
+                "train/loss_supervised_change": metrics.get("supervised_change", 0.0),
+                "train/loss_supervised_change_positive": metrics.get(
+                    "supervised_change_positive", 0.0
+                ),
+                "train/loss_supervised_change_negative": metrics.get(
+                    "supervised_change_negative", 0.0
+                ),
+                "train/loss_supervised_change_weighted": metrics.get(
+                    "supervised_change_weighted", 0.0
+                ),
+                "train/supervised_change_weight": metrics.get(
+                    "supervised_change_weight", 0.0
+                ),
+                "train/supervised_change_positive_pixels": metrics.get(
+                    "supervised_change_positive_pixels", 0.0
+                ),
+                "train/supervised_change_negative_pixels": metrics.get(
+                    "supervised_change_negative_pixels", 0.0
+                ),
                 "train/lr": self.optimizer.param_groups[0]["lr"],
             }
             for name, value in metrics.items():
@@ -430,11 +486,7 @@ class Trainer:
 
             with self.autocast:
                 output = self._forward(batch)
-                losses = self.criterion(
-                    output,
-                    batch["targets"],
-                    batch["target_masks"],
-                )
+                losses = self._compute_losses(output, batch)
             for name, value in losses.items():
                 metric_sums.setdefault(name, 0.0)
                 metric_sums[name] += value.item()
@@ -474,6 +526,23 @@ class Trainer:
                 ),
                 "val/temporal_contrast_change_pixels": metrics.get(
                     "temporal_contrast_change_pixels", 0.0
+                ),
+                "val/loss_supervised_change": metrics.get("supervised_change", 0.0),
+                "val/loss_supervised_change_positive": metrics.get(
+                    "supervised_change_positive", 0.0
+                ),
+                "val/loss_supervised_change_negative": metrics.get(
+                    "supervised_change_negative", 0.0
+                ),
+                "val/loss_supervised_change_weighted": metrics.get(
+                    "supervised_change_weighted", 0.0
+                ),
+                "val/supervised_change_weight": metrics.get("supervised_change_weight", 0.0),
+                "val/supervised_change_positive_pixels": metrics.get(
+                    "supervised_change_positive_pixels", 0.0
+                ),
+                "val/supervised_change_negative_pixels": metrics.get(
+                    "supervised_change_negative_pixels", 0.0
                 ),
             }
             for name, value in metrics.items():
