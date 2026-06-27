@@ -15,6 +15,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from xuannv_embedding.config import Config, ConfigError
 from xuannv_embedding.models.model import AEFOutput
+from xuannv_embedding.data.sampler import DistributedWeightedSampler
 from xuannv_embedding.training.checkpoint import load_checkpoint, save_checkpoint
 from xuannv_embedding.training.losses import (
     TotalLoss,
@@ -248,6 +249,11 @@ training:
   supervised_change_pos_margin: 0.4
   supervised_change_neg_margin: 0.02
   supervised_change_tasks: [building_change]
+  supervised_change_pos_weight: 1.5
+  supervised_change_neg_weight: 0.5
+  supervised_change_hard_negative_ratio: 0.05
+  supervised_change_task_weights:
+    building_change: 1.5
 """,
         encoding="utf-8",
     )
@@ -262,6 +268,10 @@ training:
     assert cfg.training.supervised_change_pos_margin == 0.4
     assert cfg.training.supervised_change_neg_margin == 0.02
     assert cfg.training.supervised_change_tasks == ["building_change"]
+    assert cfg.training.supervised_change_pos_weight == 1.5
+    assert cfg.training.supervised_change_neg_weight == 0.5
+    assert cfg.training.supervised_change_hard_negative_ratio == 0.05
+    assert cfg.training.supervised_change_task_weights == {"building_change": 1.5}
 
 
 def test_config_model_ref_conflict_with_data_first_month(tmp_path: Path) -> None:
@@ -303,6 +313,45 @@ training:
 
     with pytest.raises(ConfigError, match="data.months\\[0\\]"):
         Config.from_yaml(config_path)
+
+
+def test_distributed_weighted_sampler_shards_and_changes_by_epoch() -> None:
+    weights = torch.tensor([1.0, 5.0, 1.0, 8.0, 1.0], dtype=torch.double)
+    rank0 = DistributedWeightedSampler(weights, num_replicas=2, rank=0, seed=7)
+    rank1 = DistributedWeightedSampler(weights, num_replicas=2, rank=1, seed=7)
+
+    epoch0_rank0 = list(rank0)
+    epoch0_rank1 = list(rank1)
+    assert len(epoch0_rank0) == len(rank0)
+    assert len(epoch0_rank1) == len(rank1)
+    assert all(0 <= idx < len(weights) for idx in epoch0_rank0 + epoch0_rank1)
+
+    rank0.set_epoch(1)
+    assert list(rank0) != epoch0_rank0
+
+
+def test_supervised_change_hard_negative_ratio_limits_negative_pixels() -> None:
+    embedding_map = torch.randn(2, 2, 4, 8, 8)
+    labels = {
+        "a": torch.zeros(2, 8, 8),
+        "b": torch.zeros(2, 8, 8),
+    }
+    labels["a"][:, :2, :2] = 1.0
+    label_masks = {"a": torch.ones(2), "b": torch.ones(2)}
+
+    loss, stats = supervised_change_alignment_loss(
+        embedding_map,
+        labels,
+        label_masks,
+        tasks=("a", "b"),
+        hard_negative_ratio=0.05,
+        task_weights={"a": 1.5, "b": 1.0},
+    )
+
+    assert loss.item() >= 0.0
+    assert stats["positive_pixels"].item() == 8.0
+    assert stats["valid_negative_pixels"].item() == 248.0
+    assert 0.0 < stats["negative_pixels"].item() < stats["valid_negative_pixels"].item()
 
 
 def test_reconstruction_loss_l1() -> None:

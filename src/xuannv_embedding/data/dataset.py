@@ -221,6 +221,58 @@ class MonthlyEmbeddingDataset(Dataset):
             return max(candidates, key=_month)
         return None
 
+    def compute_supervised_sampling_weights(
+        self,
+        positive_boost: float = 4.0,
+        max_weight: float = 8.0,
+        task_weights: dict[str, float] | None = None,
+    ) -> torch.Tensor:
+        """Compute per-sample weights from sparse supervised label availability.
+
+        A patch receives extra weight when any configured supervised task has
+        positive pixels. The score is task-level rather than pixel-proportional,
+        because these labels are extremely sparse and thin masks should still be
+        sampled reliably.
+        """
+        task_weights = task_weights or {}
+        weights: list[float] = []
+        stats: list[dict[str, Any]] = []
+        for entry in self.manifest:
+            patch_id: str = entry["patch_id"]
+            region = entry.get("region")
+            positive_score = 0.0
+            task_positive_pixels: dict[str, int] = {}
+            for task, label_root in self.supervised_label_roots.items():
+                source_patch_id = entry.get("source_patch_id", patch_id)
+                label_patch_ids = [patch_id]
+                if region is not None and str(region) in label_root.parts:
+                    label_patch_ids.append(source_patch_id)
+                label_patch_ids = list(dict.fromkeys(label_patch_ids))
+                mask_path = self._resolve_label_mask_path(label_root, label_patch_ids)
+                if mask_path is None:
+                    task_positive_pixels[task] = 0
+                    continue
+                mask = load_tiff(mask_path)[0]
+                mask = np.nan_to_num(mask, nan=0.0, posinf=0.0, neginf=0.0)
+                positives = int((mask > 0).sum())
+                task_positive_pixels[task] = positives
+                if positives > 0:
+                    positive_score += float(task_weights.get(task, 1.0))
+            weight = 1.0 + float(positive_boost) * positive_score
+            weight = min(max(weight, 1.0), float(max_weight))
+            weights.append(weight)
+            stats.append(
+                {
+                    "patch_id": patch_id,
+                    "region": region,
+                    "weight": weight,
+                    "positive_score": positive_score,
+                    "task_positive_pixels": task_positive_pixels,
+                }
+            )
+        self.supervised_sampling_stats = stats
+        return torch.tensor(weights, dtype=torch.double)
+
     def __len__(self) -> int:
         return len(self.manifest)
 

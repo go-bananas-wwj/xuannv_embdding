@@ -14,11 +14,12 @@ import torch
 import torch.distributed as dist
 import yaml
 from torch import nn
-from torch.utils.data import DataLoader, DistributedSampler
+from torch.utils.data import DataLoader, DistributedSampler, WeightedRandomSampler
 
 from xuannv_embedding.config import Config, ConfigError
 from xuannv_embedding.data.collate import collate_fn
 from xuannv_embedding.data.dataset import MonthlyEmbeddingDataset
+from xuannv_embedding.data.sampler import DistributedWeightedSampler
 from xuannv_embedding.models.model import AEFModel
 from xuannv_embedding.training.batch_preparation import prepare_batch
 from xuannv_embedding.training.losses import TotalLoss
@@ -168,7 +169,32 @@ def _build_loader(
     )
 
     sampler = None
-    if is_distributed:
+    sampling_cfg = cfg.data.supervised_sampling or {}
+    use_supervised_sampling = split == "train" and bool(sampling_cfg.get("enabled", False))
+    if use_supervised_sampling:
+        weights = dataset.compute_supervised_sampling_weights(
+            positive_boost=float(sampling_cfg.get("positive_boost", 4.0)),
+            max_weight=float(sampling_cfg.get("max_weight", 8.0)),
+            task_weights=sampling_cfg.get("task_weights", {}),
+        )
+        if is_distributed:
+            sampler = DistributedWeightedSampler(weights, seed=cfg.experiment.seed)
+        else:
+            sampler = WeightedRandomSampler(
+                weights,
+                num_samples=len(dataset),
+                replacement=True,
+            )
+        if not is_distributed or dist.get_rank() == 0:
+            logger.info(
+                "启用监督正样本采样: min=%.3f max=%.3f mean=%.3f positive_weighted=%d/%d",
+                float(weights.min().item()),
+                float(weights.max().item()),
+                float(weights.mean().item()),
+                int((weights > 1.0).sum().item()),
+                len(weights),
+            )
+    elif is_distributed:
         sampler = DistributedSampler(
             dataset,
             shuffle=(split == "train"),
@@ -294,6 +320,12 @@ def main() -> None:
         supervised_change_pos_margin=cfg.training.supervised_change_pos_margin,
         supervised_change_neg_margin=cfg.training.supervised_change_neg_margin,
         supervised_change_tasks=cfg.training.supervised_change_tasks,
+        supervised_change_pos_weight=cfg.training.supervised_change_pos_weight,
+        supervised_change_neg_weight=cfg.training.supervised_change_neg_weight,
+        supervised_change_hard_negative_ratio=(
+            cfg.training.supervised_change_hard_negative_ratio
+        ),
+        supervised_change_task_weights=cfg.training.supervised_change_task_weights,
     )
 
     train_loader = _build_loader(
@@ -309,11 +341,7 @@ def main() -> None:
         is_distributed=is_distributed,
     )
 
-    train_sampler = (
-        train_loader.sampler
-        if isinstance(train_loader.sampler, DistributedSampler)
-        else None
-    )
+    train_sampler = train_loader.sampler if hasattr(train_loader.sampler, "set_epoch") else None
 
     trainer = Trainer(
         cfg=cfg,
