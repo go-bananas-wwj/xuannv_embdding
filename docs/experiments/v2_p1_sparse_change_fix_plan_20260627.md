@@ -64,6 +64,59 @@ Expected output:
 Why first: if a fold has almost no positive pixels in train or val, model changes
 will not fix the evaluation instability by themselves.
 
+## Step 1.5: Expanded Downstream Capability Suite
+
+Add a separate downstream suite so the embedding is evaluated beyond sparse
+change labels. This suite should be reported alongside, but not blindly averaged
+with, the P0/P1 sparse-change benchmark because label quality and task semantics
+are different.
+
+### Immediate Tasks From Existing Labels
+
+1. `landcover_multiclass_segmentation`
+   - Label source: existing `worldcover` labels under
+     `/data/xuannv_embedding/processed/{haidian,harbin}/labels/worldcover`.
+   - Head: linear probe or lightweight segmentation head on frozen embeddings.
+   - Metrics: mean IoU, macro F1, pixel accuracy, per-class IoU.
+   - Caveat: WorldCover-like labels are also part of the pretraining target, so
+     this is a representation sanity probe rather than a fully independent
+     held-out capability claim.
+2. `lulc_patch_classification`
+   - Label source: patch-level majority class derived from `worldcover`.
+   - Head: classification head using pooled scene/patch embeddings.
+   - Metrics: accuracy, macro F1, per-class recall.
+   - Purpose: test whether the embedding carries global land-use context, not
+     only dense pixel boundaries.
+
+### Tasks Requiring Label Inventory or Preparation
+
+1. `building_extraction`
+   - Preferred source: local static building footprint masks, if present.
+   - Fallback source: derive a weak built-up mask from WorldCover built-up class
+     for quick probing, clearly labeled as weak/pseudo supervision.
+   - Better source for later: rasterized building footprints from a trusted
+     local GIS layer, OSM, Microsoft building footprints, or manual labels.
+   - Metrics: F1_best, F1 at validation threshold, mIoU, precision/recall.
+2. `road_extraction`
+   - Preferred source: local road masks or rasterized vector road centerlines.
+   - If no local road labels exist, prepare a small, versioned label-building
+     step before running the benchmark. Do not treat generated pseudo labels as
+     equal to hand-checked GT.
+   - Metrics: F1_best, F1 at validation threshold, mIoU, precision/recall. Add
+     a relaxed-distance or skeleton-aware metric later if road masks are thin.
+
+### Reporting Rules
+
+- Keep two macro summaries:
+  - `sparse_change_macro`: construction/change labels used for P0/P1.
+  - `capability_macro`: landcover, building, road, and patch classification.
+- Mark each task as one of:
+  - `gt`: human-checked or trusted independent label.
+  - `weak_gt`: coarse external label such as WorldCover-derived built-up.
+  - `pseudo`: generated labels used only for debugging.
+- Every post-training report should include a task availability table so we can
+  see which downstream tasks were actually run for that checkpoint.
+
 ## Step 2: Positive-Aware Pretraining Sampler
 
 Current Round2 uses ordinary shuffled patches. P1 should cache per-patch
