@@ -205,6 +205,31 @@ class Trainer:
             pass
         return None
 
+    def _average_metric_sums(
+        self,
+        metric_sums: dict[str, float],
+        num_batches: int,
+    ) -> dict[str, float]:
+        """Average metric sums across local or distributed batches.
+
+        In DDP each rank only sees its shard of the DataLoader. Rank-0-only
+        metrics can pick a misleading best checkpoint, so epoch-level metrics
+        are reduced across all ranks before logging and checkpoint selection.
+        """
+        if num_batches <= 0:
+            return {name: 0.0 for name in metric_sums}
+
+        names = sorted(metric_sums)
+        values = [metric_sums[name] for name in names]
+        values.append(float(num_batches))
+        tensor = torch.tensor(values, dtype=torch.float64, device=self.device)
+
+        if dist.is_initialized():
+            dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+
+        count = max(float(tensor[-1].item()), 1.0)
+        return {name: float(tensor[idx].item() / count) for idx, name in enumerate(names)}
+
     def train_epoch(self) -> dict[str, float]:
         """执行一个训练 epoch。
 
@@ -213,7 +238,6 @@ class Trainer:
         """
         self.model.train()
 
-        total_loss = 0.0
         metric_sums: dict[str, float] = {}
         num_batches = 0
         log_every = getattr(self.cfg.training, "log_every", 0)
@@ -242,8 +266,6 @@ class Trainer:
                 self.optimizer.zero_grad(set_to_none=True)
                 self.global_step += 1
 
-            batch_loss = losses["total"].item()
-            total_loss += batch_loss
             num_batches += 1
 
             for name, value in losses.items():
@@ -284,6 +306,14 @@ class Trainer:
                         "temporal_contrast",
                         torch.tensor(0.0, device=self.device),
                     ).item(),
+                    "train/loss_temporal_contrast_stable": losses.get(
+                        "temporal_contrast_stable",
+                        torch.tensor(0.0, device=self.device),
+                    ).item(),
+                    "train/loss_temporal_contrast_change": losses.get(
+                        "temporal_contrast_change",
+                        torch.tensor(0.0, device=self.device),
+                    ).item(),
                     "train/loss_temporal_contrast_weighted": losses.get(
                         "temporal_contrast_weighted",
                         torch.tensor(0.0, device=self.device),
@@ -322,10 +352,8 @@ class Trainer:
 
         self.scheduler.step()
 
-        metrics: dict[str, float] = {
-            name: value / num_batches for name, value in metric_sums.items()
-        }
-        metrics["train_loss"] = total_loss / num_batches
+        metrics = self._average_metric_sums(metric_sums, num_batches)
+        metrics["train_loss"] = metrics.get("total", 0.0)
 
         # 每轮结束时在主进程记录 epoch 级训练指标。
         if self._is_main_process():
@@ -345,6 +373,12 @@ class Trainer:
                     "temporal_endpoint_weight", 0.0
                 ),
                 "train/loss_temporal_contrast": metrics.get("temporal_contrast", 0.0),
+                "train/loss_temporal_contrast_stable": metrics.get(
+                    "temporal_contrast_stable", 0.0
+                ),
+                "train/loss_temporal_contrast_change": metrics.get(
+                    "temporal_contrast_change", 0.0
+                ),
                 "train/loss_temporal_contrast_weighted": metrics.get(
                     "temporal_contrast_weighted", 0.0
                 ),
@@ -406,9 +440,7 @@ class Trainer:
                 metric_sums[name] += value.item()
             num_batches += 1
 
-        metrics: dict[str, float] = {
-            name: value / num_batches for name, value in metric_sums.items()
-        }
+        metrics = self._average_metric_sums(metric_sums, num_batches)
         metrics["val_loss"] = metrics.get("total", 0.0)
 
         if self._is_main_process():
@@ -425,6 +457,12 @@ class Trainer:
                     "temporal_endpoint_weight", 0.0
                 ),
                 "val/loss_temporal_contrast": metrics.get("temporal_contrast", 0.0),
+                "val/loss_temporal_contrast_stable": metrics.get(
+                    "temporal_contrast_stable", 0.0
+                ),
+                "val/loss_temporal_contrast_change": metrics.get(
+                    "temporal_contrast_change", 0.0
+                ),
                 "val/loss_temporal_contrast_weighted": metrics.get(
                     "temporal_contrast_weighted", 0.0
                 ),
