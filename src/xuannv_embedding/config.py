@@ -31,6 +31,7 @@ class DataConfig:
     months: list[str] = field(default_factory=lambda: [])
     sources: list[str] = field(default_factory=lambda: ["s2", "s1", "landsat"])
     source_dropout_probs: dict[str, float] = field(default_factory=dict)
+    supervised_sampling: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -92,6 +93,10 @@ class TrainingConfig:
     supervised_change_pos_margin: float = 0.35
     supervised_change_neg_margin: float = 0.05
     supervised_change_tasks: list[str] = field(default_factory=list)
+    supervised_change_pos_weight: float = 1.0
+    supervised_change_neg_weight: float = 1.0
+    supervised_change_hard_negative_ratio: float = 1.0
+    supervised_change_task_weights: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -236,6 +241,7 @@ class Config:
                 months=data_cfg.get("months", []),
                 sources=data_cfg.get("sources", ["s2", "s1", "landsat"]),
                 source_dropout_probs=data_cfg.get("source_dropout_probs", {}),
+                supervised_sampling=data_cfg.get("supervised_sampling", {}),
             ),
             experiment=ExperimentConfig(
                 name=experiment_cfg["name"],
@@ -302,6 +308,18 @@ class Config:
                     "supervised_change_neg_margin", 0.05
                 ),
                 supervised_change_tasks=training_cfg.get("supervised_change_tasks", []),
+                supervised_change_pos_weight=training_cfg.get(
+                    "supervised_change_pos_weight", 1.0
+                ),
+                supervised_change_neg_weight=training_cfg.get(
+                    "supervised_change_neg_weight", 1.0
+                ),
+                supervised_change_hard_negative_ratio=training_cfg.get(
+                    "supervised_change_hard_negative_ratio", 1.0
+                ),
+                supervised_change_task_weights=training_cfg.get(
+                    "supervised_change_task_weights", {}
+                ),
             ),
         )
 

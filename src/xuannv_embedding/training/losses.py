@@ -251,21 +251,27 @@ def supervised_change_alignment_loss(
     tasks: list[str] | tuple[str, ...] = (),
     pos_margin: float = 0.35,
     neg_margin: float = 0.05,
+    pos_weight: float = 1.0,
+    neg_weight: float = 1.0,
+    hard_negative_ratio: float = 1.0,
+    task_weights: dict[str, float] | None = None,
     eps: float = 1e-8,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     """Align endpoint embedding distance with sparse downstream label masks.
 
-    Positive label pixels should have a larger before/after embedding distance.
-    Valid background pixels should remain close. Missing labels are ignored.
+    Positive pixels should have larger before/after embedding distance. Valid
+    background pixels should remain close. P1 computes this per task, applies
+    optional task weights, and can mine only the hardest negative pixels.
     """
     zero = torch.tensor(0.0, device=embedding_map.device, dtype=embedding_map.dtype)
+    empty_stats = {
+        "positive": zero,
+        "negative": zero,
+        "positive_pixels": zero,
+        "negative_pixels": zero,
+    }
     if embedding_map.dim() != 5 or embedding_map.shape[1] < 2 or not labels:
-        return zero, {
-            "positive": zero,
-            "negative": zero,
-            "positive_pixels": zero,
-            "negative_pixels": zero,
-        }
+        return zero, empty_stats
 
     first = F.normalize(embedding_map[:, 0], p=2, dim=1)
     last = F.normalize(embedding_map[:, -1], p=2, dim=1)
@@ -273,11 +279,20 @@ def supervised_change_alignment_loss(
     height, width = distance.shape[-2:]
 
     task_names = tuple(tasks) if tasks else tuple(labels.keys())
-    pos_sum = zero
-    neg_sum = zero
-    pos_count = zero
-    neg_count = zero
     label_masks = label_masks or {}
+    task_weights = task_weights or {}
+    ratio = max(0.0, min(1.0, float(hard_negative_ratio)))
+
+    loss_sum = zero
+    task_weight_sum = zero
+    pos_loss_sum = zero
+    neg_loss_sum = zero
+    pos_task_count = zero
+    neg_task_count = zero
+    pos_pixel_count = zero
+    neg_pixel_count = zero
+    sampled_neg_pixel_count = zero
+    stats: dict[str, torch.Tensor] = {}
 
     for task in task_names:
         label = labels.get(task)
@@ -300,24 +315,69 @@ def supervised_change_alignment_loss(
 
         positive = valid & (label > 0.5)
         negative = valid & (label <= 0.5)
+        task_pos_pixels = positive.float().sum()
+        task_neg_pixels = negative.float().sum()
+        if task_pos_pixels <= 0 and task_neg_pixels <= 0:
+            continue
+
         pos_loss_map = F.relu(float(pos_margin) - distance)
         neg_loss_map = F.relu(distance - float(neg_margin))
-        pos_sum = pos_sum + (pos_loss_map * positive.float()).sum()
-        neg_sum = neg_sum + (neg_loss_map * negative.float()).sum()
-        pos_count = pos_count + positive.float().sum()
-        neg_count = neg_count + negative.float().sum()
+        if task_pos_pixels > 0:
+            task_pos_loss = (pos_loss_map * positive.float()).sum() / task_pos_pixels.clamp(min=eps)
+            pos_loss_sum = pos_loss_sum + task_pos_loss
+            pos_task_count = pos_task_count + 1.0
+        else:
+            task_pos_loss = zero
 
-    positive_loss = pos_sum / pos_count.clamp(min=eps)
-    negative_loss = neg_sum / neg_count.clamp(min=eps)
-    loss = positive_loss + negative_loss
-    stats = {
-        "positive": positive_loss,
-        "negative": negative_loss,
-        "positive_pixels": pos_count,
-        "negative_pixels": neg_count,
-    }
+        if task_neg_pixels > 0 and ratio > 0.0:
+            task_neg_values = neg_loss_map[negative]
+            if ratio < 1.0:
+                k = max(1, int(task_neg_values.numel() * ratio))
+                task_neg_values = torch.topk(task_neg_values, k=k, largest=True).values
+            task_neg_loss = task_neg_values.mean()
+            sampled_neg_pixels = torch.tensor(
+                float(task_neg_values.numel()),
+                device=embedding_map.device,
+                dtype=embedding_map.dtype,
+            )
+            neg_loss_sum = neg_loss_sum + task_neg_loss
+            neg_task_count = neg_task_count + 1.0
+        else:
+            task_neg_loss = zero
+            sampled_neg_pixels = zero
+
+        task_weight = torch.tensor(
+            float(task_weights.get(task, 1.0)),
+            device=embedding_map.device,
+            dtype=embedding_map.dtype,
+        )
+        task_loss = float(pos_weight) * task_pos_loss + float(neg_weight) * task_neg_loss
+        loss_sum = loss_sum + task_weight * task_loss
+        task_weight_sum = task_weight_sum + task_weight
+        pos_pixel_count = pos_pixel_count + task_pos_pixels
+        neg_pixel_count = neg_pixel_count + task_neg_pixels
+        sampled_neg_pixel_count = sampled_neg_pixel_count + sampled_neg_pixels
+        stats[f"supervised_change_{task}_positive_pixels"] = task_pos_pixels
+        stats[f"supervised_change_{task}_negative_pixels"] = task_neg_pixels
+        stats[f"supervised_change_{task}_sampled_negative_pixels"] = sampled_neg_pixels
+        stats[f"supervised_change_{task}_loss"] = task_loss.detach()
+
+    if task_weight_sum <= 0:
+        return zero, empty_stats
+
+    positive_loss = pos_loss_sum / pos_task_count.clamp(min=eps)
+    negative_loss = neg_loss_sum / neg_task_count.clamp(min=eps)
+    loss = loss_sum / task_weight_sum.clamp(min=eps)
+    stats.update(
+        {
+            "positive": positive_loss,
+            "negative": negative_loss,
+            "positive_pixels": pos_pixel_count,
+            "negative_pixels": sampled_neg_pixel_count,
+            "valid_negative_pixels": neg_pixel_count,
+        }
+    )
     return loss, stats
-
 
 class TotalLoss(nn.Module):
     """AEF 训练总损失：加权重建损失 + 表征正则项。"""
@@ -346,6 +406,10 @@ class TotalLoss(nn.Module):
         supervised_change_pos_margin: float = 0.35,
         supervised_change_neg_margin: float = 0.05,
         supervised_change_tasks: list[str] | tuple[str, ...] = (),
+        supervised_change_pos_weight: float = 1.0,
+        supervised_change_neg_weight: float = 1.0,
+        supervised_change_hard_negative_ratio: float = 1.0,
+        supervised_change_task_weights: dict[str, float] | None = None,
     ) -> None:
         """初始化。
 
@@ -380,6 +444,12 @@ class TotalLoss(nn.Module):
         self.supervised_change_pos_margin = float(supervised_change_pos_margin)
         self.supervised_change_neg_margin = float(supervised_change_neg_margin)
         self.supervised_change_tasks = tuple(supervised_change_tasks)
+        self.supervised_change_pos_weight = float(supervised_change_pos_weight)
+        self.supervised_change_neg_weight = float(supervised_change_neg_weight)
+        self.supervised_change_hard_negative_ratio = float(
+            supervised_change_hard_negative_ratio
+        )
+        self.supervised_change_task_weights = dict(supervised_change_task_weights or {})
         self.current_epoch = 0
 
     def set_epoch(self, epoch: int) -> None:
@@ -495,6 +565,10 @@ class TotalLoss(nn.Module):
             tasks=self.supervised_change_tasks,
             pos_margin=self.supervised_change_pos_margin,
             neg_margin=self.supervised_change_neg_margin,
+            pos_weight=self.supervised_change_pos_weight,
+            neg_weight=self.supervised_change_neg_weight,
+            hard_negative_ratio=self.supervised_change_hard_negative_ratio,
+            task_weights=self.supervised_change_task_weights,
         )
         supervised_change_weight = self._current_supervised_change_weight()
         weighted_supervised_change = supervised_change * supervised_change_weight
@@ -545,6 +619,12 @@ class TotalLoss(nn.Module):
             ),
             "supervised_change_positive_pixels": supervised_change_stats["positive_pixels"],
             "supervised_change_negative_pixels": supervised_change_stats["negative_pixels"],
+            "supervised_change_valid_negative_pixels": supervised_change_stats.get(
+                "valid_negative_pixels", supervised_change_stats["negative_pixels"]
+            ),
         }
+        for name, value in supervised_change_stats.items():
+            if name.startswith("supervised_change_"):
+                result[name] = value
         result.update(recon_losses)
         return result
