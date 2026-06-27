@@ -12,10 +12,11 @@ from typing import Any
 import numpy as np
 import torch
 import torch.distributed as dist
+import yaml
 from torch import nn
 from torch.utils.data import DataLoader, DistributedSampler
 
-from xuannv_embedding.config import Config
+from xuannv_embedding.config import Config, ConfigError
 from xuannv_embedding.data.collate import collate_fn
 from xuannv_embedding.data.dataset import MonthlyEmbeddingDataset
 from xuannv_embedding.models.model import AEFModel
@@ -25,6 +26,18 @@ from xuannv_embedding.training.trainer import Trainer
 from xuannv_embedding.utils.device import get_device
 
 logger = logging.getLogger(__name__)
+
+
+def reject_base_config(config_path: str | Path) -> None:
+    """Reject `_base_` in actual training configs so experiments are self-contained."""
+    path = Path(config_path)
+    with path.open("r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f)
+    if isinstance(raw, dict) and "_base_" in raw:
+        raise ConfigError(
+            f"实际训练配置必须自包含，禁止使用 `_base_`: {path}. "
+            "请复制完整配置后直接修改字段。"
+        )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -209,6 +222,7 @@ def main() -> None:
     args = parse_args()
     is_distributed, local_rank = setup_distributed()
 
+    reject_base_config(args.config)
     cfg = Config.from_yaml(args.config)
     _set_seed(cfg.experiment.seed)
 
