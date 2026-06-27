@@ -123,6 +123,7 @@ def main() -> None:
     eval_every = args.eval_every or int(cfg["training"].get("eval_every", 1))
     if eval_every <= 0:
         raise ValueError(f"eval_every 必须为正整数，实际得到 {eval_every}")
+    early_stop_metric = str(cfg["training"].get("early_stop_metric", "miou"))
 
     region = args.region if args.region else args.label_root.parent.name
     emb_region_root = args.embedding_root / region
@@ -225,7 +226,7 @@ def main() -> None:
         )
         loss_fn = task.build_loss()
 
-        best_miou = -1.0
+        best_score = -float("inf")
         best_threshold = 0.5
         patience_counter = 0
         best_epoch = -1
@@ -255,19 +256,30 @@ def main() -> None:
                 continue
 
             val_metrics = task.evaluate(model, val_loader, device)
+            if early_stop_metric not in val_metrics:
+                raise KeyError(
+                    f"early_stop_metric={early_stop_metric!r} 不在验证指标中；"
+                    f"可用指标: {sorted(val_metrics)}"
+                )
+            val_score = float(val_metrics[early_stop_metric])
             logger.info(
-                "Epoch %d train_loss=%.4f val_miou=%.4f",
+                "Epoch %d train_loss=%.4f val_miou=%.4f val_%s=%.4f",
                 epoch,
                 train_loss,
                 val_metrics["miou"],
+                early_stop_metric,
+                val_score,
             )
 
-            if val_metrics["miou"] > best_miou:
-                best_miou = val_metrics["miou"]
+            if val_score > best_score:
+                best_score = val_score
                 best_threshold = float(val_metrics.get("best_threshold", 0.5))
                 patience_counter = 0
                 best_epoch = epoch
-                best_state = model.state_dict()
+                best_state = {
+                    key: value.detach().cpu().clone()
+                    for key, value in model.state_dict().items()
+                }
                 (out_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
                 torch.save(best_state, out_dir / "checkpoints" / "best.pt")
             else:
@@ -282,6 +294,8 @@ def main() -> None:
         test_metrics = task.evaluate(model, test_loader, device, threshold=best_threshold)
         test_metrics["fold"] = fold_idx
         test_metrics["best_epoch"] = best_epoch
+        test_metrics["early_stop_metric"] = early_stop_metric
+        test_metrics["best_val_score"] = best_score
         test_metrics["val_threshold"] = best_threshold
         test_metrics["months"] = months
         test_metrics["temporal_mode"] = temporal_mode
@@ -305,10 +319,29 @@ def main() -> None:
                 mask_dir,
             )
 
-    # 汇总
-    with open(args.output_root / "summary_5fold.json", "w", encoding="utf-8") as f:
+    # 汇总。summary_5fold.json 保留为旧脚本兼容别名；summary_meta.json 记录真实 fold 数。
+    summary_path = args.output_root / "summary.json"
+    with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
-    logger.info("5-fold 汇总：%s", args.output_root / "summary_5fold.json")
+    legacy_path = args.output_root / "summary_5fold.json"
+    with open(legacy_path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2)
+    summary_meta = {
+        "num_folds": len(summary),
+        "requested_fold": args.fold,
+        "is_full_5fold": len(summary) == 5 and args.fold is None,
+        "summary_path": str(summary_path),
+        "legacy_summary_5fold_path": str(legacy_path),
+        "early_stop_metric": early_stop_metric,
+    }
+    with open(args.output_root / "summary_meta.json", "w", encoding="utf-8") as f:
+        json.dump(summary_meta, f, ensure_ascii=False, indent=2)
+    logger.info(
+        "汇总：%s (num_folds=%d, legacy_alias=%s)",
+        summary_path,
+        len(summary),
+        legacy_path,
+    )
 
 
 if __name__ == "__main__":
