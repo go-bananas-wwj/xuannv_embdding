@@ -382,10 +382,11 @@ def supervised_change_alignment_loss(
 class SemanticProbeLoss(nn.Module):
     """Training-only semantic probes that make embedding maps directly decodable.
 
-    Each task is a tiny 1x1 MLP applied to one monthly embedding map. The probes
-    are optimized during embedding training and can be discarded after training;
-    their purpose is to force the embedding space to expose semantic information
-    to simple downstream heads.
+    Each task is a tiny probe applied to one monthly embedding map. By default
+    this is a 1x1 MLP. When ``hidden_dim <= 0`` it becomes a pure 1x1 linear
+    probe, which is useful when we want to force linearly readable embeddings.
+    The probes are optimized during embedding training and discarded after
+    training.
     """
 
     def __init__(
@@ -404,16 +405,18 @@ class SemanticProbeLoss(nn.Module):
         self.pos_weight = float(pos_weight)
         self.pos_weights = dict(pos_weights or {})
         self.month_index = int(month_index)
-        self.probes = nn.ModuleDict(
-            {
-                task: nn.Sequential(
+        hidden_dim = int(hidden_dim)
+        modules: dict[str, nn.Module] = {}
+        for task in self.tasks:
+            if hidden_dim <= 0:
+                modules[task] = nn.Conv2d(embed_dim, 1, kernel_size=1)
+            else:
+                modules[task] = nn.Sequential(
                     nn.Conv2d(embed_dim, hidden_dim, kernel_size=1),
                     nn.ReLU(inplace=True),
                     nn.Conv2d(hidden_dim, 1, kernel_size=1),
                 )
-                for task in self.tasks
-            }
-        )
+        self.probes = nn.ModuleDict(modules)
 
     @staticmethod
     def _masked_mean(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:

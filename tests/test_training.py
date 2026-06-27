@@ -314,6 +314,7 @@ training:
   semantic_probe_pos_weight: 3.0
   semantic_probe_pos_weights:
     road_osm: 4.0
+  semantic_probe_hidden_dim: 0
 """,
         encoding="utf-8",
     )
@@ -326,6 +327,7 @@ training:
     assert cfg.training.semantic_probe_task_weights == {"building_osm": 1.5}
     assert cfg.training.semantic_probe_pos_weight == 3.0
     assert cfg.training.semantic_probe_pos_weights == {"road_osm": 4.0}
+    assert cfg.training.semantic_probe_hidden_dim == 0
 
 
 def test_config_model_ref_conflict_with_data_first_month(tmp_path: Path) -> None:
@@ -577,6 +579,21 @@ def test_total_loss_with_semantic_probe() -> None:
     assert embedding_map.grad is not None
     probe_param = next(criterion.semantic_probe.parameters())
     assert probe_param.grad is not None
+
+
+def test_total_loss_with_linear_semantic_probe() -> None:
+    """semantic_probe_hidden_dim=0 时应使用线性 1x1 probe。"""
+    criterion = TotalLoss(
+        {"s2_recon": {"loss_type": "l1", "channels": 3, "weight": 1.0}},
+        uniformity_weight=0.0,
+        semantic_probe_embed_dim=8,
+        semantic_probe_weight=0.2,
+        semantic_probe_tasks=["building_osm"],
+        semantic_probe_hidden_dim=0,
+    )
+
+    assert criterion.semantic_probe is not None
+    assert isinstance(criterion.semantic_probe.probes["building_osm"], nn.Conv2d)
 
 
 def test_reconstruction_loss_temporal() -> None:
