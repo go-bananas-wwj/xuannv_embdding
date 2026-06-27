@@ -8,6 +8,21 @@ from downstreams.heads.base import TaskHead
 from downstreams.heads.linear_probe import LinearProbeHead
 
 
+class MLPProbeHead(TaskHead):
+    """逐像素 MLP 探针：只做 1x1 通道混合，不引入空间上下文。"""
+
+    def __init__(self, embed_dim: int, num_classes: int, hidden_dim: int = 128) -> None:
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(embed_dim, hidden_dim, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(hidden_dim, num_classes, kernel_size=1),
+        )
+
+    def forward(self, x: torch.Tensor, scene_emb: torch.Tensor | None = None) -> torch.Tensor:
+        return self.net(x)
+
+
 class FCNHead(TaskHead):
     def __init__(self, embed_dim: int, num_classes: int, hidden_dim: int = 256) -> None:
         super().__init__()
@@ -97,6 +112,8 @@ def build_segmentation_head(head_type: str, embed_dim: int, num_classes: int) ->
     head_type = head_type.lower()
     if head_type == "linear" or head_type == "linear_probe":
         return LinearProbeHead(embed_dim, num_classes)
+    if head_type == "mlp" or head_type == "mlp_probe":
+        return MLPProbeHead(embed_dim, num_classes)
     if head_type == "fcn":
         return FCNHead(embed_dim, num_classes)
     if head_type == "unet":

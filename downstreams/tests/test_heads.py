@@ -7,6 +7,7 @@ from downstreams.heads import (
     ClassificationHead,
     FCNHead,
     LinearProbeHead,
+    MLPProbeHead,
     UNetHead,
     UperNetHead,
     build_segmentation_head,
@@ -37,6 +38,12 @@ def test_fcn_head(seg_input: torch.Tensor) -> None:
     assert out.shape == (2, 5, 16, 16)
 
 
+def test_mlp_probe_head(seg_input: torch.Tensor) -> None:
+    head = MLPProbeHead(embed_dim=64, num_classes=5, hidden_dim=32)
+    out = head(seg_input)
+    assert out.shape == (2, 5, 16, 16)
+
+
 def test_unet_head(seg_input: torch.Tensor) -> None:
     head = UNetHead(embed_dim=64, num_classes=5)
     out = head(seg_input)
@@ -55,6 +62,8 @@ def test_upernet_head(seg_input: torch.Tensor) -> None:
     [
         ("linear", LinearProbeHead),
         ("linear_probe", LinearProbeHead),
+        ("mlp", MLPProbeHead),
+        ("mlp_probe", MLPProbeHead),
         ("fcn", FCNHead),
         ("unet", UNetHead),
         ("upernet", UperNetHead),
