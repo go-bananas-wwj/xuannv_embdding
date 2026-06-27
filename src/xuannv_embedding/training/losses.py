@@ -379,6 +379,130 @@ def supervised_change_alignment_loss(
     )
     return loss, stats
 
+class SemanticProbeLoss(nn.Module):
+    """Training-only semantic probes that make embedding maps directly decodable.
+
+    Each task is a tiny 1x1 MLP applied to one monthly embedding map. The probes
+    are optimized during embedding training and can be discarded after training;
+    their purpose is to force the embedding space to expose semantic information
+    to simple downstream heads.
+    """
+
+    def __init__(
+        self,
+        embed_dim: int,
+        tasks: list[str] | tuple[str, ...],
+        hidden_dim: int = 64,
+        task_weights: dict[str, float] | None = None,
+        pos_weight: float = 1.0,
+        pos_weights: dict[str, float] | None = None,
+        month_index: int = -1,
+    ) -> None:
+        super().__init__()
+        self.tasks = tuple(tasks)
+        self.task_weights = dict(task_weights or {})
+        self.pos_weight = float(pos_weight)
+        self.pos_weights = dict(pos_weights or {})
+        self.month_index = int(month_index)
+        self.probes = nn.ModuleDict(
+            {
+                task: nn.Sequential(
+                    nn.Conv2d(embed_dim, hidden_dim, kernel_size=1),
+                    nn.ReLU(inplace=True),
+                    nn.Conv2d(hidden_dim, 1, kernel_size=1),
+                )
+                for task in self.tasks
+            }
+        )
+
+    @staticmethod
+    def _masked_mean(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        return (values * mask).sum() / mask.sum().clamp(min=1.0)
+
+    @staticmethod
+    def _dice_loss(logits: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        probs = torch.sigmoid(logits)
+        probs = probs * mask
+        target = target * mask
+        intersection = (probs * target).sum()
+        union = probs.sum() + target.sum()
+        return 1.0 - (2.0 * intersection + 1e-6) / (union + 1e-6)
+
+    def forward(
+        self,
+        embedding_map: torch.Tensor,
+        labels: dict[str, torch.Tensor] | None,
+        label_masks: dict[str, torch.Tensor] | None,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        zero = embedding_map.sum() * 0.0
+        if not self.tasks or labels is None:
+            return zero, {
+                "semantic_probe_positive_pixels": zero.detach(),
+                "semantic_probe_valid_pixels": zero.detach(),
+            }
+
+        emb = embedding_map[:, self.month_index]
+        total = zero
+        task_weight_sum = zero
+        total_positive = zero
+        total_valid = zero
+        stats: dict[str, torch.Tensor] = {}
+
+        for task in self.tasks:
+            if task not in labels or task not in self.probes:
+                continue
+            label = labels[task].to(device=emb.device, dtype=emb.dtype)
+            if label.dim() != 3:
+                raise ValueError(f"semantic label {task!r} 形状应为 [B,H,W]，实际为 {tuple(label.shape)}")
+            label = label[:, None]
+            if label.shape[-2:] != emb.shape[-2:]:
+                label = F.interpolate(label, size=emb.shape[-2:], mode="nearest")
+            label = (label > 0.5).to(dtype=emb.dtype)
+
+            sample_mask = None
+            if label_masks is not None and task in label_masks:
+                sample_mask = label_masks[task].to(device=emb.device, dtype=emb.dtype)
+            if sample_mask is None:
+                sample_mask = torch.ones((emb.shape[0],), device=emb.device, dtype=emb.dtype)
+            valid = sample_mask[:, None, None, None].expand_as(label)
+            if bool((valid.sum() <= 0).item()):
+                stats[f"semantic_probe_{task}_loss"] = zero.detach()
+                stats[f"semantic_probe_{task}_positive_pixels"] = zero.detach()
+                stats[f"semantic_probe_{task}_valid_pixels"] = zero.detach()
+                continue
+
+            logits = self.probes[task](emb)
+            pw = float(self.pos_weights.get(task, self.pos_weight))
+            bce_map = F.binary_cross_entropy_with_logits(
+                logits,
+                label,
+                pos_weight=torch.tensor(pw, device=emb.device, dtype=emb.dtype),
+                reduction="none",
+            )
+            bce = self._masked_mean(bce_map, valid)
+            dice = self._dice_loss(logits, label, valid)
+            task_loss = bce + dice
+            weight = torch.tensor(
+                float(self.task_weights.get(task, 1.0)),
+                device=emb.device,
+                dtype=emb.dtype,
+            )
+            total = total + weight * task_loss
+            task_weight_sum = task_weight_sum + weight
+            positive_pixels = (label * valid).sum()
+            valid_pixels = valid.sum()
+            total_positive = total_positive + positive_pixels
+            total_valid = total_valid + valid_pixels
+            stats[f"semantic_probe_{task}_loss"] = task_loss.detach()
+            stats[f"semantic_probe_{task}_positive_pixels"] = positive_pixels.detach()
+            stats[f"semantic_probe_{task}_valid_pixels"] = valid_pixels.detach()
+
+        loss = total / task_weight_sum.clamp(min=1.0)
+        stats["semantic_probe_positive_pixels"] = total_positive.detach()
+        stats["semantic_probe_valid_pixels"] = total_valid.detach()
+        return loss, stats
+
+
 class TotalLoss(nn.Module):
     """AEF 训练总损失：加权重建损失 + 表征正则项。"""
 
@@ -410,6 +534,14 @@ class TotalLoss(nn.Module):
         supervised_change_neg_weight: float = 1.0,
         supervised_change_hard_negative_ratio: float = 1.0,
         supervised_change_task_weights: dict[str, float] | None = None,
+        semantic_probe_embed_dim: int | None = None,
+        semantic_probe_weight: float = 0.0,
+        semantic_probe_warmup_epochs: int = 0,
+        semantic_probe_tasks: list[str] | tuple[str, ...] = (),
+        semantic_probe_task_weights: dict[str, float] | None = None,
+        semantic_probe_pos_weight: float = 1.0,
+        semantic_probe_pos_weights: dict[str, float] | None = None,
+        semantic_probe_hidden_dim: int = 64,
     ) -> None:
         """初始化。
 
@@ -450,6 +582,23 @@ class TotalLoss(nn.Module):
             supervised_change_hard_negative_ratio
         )
         self.supervised_change_task_weights = dict(supervised_change_task_weights or {})
+        self.semantic_probe_weight = float(semantic_probe_weight)
+        self.semantic_probe_warmup_epochs = int(semantic_probe_warmup_epochs)
+        self.semantic_probe_tasks = tuple(semantic_probe_tasks)
+        if self.semantic_probe_tasks and semantic_probe_embed_dim is None:
+            raise ValueError("semantic_probe_embed_dim is required when semantic_probe_tasks is not empty")
+        self.semantic_probe = (
+            SemanticProbeLoss(
+                embed_dim=int(semantic_probe_embed_dim or 1),
+                tasks=self.semantic_probe_tasks,
+                hidden_dim=int(semantic_probe_hidden_dim),
+                task_weights=semantic_probe_task_weights,
+                pos_weight=semantic_probe_pos_weight,
+                pos_weights=semantic_probe_pos_weights,
+            )
+            if self.semantic_probe_tasks
+            else None
+        )
         self.current_epoch = 0
 
     def set_epoch(self, epoch: int) -> None:
@@ -496,6 +645,17 @@ class TotalLoss(nn.Module):
             float(self.current_epoch + 1) / self.supervised_change_warmup_epochs,
         )
         return self.supervised_change_weight * progress
+
+    def _current_semantic_probe_weight(self) -> float:
+        if self.semantic_probe_weight == 0.0:
+            return 0.0
+        if self.semantic_probe_warmup_epochs <= 0:
+            return self.semantic_probe_weight
+        progress = min(
+            1.0,
+            float(self.current_epoch + 1) / self.semantic_probe_warmup_epochs,
+        )
+        return self.semantic_probe_weight * progress
 
     def forward(
         self,
@@ -572,12 +732,27 @@ class TotalLoss(nn.Module):
         )
         supervised_change_weight = self._current_supervised_change_weight()
         weighted_supervised_change = supervised_change * supervised_change_weight
+        if self.semantic_probe is None:
+            semantic_probe = output.embedding_map.sum() * 0.0
+            semantic_probe_stats = {
+                "semantic_probe_positive_pixels": semantic_probe.detach(),
+                "semantic_probe_valid_pixels": semantic_probe.detach(),
+            }
+        else:
+            semantic_probe, semantic_probe_stats = self.semantic_probe(
+                output.embedding_map,
+                supervised_labels,
+                supervised_label_masks,
+            )
+        semantic_probe_weight = self._current_semantic_probe_weight()
+        weighted_semantic_probe = semantic_probe * semantic_probe_weight
         total = (
             total_recon
             + weighted_uniformity
             + weighted_temporal_endpoint
             + weighted_temporal_contrast
             + weighted_supervised_change
+            + weighted_semantic_probe
         )
 
         result: dict[str, torch.Tensor] = {
@@ -622,9 +797,21 @@ class TotalLoss(nn.Module):
             "supervised_change_valid_negative_pixels": supervised_change_stats.get(
                 "valid_negative_pixels", supervised_change_stats["negative_pixels"]
             ),
+            "semantic_probe": semantic_probe,
+            "semantic_probe_weighted": weighted_semantic_probe,
+            "semantic_probe_weight": torch.tensor(
+                semantic_probe_weight,
+                device=output.embedding.device,
+                dtype=output.embedding.dtype,
+            ),
+            "semantic_probe_positive_pixels": semantic_probe_stats["semantic_probe_positive_pixels"],
+            "semantic_probe_valid_pixels": semantic_probe_stats["semantic_probe_valid_pixels"],
         }
         for name, value in supervised_change_stats.items():
             if name.startswith("supervised_change_"):
+                result[name] = value
+        for name, value in semantic_probe_stats.items():
+            if name.startswith("semantic_probe_"):
                 result[name] = value
         result.update(recon_losses)
         return result

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import logging
 import re
 import shutil
@@ -63,6 +64,7 @@ class Trainer:
         self.device = torch.device(device) if isinstance(device, str) else device
 
         self.model = self.model.to(self.device)
+        self.criterion = self.criterion.to(self.device)
 
         # DDP 包装：仅在分布式已初始化时进行；CPU 后端不传递 device_ids。
         if dist.is_initialized():
@@ -73,7 +75,7 @@ class Trainer:
             self.model = DDP(self.model, **ddp_kwargs)
 
         self.optimizer = build_optimizer(
-            self._unwrap_model(),
+            itertools.chain(self._unwrap_model().parameters(), self.criterion.parameters()),
             lr=cfg.training.lr,
             weight_decay=cfg.training.weight_decay,
         )
@@ -619,6 +621,7 @@ class Trainer:
                                 "best_val_loss": self.best_val_loss,
                                 "best_epoch": self.best_epoch,
                             },
+                            criterion=self.criterion,
                         )
 
                         # 更新 best.pt。
@@ -666,6 +669,7 @@ class Trainer:
                 "best_val_loss": self.best_val_loss,
                 "best_epoch": self.best_epoch,
             },
+            criterion=self.criterion,
         )
 
     def load(self, path: str | Path) -> dict[str, Any]:
@@ -676,6 +680,7 @@ class Trainer:
             self.optimizer,
             self.scheduler,
             device=self.device,
+            criterion=self.criterion,
         )
         self.epoch = state.get("epoch", 0) + 1
         trainer_state = state.get("trainer_state", {}) or {}

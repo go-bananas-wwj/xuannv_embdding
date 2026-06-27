@@ -274,6 +274,60 @@ training:
     assert cfg.training.supervised_change_task_weights == {"building_change": 1.5}
 
 
+def test_config_semantic_probe_defaults_and_overrides(tmp_path: Path) -> None:
+    """验证 semantic probe 配置字段可显式覆盖。"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+experiment:
+  name: semantic_probe_config_test
+data:
+  root: /data/xuannv_embedding/processed/base
+  region: base
+  manifest_path: /data/xuannv_embedding/processed/base/manifest.json
+  num_months: 2
+  months: [2025-12, 2026-01]
+  supervised_label_roots:
+    building_osm: /data/xuannv_embedding/processed/haidian/labels/building_osm
+model:
+  embed_dim: 64
+  num_months: 2
+  sensor_channels:
+    s2: 12
+  target_heads:
+    s2_recon:
+      loss_type: continuous
+      channels: 12
+training:
+  epochs: 1
+  lr: 1.0e-4
+  weight_decay: 0.05
+  warmup_epochs: 0
+  gradient_accumulation_steps: 1
+  save_every: 1
+  eval_every: 1
+  semantic_probe_weight: 0.08
+  semantic_probe_warmup_epochs: 4
+  semantic_probe_tasks: [building_osm, road_osm]
+  semantic_probe_task_weights:
+    building_osm: 1.5
+  semantic_probe_pos_weight: 3.0
+  semantic_probe_pos_weights:
+    road_osm: 4.0
+""",
+        encoding="utf-8",
+    )
+
+    cfg = Config.from_yaml(config_path)
+
+    assert cfg.training.semantic_probe_weight == 0.08
+    assert cfg.training.semantic_probe_warmup_epochs == 4
+    assert cfg.training.semantic_probe_tasks == ["building_osm", "road_osm"]
+    assert cfg.training.semantic_probe_task_weights == {"building_osm": 1.5}
+    assert cfg.training.semantic_probe_pos_weight == 3.0
+    assert cfg.training.semantic_probe_pos_weights == {"road_osm": 4.0}
+
+
 def test_config_model_ref_conflict_with_data_first_month(tmp_path: Path) -> None:
     """显式配置的模型参考月与数据首月冲突时应报错。"""
     config_path = tmp_path / "config.yaml"
@@ -473,6 +527,56 @@ def test_total_loss() -> None:
     # recon 应为加权求和。
     expected_recon = 1.0 * losses["recon_s2_recon"] + 0.5 * losses["recon_worldcover"]
     assert torch.allclose(losses["recon"], expected_recon)
+
+
+def test_total_loss_with_semantic_probe() -> None:
+    """semantic probe 应增加总损失，并向 embedding/probe 参数反传梯度。"""
+    batch_size, num_months, embed_dim, height, width = 2, 2, 8, 4, 4
+    embedding_map = torch.randn(
+        batch_size, num_months, embed_dim, height, width, requires_grad=True
+    )
+    output = AEFOutput(
+        embedding_map=embedding_map,
+        embedding=embedding_map.mean(dim=[3, 4]),
+        reconstructions={
+            "s2_recon": torch.randn(batch_size, num_months, 3, height, width),
+        },
+    )
+    targets = {
+        "s2_recon": torch.randn(batch_size, num_months, 3, height, width),
+    }
+    masks = {
+        "s2_recon": torch.ones(batch_size, num_months, height, width),
+    }
+    supervised_labels = {
+        "building_osm": torch.zeros(batch_size, height, width),
+    }
+    supervised_labels["building_osm"][:, 1:3, 1:3] = 1.0
+    supervised_label_masks = {"building_osm": torch.ones(batch_size)}
+
+    criterion = TotalLoss(
+        {"s2_recon": {"loss_type": "l1", "channels": 3, "weight": 1.0}},
+        uniformity_weight=0.0,
+        semantic_probe_embed_dim=embed_dim,
+        semantic_probe_weight=0.2,
+        semantic_probe_tasks=["building_osm"],
+        semantic_probe_pos_weight=2.0,
+    )
+    losses = criterion(output, targets, masks, supervised_labels, supervised_label_masks)
+
+    assert losses["semantic_probe"].item() > 0.0
+    assert losses["semantic_probe_weight"].item() == pytest.approx(0.2)
+    assert losses["semantic_probe_positive_pixels"].item() == pytest.approx(8.0)
+    assert torch.allclose(
+        losses["total"],
+        losses["recon"] + losses["semantic_probe_weighted"],
+        atol=1e-5,
+    )
+
+    losses["total"].backward()
+    assert embedding_map.grad is not None
+    probe_param = next(criterion.semantic_probe.parameters())
+    assert probe_param.grad is not None
 
 
 def test_reconstruction_loss_temporal() -> None:
