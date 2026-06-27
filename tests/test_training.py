@@ -20,6 +20,7 @@ from xuannv_embedding.training.losses import (
     TotalLoss,
     batch_uniformity_loss,
     reconstruction_loss,
+    supervised_change_alignment_loss,
     temporal_change_aware_contrast_loss,
     temporal_endpoint_separation_loss,
 )
@@ -208,6 +209,59 @@ training:
     assert cfg.training.temporal_contrast_change_z == 0.8
     assert cfg.training.temporal_contrast_stable_z == -0.3
     assert cfg.training.temporal_contrast_sources == ["s2_recon"]
+
+
+def test_config_supervised_change_defaults_and_overrides(tmp_path: Path) -> None:
+    """验证监督式变化对齐配置字段和 label root 映射。"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+experiment:
+  name: supervised_change_config_test
+data:
+  root: /data/xuannv_embedding/processed/base
+  region: base
+  manifest_path: /data/xuannv_embedding/processed/base/manifest.json
+  num_months: 2
+  months: [2025-12, 2026-01]
+  supervised_label_roots:
+    building_change: /data/xuannv_embedding/processed/harbin/labels/building_change
+model:
+  embed_dim: 64
+  num_months: 2
+  sensor_channels:
+    s2: 12
+  target_heads:
+    s2_recon:
+      loss_type: continuous
+      channels: 12
+training:
+  epochs: 1
+  lr: 1.0e-4
+  weight_decay: 0.05
+  warmup_epochs: 0
+  gradient_accumulation_steps: 1
+  save_every: 1
+  eval_every: 1
+  supervised_change_weight: 0.2
+  supervised_change_warmup_epochs: 3
+  supervised_change_pos_margin: 0.4
+  supervised_change_neg_margin: 0.02
+  supervised_change_tasks: [building_change]
+""",
+        encoding="utf-8",
+    )
+
+    cfg = Config.from_yaml(config_path)
+
+    assert cfg.data.supervised_label_roots["building_change"] == Path(
+        "/data/xuannv_embedding/processed/harbin/labels/building_change"
+    )
+    assert cfg.training.supervised_change_weight == 0.2
+    assert cfg.training.supervised_change_warmup_epochs == 3
+    assert cfg.training.supervised_change_pos_margin == 0.4
+    assert cfg.training.supervised_change_neg_margin == 0.02
+    assert cfg.training.supervised_change_tasks == ["building_change"]
 
 
 def test_config_model_ref_conflict_with_data_first_month(tmp_path: Path) -> None:
@@ -441,6 +495,33 @@ def test_temporal_change_aware_contrast_loss() -> None:
     assert loss > 0
     assert stats["change_pixels"].item() == 1
     assert stats["stable_pixels"].item() == 3
+
+
+def test_supervised_change_alignment_loss() -> None:
+    """标注正区距离不足、负区距离过大时应产生监督式对齐损失。"""
+    embedding_map = torch.zeros(1, 2, 2, 2, 2)
+    embedding_map[:, 0, 0] = 1.0
+    embedding_map[:, 1, 0] = 1.0
+    # 让一个背景像素前后相反，触发 negative loss。
+    embedding_map[:, 1, :, 0, 0] = torch.tensor([-1.0, 0.0])
+    labels = {"building_change": torch.zeros(1, 2, 2)}
+    labels["building_change"][:, 1, 1] = 1.0
+    label_masks = {"building_change": torch.ones(1)}
+
+    loss, stats = supervised_change_alignment_loss(
+        embedding_map,
+        labels,
+        label_masks,
+        tasks=["building_change"],
+        pos_margin=0.3,
+        neg_margin=0.05,
+    )
+
+    assert loss > 0
+    assert stats["positive_pixels"].item() == 1
+    assert stats["negative_pixels"].item() == 3
+    assert stats["positive"] > 0
+    assert stats["negative"] > 0
 
 
 def test_checkpoint_save_load() -> None:

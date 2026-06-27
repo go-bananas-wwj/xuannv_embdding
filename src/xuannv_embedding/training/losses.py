@@ -244,6 +244,81 @@ def temporal_change_aware_contrast_loss(
     return loss, stats
 
 
+def supervised_change_alignment_loss(
+    embedding_map: torch.Tensor,
+    labels: dict[str, torch.Tensor] | None,
+    label_masks: dict[str, torch.Tensor] | None,
+    tasks: list[str] | tuple[str, ...] = (),
+    pos_margin: float = 0.35,
+    neg_margin: float = 0.05,
+    eps: float = 1e-8,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Align endpoint embedding distance with sparse downstream label masks.
+
+    Positive label pixels should have a larger before/after embedding distance.
+    Valid background pixels should remain close. Missing labels are ignored.
+    """
+    zero = torch.tensor(0.0, device=embedding_map.device, dtype=embedding_map.dtype)
+    if embedding_map.dim() != 5 or embedding_map.shape[1] < 2 or not labels:
+        return zero, {
+            "positive": zero,
+            "negative": zero,
+            "positive_pixels": zero,
+            "negative_pixels": zero,
+        }
+
+    first = F.normalize(embedding_map[:, 0], p=2, dim=1)
+    last = F.normalize(embedding_map[:, -1], p=2, dim=1)
+    distance = 1.0 - (first * last).sum(dim=1)
+    height, width = distance.shape[-2:]
+
+    task_names = tuple(tasks) if tasks else tuple(labels.keys())
+    pos_sum = zero
+    neg_sum = zero
+    pos_count = zero
+    neg_count = zero
+    label_masks = label_masks or {}
+
+    for task in task_names:
+        label = labels.get(task)
+        if label is None:
+            continue
+        label = label.to(device=embedding_map.device, dtype=embedding_map.dtype)
+        if label.dim() == 3:
+            label = label.unsqueeze(1)
+        if label.shape[-2:] != (height, width):
+            label = F.interpolate(label, size=(height, width), mode="nearest")
+        label = label.squeeze(1)
+
+        avail = label_masks.get(task)
+        if avail is None:
+            valid = torch.ones_like(label, dtype=torch.bool)
+        else:
+            avail = avail.to(device=embedding_map.device, dtype=embedding_map.dtype)
+            valid = avail.reshape(-1, 1, 1) > 0
+            valid = valid.expand_as(label)
+
+        positive = valid & (label > 0.5)
+        negative = valid & (label <= 0.5)
+        pos_loss_map = F.relu(float(pos_margin) - distance)
+        neg_loss_map = F.relu(distance - float(neg_margin))
+        pos_sum = pos_sum + (pos_loss_map * positive.float()).sum()
+        neg_sum = neg_sum + (neg_loss_map * negative.float()).sum()
+        pos_count = pos_count + positive.float().sum()
+        neg_count = neg_count + negative.float().sum()
+
+    positive_loss = pos_sum / pos_count.clamp(min=eps)
+    negative_loss = neg_sum / neg_count.clamp(min=eps)
+    loss = positive_loss + negative_loss
+    stats = {
+        "positive": positive_loss,
+        "negative": negative_loss,
+        "positive_pixels": pos_count,
+        "negative_pixels": neg_count,
+    }
+    return loss, stats
+
+
 class TotalLoss(nn.Module):
     """AEF 训练总损失：加权重建损失 + 表征正则项。"""
 
@@ -266,6 +341,11 @@ class TotalLoss(nn.Module):
             "s1_recon",
             "landsat_recon",
         ),
+        supervised_change_weight: float = 0.0,
+        supervised_change_warmup_epochs: int = 0,
+        supervised_change_pos_margin: float = 0.35,
+        supervised_change_neg_margin: float = 0.05,
+        supervised_change_tasks: list[str] | tuple[str, ...] = (),
     ) -> None:
         """初始化。
 
@@ -295,6 +375,11 @@ class TotalLoss(nn.Module):
         self.temporal_contrast_change_z = float(temporal_contrast_change_z)
         self.temporal_contrast_stable_z = float(temporal_contrast_stable_z)
         self.temporal_contrast_sources = tuple(temporal_contrast_sources)
+        self.supervised_change_weight = float(supervised_change_weight)
+        self.supervised_change_warmup_epochs = int(supervised_change_warmup_epochs)
+        self.supervised_change_pos_margin = float(supervised_change_pos_margin)
+        self.supervised_change_neg_margin = float(supervised_change_neg_margin)
+        self.supervised_change_tasks = tuple(supervised_change_tasks)
         self.current_epoch = 0
 
     def set_epoch(self, epoch: int) -> None:
@@ -331,11 +416,24 @@ class TotalLoss(nn.Module):
         )
         return self.temporal_contrast_weight * progress
 
+    def _current_supervised_change_weight(self) -> float:
+        if self.supervised_change_weight == 0.0:
+            return 0.0
+        if self.supervised_change_warmup_epochs <= 0:
+            return self.supervised_change_weight
+        progress = min(
+            1.0,
+            float(self.current_epoch + 1) / self.supervised_change_warmup_epochs,
+        )
+        return self.supervised_change_weight * progress
+
     def forward(
         self,
         output,
         targets: dict[str, torch.Tensor],
         masks: dict[str, torch.Tensor],
+        supervised_labels: dict[str, torch.Tensor] | None = None,
+        supervised_label_masks: dict[str, torch.Tensor] | None = None,
     ) -> dict[str, torch.Tensor]:
         """计算总损失。
 
@@ -390,11 +488,22 @@ class TotalLoss(nn.Module):
         )
         temporal_contrast_weight = self._current_temporal_contrast_weight()
         weighted_temporal_contrast = temporal_contrast * temporal_contrast_weight
+        supervised_change, supervised_change_stats = supervised_change_alignment_loss(
+            output.embedding_map,
+            supervised_labels,
+            supervised_label_masks,
+            tasks=self.supervised_change_tasks,
+            pos_margin=self.supervised_change_pos_margin,
+            neg_margin=self.supervised_change_neg_margin,
+        )
+        supervised_change_weight = self._current_supervised_change_weight()
+        weighted_supervised_change = supervised_change * supervised_change_weight
         total = (
             total_recon
             + weighted_uniformity
             + weighted_temporal_endpoint
             + weighted_temporal_contrast
+            + weighted_supervised_change
         )
 
         result: dict[str, torch.Tensor] = {
@@ -425,6 +534,17 @@ class TotalLoss(nn.Module):
             ),
             "temporal_contrast_stable_pixels": temporal_contrast_stats["stable_pixels"],
             "temporal_contrast_change_pixels": temporal_contrast_stats["change_pixels"],
+            "supervised_change": supervised_change,
+            "supervised_change_positive": supervised_change_stats["positive"],
+            "supervised_change_negative": supervised_change_stats["negative"],
+            "supervised_change_weighted": weighted_supervised_change,
+            "supervised_change_weight": torch.tensor(
+                supervised_change_weight,
+                device=output.embedding.device,
+                dtype=output.embedding.dtype,
+            ),
+            "supervised_change_positive_pixels": supervised_change_stats["positive_pixels"],
+            "supervised_change_negative_pixels": supervised_change_stats["negative_pixels"],
         }
         result.update(recon_losses)
         return result

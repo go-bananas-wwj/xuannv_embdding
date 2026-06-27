@@ -164,6 +164,7 @@ def _build_loader(
         ref_year=cfg.model.ref_year,
         ref_month=cfg.model.ref_month,
         statistics_dirs_by_region=cfg.data.statistics_dirs_by_region,
+        supervised_label_roots=cfg.data.supervised_label_roots,
     )
 
     sampler = None
@@ -288,6 +289,11 @@ def main() -> None:
         temporal_contrast_change_z=cfg.training.temporal_contrast_change_z,
         temporal_contrast_stable_z=cfg.training.temporal_contrast_stable_z,
         temporal_contrast_sources=cfg.training.temporal_contrast_sources,
+        supervised_change_weight=cfg.training.supervised_change_weight,
+        supervised_change_warmup_epochs=cfg.training.supervised_change_warmup_epochs,
+        supervised_change_pos_margin=cfg.training.supervised_change_pos_margin,
+        supervised_change_neg_margin=cfg.training.supervised_change_neg_margin,
+        supervised_change_tasks=cfg.training.supervised_change_tasks,
     )
 
     train_loader = _build_loader(

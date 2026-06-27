@@ -3,6 +3,7 @@ from __future__ import annotations
 # 月度地理嵌入 Dataset 实现
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from xuannv_embedding.data.transforms import (
 )
 
 logger = logging.getLogger(__name__)
+_MONTH_SUFFIX_RE = re.compile(r"^(?P<patch>.+)_(?P<month>\d{6})$")
 
 
 class MonthlyEmbeddingDataset(Dataset):
@@ -37,6 +39,7 @@ class MonthlyEmbeddingDataset(Dataset):
         ref_year: int = 2025,
         ref_month: int = 1,
         statistics_dirs_by_region: dict[str, Path] | None = None,
+        supervised_label_roots: dict[str, Path] | None = None,
         region_filter: str | None = None,
     ) -> None:
         """初始化 Dataset。
@@ -63,6 +66,9 @@ class MonthlyEmbeddingDataset(Dataset):
         self.statistics_dirs_by_region = {
             region: Path(path)
             for region, path in (statistics_dirs_by_region or {}).items()
+        }
+        self.supervised_label_roots = {
+            task: Path(path) for task, path in (supervised_label_roots or {}).items()
         }
         self.region_filter = region_filter
 
@@ -186,6 +192,35 @@ class MonthlyEmbeddingDataset(Dataset):
             self.source_channels[source] = inferred_channels
             self.source_hw[source] = inferred_hw or (self.patch_size, self.patch_size)
 
+    @staticmethod
+    def _valid_yyyymm(value: str) -> bool:
+        try:
+            year = int(value[:4])
+            month = int(value[4:])
+        except ValueError:
+            return False
+        return 1900 <= year <= 2100 and 1 <= month <= 12
+
+    @classmethod
+    def _resolve_label_mask_path(cls, label_root: Path, patch_ids: list[str]) -> Path | None:
+        mask_dir = label_root / "masks"
+        for patch_id in patch_ids:
+            exact = mask_dir / f"{patch_id}.tif"
+            if exact.exists():
+                return exact
+            candidates = sorted(mask_dir.glob(f"{patch_id}_*.tif"))
+            if not candidates:
+                continue
+
+            def _month(path: Path) -> int:
+                match = _MONTH_SUFFIX_RE.match(path.stem)
+                if match is None or not cls._valid_yyyymm(match.group("month")):
+                    return -1
+                return int(match.group("month"))
+
+            return max(candidates, key=_month)
+        return None
+
     def __len__(self) -> int:
         return len(self.manifest)
 
@@ -205,6 +240,8 @@ class MonthlyEmbeddingDataset(Dataset):
             "source_frames": {},
             "source_masks": {},
             "timestamps": {},
+            "supervised_labels": {},
+            "supervised_label_masks": {},
         }
 
         month_timestamps = torch.tensor(self.month_bins, dtype=torch.long)
@@ -301,5 +338,25 @@ class MonthlyEmbeddingDataset(Dataset):
             sample["source_frames"][source] = binned_frames
             sample["source_masks"][source] = binned_masks
             sample["timestamps"][source] = month_timestamps
+
+        for task, label_root in self.supervised_label_roots.items():
+            source_patch_id = entry.get("source_patch_id", patch_id)
+            label_patch_ids = [patch_id]
+            if region is not None and str(region) in label_root.parts:
+                label_patch_ids.append(source_patch_id)
+            label_patch_ids = list(dict.fromkeys(label_patch_ids))
+            mask_path = self._resolve_label_mask_path(label_root, label_patch_ids)
+            if mask_path is None:
+                sample["supervised_labels"][task] = torch.zeros(
+                    self.patch_size, self.patch_size, dtype=torch.float32
+                )
+                sample["supervised_label_masks"][task] = torch.tensor(0.0, dtype=torch.float32)
+                continue
+            mask = load_tiff(mask_path)
+            mask = mask[0].astype(np.float32, copy=False)
+            mask = np.nan_to_num(mask, nan=0.0, posinf=0.0, neginf=0.0)
+            mask_tensor = torch.from_numpy((mask > 0).astype(np.float32))
+            sample["supervised_labels"][task] = mask_tensor
+            sample["supervised_label_masks"][task] = torch.tensor(1.0, dtype=torch.float32)
 
         return sample
