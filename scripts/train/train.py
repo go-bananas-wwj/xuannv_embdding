@@ -333,6 +333,7 @@ def main() -> None:
         semantic_probe_task_weights=cfg.training.semantic_probe_task_weights,
         semantic_probe_pos_weight=cfg.training.semantic_probe_pos_weight,
         semantic_probe_pos_weights=cfg.training.semantic_probe_pos_weights,
+        semantic_probe_hidden_dim=cfg.training.semantic_probe_hidden_dim,
     )
 
     train_loader = _build_loader(
