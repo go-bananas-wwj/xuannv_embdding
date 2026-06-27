@@ -117,6 +117,7 @@ def load_embedding(
             / region
             / f"{source_region}_{source_patch}"
             / f"{month}_embedding_map.pt",
+            embedding_root / source_region / patch_id / f"{month}_embedding_map.pt",
             embedding_root / source_region / source_patch / f"{month}_embedding_map.pt",
         ]
     )
