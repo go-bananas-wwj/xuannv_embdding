@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 
 from torch import nn
 from torch.optim import AdamW, Optimizer
@@ -9,7 +10,7 @@ from torch.optim.lr_scheduler import LambdaLR
 # optimizer 与带 warmup 的 cosine annealing scheduler 工厂函数。
 
 
-def build_optimizer(model: nn.Module, lr: float, weight_decay: float) -> Optimizer:
+def build_optimizer(model: nn.Module | Iterable, lr: float, weight_decay: float) -> Optimizer:
     """构造 AdamW 优化器。
 
     参数:
@@ -20,7 +21,11 @@ def build_optimizer(model: nn.Module, lr: float, weight_decay: float) -> Optimiz
     返回:
         配置好的 ``AdamW`` 优化器实例。
     """
-    return AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    if isinstance(model, nn.Module):
+        parameters = model.parameters()
+    else:
+        parameters = model
+    return AdamW(parameters, lr=lr, weight_decay=weight_decay)
 
 
 def build_scheduler(

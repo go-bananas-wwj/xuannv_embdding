@@ -326,6 +326,13 @@ def main() -> None:
             cfg.training.supervised_change_hard_negative_ratio
         ),
         supervised_change_task_weights=cfg.training.supervised_change_task_weights,
+        semantic_probe_embed_dim=cfg.model.embed_dim,
+        semantic_probe_weight=cfg.training.semantic_probe_weight,
+        semantic_probe_warmup_epochs=cfg.training.semantic_probe_warmup_epochs,
+        semantic_probe_tasks=cfg.training.semantic_probe_tasks,
+        semantic_probe_task_weights=cfg.training.semantic_probe_task_weights,
+        semantic_probe_pos_weight=cfg.training.semantic_probe_pos_weight,
+        semantic_probe_pos_weights=cfg.training.semantic_probe_pos_weights,
     )
 
     train_loader = _build_loader(

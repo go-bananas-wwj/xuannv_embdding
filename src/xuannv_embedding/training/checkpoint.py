@@ -19,6 +19,7 @@ def save_checkpoint(
     epoch: int,
     metrics: dict[str, Any],
     trainer_state: dict[str, Any] | None = None,
+    criterion: nn.Module | None = None,
 ) -> None:
     """保存训练状态到 checkpoint 文件。
 
@@ -42,6 +43,8 @@ def save_checkpoint(
         "metrics": metrics,
         "trainer_state": trainer_state if trainer_state is not None else {},
     }
+    if criterion is not None:
+        state["criterion"] = criterion.state_dict()
     torch.save(state, path)
 
 
@@ -51,6 +54,7 @@ def load_checkpoint(
     optimizer: Optimizer | None = None,
     scheduler: _LRScheduler | None = None,
     device: str | torch.device = "cpu",
+    criterion: nn.Module | None = None,
 ) -> dict[str, Any]:
     """从 checkpoint 文件恢复训练状态。
 
@@ -76,5 +80,8 @@ def load_checkpoint(
 
     if scheduler is not None and state.get("scheduler") is not None:
         scheduler.load_state_dict(state["scheduler"])
+
+    if criterion is not None and state.get("criterion") is not None:
+        criterion.load_state_dict(state["criterion"])
 
     return state

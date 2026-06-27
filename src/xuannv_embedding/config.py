@@ -97,6 +97,12 @@ class TrainingConfig:
     supervised_change_neg_weight: float = 1.0
     supervised_change_hard_negative_ratio: float = 1.0
     supervised_change_task_weights: dict[str, float] = field(default_factory=dict)
+    semantic_probe_weight: float = 0.0
+    semantic_probe_warmup_epochs: int = 0
+    semantic_probe_tasks: list[str] = field(default_factory=list)
+    semantic_probe_task_weights: dict[str, float] = field(default_factory=dict)
+    semantic_probe_pos_weight: float = 1.0
+    semantic_probe_pos_weights: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -320,6 +326,16 @@ class Config:
                 supervised_change_task_weights=training_cfg.get(
                     "supervised_change_task_weights", {}
                 ),
+                semantic_probe_weight=training_cfg.get("semantic_probe_weight", 0.0),
+                semantic_probe_warmup_epochs=training_cfg.get(
+                    "semantic_probe_warmup_epochs", 0
+                ),
+                semantic_probe_tasks=training_cfg.get("semantic_probe_tasks", []),
+                semantic_probe_task_weights=training_cfg.get(
+                    "semantic_probe_task_weights", {}
+                ),
+                semantic_probe_pos_weight=training_cfg.get("semantic_probe_pos_weight", 1.0),
+                semantic_probe_pos_weights=training_cfg.get("semantic_probe_pos_weights", {}),
             ),
         )
 
