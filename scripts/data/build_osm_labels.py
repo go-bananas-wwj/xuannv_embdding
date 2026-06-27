@@ -120,6 +120,28 @@ def load_aoi_polygon(path: Path) -> Polygon:
     return polygon
 
 
+
+
+def sanitize_osm_attributes(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Keep a small, stable schema that GeoPackage can write reliably."""
+    if gdf.empty:
+        return gdf
+    keep = [
+        col
+        for col in ("osmid", "building", "highway", "name", "geometry")
+        if col in gdf.columns
+    ]
+    out = gdf[keep].copy()
+    for col in out.columns:
+        if col == "geometry":
+            continue
+        out[col] = out[col].map(
+            lambda value: ",".join(map(str, value))
+            if isinstance(value, list)
+            else (None if value is None else str(value))
+        )
+    return out
+
 def tags_for_task(task: str) -> dict[str, Any]:
     if task == "building_osm":
         return {"building": True}
@@ -149,6 +171,7 @@ def read_or_download_osm(
         gdf = gdf.set_geometry("geometry")
         if gdf.crs is None:
             gdf = gdf.set_crs("EPSG:4326")
+        gdf = sanitize_osm_attributes(gdf)
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     gdf.to_file(cache_path, driver="GPKG")
