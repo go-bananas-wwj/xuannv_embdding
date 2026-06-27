@@ -99,6 +99,50 @@ def load_prediction(pred_path: Path) -> np.ndarray:
         return src.read(1)
 
 
+def load_gt_mask(
+    processed_root: Path,
+    task: str,
+    patch_id: str,
+    preferred_month: str,
+) -> tuple[np.ndarray | None, str | None, int]:
+    if task == "construction_joint":
+        mask_dir = processed_root / "construction_joint_v2" / "masks"
+        candidate_ids = [patch_id]
+    else:
+        region, source_patch = resolve_region_patch(task, patch_id)
+        mask_dir = processed_root / region / "labels" / task / "masks"
+        candidate_ids = [source_patch, patch_id]
+
+    candidates: list[Path] = []
+    for candidate_id in dict.fromkeys(candidate_ids):
+        candidates.extend(mask_dir.glob(f"{candidate_id}.tif"))
+        candidates.extend(mask_dir.glob(f"{candidate_id}_*.tif"))
+    candidates = sorted(set(candidates))
+    if not candidates:
+        return None, None, 0
+
+    preferred = [path for path in candidates if preferred_month in path.stem]
+    search_order = preferred + [path for path in candidates if path not in preferred]
+
+    best_mask: np.ndarray | None = None
+    best_path: Path | None = None
+    best_positive = -1
+    for path in search_order:
+        with rasterio.open(path) as src:
+            mask = (src.read(1) > 0).astype(np.float32)
+        positives = int(mask.sum())
+        if path in preferred and positives > 0:
+            return mask, str(path), positives
+        if positives > best_positive:
+            best_mask = mask
+            best_path = path
+            best_positive = positives
+
+    if best_mask is None or best_path is None:
+        return None, None, 0
+    return best_mask, str(best_path), max(best_positive, 0)
+
+
 def load_embedding(
     embedding_root: Path,
     task: str,
@@ -212,6 +256,12 @@ def make_visual(
     after_pca = embedding_pca(after_emb)
     delta = embedding_delta(before_emb, after_emb)
     pred = stretch(load_prediction(pred_path), lower=0.0, upper=100.0)
+    gt_mask, gt_path, gt_positive_pixels = load_gt_mask(
+        processed_root,
+        task,
+        patch_id,
+        after_month,
+    )
 
     panels = [
         (before_hr, f"High-res {before_month}", None),
@@ -220,6 +270,7 @@ def make_visual(
         (after_pca, f"Embedding PCA {after_month}", None),
         (delta, "PDA / Delta Emb PCA", None),
         (pred, "Prediction Prob", "viridis"),
+        (gt_mask, "GT / True Label", "Reds"),
     ]
     fig, axes = plt.subplots(1, len(panels), figsize=(3.0 * len(panels), 3.3))
     for ax, (image, title, cmap) in zip(axes, panels, strict=True):
@@ -238,11 +289,14 @@ def make_visual(
         "source_patch_id": source_patch,
         "prediction": str(pred_path),
         "figure": str(out_path),
+        "gt_mask": gt_path,
+        "gt_positive_pixels": gt_positive_pixels,
         "missing": {
             "before_highres": before_hr is None,
             "after_highres": after_hr is None,
             "before_embedding": before_emb is None,
             "after_embedding": after_emb is None,
+            "gt_mask": gt_mask is None,
         },
     }
 
@@ -258,6 +312,8 @@ def write_index(records: list[dict[str, Any]], output_root: Path) -> None:
                 f"- source_region: `{record['source_region']}`",
                 f"- source_patch_id: `{record['source_patch_id']}`",
                 f"- prediction: `{record['prediction']}`",
+                f"- gt_mask: `{record['gt_mask']}`",
+                f"- gt_positive_pixels: `{record['gt_positive_pixels']}`",
                 f"- missing: `{record['missing']}`",
                 "",
                 f"![{fig.name}]({fig.relative_to(output_root)})",
