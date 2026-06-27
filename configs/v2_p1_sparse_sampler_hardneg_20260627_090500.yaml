@@ -2,7 +2,7 @@ experiment:
   name: v2_p1_sparse_sampler_hardneg_20260627_090500
   seed: 42
   output_dir: /data/xuannv_embedding/outputs/v2_p1_sparse_sampler_hardneg_20260627_090500
-  use_wandb: true
+  use_wandb: false
   wandb_project: xuannv-embedding-v2
   wandb_run_name: v2_p1_sparse_sampler_hardneg_20260627_090500_bs6
 model:
