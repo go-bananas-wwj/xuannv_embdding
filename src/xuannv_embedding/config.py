@@ -104,6 +104,8 @@ class TrainingConfig:
     semantic_probe_pos_weight: float = 1.0
     semantic_probe_pos_weights: dict[str, float] = field(default_factory=dict)
     semantic_probe_hidden_dim: int = 64
+    semantic_probe_hard_negative_ratio: float = 0.0
+    semantic_probe_hard_negative_weight: float = 0.0
 
 
 @dataclass
@@ -339,6 +341,12 @@ class Config:
                 semantic_probe_pos_weights=training_cfg.get("semantic_probe_pos_weights", {}),
                 semantic_probe_hidden_dim=training_cfg.get(
                     "semantic_probe_hidden_dim", 64
+                ),
+                semantic_probe_hard_negative_ratio=training_cfg.get(
+                    "semantic_probe_hard_negative_ratio", 0.0
+                ),
+                semantic_probe_hard_negative_weight=training_cfg.get(
+                    "semantic_probe_hard_negative_weight", 0.0
                 ),
             ),
         )

@@ -315,6 +315,8 @@ training:
   semantic_probe_pos_weights:
     road_osm: 4.0
   semantic_probe_hidden_dim: 0
+  semantic_probe_hard_negative_ratio: 0.05
+  semantic_probe_hard_negative_weight: 0.5
 """,
         encoding="utf-8",
     )
@@ -328,6 +330,8 @@ training:
     assert cfg.training.semantic_probe_pos_weight == 3.0
     assert cfg.training.semantic_probe_pos_weights == {"road_osm": 4.0}
     assert cfg.training.semantic_probe_hidden_dim == 0
+    assert cfg.training.semantic_probe_hard_negative_ratio == 0.05
+    assert cfg.training.semantic_probe_hard_negative_weight == 0.5
 
 
 def test_config_model_ref_conflict_with_data_first_month(tmp_path: Path) -> None:
@@ -594,6 +598,46 @@ def test_total_loss_with_linear_semantic_probe() -> None:
 
     assert criterion.semantic_probe is not None
     assert isinstance(criterion.semantic_probe.probes["building_osm"], nn.Conv2d)
+
+
+def test_total_loss_with_semantic_probe_hard_negatives() -> None:
+    """semantic hard negatives 应增加语义损失并记录统计量。"""
+    batch_size, num_months, embed_dim, height, width = 1, 2, 4, 4, 4
+    embedding_map = torch.randn(
+        batch_size, num_months, embed_dim, height, width, requires_grad=True
+    )
+    output = AEFOutput(
+        embedding_map=embedding_map,
+        embedding=embedding_map.mean(dim=[3, 4]),
+        reconstructions={
+            "s2_recon": torch.randn(batch_size, num_months, 3, height, width),
+        },
+    )
+    targets = {
+        "s2_recon": torch.randn(batch_size, num_months, 3, height, width),
+    }
+    masks = {
+        "s2_recon": torch.ones(batch_size, num_months, height, width),
+    }
+    supervised_labels = {"building_osm": torch.zeros(batch_size, height, width)}
+    supervised_labels["building_osm"][:, :2, :2] = 1.0
+    supervised_label_masks = {"building_osm": torch.ones(batch_size)}
+
+    criterion = TotalLoss(
+        {"s2_recon": {"loss_type": "l1", "channels": 3, "weight": 1.0}},
+        uniformity_weight=0.0,
+        semantic_probe_embed_dim=embed_dim,
+        semantic_probe_weight=0.2,
+        semantic_probe_tasks=["building_osm"],
+        semantic_probe_hard_negative_ratio=0.25,
+        semantic_probe_hard_negative_weight=0.5,
+    )
+    losses = criterion(output, targets, masks, supervised_labels, supervised_label_masks)
+
+    assert losses["semantic_probe_building_osm_hard_negative"].item() > 0.0
+    assert losses["semantic_probe"].item() > losses[
+        "semantic_probe_building_osm_hard_negative"
+    ].item() * 0.5
 
 
 def test_reconstruction_loss_temporal() -> None:
