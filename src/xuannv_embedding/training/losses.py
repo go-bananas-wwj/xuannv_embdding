@@ -398,6 +398,8 @@ class SemanticProbeLoss(nn.Module):
         pos_weight: float = 1.0,
         pos_weights: dict[str, float] | None = None,
         month_index: int = -1,
+        hard_negative_ratio: float = 0.0,
+        hard_negative_weight: float = 0.0,
     ) -> None:
         super().__init__()
         self.tasks = tuple(tasks)
@@ -405,6 +407,8 @@ class SemanticProbeLoss(nn.Module):
         self.pos_weight = float(pos_weight)
         self.pos_weights = dict(pos_weights or {})
         self.month_index = int(month_index)
+        self.hard_negative_ratio = max(0.0, float(hard_negative_ratio))
+        self.hard_negative_weight = max(0.0, float(hard_negative_weight))
         hidden_dim = int(hidden_dim)
         modules: dict[str, nn.Module] = {}
         for task in self.tasks:
@@ -430,6 +434,22 @@ class SemanticProbeLoss(nn.Module):
         intersection = (probs * target).sum()
         union = probs.sum() + target.sum()
         return 1.0 - (2.0 * intersection + 1e-6) / (union + 1e-6)
+
+    def _hard_negative_loss(
+        self,
+        bce_map: torch.Tensor,
+        target: torch.Tensor,
+        mask: torch.Tensor,
+    ) -> torch.Tensor:
+        if self.hard_negative_ratio <= 0.0 or self.hard_negative_weight <= 0.0:
+            return bce_map.sum() * 0.0
+        negative_mask = (target < 0.5) & (mask > 0.0)
+        values = bce_map[negative_mask]
+        if values.numel() == 0:
+            return bce_map.sum() * 0.0
+        k = max(1, int(values.numel() * self.hard_negative_ratio))
+        k = min(k, values.numel())
+        return values.topk(k).values.mean()
 
     def forward(
         self,
@@ -484,7 +504,8 @@ class SemanticProbeLoss(nn.Module):
             )
             bce = self._masked_mean(bce_map, valid)
             dice = self._dice_loss(logits, label, valid)
-            task_loss = bce + dice
+            hard_negative = self._hard_negative_loss(bce_map, label, valid)
+            task_loss = bce + dice + self.hard_negative_weight * hard_negative
             weight = torch.tensor(
                 float(self.task_weights.get(task, 1.0)),
                 device=emb.device,
@@ -497,6 +518,7 @@ class SemanticProbeLoss(nn.Module):
             total_positive = total_positive + positive_pixels
             total_valid = total_valid + valid_pixels
             stats[f"semantic_probe_{task}_loss"] = task_loss.detach()
+            stats[f"semantic_probe_{task}_hard_negative"] = hard_negative.detach()
             stats[f"semantic_probe_{task}_positive_pixels"] = positive_pixels.detach()
             stats[f"semantic_probe_{task}_valid_pixels"] = valid_pixels.detach()
 
@@ -545,6 +567,8 @@ class TotalLoss(nn.Module):
         semantic_probe_pos_weight: float = 1.0,
         semantic_probe_pos_weights: dict[str, float] | None = None,
         semantic_probe_hidden_dim: int = 64,
+        semantic_probe_hard_negative_ratio: float = 0.0,
+        semantic_probe_hard_negative_weight: float = 0.0,
     ) -> None:
         """初始化。
 
@@ -598,6 +622,8 @@ class TotalLoss(nn.Module):
                 task_weights=semantic_probe_task_weights,
                 pos_weight=semantic_probe_pos_weight,
                 pos_weights=semantic_probe_pos_weights,
+                hard_negative_ratio=semantic_probe_hard_negative_ratio,
+                hard_negative_weight=semantic_probe_hard_negative_weight,
             )
             if self.semantic_probe_tasks
             else None
