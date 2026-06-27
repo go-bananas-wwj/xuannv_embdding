@@ -235,7 +235,7 @@ class Trainer:
         names = sorted(metric_sums)
         values = [metric_sums[name] for name in names]
         values.append(float(num_batches))
-        tensor = torch.tensor(values, dtype=torch.float64, device=self.device)
+        tensor = torch.tensor(values, dtype=torch.float32, device=self.device)
 
         if dist.is_initialized():
             dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
