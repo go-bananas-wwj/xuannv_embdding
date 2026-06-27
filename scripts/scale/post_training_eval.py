@@ -99,6 +99,7 @@ def write_report(benchmark_root: Path, run_id: str, tasks: list[str], mode: str)
         "",
         "- `comparison_vs_aef.md`",
         "- `comparison_vs_v1.0.md` when enabled",
+        "- `threshold_calibration.md`",
         "- `visualizations/index.md` when prediction export is enabled",
         "",
         "## Task Summaries",
@@ -159,6 +160,18 @@ def main() -> None:
             str(benchmark_root / "comparison_vs_aef.json"),
             "--name",
             run_id,
+        ],
+        env,
+    )
+
+    run(
+        [
+            "python",
+            "scripts/report/summarize_threshold_calibration.py",
+            "--benchmark-root",
+            str(benchmark_root),
+            "--output",
+            str(benchmark_root / "threshold_calibration.json"),
         ],
         env,
     )
