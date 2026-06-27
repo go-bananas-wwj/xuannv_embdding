@@ -78,6 +78,14 @@ class TrainingConfig:
     temporal_endpoint_weight: float = 0.0
     temporal_endpoint_warmup_epochs: int = 0
     temporal_endpoint_margin: float = 0.15
+    temporal_contrast_weight: float = 0.0
+    temporal_contrast_warmup_epochs: int = 0
+    temporal_contrast_margin: float = 0.2
+    temporal_contrast_change_z: float = 0.75
+    temporal_contrast_stable_z: float = -0.25
+    temporal_contrast_sources: list[str] = field(
+        default_factory=lambda: ["s2_recon", "s1_recon", "landsat_recon"]
+    )
 
 
 @dataclass
@@ -258,6 +266,21 @@ class Config:
                     "temporal_endpoint_warmup_epochs", 0
                 ),
                 temporal_endpoint_margin=training_cfg.get("temporal_endpoint_margin", 0.15),
+                temporal_contrast_weight=training_cfg.get("temporal_contrast_weight", 0.0),
+                temporal_contrast_warmup_epochs=training_cfg.get(
+                    "temporal_contrast_warmup_epochs", 0
+                ),
+                temporal_contrast_margin=training_cfg.get("temporal_contrast_margin", 0.2),
+                temporal_contrast_change_z=training_cfg.get(
+                    "temporal_contrast_change_z", 0.75
+                ),
+                temporal_contrast_stable_z=training_cfg.get(
+                    "temporal_contrast_stable_z", -0.25
+                ),
+                temporal_contrast_sources=training_cfg.get(
+                    "temporal_contrast_sources",
+                    ["s2_recon", "s1_recon", "landsat_recon"],
+                ),
             ),
         )
 

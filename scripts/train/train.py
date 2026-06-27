@@ -268,6 +268,12 @@ def main() -> None:
         temporal_endpoint_weight=cfg.training.temporal_endpoint_weight,
         temporal_endpoint_warmup_epochs=cfg.training.temporal_endpoint_warmup_epochs,
         temporal_endpoint_margin=cfg.training.temporal_endpoint_margin,
+        temporal_contrast_weight=cfg.training.temporal_contrast_weight,
+        temporal_contrast_warmup_epochs=cfg.training.temporal_contrast_warmup_epochs,
+        temporal_contrast_margin=cfg.training.temporal_contrast_margin,
+        temporal_contrast_change_z=cfg.training.temporal_contrast_change_z,
+        temporal_contrast_stable_z=cfg.training.temporal_contrast_stable_z,
+        temporal_contrast_sources=cfg.training.temporal_contrast_sources,
     )
 
     train_loader = _build_loader(

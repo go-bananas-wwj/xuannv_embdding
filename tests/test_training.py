@@ -20,6 +20,7 @@ from xuannv_embedding.training.losses import (
     TotalLoss,
     batch_uniformity_loss,
     reconstruction_loss,
+    temporal_change_aware_contrast_loss,
     temporal_endpoint_separation_loss,
 )
 from xuannv_embedding.training.optimizer import build_optimizer, build_scheduler
@@ -157,6 +158,56 @@ training:
     assert cfg.training.temporal_endpoint_weight == 0.04
     assert cfg.training.temporal_endpoint_warmup_epochs == 5
     assert cfg.training.temporal_endpoint_margin == 0.2
+
+
+def test_config_temporal_contrast_defaults_and_overrides(tmp_path: Path) -> None:
+    """验证变化感知时序对比损失配置字段可显式覆盖。"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+experiment:
+  name: temporal_contrast_config_test
+data:
+  root: /data/xuannv_embedding/processed/base
+  region: base
+  manifest_path: /data/xuannv_embedding/processed/base/manifest.json
+  num_months: 2
+  months: [2025-12, 2026-01]
+model:
+  embed_dim: 64
+  num_months: 2
+  sensor_channels:
+    s2: 12
+  target_heads:
+    s2_recon:
+      loss_type: continuous
+      channels: 12
+training:
+  epochs: 1
+  lr: 1.0e-4
+  weight_decay: 0.05
+  warmup_epochs: 0
+  gradient_accumulation_steps: 1
+  save_every: 1
+  eval_every: 1
+  temporal_contrast_weight: 0.03
+  temporal_contrast_warmup_epochs: 4
+  temporal_contrast_margin: 0.25
+  temporal_contrast_change_z: 0.8
+  temporal_contrast_stable_z: -0.3
+  temporal_contrast_sources: [s2_recon]
+""",
+        encoding="utf-8",
+    )
+
+    cfg = Config.from_yaml(config_path)
+
+    assert cfg.training.temporal_contrast_weight == 0.03
+    assert cfg.training.temporal_contrast_warmup_epochs == 4
+    assert cfg.training.temporal_contrast_margin == 0.25
+    assert cfg.training.temporal_contrast_change_z == 0.8
+    assert cfg.training.temporal_contrast_stable_z == -0.3
+    assert cfg.training.temporal_contrast_sources == ["s2_recon"]
 
 
 def test_config_model_ref_conflict_with_data_first_month(tmp_path: Path) -> None:
@@ -366,6 +417,30 @@ def test_temporal_endpoint_separation_loss() -> None:
 
     assert torch.allclose(loss_collapsed, torch.tensor(0.2), atol=1e-6)
     assert torch.allclose(loss_separated, torch.tensor(0.0), atol=1e-6)
+
+
+def test_temporal_change_aware_contrast_loss() -> None:
+    """稳定区域拉近、疑似变化区域未达到 margin 时产生损失。"""
+    embedding_map = torch.zeros(1, 2, 2, 2, 2)
+    embedding_map[:, :, 0] = 1.0
+    # 右下角模拟变化区域，但 embedding 仍坍缩，应产生 change loss。
+    targets = {"s2_recon": torch.zeros(1, 2, 1, 2, 2)}
+    targets["s2_recon"][:, 1, 0, 1, 1] = 10.0
+    masks = {"s2_recon": torch.ones(1, 2, 2, 2)}
+
+    loss, stats = temporal_change_aware_contrast_loss(
+        embedding_map,
+        targets,
+        masks,
+        source_names=["s2_recon"],
+        margin=0.2,
+        change_z=0.5,
+        stable_z=-0.1,
+    )
+
+    assert loss > 0
+    assert stats["change_pixels"].item() == 1
+    assert stats["stable_pixels"].item() == 3
 
 
 def test_checkpoint_save_load() -> None:
