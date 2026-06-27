@@ -10,7 +10,7 @@ import pytest
 import torch
 
 import xuannv_embedding
-from xuannv_embedding.config import Config
+from xuannv_embedding.config import Config, ConfigError
 from xuannv_embedding.models.model import AEFModel, AEFOutput
 from xuannv_embedding.utils.device import get_device
 
@@ -197,3 +197,13 @@ def test_train_entry_argparse() -> None:
     args = parse_args(["--config", "configs/smoke.yaml", "--resume", "foo.pt"])
     assert args.config == "configs/smoke.yaml"
     assert args.resume == "foo.pt"
+
+
+def test_train_entry_rejects_base_config(tmp_path: Path) -> None:
+    """实际训练入口应拒绝 `_base_`，确保实验配置自包含。"""
+    train_module = _import_train_module()
+    config_path = tmp_path / "derived.yaml"
+    config_path.write_text("_base_: base.yaml\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="自包含"):
+        train_module.reject_base_config(config_path)
