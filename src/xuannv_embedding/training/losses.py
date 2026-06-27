@@ -110,8 +110,28 @@ def batch_uniformity_loss(emb: torch.Tensor, temperature: float = 2.0) -> torch.
     return torch.log(torch.exp(-temperature * off_diag_dist).mean())
 
 
+def temporal_endpoint_separation_loss(
+    emb: torch.Tensor,
+    margin: float = 0.15,
+) -> torch.Tensor:
+    """Encourage the first and last monthly scene embeddings to be distinguishable.
+
+    The downstream 202512/202605 tasks depend on temporal sensitivity. This hinge
+    term is zero once the cosine distance ``1 - cos(first, last)`` reaches
+    ``margin`` and positive when endpoint embeddings collapse together.
+    """
+    if emb.dim() != 3 or emb.shape[1] < 2:
+        return torch.tensor(0.0, device=emb.device, dtype=emb.dtype)
+
+    first = F.normalize(emb[:, 0, :], p=2, dim=1)
+    last = F.normalize(emb[:, -1, :], p=2, dim=1)
+    cosine = (first * last).sum(dim=1)
+    distance = 1.0 - cosine
+    return F.relu(float(margin) - distance).mean()
+
+
 class TotalLoss(nn.Module):
-    """AEF 训练总损失：加权重建损失 + 可配置 batch uniformity 损失。"""
+    """AEF 训练总损失：加权重建损失 + 表征正则项。"""
 
     def __init__(
         self,
@@ -119,6 +139,9 @@ class TotalLoss(nn.Module):
         uniformity_weight: float = 1.0,
         uniformity_warmup_epochs: int = 0,
         uniformity_temperature: float = 2.0,
+        temporal_endpoint_weight: float = 0.0,
+        temporal_endpoint_warmup_epochs: int = 0,
+        temporal_endpoint_margin: float = 0.15,
     ) -> None:
         """初始化。
 
@@ -139,6 +162,9 @@ class TotalLoss(nn.Module):
         self.uniformity_weight = float(uniformity_weight)
         self.uniformity_warmup_epochs = int(uniformity_warmup_epochs)
         self.uniformity_temperature = float(uniformity_temperature)
+        self.temporal_endpoint_weight = float(temporal_endpoint_weight)
+        self.temporal_endpoint_warmup_epochs = int(temporal_endpoint_warmup_epochs)
+        self.temporal_endpoint_margin = float(temporal_endpoint_margin)
         self.current_epoch = 0
 
     def set_epoch(self, epoch: int) -> None:
@@ -152,6 +178,17 @@ class TotalLoss(nn.Module):
             return self.uniformity_weight
         progress = min(1.0, float(self.current_epoch + 1) / self.uniformity_warmup_epochs)
         return self.uniformity_weight * progress
+
+    def _current_temporal_endpoint_weight(self) -> float:
+        if self.temporal_endpoint_weight == 0.0:
+            return 0.0
+        if self.temporal_endpoint_warmup_epochs <= 0:
+            return self.temporal_endpoint_weight
+        progress = min(
+            1.0,
+            float(self.current_epoch + 1) / self.temporal_endpoint_warmup_epochs,
+        )
+        return self.temporal_endpoint_weight * progress
 
     def forward(
         self,
@@ -195,7 +232,13 @@ class TotalLoss(nn.Module):
         )
         uniformity_weight = self._current_uniformity_weight()
         weighted_uniformity = uniformity * uniformity_weight
-        total = total_recon + weighted_uniformity
+        temporal_endpoint = temporal_endpoint_separation_loss(
+            output.embedding,
+            margin=self.temporal_endpoint_margin,
+        )
+        temporal_endpoint_weight = self._current_temporal_endpoint_weight()
+        weighted_temporal_endpoint = temporal_endpoint * temporal_endpoint_weight
+        total = total_recon + weighted_uniformity + weighted_temporal_endpoint
 
         result: dict[str, torch.Tensor] = {
             "total": total,
@@ -204,6 +247,13 @@ class TotalLoss(nn.Module):
             "uniformity_weighted": weighted_uniformity,
             "uniformity_weight": torch.tensor(
                 uniformity_weight,
+                device=output.embedding.device,
+                dtype=output.embedding.dtype,
+            ),
+            "temporal_endpoint": temporal_endpoint,
+            "temporal_endpoint_weighted": weighted_temporal_endpoint,
+            "temporal_endpoint_weight": torch.tensor(
+                temporal_endpoint_weight,
                 device=output.embedding.device,
                 dtype=output.embedding.dtype,
             ),

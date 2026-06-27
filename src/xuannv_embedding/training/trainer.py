@@ -268,6 +268,18 @@ class Trainer:
                         "uniformity_weight",
                         torch.tensor(1.0, device=self.device),
                     ).item(),
+                    "train/loss_temporal_endpoint": losses.get(
+                        "temporal_endpoint",
+                        torch.tensor(0.0, device=self.device),
+                    ).item(),
+                    "train/loss_temporal_endpoint_weighted": losses.get(
+                        "temporal_endpoint_weighted",
+                        torch.tensor(0.0, device=self.device),
+                    ).item(),
+                    "train/temporal_endpoint_weight": losses.get(
+                        "temporal_endpoint_weight",
+                        torch.tensor(0.0, device=self.device),
+                    ).item(),
                     "train/lr": self.optimizer.param_groups[0]["lr"],
                 }
                 for name, value in losses.items():
@@ -305,6 +317,13 @@ class Trainer:
                     "uniformity_weighted", metrics["uniformity"]
                 ),
                 "train/uniformity_weight": metrics.get("uniformity_weight", 1.0),
+                "train/loss_temporal_endpoint": metrics.get("temporal_endpoint", 0.0),
+                "train/loss_temporal_endpoint_weighted": metrics.get(
+                    "temporal_endpoint_weighted", 0.0
+                ),
+                "train/temporal_endpoint_weight": metrics.get(
+                    "temporal_endpoint_weight", 0.0
+                ),
                 "train/lr": self.optimizer.param_groups[0]["lr"],
             }
             for name, value in metrics.items():
@@ -365,6 +384,13 @@ class Trainer:
                 "val/loss_uniformity": metrics.get("uniformity", 0.0),
                 "val/loss_uniformity_weighted": metrics.get("uniformity_weighted", 0.0),
                 "val/uniformity_weight": metrics.get("uniformity_weight", 0.0),
+                "val/loss_temporal_endpoint": metrics.get("temporal_endpoint", 0.0),
+                "val/loss_temporal_endpoint_weighted": metrics.get(
+                    "temporal_endpoint_weighted", 0.0
+                ),
+                "val/temporal_endpoint_weight": metrics.get(
+                    "temporal_endpoint_weight", 0.0
+                ),
             }
             for name, value in metrics.items():
                 if name.startswith("recon_"):
