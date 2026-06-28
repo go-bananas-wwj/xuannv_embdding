@@ -317,6 +317,7 @@ training:
   semantic_probe_hidden_dim: 0
   semantic_probe_hard_negative_ratio: 0.05
   semantic_probe_hard_negative_weight: 0.5
+  semantic_probe_hard_negative_warmup_epochs: 8
 """,
         encoding="utf-8",
     )
@@ -332,6 +333,7 @@ training:
     assert cfg.training.semantic_probe_hidden_dim == 0
     assert cfg.training.semantic_probe_hard_negative_ratio == 0.05
     assert cfg.training.semantic_probe_hard_negative_weight == 0.5
+    assert cfg.training.semantic_probe_hard_negative_warmup_epochs == 8
 
 
 def test_config_model_ref_conflict_with_data_first_month(tmp_path: Path) -> None:
@@ -631,10 +633,15 @@ def test_total_loss_with_semantic_probe_hard_negatives() -> None:
         semantic_probe_tasks=["building_osm"],
         semantic_probe_hard_negative_ratio=0.25,
         semantic_probe_hard_negative_weight=0.5,
+        semantic_probe_hard_negative_warmup_epochs=2,
     )
+    criterion.set_epoch(1)
     losses = criterion(output, targets, masks, supervised_labels, supervised_label_masks)
 
     assert losses["semantic_probe_building_osm_hard_negative"].item() > 0.0
+    assert losses["semantic_probe_building_osm_hard_negative_weight"].item() == pytest.approx(
+        0.5
+    )
     assert losses["semantic_probe"].item() > losses[
         "semantic_probe_building_osm_hard_negative"
     ].item() * 0.5

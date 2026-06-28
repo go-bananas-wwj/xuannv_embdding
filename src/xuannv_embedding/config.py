@@ -106,6 +106,7 @@ class TrainingConfig:
     semantic_probe_hidden_dim: int = 64
     semantic_probe_hard_negative_ratio: float = 0.0
     semantic_probe_hard_negative_weight: float = 0.0
+    semantic_probe_hard_negative_warmup_epochs: int = 0
 
 
 @dataclass
@@ -347,6 +348,9 @@ class Config:
                 ),
                 semantic_probe_hard_negative_weight=training_cfg.get(
                     "semantic_probe_hard_negative_weight", 0.0
+                ),
+                semantic_probe_hard_negative_warmup_epochs=training_cfg.get(
+                    "semantic_probe_hard_negative_warmup_epochs", 0
                 ),
             ),
         )

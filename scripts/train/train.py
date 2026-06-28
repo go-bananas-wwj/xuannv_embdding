@@ -340,6 +340,9 @@ def main() -> None:
         semantic_probe_hard_negative_weight=(
             cfg.training.semantic_probe_hard_negative_weight
         ),
+        semantic_probe_hard_negative_warmup_epochs=(
+            cfg.training.semantic_probe_hard_negative_warmup_epochs
+        ),
     )
 
     train_loader = _build_loader(

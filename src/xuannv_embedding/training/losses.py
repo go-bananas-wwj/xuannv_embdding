@@ -400,6 +400,7 @@ class SemanticProbeLoss(nn.Module):
         month_index: int = -1,
         hard_negative_ratio: float = 0.0,
         hard_negative_weight: float = 0.0,
+        hard_negative_warmup_epochs: int = 0,
     ) -> None:
         super().__init__()
         self.tasks = tuple(tasks)
@@ -409,6 +410,8 @@ class SemanticProbeLoss(nn.Module):
         self.month_index = int(month_index)
         self.hard_negative_ratio = max(0.0, float(hard_negative_ratio))
         self.hard_negative_weight = max(0.0, float(hard_negative_weight))
+        self.hard_negative_warmup_epochs = max(0, int(hard_negative_warmup_epochs))
+        self.current_epoch = 0
         hidden_dim = int(hidden_dim)
         modules: dict[str, nn.Module] = {}
         for task in self.tasks:
@@ -421,6 +424,20 @@ class SemanticProbeLoss(nn.Module):
                     nn.Conv2d(hidden_dim, 1, kernel_size=1),
                 )
         self.probes = nn.ModuleDict(modules)
+
+    def set_epoch(self, epoch: int) -> None:
+        self.current_epoch = int(epoch)
+
+    def _current_hard_negative_weight(self) -> float:
+        if self.hard_negative_weight == 0.0:
+            return 0.0
+        if self.hard_negative_warmup_epochs <= 0:
+            return self.hard_negative_weight
+        progress = min(
+            1.0,
+            float(self.current_epoch + 1) / self.hard_negative_warmup_epochs,
+        )
+        return self.hard_negative_weight * progress
 
     @staticmethod
     def _masked_mean(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -470,6 +487,7 @@ class SemanticProbeLoss(nn.Module):
         total_positive = zero
         total_valid = zero
         stats: dict[str, torch.Tensor] = {}
+        hard_negative_weight = self._current_hard_negative_weight()
 
         for task in self.tasks:
             if task not in labels or task not in self.probes:
@@ -505,7 +523,7 @@ class SemanticProbeLoss(nn.Module):
             bce = self._masked_mean(bce_map, valid)
             dice = self._dice_loss(logits, label, valid)
             hard_negative = self._hard_negative_loss(bce_map, label, valid)
-            task_loss = bce + dice + self.hard_negative_weight * hard_negative
+            task_loss = bce + dice + hard_negative_weight * hard_negative
             weight = torch.tensor(
                 float(self.task_weights.get(task, 1.0)),
                 device=emb.device,
@@ -519,6 +537,11 @@ class SemanticProbeLoss(nn.Module):
             total_valid = total_valid + valid_pixels
             stats[f"semantic_probe_{task}_loss"] = task_loss.detach()
             stats[f"semantic_probe_{task}_hard_negative"] = hard_negative.detach()
+            stats[f"semantic_probe_{task}_hard_negative_weight"] = torch.tensor(
+                hard_negative_weight,
+                device=emb.device,
+                dtype=emb.dtype,
+            ).detach()
             stats[f"semantic_probe_{task}_positive_pixels"] = positive_pixels.detach()
             stats[f"semantic_probe_{task}_valid_pixels"] = valid_pixels.detach()
 
@@ -569,6 +592,7 @@ class TotalLoss(nn.Module):
         semantic_probe_hidden_dim: int = 64,
         semantic_probe_hard_negative_ratio: float = 0.0,
         semantic_probe_hard_negative_weight: float = 0.0,
+        semantic_probe_hard_negative_warmup_epochs: int = 0,
     ) -> None:
         """初始化。
 
@@ -624,6 +648,9 @@ class TotalLoss(nn.Module):
                 pos_weights=semantic_probe_pos_weights,
                 hard_negative_ratio=semantic_probe_hard_negative_ratio,
                 hard_negative_weight=semantic_probe_hard_negative_weight,
+                hard_negative_warmup_epochs=(
+                    semantic_probe_hard_negative_warmup_epochs
+                ),
             )
             if self.semantic_probe_tasks
             else None
@@ -633,6 +660,8 @@ class TotalLoss(nn.Module):
     def set_epoch(self, epoch: int) -> None:
         """设置当前 epoch，用于 uniformity 权重 warmup。"""
         self.current_epoch = int(epoch)
+        if self.semantic_probe is not None:
+            self.semantic_probe.set_epoch(epoch)
 
     def _current_uniformity_weight(self) -> float:
         if self.uniformity_weight == 0.0:
