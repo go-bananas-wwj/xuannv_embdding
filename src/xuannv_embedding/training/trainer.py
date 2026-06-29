@@ -460,7 +460,7 @@ class Trainer:
             util_info = self._get_utilization()
             if util_info is not None:
                 epoch_metrics[util_info[0]] = util_info[1]
-            self._log_to_wandb(epoch_metrics, step=self.epoch)
+            self._log_to_wandb(epoch_metrics, step=self.global_step)
 
         return metrics
 
@@ -550,7 +550,7 @@ class Trainer:
             for name, value in metrics.items():
                 if name.startswith("recon_"):
                     val_metrics[f"val/{name}"] = value
-            self._log_to_wandb(val_metrics, step=self.epoch)
+            self._log_to_wandb(val_metrics, step=self.global_step)
 
         return metrics
 
