@@ -2,7 +2,7 @@ experiment:
   name: v2_p3a_osm_weak_semantic_full_20260629
   seed: 42
   output_dir: /data/xuannv_embedding/outputs/v2_p3a_osm_weak_semantic_full_20260629
-  use_wandb: false
+  use_wandb: true
   wandb_project: xuannv-embedding-v2
   wandb_run_name: v2_p3a_osm_weak_semantic_full_20260629_6npu_bs6
 model:
