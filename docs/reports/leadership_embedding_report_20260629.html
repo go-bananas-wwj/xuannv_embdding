@@ -12,8 +12,10 @@
       --panel: #ffffff;
       --soft: #f5f7fb;
       --soft2: #eef4ff;
-      --brand: #2357a7;
+      --brand: #1d4ed8;
       --brand2: #0f766e;
+      --navy: #0b1220;
+      --gold: #b7791f;
       --warn: #b45309;
       --bad: #b42318;
       --good: #087443;
@@ -26,7 +28,7 @@
       margin: 0;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
       color: var(--ink);
-      background: #eef1f6;
+      background: #e9edf5;
       line-height: 1.65;
       letter-spacing: 0;
     }
@@ -51,7 +53,7 @@
       height: 100vh;
       overflow: auto;
       padding: 26px 20px;
-      background: #111827;
+      background: var(--navy);
       color: #e5e7eb;
     }
 
@@ -92,8 +94,43 @@
     }
 
     .hero {
-      background: #ffffff;
-      border-top: 6px solid var(--brand);
+      color: #f8fafc;
+      background:
+        linear-gradient(135deg, rgba(11,18,32,0.98), rgba(29,78,216,0.88)),
+        url("/reports/harbin_202512_202605/overviews/all_labels_bubble_map.png");
+      background-size: cover;
+      background-position: center;
+      border: 0;
+      min-height: 520px;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+    }
+
+    .hero h1,
+    .hero .subtitle {
+      color: #fff;
+      text-shadow: 0 2px 16px rgba(0,0,0,0.28);
+    }
+
+    .hero .subtitle {
+      color: #dbeafe;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      color: #bfdbfe;
+      font-size: 13px;
+      font-weight: 800;
+      margin-bottom: 10px;
+    }
+
+    .section-label {
+      display: inline-block;
+      color: var(--brand);
+      font-size: 12px;
+      font-weight: 900;
+      margin-bottom: 8px;
     }
 
     h1 {
@@ -138,8 +175,8 @@
       min-height: 30px;
       padding: 5px 10px;
       border: 1px solid #cbd5e1;
-      background: #f8fafc;
-      color: #334155;
+      background: rgba(255,255,255,0.92);
+      color: #1e293b;
       border-radius: 6px;
       font-size: 13px;
       font-weight: 600;
@@ -153,6 +190,7 @@
     .grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .grid.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .grid.cols-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 
     .kpi {
       border: 1px solid var(--line);
@@ -191,6 +229,69 @@
     .callout.good { border-left-color: var(--good); background: #ecfdf3; }
     .callout.warn { border-left-color: var(--warn); background: #fffaeb; }
     .callout.bad { border-left-color: var(--bad); background: #fef3f2; }
+
+    .chapter {
+      background: #0f172a;
+      color: #e5e7eb;
+      border: 0;
+    }
+
+    .chapter h2 {
+      color: #fff;
+      font-size: 30px;
+    }
+
+    .chapter p {
+      color: #cbd5e1;
+      max-width: 980px;
+    }
+
+    .work-card {
+      border: 1px solid #dbe3ef;
+      background: linear-gradient(180deg, #ffffff, #f8fbff);
+      border-radius: 8px;
+      padding: 16px;
+      min-height: 148px;
+    }
+
+    .work-card strong {
+      display: block;
+      font-size: 16px;
+      margin-bottom: 6px;
+      color: #0f172a;
+    }
+
+    .work-card .count {
+      font-size: 30px;
+      font-weight: 900;
+      color: var(--brand);
+      line-height: 1.1;
+      margin-bottom: 6px;
+    }
+
+    .quote-strip {
+      display: grid;
+      grid-template-columns: 1.1fr 1fr 1fr;
+      gap: 14px;
+      margin-top: 16px;
+    }
+
+    .quote {
+      border: 1px solid #dbe3ef;
+      background: #f8fafc;
+      border-radius: 8px;
+      padding: 16px;
+      font-weight: 800;
+      color: #1f2937;
+    }
+
+    .quote span {
+      display: block;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 500;
+      margin-top: 8px;
+    }
 
     table {
       width: 100%;
@@ -312,7 +413,7 @@
       .shell { grid-template-columns: 1fr; }
       nav { position: relative; height: auto; }
       main { padding: 16px; }
-      .grid.cols-4, .grid.cols-3, .grid.cols-2, .image-grid { grid-template-columns: 1fr; }
+      .grid.cols-5, .grid.cols-4, .grid.cols-3, .grid.cols-2, .image-grid, .quote-strip { grid-template-columns: 1fr; }
       .step { grid-template-columns: 1fr; }
     }
 
@@ -337,8 +438,10 @@
       </div>
       <a href="#summary">一页结论</a>
       <a href="#background">项目背景</a>
+      <a href="#workload">工作量总览</a>
       <a href="#data">数据与任务</a>
       <a href="#pipeline">流程建设</a>
+      <a href="#engineering">工程/API</a>
       <a href="#experiments">实验版本</a>
       <a href="#metrics">核心指标</a>
       <a href="#haidian">海淀专测</a>
@@ -350,14 +453,17 @@
 
     <main>
       <section class="hero" id="summary">
+        <div class="eyebrow">玄女科技 · 地理嵌入底座阶段汇报</div>
         <h1>玄女遥感 Embedding 模型阶段成果汇报</h1>
         <p class="subtitle">
-          本阶段完成了海淀与哈尔滨两地、多时相、多源遥感 embedding 的训练、下游评测、可视化诊断和迭代对比。当前最稳妥的结论是：<strong>P2A 原版是当前综合最优底座</strong>，P2A-Long 虽然训练损失更低，但下游整体没有变好。
+          从“每个任务单独建模”升级到“统一地理嵌入底座 + 多任务复用”。本阶段完成了海淀与哈尔滨两地、多时相、多源遥感 embedding 的训练、后端数据/API 对接、下游评测、报告自动化和可视化诊断。当前最稳妥的结论是：<strong>P2A 原版是当前综合最优底座</strong>。
         </p>
         <div class="badges">
           <span class="badge">6 张 Ascend NPU 训练</span>
           <span class="badge">2025-12 至 2026-05 多月 embedding</span>
           <span class="badge">变化检测 + 建筑 + 道路下游测评</span>
+          <span class="badge">后端 AOI/API 同步</span>
+          <span class="badge">政府报告与 PPT 素材沉淀</span>
           <span class="badge">P2A 当前推荐 baseline</span>
           <span class="badge">已生成可视化诊断闭环</span>
         </div>
@@ -385,13 +491,29 @@
           </div>
         </div>
 
+        <div class="quote-strip">
+          <div class="quote">
+            一次生成地球表征，多任务复用
+            <span>来自 BP/PPT 的核心表达：不是多训练几个模型，而是沉淀可复用的遥感基础表征。</span>
+          </div>
+          <div class="quote">
+            商业航天解决“看见地球”，地理嵌入解决“理解地球”
+            <span>把模型能力讲成业务价值，而不是只讲算法指标。</span>
+          </div>
+          <div class="quote">
+            图斑 / 证据链 / 报告 / 接口 / 驾驶舱
+            <span>本阶段已经覆盖模型、API、报告和可视化交付链条。</span>
+          </div>
+        </div>
+
         <div class="callout good">
           <strong>领导汇报版一句话：</strong>
-          我们已经跑通了从多源遥感预训练、embedding 导出、下游快速测评、和 AEF/不同版本对比、到可视化诊断的完整闭环；目前 P2A 在变化检测和强下游分割头上最稳，后续重点不是继续堆训练轮次，而是让 embedding 同时兼顾“变化敏感性”和“建筑/道路等语义可分性”。
+          我们已经跑通了从多源数据接入、后端区域/API 同步、预处理、模型训练、embedding 导出、下游快速测评、AEF/多版本对比、可视化诊断到政府报告/PPT 材料沉淀的完整闭环；目前 P2A 在变化检测和强下游分割头上最稳，后续重点是让 embedding 同时兼顾“变化敏感性”和“建筑/道路等语义可分性”。
         </div>
       </section>
 
       <section id="background">
+        <span class="section-label">Positioning</span>
         <h2>1. 项目背景：为什么要做这个 embedding</h2>
         <p>
           目标不是只训练一个单任务模型，而是训练一个<strong>通用遥感地理 embedding</strong>：给定一个 1280 m × 1280 m patch，模型输出 128×128 的空间 embedding，使它能被下游简单头或分割头用于多种任务。
@@ -420,8 +542,91 @@
         </p>
       </section>
 
+      <section class="chapter" id="workload">
+        <span class="section-label" style="color:#93c5fd;">Workload</span>
+        <h2>2. 本阶段工作量总览</h2>
+        <p>
+          这不是单个模型训练实验，而是一套“数据工程 + 模型工程 + 后端接口 + 下游评测 + 报告交付”的系统建设。下面按可交付物拆解工作量，便于汇报时说明投入和沉淀。
+        </p>
+      </section>
+
+      <section>
+        <div class="grid cols-5">
+          <div class="work-card">
+            <strong>多源数据工程</strong>
+            <div class="count">2 区域</div>
+            海淀、哈尔滨 AOI/patch 网格、S1/S2/Landsat、高分光学、高分 SAR、WorldCover/OSM/人工标签接入与 QA。
+          </div>
+          <div class="work-card">
+            <strong>模型训练迭代</strong>
+            <div class="count">8+ 轮</div>
+            P1B、P2A、P2B、P2C、P2D、P2E、P2A-Long 等多轮假设验证，均记录配置、权重、报告。
+          </div>
+          <div class="work-card">
+            <strong>下游任务验证</strong>
+            <div class="count">12+ 组</div>
+            变化检测 5 类，OSM 建筑/道路 × Linear/MLP/U-Net，海淀专测，AEF 对比。
+          </div>
+          <div class="work-card">
+            <strong>可视化与报告</strong>
+            <div class="count">多套</div>
+            变化前后高分影像、embedding PCA、预测、GT、红白诊断图、PPT/HTML/政府报告素材。
+          </div>
+          <div class="work-card">
+            <strong>后端/API 工程</strong>
+            <div class="count">已接入</div>
+            AOI 和 patch 网格 API 同步、静态报告服务、评测结果目录化，为驾驶舱/接口化交付做准备。
+          </div>
+        </div>
+
+        <h3>工作量拆解</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>模块</th>
+              <th>完成内容</th>
+              <th>沉淀资产</th>
+              <th>汇报价值</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>数据底座</td>
+              <td>区域边界、patch 网格、多源遥感、标签、统计量、manifest 管理。</td>
+              <td>可复用数据目录和 QA 文档。</td>
+              <td>证明项目不是 demo，而是可持续生产数据资产。</td>
+            </tr>
+            <tr>
+              <td>训练系统</td>
+              <td>6 卡 NPU DDP、torch_npu 环境、tmux 后台训练、训练状态跟踪。</td>
+              <td>自包含 YAML、checkpoint、训练日志。</td>
+              <td>证明具备工程化训练能力。</td>
+            </tr>
+            <tr>
+              <td>评测系统</td>
+              <td>训练后自动导出 embedding，统一跑变化检测、OSM simple probe、U-Net probe。</td>
+              <td>固定 post-training eval 流程和 skill。</td>
+              <td>每轮模型都能快速判断是否真的变好。</td>
+            </tr>
+            <tr>
+              <td>可视化诊断</td>
+              <td>GT、预测、前后高分影像、embedding PCA、差分 PCA 横向对齐。</td>
+              <td>诊断图、对比图、红白预测图。</td>
+              <td>避免只讲指标，能让领导直接看到模型效果。</td>
+            </tr>
+            <tr>
+              <td>业务交付</td>
+              <td>哈尔滨新区城市治理报告、PPT/BP 页面、HTML 汇报站点、8001 端口服务。</td>
+              <td>PDF、Word、PPT、HTML、静态服务脚本。</td>
+              <td>体现模型结果能进入报告交付链条。</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
       <section id="data">
-        <h2>2. 数据、区域和下游任务</h2>
+        <span class="section-label">Data Foundation</span>
+        <h2>3. 数据、区域和下游任务</h2>
         <table>
           <thead>
             <tr>
@@ -466,7 +671,8 @@
       </section>
 
       <section id="pipeline">
-        <h2>3. 已经搭好的实验闭环</h2>
+        <span class="section-label">Evaluation Pipeline</span>
+        <h2>4. 已经搭好的实验闭环</h2>
         <p>
           现在已经不是单次手工试验，而是具备了固定流程：训练后自动导出 embedding，再跑变化检测与 OSM 下游任务，最后生成指标和可视化。
         </p>
@@ -509,8 +715,100 @@
         </div>
       </section>
 
+      <section id="engineering">
+        <span class="section-label">Engineering / API / Delivery</span>
+        <h2>5. 工程与后端 API 工作量</h2>
+        <p>
+          除了模型本身，本阶段还把上下游工程链路补齐：区域网格从后端 API 同步，训练和评测结果结构化落盘，报告站点通过 8001 端口提供访问。这部分是后续做驾驶舱、接口服务和业务交付的基础。
+        </p>
+
+        <div class="grid cols-3">
+          <div class="kpi">
+            <div class="label">后端区域/API 对接</div>
+            <div class="value">AOI + Patch</div>
+            <div class="note">通过脚本同步海淀/哈尔滨区域边界与 patch 网格元数据，连接后端区域管理能力。</div>
+          </div>
+          <div class="kpi">
+            <div class="label">报告服务</div>
+            <div class="value">8001</div>
+            <div class="note">将 HTML 汇报站点部署为静态服务，并映射数据盘图片，领导可直接浏览。</div>
+          </div>
+          <div class="kpi">
+            <div class="label">交付形态</div>
+            <div class="value">接口化</div>
+            <div class="note">图斑、证据链、报告、接口、驾驶舱是后续产品化方向。</div>
+          </div>
+        </div>
+
+        <h3>具体工程资产</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>资产</th>
+              <th>文件/目录</th>
+              <th>作用</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>后端区域同步</td>
+              <td><code>scripts/data/update_aoi_and_patches.py</code></td>
+              <td>从上游展示/API 仓库同步哈尔滨、海淀 AOI GeoJSON 与 patch 网格元数据，避免手工维护区域切片。</td>
+            </tr>
+            <tr>
+              <td>报告服务</td>
+              <td><code>scripts/serve_leadership_report.py</code></td>
+              <td>将报告部署到 8001 端口，同时映射 <code>/data/xuannv_embedding</code> 下的图片资源。</td>
+            </tr>
+            <tr>
+              <td>后训练评测流程</td>
+              <td><code>scripts/scale/post_training_eval.py</code>、<code>skills/xuannv-post-training-eval</code></td>
+              <td>训练完成后固定执行 embedding 导出、下游评测、AEF 对比、可视化和报告生成。</td>
+            </tr>
+            <tr>
+              <td>报告生成链路</td>
+              <td><code>reports/harbin_202512_202605/</code></td>
+              <td>沉淀哈尔滨新区城市管理总报告及建筑工地、建筑变化、耕地、垃圾渣土专题报告。</td>
+            </tr>
+            <tr>
+              <td>PPT/BP 素材</td>
+              <td><code>docs/bp_deck/outputs/</code></td>
+              <td>将模型能力表达成商业汇报语言：地理嵌入、一次表征多次复用、任务组件库、接口生态。</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>参考 PPT 后补充的汇报口径</h3>
+        <div class="quote-strip">
+          <div class="quote">
+            从任务模型到底座模型
+            <span>传统遥感 AI 围绕单任务重复建设；玄女将能力沉淀在统一地理嵌入中。</span>
+          </div>
+          <div class="quote">
+            一套嵌入支撑多类下游任务
+            <span>同一套表征支撑施工、建筑、农用地、垃圾/裸地、道路等任务。</span>
+          </div>
+          <div class="quote">
+            从模型结果到政府监测报告
+            <span>价值不只在精度，更在于把检测结果组织成可阅读、可复核、可归档的报告。</span>
+          </div>
+        </div>
+
+        <div class="image-grid">
+          <figure>
+            <img src="/docs/bp_deck/assets/remote_sensing_team_workflow.png" alt="workflow" />
+            <figcaption>BP/PPT 中的工作流素材：把数据、模型、任务组件和业务交付串成完整链路。</figcaption>
+          </figure>
+          <figure>
+            <img src="/reports/harbin_202512_202605/pdf_maps/all_categories_map.png" alt="all categories map" />
+            <figcaption>哈尔滨新区报告图斑总览：模型结果已沉淀为可进入业务报告的图斑证据。</figcaption>
+          </figure>
+        </div>
+      </section>
+
       <section id="experiments">
-        <h2>4. 实验版本演进</h2>
+        <span class="section-label">Model Iteration</span>
+        <h2>6. 实验版本演进</h2>
         <table>
           <thead>
             <tr>
@@ -581,7 +879,7 @@
       </section>
 
       <section id="metrics">
-        <h2>5. 核心指标对比</h2>
+        <h2>7. 核心指标对比</h2>
         <h3>5.1 变化检测任务：P2A 对 AEF 有明显优势</h3>
         <table>
           <thead>
@@ -692,7 +990,7 @@
       </section>
 
       <section id="haidian">
-        <h2>6. 海淀区专测：如果只服务海淀，哪个模型更好</h2>
+        <h2>8. 海淀区专测：如果只服务海淀，哪个模型更好</h2>
         <p>
           因为领导汇报可能更关注海淀场景，我们单独做了海淀专测。这里只纳入海淀施工地、海淀 construction_joint 子集、海淀建筑 OSM、海淀道路 OSM。哈尔滨为主的 farm_change、rubbish、building_change 不放进海淀专测。
         </p>
@@ -722,12 +1020,36 @@
       </section>
 
       <section id="visuals">
-        <h2>7. 可视化证据</h2>
+        <h2>9. 可视化证据</h2>
         <p>
           我们不只看指标，还把每类任务的预测结果可视化。下面的对比图中，同一 patch 对齐，P2A 在上，P2A-Long 在下，便于观察训练更久是否真的带来更好预测。
         </p>
 
-        <h3>7.1 变化检测任务对比</h3>
+        <h3>9.1 指标图表与汇报包素材</h3>
+        <div class="image-grid">
+          <figure>
+            <img src="/data/xuannv_embedding/experiments/v2_202512_202605/presentation/p1b_downstream_showcase_20260627/charts/macro_metrics_vs_aef.png" alt="macro metrics vs aef" />
+            <figcaption>早期 P1B 汇报包：macro 指标对比 AEF，体现我们已经沉淀了标准化指标图表。</figcaption>
+          </figure>
+          <figure>
+            <img src="/data/xuannv_embedding/experiments/v2_202512_202605/presentation/p1b_downstream_showcase_20260627/charts/task_f1_best_vs_aef.png" alt="task f1 vs aef" />
+            <figcaption>分任务 F1_best 对比：把模型指标转成领导能快速判断的图表，而不是只给 JSON。</figcaption>
+          </figure>
+        </div>
+
+        <h3>9.2 业务报告交付素材</h3>
+        <div class="image-grid">
+          <figure>
+            <img src="/reports/harbin_202512_202605/pdf_maps/all_categories_map.png" alt="all categories report map" />
+            <figcaption>哈尔滨新区总览图：施工、建筑变化、耕地、垃圾渣土等图斑统一组织，支撑政府报告。</figcaption>
+          </figure>
+          <figure>
+            <img src="/reports/harbin_202512_202605/final/rubbish/patch_000169.png" alt="rubbish final case" />
+            <figcaption>疑似垃圾/堆场专题案例：从模型结果整理到可复核图斑，体现模型到报告的闭环。</figcaption>
+          </figure>
+        </div>
+
+        <h3>9.3 变化检测任务对比</h3>
         <div class="image-grid">
           <figure>
             <img src="/data/xuannv_embedding/experiments/v2_202512_202605/comparisons/p2a_vs_p2a_long_20260628/construction_p2a_vs_p2a_long.png" alt="construction comparison" />
@@ -747,7 +1069,7 @@
           </figure>
         </div>
 
-        <h3>7.2 海淀建筑和道路可视化</h3>
+        <h3>9.4 海淀建筑和道路可视化</h3>
         <div class="image-grid">
           <figure>
             <img src="/data/xuannv_embedding/experiments/v2_202512_202605/comparisons/p2a_vs_p2a_long_20260628/haidian_building_osm_unet_p2a_vs_p2a_long.png" alt="haidian building osm comparison" />
@@ -759,7 +1081,7 @@
           </figure>
         </div>
 
-        <h3>7.3 哈尔滨建筑和道路可视化</h3>
+        <h3>9.5 哈尔滨建筑和道路可视化</h3>
         <div class="image-grid">
           <figure>
             <img src="/data/xuannv_embedding/experiments/v2_202512_202605/comparisons/p2a_vs_p2a_long_20260628/harbin_building_osm_unet_p2a_vs_p2a_long.png" alt="harbin building osm comparison" />
@@ -778,7 +1100,7 @@
       </section>
 
       <section id="findings">
-        <h2>8. 当前主要发现和问题</h2>
+        <h2>10. 当前主要发现和问题</h2>
         <div class="grid cols-2">
           <div class="kpi">
             <div class="label">发现 1</div>
@@ -842,7 +1164,7 @@
       </section>
 
       <section id="next">
-        <h2>9. 下一步升级计划</h2>
+        <h2>11. 下一步升级计划</h2>
         <p>
           当前建议不是继续把 P2A 训练更久，而是设计新一轮目标，让模型同时保留 P2A 的空间语义能力，并吸收 P2A-Long 在简单头上的线性可分性收益。
         </p>
@@ -899,7 +1221,7 @@
       </section>
 
       <section id="appendix">
-        <h2>10. 附录：关键路径和复现信息</h2>
+        <h2>12. 附录：关键路径和复现信息</h2>
         <h3>当前推荐模型 P2A</h3>
         <span class="path">权重：/data/xuannv_embedding/outputs/v2_p2a_semantic_probe_full_20260627/best.pt</span>
         <span class="path">Embedding：/data/xuannv_embedding/embeddings/v2_202512_202605/20260627_v2_p2a_semantic_probe_full_20260627_best_p2a_semantic_probe_full_best_20260627</span>
