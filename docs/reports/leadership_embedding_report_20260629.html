@@ -1,0 +1,931 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>玄女遥感 Embedding 阶段成果汇报 - 2026-06-29</title>
+  <style>
+    :root {
+      --ink: #17202a;
+      --muted: #667085;
+      --line: #d7dde8;
+      --panel: #ffffff;
+      --soft: #f5f7fb;
+      --soft2: #eef4ff;
+      --brand: #2357a7;
+      --brand2: #0f766e;
+      --warn: #b45309;
+      --bad: #b42318;
+      --good: #087443;
+      --shadow: 0 10px 30px rgba(18, 38, 63, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+      color: var(--ink);
+      background: #eef1f6;
+      line-height: 1.65;
+      letter-spacing: 0;
+    }
+
+    a { color: var(--brand); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .shell {
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr);
+      gap: 0;
+      max-width: 1680px;
+      margin: 0 auto;
+      background: var(--soft);
+      min-height: 100vh;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      align-self: start;
+      height: 100vh;
+      overflow: auto;
+      padding: 26px 20px;
+      background: #111827;
+      color: #e5e7eb;
+    }
+
+    nav h2 {
+      font-size: 17px;
+      margin: 0 0 18px;
+      color: white;
+      line-height: 1.35;
+    }
+
+    nav .meta {
+      font-size: 12px;
+      color: #aeb6c2;
+      border-bottom: 1px solid rgba(255,255,255,0.12);
+      padding-bottom: 14px;
+      margin-bottom: 14px;
+    }
+
+    nav a {
+      display: block;
+      color: #d5dce8;
+      font-size: 13px;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+
+    main {
+      padding: 28px;
+    }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+      border-radius: 8px;
+      margin: 0 0 22px;
+      padding: 28px;
+    }
+
+    .hero {
+      background: #ffffff;
+      border-top: 6px solid var(--brand);
+    }
+
+    h1 {
+      font-size: 34px;
+      line-height: 1.18;
+      margin: 0 0 12px;
+      color: #0f172a;
+    }
+
+    h2 {
+      font-size: 24px;
+      line-height: 1.3;
+      margin: 0 0 16px;
+      color: #0f172a;
+    }
+
+    h3 {
+      font-size: 18px;
+      margin: 24px 0 10px;
+      color: #1f2937;
+    }
+
+    p { margin: 8px 0 12px; }
+
+    .subtitle {
+      font-size: 17px;
+      color: var(--muted);
+      max-width: 980px;
+      margin-bottom: 20px;
+    }
+
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 18px 0 0;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 5px 10px;
+      border: 1px solid #cbd5e1;
+      background: #f8fafc;
+      color: #334155;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+    .kpi {
+      border: 1px solid var(--line);
+      background: #fbfdff;
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .kpi .label {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 6px;
+    }
+
+    .kpi .value {
+      font-size: 26px;
+      line-height: 1.15;
+      font-weight: 800;
+      color: #111827;
+    }
+
+    .kpi .note {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 7px;
+    }
+
+    .callout {
+      border-left: 5px solid var(--brand);
+      background: var(--soft2);
+      padding: 14px 16px;
+      border-radius: 6px;
+      margin: 16px 0;
+    }
+
+    .callout.good { border-left-color: var(--good); background: #ecfdf3; }
+    .callout.warn { border-left-color: var(--warn); background: #fffaeb; }
+    .callout.bad { border-left-color: var(--bad); background: #fef3f2; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0 20px;
+      font-size: 13px;
+    }
+
+    th, td {
+      border: 1px solid var(--line);
+      padding: 8px 9px;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f1f5f9;
+      text-align: left;
+      font-weight: 800;
+      color: #1f2937;
+    }
+
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    tr.best td { background: #ecfdf3; }
+    .green { color: var(--good); font-weight: 800; }
+    .red { color: var(--bad); font-weight: 800; }
+    .orange { color: var(--warn); font-weight: 800; }
+    .muted { color: var(--muted); }
+
+    .timeline {
+      display: grid;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 118px minmax(0, 1fr);
+      gap: 14px;
+      border: 1px solid var(--line);
+      background: #fbfdff;
+      border-radius: 8px;
+      padding: 14px;
+    }
+
+    .step .time {
+      color: var(--brand);
+      font-weight: 800;
+    }
+
+    .image-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 12px;
+    }
+
+    figure {
+      margin: 0;
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    figure img {
+      display: block;
+      width: 100%;
+      height: auto;
+      background: #f8fafc;
+    }
+
+    figcaption {
+      padding: 10px 12px;
+      color: #334155;
+      font-size: 13px;
+      border-top: 1px solid var(--line);
+      background: #fbfdff;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      color: #1e293b;
+      background: #eef2f7;
+      padding: 2px 5px;
+      border-radius: 4px;
+    }
+
+    .path {
+      display: block;
+      overflow-wrap: anywhere;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      background: #f8fafc;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px;
+      color: #334155;
+      margin: 6px 0;
+    }
+
+    .bar {
+      height: 10px;
+      background: #e5e7eb;
+      border-radius: 100px;
+      overflow: hidden;
+      margin-top: 6px;
+    }
+
+    .bar span {
+      display: block;
+      height: 100%;
+      background: var(--brand2);
+    }
+
+    .small { font-size: 12px; }
+
+    @media (max-width: 1100px) {
+      .shell { grid-template-columns: 1fr; }
+      nav { position: relative; height: auto; }
+      main { padding: 16px; }
+      .grid.cols-4, .grid.cols-3, .grid.cols-2, .image-grid { grid-template-columns: 1fr; }
+      .step { grid-template-columns: 1fr; }
+    }
+
+    @media print {
+      body { background: white; }
+      .shell { display: block; max-width: none; }
+      nav { display: none; }
+      main { padding: 0; }
+      section { box-shadow: none; break-inside: avoid; margin-bottom: 16px; }
+      a { color: #000; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <nav>
+      <h2>玄女 Embedding<br />阶段成果汇报</h2>
+      <div class="meta">
+        日期：2026-06-29<br />
+        范围：海淀 + 哈尔滨<br />
+        周期：2025-12 至 2026-05
+      </div>
+      <a href="#summary">一页结论</a>
+      <a href="#background">项目背景</a>
+      <a href="#data">数据与任务</a>
+      <a href="#pipeline">流程建设</a>
+      <a href="#experiments">实验版本</a>
+      <a href="#metrics">核心指标</a>
+      <a href="#haidian">海淀专测</a>
+      <a href="#visuals">可视化证据</a>
+      <a href="#findings">问题与判断</a>
+      <a href="#next">下一步计划</a>
+      <a href="#appendix">附录路径</a>
+    </nav>
+
+    <main>
+      <section class="hero" id="summary">
+        <h1>玄女遥感 Embedding 模型阶段成果汇报</h1>
+        <p class="subtitle">
+          本阶段完成了海淀与哈尔滨两地、多时相、多源遥感 embedding 的训练、下游评测、可视化诊断和迭代对比。当前最稳妥的结论是：<strong>P2A 原版是当前综合最优底座</strong>，P2A-Long 虽然训练损失更低，但下游整体没有变好。
+        </p>
+        <div class="badges">
+          <span class="badge">6 张 Ascend NPU 训练</span>
+          <span class="badge">2025-12 至 2026-05 多月 embedding</span>
+          <span class="badge">变化检测 + 建筑 + 道路下游测评</span>
+          <span class="badge">P2A 当前推荐 baseline</span>
+          <span class="badge">已生成可视化诊断闭环</span>
+        </div>
+
+        <div class="grid cols-4" style="margin-top: 22px;">
+          <div class="kpi">
+            <div class="label">当前推荐模型</div>
+            <div class="value">P2A</div>
+            <div class="note">语义 probe 版本，综合最稳。</div>
+          </div>
+          <div class="kpi">
+            <div class="label">P2A 变化检测均值 F1</div>
+            <div class="value">0.3394</div>
+            <div class="note">明显高于 AEF 均值 0.1305。</div>
+          </div>
+          <div class="kpi">
+            <div class="label">P2A OSM U-Net 均值 F1</div>
+            <div class="value">0.5077</div>
+            <div class="note">建筑、道路空间语义已有可读性。</div>
+          </div>
+          <div class="kpi">
+            <div class="label">P2A-Long 结论</div>
+            <div class="value">不晋升</div>
+            <div class="note">loss 更低，但下游平均下降。</div>
+          </div>
+        </div>
+
+        <div class="callout good">
+          <strong>领导汇报版一句话：</strong>
+          我们已经跑通了从多源遥感预训练、embedding 导出、下游快速测评、和 AEF/不同版本对比、到可视化诊断的完整闭环；目前 P2A 在变化检测和强下游分割头上最稳，后续重点不是继续堆训练轮次，而是让 embedding 同时兼顾“变化敏感性”和“建筑/道路等语义可分性”。
+        </div>
+      </section>
+
+      <section id="background">
+        <h2>1. 项目背景：为什么要做这个 embedding</h2>
+        <p>
+          目标不是只训练一个单任务模型，而是训练一个<strong>通用遥感地理 embedding</strong>：给定一个 1280 m × 1280 m patch，模型输出 128×128 的空间 embedding，使它能被下游简单头或分割头用于多种任务。
+        </p>
+        <div class="grid cols-3">
+          <div class="kpi">
+            <div class="label">业务价值</div>
+            <div class="value">少标注</div>
+            <div class="note">embedding 学好后，下游任务只需要少量标签或弱标签。</div>
+          </div>
+          <div class="kpi">
+            <div class="label">技术目标</div>
+            <div class="value">一套特征</div>
+            <div class="note">服务变化检测、建筑提取、道路提取、土地利用等任务。</div>
+          </div>
+          <div class="kpi">
+            <div class="label">汇报目标</div>
+            <div class="value">可解释</div>
+            <div class="note">不仅报指标，还展示预测、GT、embedding PCA 和失败案例。</div>
+          </div>
+        </div>
+
+        <h3>通俗解释</h3>
+        <p>
+          可以把 embedding 理解为“遥感图像的地理语义底图”。如果底图学得好，后面的建筑提取、道路提取、施工地检测、变化检测就不需要每个任务都从零开始学，而是只需要在这个底图上加一个很小的任务头。
+        </p>
+      </section>
+
+      <section id="data">
+        <h2>2. 数据、区域和下游任务</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>项目</th>
+              <th>内容</th>
+              <th>说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>区域</td>
+              <td>海淀、哈尔滨</td>
+              <td>海淀偏城市精细目标，哈尔滨提供跨区域和变化类任务。</td>
+            </tr>
+            <tr>
+              <td>月份</td>
+              <td>2025-12 至 2026-05</td>
+              <td>用于构造两期和多期时序 embedding。</td>
+            </tr>
+            <tr>
+              <td>模态</td>
+              <td>S2、S1、Landsat、高分光学、高分 SAR</td>
+              <td>多源融合，兼顾光谱、雷达和高分辨率空间纹理。</td>
+            </tr>
+            <tr>
+              <td>输出分辨率</td>
+              <td>128×128 embedding map</td>
+              <td>保持空间结构，便于做像素级分割和变化检测。</td>
+            </tr>
+            <tr>
+              <td>下游任务</td>
+              <td>施工地、建筑变化、农田变化、裸地/垃圾、建筑 OSM、道路 OSM</td>
+              <td>同时评估变化敏感性和语义可分性。</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="callout">
+          <strong>已解决的关键问题：</strong>
+          早期我们发现部分标注和坐标转换可能影响效果，因此加入了 GT 可视化、预测红白图、embedding PCA 图和任务级诊断图，避免只看 AUC 或平均数造成误判。
+        </div>
+      </section>
+
+      <section id="pipeline">
+        <h2>3. 已经搭好的实验闭环</h2>
+        <p>
+          现在已经不是单次手工试验，而是具备了固定流程：训练后自动导出 embedding，再跑变化检测与 OSM 下游任务，最后生成指标和可视化。
+        </p>
+        <div class="timeline">
+          <div class="step">
+            <div class="time">Step 1</div>
+            <div>
+              <strong>训练 embedding</strong><br />
+              使用 6 张 NPU（NPU 0-5）做 DDP 训练，所有实验配置自包含，便于复现实验。
+            </div>
+          </div>
+          <div class="step">
+            <div class="time">Step 2</div>
+            <div>
+              <strong>导出 embedding</strong><br />
+              将 best checkpoint 导出为每个区域、每个 patch、每个月的 128×128 embedding map。
+            </div>
+          </div>
+          <div class="step">
+            <div class="time">Step 3</div>
+            <div>
+              <strong>下游快速测评</strong><br />
+              固定跑变化检测任务，以及 OSM 建筑/道路的 Linear、MLP、U-Net 三类下游头。
+            </div>
+          </div>
+          <div class="step">
+            <div class="time">Step 4</div>
+            <div>
+              <strong>可视化诊断</strong><br />
+              每个输出结果展示前后高分影像、embedding、PCA、模型预测、真实 GT，预测用红色、背景白色，便于肉眼判断是否真的有效。
+            </div>
+          </div>
+          <div class="step">
+            <div class="time">Step 5</div>
+            <div>
+              <strong>版本对比和文档沉淀</strong><br />
+              每轮生成实验文档，记录权重、embedding、评测路径、指标、结论和下一轮假设。
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="experiments">
+        <h2>4. 实验版本演进</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>版本</th>
+              <th>核心改动</th>
+              <th>目的</th>
+              <th>结论</th>
+              <th>是否晋升</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>P1B</td>
+              <td>稀疏采样 + hard negative 基线</td>
+              <td>修复早期 bug 后建立可用底座</td>
+              <td>变化检测可用，但 OSM 语义能力不足。</td>
+              <td>否</td>
+            </tr>
+            <tr class="best">
+              <td><strong>P2A</strong></td>
+              <td>加入 semantic probe 辅助训练</td>
+              <td>让 embedding 更容易表达建筑、道路等语义</td>
+              <td><strong>综合最稳，当前推荐 baseline。</strong></td>
+              <td><span class="green">是</span></td>
+            </tr>
+            <tr>
+              <td>P2B</td>
+              <td>线性 semantic probe</td>
+              <td>测试更简单监督是否能提升线性可分性</td>
+              <td>整体不如 P2A，变化检测下降。</td>
+              <td>否</td>
+            </tr>
+            <tr>
+              <td>P2C</td>
+              <td>semantic hard negative</td>
+              <td>压制建筑/道路误检背景</td>
+              <td>Linear 略升，但变化检测和 MLP 不稳。</td>
+              <td>否</td>
+            </tr>
+            <tr>
+              <td>P2D</td>
+              <td>延迟 hard negative warmup</td>
+              <td>减少 hard negative 对主训练的冲击</td>
+              <td>OSM U-Net 均值最高，但变化检测不如 P2A。</td>
+              <td>否</td>
+            </tr>
+            <tr>
+              <td>P2E</td>
+              <td>change-anchor balance</td>
+              <td>保护变化检测敏感性</td>
+              <td>construction_joint 大幅提升，但 farm_change 明显退化。</td>
+              <td>否</td>
+            </tr>
+            <tr>
+              <td>P2A-Long</td>
+              <td>P2A 继续训练 100 epoch，lr=5e-5</td>
+              <td>验证“训练更久是否更好”</td>
+              <td>val loss 更低，但下游整体下降。</td>
+              <td>否</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="callout warn">
+          <strong>关键认识：</strong>
+          训练 loss 下降不等于 embedding 下游能力提升。P2A-Long 的 val loss 从 P2A 的 1.7069 降到 1.5982，但变化检测、MLP、U-Net 下游指标都下降，所以不能只用训练损失判断模型好坏。
+        </div>
+      </section>
+
+      <section id="metrics">
+        <h2>5. 核心指标对比</h2>
+        <h3>5.1 变化检测任务：P2A 对 AEF 有明显优势</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>任务</th>
+              <th class="num">AEF F1 均值</th>
+              <th class="num">P2A F1 fold0</th>
+              <th class="num">提升</th>
+              <th class="num">P2A AUC</th>
+              <th class="num">P2A mIoU</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>construction</td>
+              <td class="num">0.2116</td>
+              <td class="num">0.2978</td>
+              <td class="num green">+0.0862</td>
+              <td class="num">0.8744</td>
+              <td class="num">0.1593</td>
+            </tr>
+            <tr>
+              <td>building_change</td>
+              <td class="num">0.0245</td>
+              <td class="num">0.3229</td>
+              <td class="num green">+0.2983</td>
+              <td class="num">0.9579</td>
+              <td class="num">0.1363</td>
+            </tr>
+            <tr>
+              <td>farm_change</td>
+              <td class="num">0.0147</td>
+              <td class="num">0.1421</td>
+              <td class="num green">+0.1274</td>
+              <td class="num">0.8961</td>
+              <td class="num">0.0000</td>
+            </tr>
+            <tr>
+              <td>rubbish</td>
+              <td class="num">0.0365</td>
+              <td class="num">0.5971</td>
+              <td class="num green">+0.5606</td>
+              <td class="num">0.9989</td>
+              <td class="num">0.2917</td>
+            </tr>
+            <tr>
+              <td>construction_joint</td>
+              <td class="num">0.3650</td>
+              <td class="num">0.3371</td>
+              <td class="num red">-0.0279</td>
+              <td class="num">0.9480</td>
+              <td class="num">0.2021</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>5.2 不同 embedding 版本的变化检测均值</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>版本</th>
+              <th class="num">construction</th>
+              <th class="num">building_change</th>
+              <th class="num">farm_change</th>
+              <th class="num">rubbish</th>
+              <th class="num">construction_joint</th>
+              <th class="num">平均</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>P1B</td><td class="num">0.3696</td><td class="num">0.2732</td><td class="num">0.0534</td><td class="num">0.5359</td><td class="num">0.3420</td><td class="num">0.3148</td></tr>
+            <tr class="best"><td><strong>P2A</strong></td><td class="num">0.2978</td><td class="num">0.3229</td><td class="num">0.1421</td><td class="num">0.5971</td><td class="num">0.3371</td><td class="num"><strong>0.3394</strong></td></tr>
+            <tr><td>P2C</td><td class="num">0.2650</td><td class="num">0.3033</td><td class="num">0.1599</td><td class="num">0.5581</td><td class="num">0.3608</td><td class="num">0.3294</td></tr>
+            <tr><td>P2D</td><td class="num">0.2659</td><td class="num">0.3028</td><td class="num">0.1594</td><td class="num">0.5597</td><td class="num">0.3591</td><td class="num">0.3294</td></tr>
+            <tr><td>P2E</td><td class="num">0.2656</td><td class="num">0.3141</td><td class="num">0.0563</td><td class="num">0.5332</td><td class="num">0.4596</td><td class="num">0.3258</td></tr>
+            <tr><td>P2A-Long</td><td class="num">0.2600</td><td class="num">0.3067</td><td class="num">0.0666</td><td class="num">0.5601</td><td class="num">0.3312</td><td class="num">0.3049</td></tr>
+          </tbody>
+        </table>
+
+        <h3>5.3 OSM 建筑/道路下游任务</h3>
+        <p>
+          OSM 任务用于测试 embedding 是否具备建筑和道路语义。Linear/MLP 是更严格的“简单可读性”测试，U-Net 是更贴近实际分割效果的强下游头测试。
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>版本</th>
+              <th class="num">Linear 平均 F1</th>
+              <th class="num">MLP 平均 F1</th>
+              <th class="num">U-Net 平均 F1</th>
+              <th>解读</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>P1B</td><td class="num">0.2373</td><td class="num">0.3000</td><td class="num muted">未跑全</td><td>旧底座，语义可分性不足。</td></tr>
+            <tr class="best"><td><strong>P2A</strong></td><td class="num">0.2463</td><td class="num"><strong>0.3403</strong></td><td class="num">0.5077</td><td>综合最稳，尤其 MLP 和变化检测。</td></tr>
+            <tr><td>P2C</td><td class="num">0.2540</td><td class="num">0.3357</td><td class="num">0.5063</td><td>Linear 略好，但综合不如 P2A。</td></tr>
+            <tr><td>P2D</td><td class="num"><strong>0.2546</strong></td><td class="num">0.3386</td><td class="num"><strong>0.5148</strong></td><td>U-Net 最好，但变化检测不如 P2A。</td></tr>
+            <tr><td>P2E</td><td class="num">0.2528</td><td class="num">0.3331</td><td class="num">0.5090</td><td>海淀道路变好，跨区域有退化。</td></tr>
+            <tr><td>P2A-Long</td><td class="num">0.2467</td><td class="num">0.3100</td><td class="num">0.4646</td><td>训练更久但下游下降。</td></tr>
+          </tbody>
+        </table>
+
+        <div class="callout good">
+          <strong>指标结论：</strong>
+          当前没有一个版本在所有任务上绝对胜出。P2D 在 OSM U-Net 上略强，P2E 在 construction_joint 上强，但 P2A 的变化检测平均和 MLP 语义能力最稳，所以继续作为总 baseline。
+        </div>
+      </section>
+
+      <section id="haidian">
+        <h2>6. 海淀区专测：如果只服务海淀，哪个模型更好</h2>
+        <p>
+          因为领导汇报可能更关注海淀场景，我们单独做了海淀专测。这里只纳入海淀施工地、海淀 construction_joint 子集、海淀建筑 OSM、海淀道路 OSM。哈尔滨为主的 farm_change、rubbish、building_change 不放进海淀专测。
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>任务组</th>
+              <th class="num">P2A F1</th>
+              <th class="num">P2A-Long F1</th>
+              <th class="num">差值</th>
+              <th>判断</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>施工类平均</td><td class="num">0.3330</td><td class="num">0.3070</td><td class="num red">-0.0261</td><td>P2A 更好</td></tr>
+            <tr><td>OSM Linear 平均</td><td class="num">0.2923</td><td class="num">0.3074</td><td class="num green">+0.0151</td><td>P2A-Long 更好</td></tr>
+            <tr><td>OSM MLP 平均</td><td class="num">0.2960</td><td class="num">0.3053</td><td class="num green">+0.0093</td><td>P2A-Long 略好</td></tr>
+            <tr><td>OSM U-Net 平均</td><td class="num">0.4358</td><td class="num">0.4150</td><td class="num red">-0.0208</td><td>P2A 更好</td></tr>
+            <tr class="best"><td><strong>海淀整体平均</strong></td><td class="num"><strong>0.3393</strong></td><td class="num">0.3337</td><td class="num red">-0.0056</td><td><strong>P2A 略好</strong></td></tr>
+          </tbody>
+        </table>
+
+        <div class="callout">
+          <strong>海淀专测结论：</strong>
+          P2A-Long 在简单头 Linear/MLP 上更容易被读出来，但 P2A 在施工任务和 U-Net 强分割头上更稳。若面向实际应用和汇报展示，仍建议使用 P2A。
+        </div>
+      </section>
+
+      <section id="visuals">
+        <h2>7. 可视化证据</h2>
+        <p>
+          我们不只看指标，还把每类任务的预测结果可视化。下面的对比图中，同一 patch 对齐，P2A 在上，P2A-Long 在下，便于观察训练更久是否真的带来更好预测。
+        </p>
+
+        <h3>7.1 变化检测任务对比</h3>
+        <div class="image-grid">
+          <figure>
+            <img src="/data/xuannv_embedding/experiments/v2_202512_202605/comparisons/p2a_vs_p2a_long_20260628/construction_p2a_vs_p2a_long.png" alt="construction comparison" />
+            <figcaption>施工地检测：P2A 在施工任务上整体更稳，P2A-Long 更容易漏检或校准不稳定。</figcaption>
+          </figure>
+          <figure>
+            <img src="/data/xuannv_embedding/experiments/v2_202512_202605/comparisons/p2a_vs_p2a_long_20260628/building_change_p2a_vs_p2a_long.png" alt="building change comparison" />
+            <figcaption>建筑变化：两期高分影像、embedding、预测和 GT 对齐展示，帮助核查是否存在坐标或标签问题。</figcaption>
+          </figure>
+          <figure>
+            <img src="/data/xuannv_embedding/experiments/v2_202512_202605/comparisons/p2a_vs_p2a_long_20260628/farm_change_p2a_vs_p2a_long.png" alt="farm change comparison" />
+            <figcaption>农田变化：当前最弱任务之一，P2A-Long 退化明显，说明单纯训练更久会损伤部分稀疏变化任务。</figcaption>
+          </figure>
+          <figure>
+            <img src="/data/xuannv_embedding/experiments/v2_202512_202605/comparisons/p2a_vs_p2a_long_20260628/rubbish_p2a_vs_p2a_long.png" alt="rubbish comparison" />
+            <figcaption>裸地/垃圾变化：P2A 在该任务上相对 AEF 提升非常明显，但仍需要看阈值、mIoU 和可视化，不只看 AUC。</figcaption>
+          </figure>
+        </div>
+
+        <h3>7.2 海淀建筑和道路可视化</h3>
+        <div class="image-grid">
+          <figure>
+            <img src="/data/xuannv_embedding/experiments/v2_202512_202605/comparisons/p2a_vs_p2a_long_20260628/haidian_building_osm_unet_p2a_vs_p2a_long.png" alt="haidian building osm comparison" />
+            <figcaption>海淀建筑 OSM：U-Net 下游头上 P2A 优于 P2A-Long，说明 P2A 的空间语义更适合强分割头。</figcaption>
+          </figure>
+          <figure>
+            <img src="/data/xuannv_embedding/experiments/v2_202512_202605/comparisons/p2a_vs_p2a_long_20260628/haidian_road_osm_unet_p2a_vs_p2a_long.png" alt="haidian road osm comparison" />
+            <figcaption>海淀道路 OSM：道路是细线目标，容易断裂或误扩张。P2A 在 U-Net 上略稳。</figcaption>
+          </figure>
+        </div>
+
+        <h3>7.3 哈尔滨建筑和道路可视化</h3>
+        <div class="image-grid">
+          <figure>
+            <img src="/data/xuannv_embedding/experiments/v2_202512_202605/comparisons/p2a_vs_p2a_long_20260628/harbin_building_osm_unet_p2a_vs_p2a_long.png" alt="harbin building osm comparison" />
+            <figcaption>哈尔滨建筑 OSM：P2A 对跨区域建筑语义更强，P2A-Long 下游下降较明显。</figcaption>
+          </figure>
+          <figure>
+            <img src="/data/xuannv_embedding/experiments/v2_202512_202605/comparisons/p2a_vs_p2a_long_20260628/harbin_road_osm_unet_p2a_vs_p2a_long.png" alt="harbin road osm comparison" />
+            <figcaption>哈尔滨道路 OSM：跨区域道路提取仍然可用，但细线结构和阈值校准还需要加强。</figcaption>
+          </figure>
+        </div>
+
+        <div class="callout warn">
+          <strong>可视化上看到的问题：</strong>
+          部分道路预测会断裂，建筑边界会粘连或过分扩张；有些任务 AUC 很高但正类预测比例很低，所以必须同时看 F1、mIoU、pred+ 和 GT 可视化。
+        </div>
+      </section>
+
+      <section id="findings">
+        <h2>8. 当前主要发现和问题</h2>
+        <div class="grid cols-2">
+          <div class="kpi">
+            <div class="label">发现 1</div>
+            <div class="value">P2A 最稳</div>
+            <div class="note">变化检测均值、MLP 语义能力、海淀实际任务都较均衡。</div>
+          </div>
+          <div class="kpi">
+            <div class="label">发现 2</div>
+            <div class="value">loss 不可靠</div>
+            <div class="note">P2A-Long loss 更低，但下游变差，说明不能单靠训练损失选模型。</div>
+          </div>
+          <div class="kpi">
+            <div class="label">发现 3</div>
+            <div class="value">语义和变化冲突</div>
+            <div class="note">hard negative 能提高建筑/道路线性可分性，但可能损伤变化敏感性。</div>
+          </div>
+          <div class="kpi">
+            <div class="label">发现 4</div>
+            <div class="value">校准仍弱</div>
+            <div class="note">F1@0.5 和 F1_best 差距较大，说明概率阈值还不稳定。</div>
+          </div>
+        </div>
+
+        <h3>需要坦诚说明的风险</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>风险</th>
+              <th>表现</th>
+              <th>当前处理方式</th>
+              <th>后续解决方向</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>OSM 标签噪声</td>
+              <td>建筑/道路标签来自 OSM，存在漏标、错标、道路宽度近似。</td>
+              <td>用可视化核查，不把单个样本当绝对真值。</td>
+              <td>引入 Locate Anything 或其他视觉基础模型辅助生成弱标签。</td>
+            </tr>
+            <tr>
+              <td>坐标转换误差</td>
+              <td>早期怀疑标签区域和影像存在对齐误差。</td>
+              <td>加入 GT 列和高分影像可视化，逐任务检查。</td>
+              <td>继续做 label QA 和可视化抽检。</td>
+            </tr>
+            <tr>
+              <td>变化任务稀疏</td>
+              <td>farm_change 正类少，mIoU 低，容易被 AUC 掩盖。</td>
+              <td>报告 F1、mIoU、pred+，不只报 AUC。</td>
+              <td>做变化区域采样、正负样本再平衡。</td>
+            </tr>
+            <tr>
+              <td>强头和简单头结论分裂</td>
+              <td>P2A-Long 简单头略好，但 U-Net 和施工任务变差。</td>
+              <td>按应用目标区分：实际汇报和工程优先看 P2A。</td>
+              <td>下一轮同时优化简单可分性和空间语义。</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="next">
+        <h2>9. 下一步升级计划</h2>
+        <p>
+          当前建议不是继续把 P2A 训练更久，而是设计新一轮目标，让模型同时保留 P2A 的空间语义能力，并吸收 P2A-Long 在简单头上的线性可分性收益。
+        </p>
+        <div class="grid cols-3">
+          <div class="kpi">
+            <div class="label">方向 A</div>
+            <div class="value">语义区域约束</div>
+            <div class="note">建筑、道路、水体、土地利用等区域提供更明确的语义监督。</div>
+          </div>
+          <div class="kpi">
+            <div class="label">方向 B</div>
+            <div class="value">变化锚点</div>
+            <div class="note">训练时保护真实变化区域，避免语义学习冲掉时序敏感性。</div>
+          </div>
+          <div class="kpi">
+            <div class="label">方向 C</div>
+            <div class="value">边界和细目标</div>
+            <div class="note">道路和建筑边界用更细的 loss 或采样策略，减少断裂和粘连。</div>
+          </div>
+        </div>
+
+        <h3>建议的执行节奏</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>阶段</th>
+              <th>要做什么</th>
+              <th>验收标准</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>下一轮 P3A</td>
+              <td>保留 P2A 底座，引入区域平衡语义监督，重点照顾海淀简单头退化问题。</td>
+              <td>海淀 Linear/MLP 不低于 P2A-Long，同时 U-Net 和变化检测不低于 P2A。</td>
+            </tr>
+            <tr>
+              <td>P3B</td>
+              <td>加入变化区域正样本采样和变化锚点保护。</td>
+              <td>farm_change、construction_joint 不再互相拉扯，变化检测均值超过 P2A。</td>
+            </tr>
+            <tr>
+              <td>P3C</td>
+              <td>引入边界/细线任务增强，重点解决道路断裂和建筑粘连。</td>
+              <td>海淀道路 U-Net 和道路可视化明显改善。</td>
+            </tr>
+            <tr>
+              <td>汇报包</td>
+              <td>固定生成指标表、红白预测图、GT 图、embedding PCA、失败案例。</td>
+              <td>每次训练结束 1 套可交付报告，方便快速迭代。</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="appendix">
+        <h2>10. 附录：关键路径和复现信息</h2>
+        <h3>当前推荐模型 P2A</h3>
+        <span class="path">权重：/data/xuannv_embedding/outputs/v2_p2a_semantic_probe_full_20260627/best.pt</span>
+        <span class="path">Embedding：/data/xuannv_embedding/embeddings/v2_202512_202605/20260627_v2_p2a_semantic_probe_full_20260627_best_p2a_semantic_probe_full_best_20260627</span>
+        <span class="path">变化检测评测：/data/xuannv_embedding/experiments/v2_202512_202605/benchmarks/p2a_semantic_probe_full_quick_20260627_185700</span>
+        <span class="path">OSM 下游评测：/data/xuannv_embedding/experiments/v2_202512_202605/expanded_downstream/p2a_semantic_probe_full_quick_20260627_185700</span>
+
+        <h3>P2A-Long 对比实验</h3>
+        <span class="path">权重：/data/xuannv_embedding/outputs/v2_p2a_long_lr5e5_full_20260628/best.pt</span>
+        <span class="path">Embedding：/data/xuannv_embedding/embeddings/v2_202512_202605/20260628_v2_p2a_long_lr5e5_full_20260628_best_p2a_long_lr5e5_full_best_20260628</span>
+        <span class="path">评测：/data/xuannv_embedding/experiments/v2_202512_202605/benchmarks/p2a_long_lr5e5_full_quick_20260628_090032</span>
+
+        <h3>已经生成的对比文档</h3>
+        <ul>
+          <li><code>docs/experiments/p2a_semantic_probe_results_20260627.md</code></li>
+          <li><code>docs/experiments/p2d_delayed_hardneg_results_20260628.md</code></li>
+          <li><code>docs/experiments/p2e_change_anchor_balance_results_20260628.md</code></li>
+          <li><code>docs/experiments/p2a_vs_p2a_long_downstream_comparison_20260628.md</code></li>
+          <li><code>docs/experiments/p2a_vs_p2a_long_haidian_only_comparison_20260628.md</code></li>
+        </ul>
+
+        <div class="callout good">
+          <strong>本 HTML 使用方式：</strong>
+          直接在浏览器打开本文件即可。图片引用的是本机 `/data/xuannv_embedding/...` 下已经生成的实验可视化，如果换机器汇报，需要同步这些图片目录或导出为 PDF。
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
