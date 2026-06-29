@@ -14,6 +14,7 @@ NNODES="${NNODES:-1}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-6}"
 
 cd "$(dirname "$0")/../.."
+export PYTHONPATH="$PWD/src:${PYTHONPATH:-}"
 
 echo "Launching training on ${NNODES} node(s) x ${NPROC_PER_NODE} NPUs"
 echo "Config: ${CONFIG}"
