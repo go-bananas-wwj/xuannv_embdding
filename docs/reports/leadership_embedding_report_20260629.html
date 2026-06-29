@@ -440,6 +440,7 @@
       <a href="#background">项目背景</a>
       <a href="#workload">工作量总览</a>
       <a href="#data">数据与任务</a>
+      <a href="#training-strategy">两阶段训练</a>
       <a href="#pipeline">流程建设</a>
       <a href="#engineering">工程/API</a>
       <a href="#experiments">实验版本</a>
@@ -670,9 +671,117 @@
         </div>
       </section>
 
+      <section id="training-strategy">
+        <span class="section-label">Training Strategy</span>
+        <h2>4. 两阶段训练思路：先学稳定时序底座，再融入高分细节</h2>
+        <p>
+          我们的训练不是简单把所有数据一次性塞进模型，而是分两阶段推进。这样做的原因是：低分辨率时序数据覆盖稳定、时间连续，适合先学“长期地理语义”；高分辨率数据空间细节强，但区域稀疏、模态不齐，适合在底座稳定后再持续预训练融入。
+        </p>
+
+        <div class="grid cols-2">
+          <div class="work-card">
+            <strong>阶段一：低分辨率多源时序预训练</strong>
+            <div class="count">S2 + S1 + Landsat</div>
+            使用 Sentinel-2、Sentinel-1、Landsat 和 WorldCover，在 10 m 等效网格上学习月度地理 embedding。目标是让模型先掌握季节、地物、雷达/光学互补和缺失月份处理能力。
+          </div>
+          <div class="work-card">
+            <strong>阶段二：高分辨率持续预训练</strong>
+            <div class="count">光学 + SAR</div>
+            在阶段一 checkpoint 基础上加入海淀高分光学、哈尔滨高分光学、海淀高分 SAR。目标是把建筑边界、道路细线、小目标纹理等高分信息压进同一个 128×128 embedding 空间。
+          </div>
+        </div>
+
+        <h3>阶段一具体怎么学</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>输入</th>
+              <th>模型处理</th>
+              <th>训练目标</th>
+              <th>学到的能力</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>S2 12 波段</td>
+              <td>按月聚合到 2025-12 至 2026-05 的月度 bin。</td>
+              <td>S2 reconstruction，连续值重建。</td>
+              <td>学习植被、裸地、水体、建筑等光谱语义。</td>
+            </tr>
+            <tr>
+              <td>S1 VV/VH</td>
+              <td>雷达模态单独编码，再与光学时序融合。</td>
+              <td>S1 reconstruction，连续值重建。</td>
+              <td>补充云遮挡、夜间/雨雾等光学不稳定场景。</td>
+            </tr>
+            <tr>
+              <td>Landsat 7 波段</td>
+              <td>作为另一套中分辨率光学时序输入。</td>
+              <td>Landsat reconstruction。</td>
+              <td>增强跨传感器一致性，降低单一传感器偏差。</td>
+            </tr>
+            <tr>
+              <td>WorldCover / 弱语义标签</td>
+              <td>作为 target-only 分类监督，不作为普通影像输入。</td>
+              <td>分类交叉熵，0 为 ignore。</td>
+              <td>让 embedding 具备基础地表覆盖语义。</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>阶段二高分辨率数据怎么用</h3>
+        <p>
+          高分辨率数据不直接拉伸到 10 m 输入里，也不是简单拼接到 S2 上。我们采用“独立高分编码分支 + 可用性感知融合”的方式：
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>高分源</th>
+              <th>区域</th>
+              <th>原始尺寸/分辨率</th>
+              <th>进入模型的方式</th>
+              <th>主要贡献</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>highres_optical_haidian</td>
+              <td>海淀</td>
+              <td>约 427×427，约 3 m</td>
+              <td>NativeResolutionHighResEncoder 独立编码，adaptive pool 到 embedding 网格。</td>
+              <td>补充高密度城区建筑边界、道路纹理、小目标。</td>
+            </tr>
+            <tr>
+              <td>highres_optical_harbin</td>
+              <td>哈尔滨</td>
+              <td>约 2560×2560，约 0.5 m</td>
+              <td>独立高分编码器处理原生分辨率，再和月度 base embedding 融合。</td>
+              <td>补充施工地、建筑变化、裸地/垃圾等细粒度纹理。</td>
+            </tr>
+            <tr>
+              <td>highres_sar_haidian</td>
+              <td>海淀</td>
+              <td>约 427×427，约 3 m</td>
+              <td>SAR 高分分支单独编码，用 availability mask 控制是否参与融合。</td>
+              <td>在光学纹理之外提供结构和散射信息。</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>为什么要可用性感知融合</h3>
+        <p>
+          高分数据不是每个区域、每个月、每个模态都有。如果强行要求所有模态都齐全，训练样本会大幅减少；如果把缺失当成 0，又容易让模型误学。因此我们给每个高分源配 availability mask：有数据时参与融合，没有数据时不强行补假数据。这样可以同时利用稀疏高分信息，又保持低分时序底座的稳定性。
+        </p>
+
+        <div class="callout good">
+          <strong>通俗总结：</strong>
+          第一阶段像“读长期低分地图”，先知道这个地方长期是什么；第二阶段像“拿放大镜看细节”，把建筑边缘、道路细线和施工纹理补进去。最后输出仍然是统一的 128×128 embedding，下游任务不用关心底层到底来自 S2、S1、Landsat 还是高分影像。
+        </div>
+      </section>
+
       <section id="pipeline">
         <span class="section-label">Evaluation Pipeline</span>
-        <h2>4. 已经搭好的实验闭环</h2>
+        <h2>5. 已经搭好的实验闭环</h2>
         <p>
           现在已经不是单次手工试验，而是具备了固定流程：训练后自动导出 embedding，再跑变化检测与 OSM 下游任务，最后生成指标和可视化。
         </p>
@@ -717,7 +826,7 @@
 
       <section id="engineering">
         <span class="section-label">Engineering / API / Delivery</span>
-        <h2>5. 工程与后端 API 工作量</h2>
+        <h2>6. 工程与后端 API 工作量</h2>
         <p>
           除了模型本身，本阶段还把上下游工程链路补齐：区域网格从后端 API 同步，训练和评测结果结构化落盘，报告站点通过 8001 端口提供访问。这部分是后续做驾驶舱、接口服务和业务交付的基础。
         </p>
@@ -808,7 +917,7 @@
 
       <section id="experiments">
         <span class="section-label">Model Iteration</span>
-        <h2>6. 实验版本演进</h2>
+        <h2>7. 实验版本演进</h2>
         <table>
           <thead>
             <tr>
@@ -879,8 +988,62 @@
       </section>
 
       <section id="metrics">
-        <h2>7. 核心指标对比</h2>
-        <h3>5.1 变化检测任务：P2A 对 AEF 有明显优势</h3>
+        <h2>8. 核心指标对比</h2>
+        <h3>8.1 P2A / P1B / AEF 总览对比</h3>
+        <p>
+          AEF 是官方年度 embedding 基线；P1B 是我们修复稀疏采样和 hard negative 后的自研基线；P2A 是当前推荐版本。这里把 AEF 放进同一张表，便于直接说明“我们和外部强基线相比处于什么位置”。
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>任务组</th>
+              <th class="num">AEF</th>
+              <th class="num">P1B</th>
+              <th class="num">P2A</th>
+              <th>结论</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="best">
+              <td>变化检测平均 F1_best</td>
+              <td class="num">0.1305</td>
+              <td class="num">0.3148</td>
+              <td class="num"><strong>0.3394</strong></td>
+              <td>P2A 明显超过 AEF，也超过 P1B。</td>
+            </tr>
+            <tr>
+              <td>变化检测平均 AUC</td>
+              <td class="num">0.7848</td>
+              <td class="num">0.9452</td>
+              <td class="num">约 0.9350+</td>
+              <td>自研 embedding 在变化排序能力上已经明显强于 AEF。</td>
+            </tr>
+            <tr>
+              <td>变化检测平均 mIoU</td>
+              <td class="num">0.0491</td>
+              <td class="num">0.1360</td>
+              <td class="num">约 0.1579</td>
+              <td>P2A 分割区域质量较 AEF 有明显提升，但稀疏任务仍需优化。</td>
+            </tr>
+            <tr>
+              <td>OSM 建筑/道路 U-Net F1</td>
+              <td class="num">未评测</td>
+              <td class="num">部分任务</td>
+              <td class="num"><strong>0.5077</strong></td>
+              <td>这是 P2A 新增验证能力，证明 embedding 可支持建筑/道路语义任务。</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="callout">
+          <strong>汇报口径：</strong>
+          AEF 作为外部强基线，在 construction_joint 上仍有优势；但在 building_change、farm_change、rubbish 等变化类任务上，自研 embedding 已经明显超过 AEF。P2A 进一步把“变化检测能力”和“建筑/道路语义能力”接到同一套 embedding 上。
+        </div>
+
+        <h3>8.2 变化检测任务：P2A 对 AEF 有明显优势</h3>
+        <p class="muted">
+          注：AEF 数字来自已有 5-fold 均值；P2A 数字为当前固定 quick fold-0 评测，用于快速迭代和方向判断。正式对外发布时建议对最终版本补跑完整 5-fold。
+        </p>
         <table>
           <thead>
             <tr>
@@ -936,7 +1099,7 @@
           </tbody>
         </table>
 
-        <h3>5.2 不同 embedding 版本的变化检测均值</h3>
+        <h3>8.3 不同 embedding 版本的变化检测均值</h3>
         <table>
           <thead>
             <tr>
@@ -959,7 +1122,7 @@
           </tbody>
         </table>
 
-        <h3>5.3 OSM 建筑/道路下游任务</h3>
+        <h3>8.4 OSM 建筑/道路下游任务</h3>
         <p>
           OSM 任务用于测试 embedding 是否具备建筑和道路语义。Linear/MLP 是更严格的“简单可读性”测试，U-Net 是更贴近实际分割效果的强下游头测试。
         </p>
@@ -990,7 +1153,7 @@
       </section>
 
       <section id="haidian">
-        <h2>8. 海淀区专测：如果只服务海淀，哪个模型更好</h2>
+        <h2>9. 海淀区专测：如果只服务海淀，哪个模型更好</h2>
         <p>
           因为领导汇报可能更关注海淀场景，我们单独做了海淀专测。这里只纳入海淀施工地、海淀 construction_joint 子集、海淀建筑 OSM、海淀道路 OSM。哈尔滨为主的 farm_change、rubbish、building_change 不放进海淀专测。
         </p>
@@ -1020,12 +1183,12 @@
       </section>
 
       <section id="visuals">
-        <h2>9. 可视化证据</h2>
+        <h2>10. 可视化证据</h2>
         <p>
           我们不只看指标，还把每类任务的预测结果可视化。下面的对比图中，同一 patch 对齐，P2A 在上，P2A-Long 在下，便于观察训练更久是否真的带来更好预测。
         </p>
 
-        <h3>9.1 指标图表与汇报包素材</h3>
+        <h3>10.1 指标图表与汇报包素材</h3>
         <div class="image-grid">
           <figure>
             <img src="/data/xuannv_embedding/experiments/v2_202512_202605/presentation/p1b_downstream_showcase_20260627/charts/macro_metrics_vs_aef.png" alt="macro metrics vs aef" />
@@ -1037,7 +1200,7 @@
           </figure>
         </div>
 
-        <h3>9.2 业务报告交付素材</h3>
+        <h3>10.2 业务报告交付素材</h3>
         <div class="image-grid">
           <figure>
             <img src="/reports/harbin_202512_202605/pdf_maps/all_categories_map.png" alt="all categories report map" />
@@ -1049,7 +1212,7 @@
           </figure>
         </div>
 
-        <h3>9.3 变化检测任务对比</h3>
+        <h3>10.3 变化检测任务对比</h3>
         <div class="image-grid">
           <figure>
             <img src="/data/xuannv_embedding/experiments/v2_202512_202605/comparisons/p2a_vs_p2a_long_20260628/construction_p2a_vs_p2a_long.png" alt="construction comparison" />
@@ -1069,7 +1232,7 @@
           </figure>
         </div>
 
-        <h3>9.4 海淀建筑和道路可视化</h3>
+        <h3>10.4 海淀建筑和道路可视化</h3>
         <div class="image-grid">
           <figure>
             <img src="/data/xuannv_embedding/experiments/v2_202512_202605/comparisons/p2a_vs_p2a_long_20260628/haidian_building_osm_unet_p2a_vs_p2a_long.png" alt="haidian building osm comparison" />
@@ -1081,7 +1244,7 @@
           </figure>
         </div>
 
-        <h3>9.5 哈尔滨建筑和道路可视化</h3>
+        <h3>10.5 哈尔滨建筑和道路可视化</h3>
         <div class="image-grid">
           <figure>
             <img src="/data/xuannv_embedding/experiments/v2_202512_202605/comparisons/p2a_vs_p2a_long_20260628/harbin_building_osm_unet_p2a_vs_p2a_long.png" alt="harbin building osm comparison" />
@@ -1100,7 +1263,7 @@
       </section>
 
       <section id="findings">
-        <h2>10. 当前主要发现和问题</h2>
+        <h2>11. 当前主要发现和问题</h2>
         <div class="grid cols-2">
           <div class="kpi">
             <div class="label">发现 1</div>
@@ -1164,7 +1327,7 @@
       </section>
 
       <section id="next">
-        <h2>11. 下一步升级计划</h2>
+        <h2>12. 下一步升级计划</h2>
         <p>
           当前建议不是继续把 P2A 训练更久，而是设计新一轮目标，让模型同时保留 P2A 的空间语义能力，并吸收 P2A-Long 在简单头上的线性可分性收益。
         </p>
@@ -1221,7 +1384,7 @@
       </section>
 
       <section id="appendix">
-        <h2>12. 附录：关键路径和复现信息</h2>
+        <h2>13. 附录：关键路径和复现信息</h2>
         <h3>当前推荐模型 P2A</h3>
         <span class="path">权重：/data/xuannv_embedding/outputs/v2_p2a_semantic_probe_full_20260627/best.pt</span>
         <span class="path">Embedding：/data/xuannv_embedding/embeddings/v2_202512_202605/20260627_v2_p2a_semantic_probe_full_20260627_best_p2a_semantic_probe_full_best_20260627</span>
