@@ -3,9 +3,7 @@
 set -euo pipefail
 
 if [[ -z "${WANDB_API_KEY:-}" ]]; then
-    echo "ERROR: 请设置环境变量 WANDB_API_KEY 以启用 WANDB 实时监控。" >&2
-    echo "例如: export WANDB_API_KEY=<your_key>" >&2
-    exit 1
+    echo "WARN: WANDB_API_KEY 未设置；若配置 use_wandb=false 可忽略。" >&2
 fi
 
 CONFIG="${1:-configs/harbin_128.yaml}"
