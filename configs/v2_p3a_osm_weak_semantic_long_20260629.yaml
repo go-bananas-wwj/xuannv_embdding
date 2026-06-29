@@ -1,0 +1,253 @@
+experiment:
+  name: v2_p3a_osm_weak_semantic_long_20260629
+  seed: 42
+  output_dir: /data/xuannv_embedding/outputs/v2_p3a_osm_weak_semantic_long_20260629
+  use_wandb: true
+  wandb_project: xuannv-embedding-v2
+  wandb_run_name: v2_p3a_osm_weak_semantic_long_20260629_6npu_bs6_ep300
+model:
+  embed_dim: 64
+  stem_dim: 32
+  num_months: 6
+  ref_year: 2025
+  ref_month: 12
+  stp:
+    space_dim: 512
+    time_dim: 256
+    precision_dim: 128
+    num_blocks: 6
+    num_heads: 8
+    temporal_fusion: gated_sum
+  sensor_channels:
+    s2: 12
+    s1: 2
+    landsat: 7
+    highres_optical_haidian: 3
+    highres_optical_harbin: 3
+    highres_sar_haidian: 1
+  target_heads:
+    s2_recon:
+      source: s2
+      loss_type: continuous
+      channels: 12
+      weight: 1.0
+    s1_recon:
+      source: s1
+      loss_type: continuous
+      channels: 2
+      weight: 1.0
+    landsat_recon:
+      source: landsat
+      loss_type: continuous
+      channels: 7
+      weight: 1.0
+    worldcover:
+      source: worldcover
+      loss_type: categorical
+      channels: 9
+      weight: 0.5
+    highres_optical_haidian_recon:
+      source: highres_optical_haidian
+      loss_type: continuous
+      channels: 3
+      weight: 0.25
+    highres_optical_harbin_recon:
+      source: highres_optical_harbin
+      loss_type: continuous
+      channels: 3
+      weight: 0.25
+    highres_sar_haidian_recon:
+      source: highres_sar_haidian
+      loss_type: continuous
+      channels: 1
+      weight: 0.25
+training:
+  epochs: 300
+  lr: 5.0e-05
+  weight_decay: 0.05
+  warmup_epochs: 10
+  gradient_accumulation_steps: 2
+  save_every: 20
+  eval_every: 10
+  amp: true
+  gradient_checkpointing: true
+  log_every: 50
+  uniformity_weight: 0.01
+  uniformity_warmup_epochs: 10
+  uniformity_temperature: 2.0
+  temporal_endpoint_weight: 0.0
+  temporal_endpoint_warmup_epochs: 0
+  temporal_endpoint_margin: 0.15
+  temporal_contrast_weight: 0.03
+  temporal_contrast_warmup_epochs: 12
+  temporal_contrast_margin: 0.2
+  temporal_contrast_change_z: 0.75
+  temporal_contrast_stable_z: -0.25
+  temporal_contrast_sources:
+  - s2_recon
+  - s1_recon
+  - landsat_recon
+  supervised_change_weight: 0.0
+  supervised_change_warmup_epochs: 0
+  supervised_change_pos_margin: 0.35
+  supervised_change_neg_margin: 0.05
+  supervised_change_tasks: []
+  supervised_change_pos_weight: 1.5
+  supervised_change_neg_weight: 0.5
+  supervised_change_hard_negative_ratio: 0.05
+  supervised_change_task_weights: {}
+  semantic_probe_weight: 0.06
+  semantic_probe_warmup_epochs: 12
+  semantic_probe_tasks:
+  - haidian_osm_building
+  - haidian_osm_major_road
+  - haidian_osm_minor_road
+  - haidian_osm_water
+  - haidian_osm_residential
+  - haidian_osm_commercial
+  - haidian_osm_industrial
+  - haidian_osm_agriculture
+  - haidian_osm_green
+  - haidian_osm_activity_poi
+  - haidian_osm_path_walk
+  - haidian_osm_rail
+  - haidian_osm_construction
+  - harbin_osm_building
+  - harbin_osm_major_road
+  - harbin_osm_minor_road
+  - harbin_osm_water
+  - harbin_osm_residential
+  - harbin_osm_commercial
+  - harbin_osm_industrial
+  - harbin_osm_agriculture
+  - harbin_osm_green
+  - harbin_osm_activity_poi
+  - harbin_osm_path_walk
+  - harbin_osm_rail
+  - harbin_osm_construction
+  semantic_probe_task_weights:
+    haidian_osm_building: 0.8
+    haidian_osm_major_road: 0.8
+    haidian_osm_minor_road: 0.8
+    haidian_osm_water: 0.4
+    haidian_osm_residential: 0.8
+    haidian_osm_commercial: 0.8
+    haidian_osm_industrial: 0.8
+    haidian_osm_agriculture: 0.8
+    haidian_osm_green: 0.35
+    haidian_osm_activity_poi: 0.35
+    haidian_osm_path_walk: 0.35
+    haidian_osm_rail: 0.35
+    haidian_osm_construction: 0.35
+    harbin_osm_building: 0.8
+    harbin_osm_major_road: 0.8
+    harbin_osm_minor_road: 0.8
+    harbin_osm_water: 0.4
+    harbin_osm_residential: 0.8
+    harbin_osm_commercial: 0.8
+    harbin_osm_industrial: 0.8
+    harbin_osm_agriculture: 0.8
+    harbin_osm_green: 0.35
+    harbin_osm_activity_poi: 0.35
+    harbin_osm_path_walk: 0.35
+    harbin_osm_rail: 0.35
+    harbin_osm_construction: 0.35
+  semantic_probe_pos_weight: 2.0
+  semantic_probe_pos_weights:
+    haidian_osm_building: 2.5
+    haidian_osm_major_road: 3.0
+    haidian_osm_minor_road: 3.0
+    haidian_osm_water: 1.5
+    haidian_osm_residential: 1.5
+    haidian_osm_commercial: 2.5
+    haidian_osm_industrial: 2.5
+    haidian_osm_agriculture: 2.5
+    haidian_osm_green: 1.5
+    haidian_osm_activity_poi: 1.5
+    haidian_osm_path_walk: 3.0
+    haidian_osm_rail: 3.0
+    haidian_osm_construction: 1.5
+    harbin_osm_building: 2.5
+    harbin_osm_major_road: 3.0
+    harbin_osm_minor_road: 3.0
+    harbin_osm_water: 1.5
+    harbin_osm_residential: 1.5
+    harbin_osm_commercial: 2.5
+    harbin_osm_industrial: 2.5
+    harbin_osm_agriculture: 2.5
+    harbin_osm_green: 1.5
+    harbin_osm_activity_poi: 1.5
+    harbin_osm_path_walk: 3.0
+    harbin_osm_rail: 3.0
+    harbin_osm_construction: 1.5
+  semantic_probe_hidden_dim: 64
+  semantic_probe_hard_negative_ratio: 0.0
+  semantic_probe_hard_negative_weight: 0.0
+data:
+  root: /data/xuannv_embedding/processed/v2_haidian_harbin_202512_202605
+  region: mixed_haidian_harbin
+  manifest_path: /data/xuannv_embedding/processed/v2_haidian_harbin_202512_202605/manifest_v2_202512_202605.json
+  statistics_dir: /data/xuannv_embedding/statistics/v2_haidian_harbin_202512_202605
+  statistics_dirs_by_region:
+    haidian: /data/xuannv_embedding/statistics/haidian
+    harbin: /data/xuannv_embedding/statistics/harbin
+  supervised_label_roots:
+    haidian_osm_building: /data/xuannv_embedding/processed/haidian/labels/osm_building
+    haidian_osm_major_road: /data/xuannv_embedding/processed/haidian/labels/osm_major_road
+    haidian_osm_minor_road: /data/xuannv_embedding/processed/haidian/labels/osm_minor_road
+    haidian_osm_water: /data/xuannv_embedding/processed/haidian/labels/osm_water
+    haidian_osm_residential: /data/xuannv_embedding/processed/haidian/labels/osm_residential
+    haidian_osm_commercial: /data/xuannv_embedding/processed/haidian/labels/osm_commercial
+    haidian_osm_industrial: /data/xuannv_embedding/processed/haidian/labels/osm_industrial
+    haidian_osm_agriculture: /data/xuannv_embedding/processed/haidian/labels/osm_agriculture
+    haidian_osm_green: /data/xuannv_embedding/processed/haidian/labels/osm_green
+    haidian_osm_activity_poi: /data/xuannv_embedding/processed/haidian/labels/osm_activity_poi
+    haidian_osm_path_walk: /data/xuannv_embedding/processed/haidian/labels/osm_path_walk
+    haidian_osm_rail: /data/xuannv_embedding/processed/haidian/labels/osm_rail
+    haidian_osm_construction: /data/xuannv_embedding/processed/haidian/labels/osm_construction
+    harbin_osm_building: /data/xuannv_embedding/processed/harbin/labels/osm_building
+    harbin_osm_major_road: /data/xuannv_embedding/processed/harbin/labels/osm_major_road
+    harbin_osm_minor_road: /data/xuannv_embedding/processed/harbin/labels/osm_minor_road
+    harbin_osm_water: /data/xuannv_embedding/processed/harbin/labels/osm_water
+    harbin_osm_residential: /data/xuannv_embedding/processed/harbin/labels/osm_residential
+    harbin_osm_commercial: /data/xuannv_embedding/processed/harbin/labels/osm_commercial
+    harbin_osm_industrial: /data/xuannv_embedding/processed/harbin/labels/osm_industrial
+    harbin_osm_agriculture: /data/xuannv_embedding/processed/harbin/labels/osm_agriculture
+    harbin_osm_green: /data/xuannv_embedding/processed/harbin/labels/osm_green
+    harbin_osm_activity_poi: /data/xuannv_embedding/processed/harbin/labels/osm_activity_poi
+    harbin_osm_path_walk: /data/xuannv_embedding/processed/harbin/labels/osm_path_walk
+    harbin_osm_rail: /data/xuannv_embedding/processed/harbin/labels/osm_rail
+    harbin_osm_construction: /data/xuannv_embedding/processed/harbin/labels/osm_construction
+  num_samples: 744
+  max_patches: null
+  batch_size: 6
+  num_workers: 8
+  patch_size: 128
+  num_months: 6
+  months:
+  - 2025-12
+  - 2026-01
+  - 2026-02
+  - 2026-03
+  - 2026-04
+  - 2026-05
+  sources:
+  - s2
+  - s1
+  - landsat
+  - worldcover
+  - highres_optical_haidian
+  - highres_optical_harbin
+  - highres_sar_haidian
+  source_dropout_probs:
+    s2: 0.1
+    s1: 0.1
+    landsat: 0.1
+    highres_optical_haidian: 0.2
+    highres_optical_harbin: 0.2
+    highres_sar_haidian: 0.2
+  supervised_sampling:
+    enabled: false
+    positive_boost: 1.0
+    max_weight: 2.0
+    task_weights: {}
