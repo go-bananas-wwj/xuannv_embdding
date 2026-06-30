@@ -177,6 +177,8 @@ class Config:
             "num_blocks": 6,
             "num_heads": 8,
             "temporal_fusion": "concat",
+            "time_attention_mode": "full",
+            "highres_fusion_to_embedding": True,
         }
         for key, value in stp_defaults.items():
             stp_cfg.setdefault(key, value)

@@ -131,24 +131,34 @@ class STPTimeOperator(nn.Module):
     支持通过 ``mask`` 屏蔽无效时间步。
     """
 
-    def __init__(self, dim: int, num_heads: int = 8) -> None:
+    def __init__(
+        self, dim: int, num_heads: int = 8, attention_mode: str = "full"
+    ) -> None:
         """初始化 STPTimeOperator。
 
         Args:
             dim: 输入与输出通道数。
             num_heads: 注意力头数，必须能整除 ``dim``。
+            attention_mode: ``"full"`` 表示跨月自注意力，``"none"`` 表示只保留
+                逐月时间编码与逐 token MLP，不在月份之间交换信息。
         """
         super().__init__()
         if dim % num_heads != 0:
             raise ValueError(f"dim ({dim}) 必须能被 num_heads ({num_heads}) 整除")
+        if attention_mode not in {"full", "none"}:
+            raise ValueError(
+                "STPTimeOperator attention_mode 仅支持 'full' 或 'none'，"
+                f"实际为 {attention_mode!r}"
+            )
         self.dim = dim
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
+        self.attention_mode = attention_mode
 
         self.norm1 = nn.LayerNorm(dim)
         self.norm2 = nn.LayerNorm(dim)
-        self.qkv = nn.Linear(dim, dim * 3)
-        self.proj = nn.Linear(dim, dim)
+        self.qkv = nn.Linear(dim, dim * 3) if attention_mode == "full" else None
+        self.proj = nn.Linear(dim, dim) if attention_mode == "full" else None
         self.mlp = nn.Sequential(
             nn.Linear(dim, dim * 4),
             nn.GELU(),
@@ -204,7 +214,13 @@ class STPTimeOperator(nn.Module):
         x_flat = x.permute(0, 2, 3, 1, 4).reshape(B * H * W, T, C)
         residual = x_flat
 
+        if self.attention_mode == "none":
+            x_flat = residual + self.mlp(self.norm2(x_flat))
+            return x_flat.view(B, H, W, T, C).permute(0, 3, 1, 2, 4)
+
         x_norm = self.norm1(x_flat)
+        if self.qkv is None or self.proj is None:
+            raise RuntimeError("full attention 模式缺少 qkv/proj 参数")
         qkv = self.qkv(x_norm).view(B * H * W, T, 3, self.num_heads, self.head_dim)
         q = qkv[:, :, 0].permute(0, 2, 1, 3)  # (BHW, heads, T, d)
         k = qkv[:, :, 1].permute(0, 2, 1, 3)
@@ -343,6 +359,7 @@ class MultiResolutionSTPBlock(nn.Module):
         time_dim: int,
         precision_dim: int,
         num_heads: int = 8,
+        time_attention_mode: str = "full",
     ) -> None:
         """初始化 MultiResolutionSTPBlock。
 
@@ -358,7 +375,9 @@ class MultiResolutionSTPBlock(nn.Module):
         self.precision_dim = precision_dim
 
         self.space_op = STPSpaceOperator(space_dim, num_heads)
-        self.time_op = STPTimeOperator(time_dim, num_heads)
+        self.time_op = STPTimeOperator(
+            time_dim, num_heads, attention_mode=time_attention_mode
+        )
         self.precision_op = STPPrecisionOperator(precision_dim)
 
         self.space_to_time = LearnedSpatialResampling(space_dim, time_dim, 2.0)
@@ -451,6 +470,7 @@ class STPEncoder(nn.Module):
         num_blocks: int = 6,
         num_heads: int = 8,
         gradient_checkpointing: bool = False,
+        time_attention_mode: str = "full",
     ) -> None:
         """初始化 STPEncoder。
 
@@ -468,6 +488,12 @@ class STPEncoder(nn.Module):
         self.time_dim = time_dim
         self.precision_dim = precision_dim
         self.gradient_checkpointing = gradient_checkpointing
+        if time_attention_mode not in {"full", "none"}:
+            raise ValueError(
+                "STPEncoder time_attention_mode 仅支持 'full' 或 'none'，"
+                f"实际为 {time_attention_mode!r}"
+            )
+        self.time_attention_mode = time_attention_mode
 
         self.input_projection = nn.Linear(input_channels, precision_dim)
         self.space_projection = nn.Linear(precision_dim, space_dim)
@@ -475,7 +501,13 @@ class STPEncoder(nn.Module):
 
         self.blocks = nn.ModuleList(
             [
-                MultiResolutionSTPBlock(space_dim, time_dim, precision_dim, num_heads)
+                MultiResolutionSTPBlock(
+                    space_dim,
+                    time_dim,
+                    precision_dim,
+                    num_heads,
+                    time_attention_mode=time_attention_mode,
+                )
                 for _ in range(num_blocks)
             ]
         )
