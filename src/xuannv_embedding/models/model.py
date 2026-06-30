@@ -96,6 +96,8 @@ class AEFModel(nn.Module):
             "num_blocks": 6,
             "num_heads": num_space_heads,
             "temporal_fusion": "concat",
+            "time_attention_mode": "full",
+            "highres_fusion_to_embedding": True,
         }
         for key, value in stp_defaults.items():
             stp_cfg.setdefault(key, value)
@@ -121,6 +123,7 @@ class AEFModel(nn.Module):
                 "stp.temporal_fusion 仅支持 'concat' 或 'gated_sum'，"
                 f"实际为 {self.temporal_fusion_mode!r}"
             )
+        self.highres_fusion_to_embedding = bool(stp_cfg["highres_fusion_to_embedding"])
         self.temporal_fusion = (
             SourceAwareTemporalFusion(self.temporal_source_order, stem_dim)
             if self.temporal_fusion_mode == "gated_sum"
@@ -147,6 +150,7 @@ class AEFModel(nn.Module):
             num_blocks=stp_cfg["num_blocks"],
             num_heads=stp_cfg["num_heads"],
             gradient_checkpointing=stp_cfg["gradient_checkpointing"],
+            time_attention_mode=stp_cfg["time_attention_mode"],
         )
 
         self.monthly_embed = MonthlyEmbeddingModule(
@@ -275,7 +279,7 @@ class AEFModel(nn.Module):
         embedding_map = mu_up.permute(0, 1, 4, 2, 3)  # (B, T_month, D, H, W)
 
         # 6) 可选高分辨率 availability-aware 融合（逐月重复同一高分辨率特征）。
-        if highres_frames:
+        if highres_frames and self.highres_fusion_to_embedding:
             if highres_masks is None:
                 raise ValueError("提供 highres_frames 时必须同时提供 highres_masks")
             base_feat = embedding_map.reshape(Bm * M, D, H, W)
