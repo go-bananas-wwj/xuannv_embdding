@@ -1,0 +1,76 @@
+[
+  {
+    "task": "building_extraction",
+    "name_zh": "建筑物提取",
+    "raw_global_threshold_metrics": {
+      "tp": 303823,
+      "fp": 642902,
+      "fn": 199319,
+      "tn": 4096836,
+      "precision": 0.3209200137315482,
+      "recall": 0.6038513978161235,
+      "f1": 0.4191046489091758,
+      "iou": 0.265105877261257
+    },
+    "per_patch_oracle_metrics": {
+      "tp": 357676,
+      "fp": 991398,
+      "fn": 145466,
+      "tn": 3748340,
+      "precision": 0.2651270426974354,
+      "recall": 0.7108847999173196,
+      "f1": 0.3862141348525226,
+      "iou": 0.23932179801142828
+    },
+    "osm_assisted_postprocess_metrics": {
+      "tp": 348225,
+      "fp": 759610,
+      "fn": 154917,
+      "tn": 3980128,
+      "precision": 0.31432929994087566,
+      "recall": 0.6921008383319222,
+      "f1": 0.4323152968664357,
+      "iou": 0.2757667380451585
+    },
+    "sample_sheet": "/root/workspace/xuannv/reports/api_task_visuals_20260701/osm_assisted_oracle_postprocess/haidian_v1_building_extraction_osm_assisted_oracle_postprocess_samples.png",
+    "full_domain": "/root/workspace/xuannv/reports/api_task_visuals_20260701/osm_assisted_oracle_postprocess/haidian_v1_building_extraction_osm_assisted_oracle_postprocess_full_domain.png",
+    "note": "OSM-assisted/oracle diagnostic; not pure model prediction."
+  },
+  {
+    "task": "road_extraction",
+    "name_zh": "道路提取",
+    "raw_global_threshold_metrics": {
+      "tp": 509713,
+      "fp": 1228977,
+      "fn": 309798,
+      "tn": 3194392,
+      "precision": 0.2931592175718501,
+      "recall": 0.6219721272807809,
+      "f1": 0.3984933162015025,
+      "iou": 0.24882401068495397
+    },
+    "per_patch_oracle_metrics": {
+      "tp": 517445,
+      "fp": 1192808,
+      "fn": 302066,
+      "tn": 3230561,
+      "precision": 0.3025546512708938,
+      "recall": 0.6314070219923833,
+      "f1": 0.4090855905926402,
+      "iou": 0.25713865445786677
+    },
+    "osm_assisted_postprocess_metrics": {
+      "tp": 434881,
+      "fp": 812436,
+      "fn": 384630,
+      "tn": 3610933,
+      "precision": 0.3486531491192696,
+      "recall": 0.5306591369731462,
+      "f1": 0.42081972955659586,
+      "iou": 0.2664798550443121
+    },
+    "sample_sheet": "/root/workspace/xuannv/reports/api_task_visuals_20260701/osm_assisted_oracle_postprocess/haidian_v1_road_extraction_osm_assisted_oracle_postprocess_samples.png",
+    "full_domain": "/root/workspace/xuannv/reports/api_task_visuals_20260701/osm_assisted_oracle_postprocess/haidian_v1_road_extraction_osm_assisted_oracle_postprocess_full_domain.png",
+    "note": "OSM-assisted/oracle diagnostic; not pure model prediction."
+  }
+]
