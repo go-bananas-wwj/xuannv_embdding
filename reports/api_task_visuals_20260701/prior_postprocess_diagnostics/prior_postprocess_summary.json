@@ -1,0 +1,54 @@
+[
+  {
+    "task": "building_extraction",
+    "name_zh": "建筑物提取",
+    "threshold": 0.82,
+    "raw": {
+      "tp": 303823,
+      "fp": 642902,
+      "fn": 199319,
+      "tn": 4096836,
+      "precision": 0.3209200137315482,
+      "recall": 0.6038513978161235,
+      "f1": 0.4191046489091758,
+      "iou": 0.265105877261257
+    },
+    "postprocess": {
+      "tp": 297663,
+      "fp": 608133,
+      "fn": 205479,
+      "tn": 4131605,
+      "precision": 0.32862035160234754,
+      "recall": 0.5916083332339578,
+      "f1": 0.422535271246854,
+      "iou": 0.267857191064318
+    },
+    "sample_sheet": "/root/workspace/xuannv/reports/api_task_visuals_20260701/prior_postprocess_diagnostics/haidian_v1_building_extraction_prior_postprocess_samples.png"
+  },
+  {
+    "task": "road_extraction",
+    "name_zh": "道路提取",
+    "threshold": 0.88,
+    "raw": {
+      "tp": 509713,
+      "fp": 1228977,
+      "fn": 309798,
+      "tn": 3194392,
+      "precision": 0.2931592175718501,
+      "recall": 0.6219721272807809,
+      "f1": 0.3984933162015025,
+      "iou": 0.24882401068495397
+    },
+    "postprocess": {
+      "tp": 439226,
+      "fp": 932488,
+      "fn": 380285,
+      "tn": 3490881,
+      "precision": 0.32020231622626877,
+      "recall": 0.5359610792289549,
+      "f1": 0.40089538956519755,
+      "iou": 0.25069991478305637
+    },
+    "sample_sheet": "/root/workspace/xuannv/reports/api_task_visuals_20260701/prior_postprocess_diagnostics/haidian_v1_road_extraction_prior_postprocess_samples.png"
+  }
+]
