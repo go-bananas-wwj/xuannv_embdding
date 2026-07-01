@@ -136,6 +136,15 @@ TASK_RULES: dict[str, dict[str, Any]] = {
         },
         "geometry": "mixed",
     },
+    "osm_playground": {
+        "themes": ["activity", "landuse"],
+        "columns": {
+            "leisure": {"pitch", "track", "stadium", "sports_centre", "playground"},
+            "landuse": {"recreation_ground"},
+        },
+        "geometry": "mixed",
+        "point_buffer_m": 35.0,
+    },
 }
 
 
@@ -251,6 +260,7 @@ def prepare_geometries(
     target = gdf.to_crs(target_crs).copy()
     mode = rule.get("geometry", "mixed")
     buffer_m = float(rule.get("buffer_m", POINT_BUFFER_M.get(task, POINT_BUFFER_M["default"])))
+    point_buffer_m = float(rule.get("point_buffer_m", POINT_BUFFER_M.get(task, POINT_BUFFER_M["default"])))
 
     out_geoms = []
     for geom in target.geometry:
@@ -264,7 +274,7 @@ def prepare_geometries(
             if mode in {"line", "mixed"}:
                 out_geoms.append(geom.buffer(buffer_m / 2.0, cap_style="round", join_style="round"))
         elif geom_type in {"Point", "MultiPoint"} and mode == "mixed":
-            out_geoms.append(geom.buffer(POINT_BUFFER_M.get(task, POINT_BUFFER_M["default"])))
+            out_geoms.append(geom.buffer(point_buffer_m))
     return gpd.GeoDataFrame({"geometry": out_geoms}, geometry="geometry", crs=target_crs)
 
 
