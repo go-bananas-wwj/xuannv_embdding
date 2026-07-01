@@ -1,0 +1,62 @@
+[
+  {
+    "task": "building_extraction",
+    "name_zh": "建筑物提取",
+    "label_patches": 320,
+    "best_threshold_by_f1": 0.8200000000000001,
+    "precision": 0.3209200137315482,
+    "recall": 0.6038513978161235,
+    "f1": 0.4191046489091758,
+    "iou": 0.265105877261257,
+    "pred_positive_ratio_on_labeled": 0.1805734634399414,
+    "label_positive_ratio_on_labeled": 0.09596672058105468,
+    "tp": 303823,
+    "fp": 642902,
+    "fn": 199319
+  },
+  {
+    "task": "road_extraction",
+    "name_zh": "道路提取",
+    "label_patches": 320,
+    "best_threshold_by_f1": 0.88,
+    "precision": 0.2931592175718501,
+    "recall": 0.6219721272807809,
+    "f1": 0.3984933162015025,
+    "iou": 0.24882401068495397,
+    "pred_positive_ratio_on_labeled": 0.33162879943847656,
+    "label_positive_ratio_on_labeled": 0.15630931854248048,
+    "tp": 509713,
+    "fp": 1228977,
+    "fn": 309798
+  },
+  {
+    "task": "construction",
+    "name_zh": "施工变化检测",
+    "label_patches": 62,
+    "best_threshold_by_f1": 0.49,
+    "precision": 0.2517386244287377,
+    "recall": 0.43363567464489156,
+    "f1": 0.31854958199010425,
+    "iou": 0.18944928650773307,
+    "pred_positive_ratio_on_labeled": 0.06936153288810484,
+    "label_positive_ratio_on_labeled": 0.04026646767893145,
+    "tp": 17737,
+    "fp": 52721,
+    "fn": 23166
+  },
+  {
+    "task": "construction_joint",
+    "name_zh": "施工变化联合检测",
+    "label_patches": 62,
+    "best_threshold_by_f1": 0.34,
+    "precision": 0.267458019687319,
+    "recall": 0.3387771068136812,
+    "f1": 0.29892248120544046,
+    "iou": 0.1757253728314903,
+    "pred_positive_ratio_on_labeled": 0.05100373298891129,
+    "label_positive_ratio_on_labeled": 0.04026646767893145,
+    "tp": 13857,
+    "fp": 37953,
+    "fn": 27046
+  }
+]
