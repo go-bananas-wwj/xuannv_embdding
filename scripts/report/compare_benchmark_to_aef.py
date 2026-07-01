@@ -14,6 +14,7 @@ TASKS = (
     "building_change",
     "farm_change",
     "rubbish",
+    "water",
     "construction_joint",
 )
 METRICS = ("auc_roc", "f1_best", "f1_0.5", "miou")
@@ -29,6 +30,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--name", default="candidate")
+    parser.add_argument("--tasks", nargs="+", default=list(TASKS))
     return parser.parse_args()
 
 
@@ -145,7 +147,7 @@ def main() -> None:
         metric: {"candidate": [], "aef": []} for metric in METRICS
     }
 
-    for task in TASKS:
+    for task in args.tasks:
         candidate = task_summary(args.benchmark_root, task)
         aef = task_summary(args.aef_root, task)
         if candidate is None or aef is None:

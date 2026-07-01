@@ -14,6 +14,7 @@ TASKS = (
     "building_change",
     "farm_change",
     "rubbish",
+    "water",
     "construction_joint",
 )
 
@@ -32,6 +33,10 @@ TASK_INFO = {
     },
     "rubbish": {
         "label_root": "/data/xuannv_embedding/processed/harbin/labels/rubbish",
+        "region": "harbin",
+    },
+    "water": {
+        "label_root": "/data/xuannv_embedding/processed/harbin/labels/osm_water",
         "region": "harbin",
     },
     "construction_joint": {
@@ -160,6 +165,8 @@ def main() -> None:
             str(benchmark_root / "comparison_vs_aef.json"),
             "--name",
             run_id,
+            "--tasks",
+            *args.tasks,
         ],
         env,
     )
@@ -172,6 +179,8 @@ def main() -> None:
             str(benchmark_root),
             "--output",
             str(benchmark_root / "threshold_calibration.json"),
+            "--tasks",
+            *args.tasks,
         ],
         env,
     )
@@ -200,6 +209,8 @@ def main() -> None:
                 str(args.embedding_root),
                 "--output-root",
                 str(benchmark_root / "visualizations"),
+                "--tasks",
+                *args.tasks,
                 "--samples-per-task",
                 str(args.samples_per_task),
             ],

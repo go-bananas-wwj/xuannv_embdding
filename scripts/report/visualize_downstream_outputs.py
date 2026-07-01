@@ -20,6 +20,7 @@ DEFAULT_TASKS = (
     "building_change",
     "farm_change",
     "rubbish",
+    "water",
     "construction_joint",
 )
 
@@ -28,7 +29,12 @@ TASK_REGION = {
     "building_change": "harbin",
     "farm_change": "harbin",
     "rubbish": "harbin",
+    "water": "harbin",
     "construction_joint": "construction_joint",
+}
+
+TASK_LABEL_DIR = {
+    "water": "osm_water",
 }
 
 
@@ -110,7 +116,8 @@ def load_gt_mask(
         candidate_ids = [patch_id]
     else:
         region, source_patch = resolve_region_patch(task, patch_id)
-        mask_dir = processed_root / region / "labels" / task / "masks"
+        label_dir = TASK_LABEL_DIR.get(task, task)
+        mask_dir = processed_root / region / "labels" / label_dir / "masks"
         candidate_ids = [source_patch, patch_id]
 
     candidates: list[Path] = []
@@ -196,7 +203,8 @@ def positive_pixels_for_task(processed_root: Path, task: str, patch_id: str) -> 
         mask_dir = processed_root / "construction_joint_v2" / "masks"
     else:
         region, source_patch = resolve_region_patch(task, patch_id)
-        mask_dir = processed_root / region / "labels" / task / "masks"
+        label_dir = TASK_LABEL_DIR.get(task, task)
+        mask_dir = processed_root / region / "labels" / label_dir / "masks"
         patch_id = source_patch
     candidates = list(mask_dir.glob(f"{patch_id}.tif")) + list(mask_dir.glob(f"{patch_id}_*.tif"))
     positives = 0

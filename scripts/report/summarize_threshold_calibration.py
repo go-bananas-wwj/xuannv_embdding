@@ -14,6 +14,7 @@ TASKS = (
     "building_change",
     "farm_change",
     "rubbish",
+    "water",
     "construction_joint",
 )
 METRICS = ("f1_0.5", "f1_at_threshold", "f1_best", "val_threshold", "best_threshold")
