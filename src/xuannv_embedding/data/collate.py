@@ -19,7 +19,8 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
 
     返回:
         拼接后的 batch 字典，包含 ``patch_ids``、``source_frames``、
-        ``source_masks`` 与 ``timestamps``。
+        ``source_masks``、全局月度 ``timestamps``，以及按 source 保留的
+        ``source_timestamps``。高分辨率 source 依赖后者保留原始观测月份。
     """
     patch_ids = [item["patch_id"] for item in batch]
     source_names = list(batch[0]["source_frames"].keys())
@@ -118,6 +119,9 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
         collated["source_masks"][source] = torch.stack(masks_list)
         collated["timestamps"][source] = torch.stack(timestamps_list)
 
+    # 在将 timestamps 收敛为全局月度时间戳前，保留每个 source 的原始时间戳。
+    source_timestamps = dict(collated["timestamps"])
+
     # 使用第一个非高分辨率 source 的时间戳作为全局月度时间戳。
     temporal_sources = [s for s in source_names if not s.startswith("highres")]
     if temporal_sources:
@@ -133,4 +137,5 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
     else:
         collated["timestamps"] = torch.zeros(batch_size, 0, dtype=torch.long)
 
+    collated["source_timestamps"] = source_timestamps
     return collated
