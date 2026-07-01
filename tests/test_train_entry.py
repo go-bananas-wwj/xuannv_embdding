@@ -218,6 +218,60 @@ def test_prepare_batch_highres_separation() -> None:
     assert out["highres_masks"]["highres"][1].sum().item() == 16.0
 
 
+def test_prepare_batch_highres_targets_are_binned_by_month() -> None:
+    """highres 重建 target 只应监督真实有高分观测的月份。"""
+    month_tensor = torch.tensor(
+        [202512, 202601, 202602, 202603, 202604, 202605],
+        dtype=torch.long,
+    )
+    s2 = torch.zeros(1, 6, 3, 2, 2)
+    # 两期 highres，第一期为 10，末期为 30；中间月份无高分监督。
+    highres = torch.stack(
+        [
+            torch.full((1, 4, 4), 10.0),
+            torch.full((1, 4, 4), 30.0),
+        ],
+        dim=0,
+    ).unsqueeze(0)
+    batch = {
+        "patch_ids": ["p0"],
+        "source_frames": {
+            "s2": s2,
+            "highres": highres,
+        },
+        "source_masks": {
+            "s2": torch.ones(1, 6),
+            "highres": torch.ones(1, 2),
+        },
+        "timestamps": month_tensor.unsqueeze(0),
+        "source_timestamps": {
+            "s2": month_tensor.unsqueeze(0),
+            "highres": torch.tensor([[20251201, 20260501]], dtype=torch.long),
+        },
+    }
+    target_heads = {
+        "highres_recon": {
+            "source": "highres",
+            "loss_type": "continuous",
+            "channels": 1,
+            "weight": 1.0,
+        }
+    }
+
+    out = prepare_batch(batch, target_heads)
+
+    target = out["targets"]["highres_recon"]
+    target_mask = out["target_masks"]["highres_recon"]
+    assert target.shape == (1, 6, 1, 2, 2)
+    assert torch.equal(
+        target_mask,
+        torch.tensor([[1.0, 0.0, 0.0, 0.0, 0.0, 1.0]]),
+    )
+    assert torch.equal(target[0, 0], torch.full((1, 2, 2), 10.0))
+    assert torch.equal(target[0, 5], torch.full((1, 2, 2), 30.0))
+    assert torch.equal(target[0, 1:5], torch.zeros(4, 1, 2, 2))
+
+
 def test_prepare_batch_multiple_highres_sources() -> None:
     """多个以 highres 开头的 source 应被分别聚合并保留各自 source 名。"""
     batch = {

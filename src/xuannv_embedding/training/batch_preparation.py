@@ -55,6 +55,75 @@ def _weighted_temporal_mean(frames: torch.Tensor, mask: torch.Tensor) -> torch.T
     return weighted / count.clamp(min=1.0)
 
 
+def _timestamps_to_yyyymm(timestamps: torch.Tensor) -> torch.Tensor:
+    """将 ``YYYYMM`` 或 ``YYYYMMDD`` 时间戳统一到 ``YYYYMM``。"""
+    return torch.where(timestamps >= 1000000, timestamps // 100, timestamps)
+
+
+def _bin_highres_targets_to_months(
+    frames: torch.Tensor,
+    mask: torch.Tensor,
+    source_timestamps: torch.Tensor,
+    global_timestamps: torch.Tensor,
+    spatial_size: tuple[int, int],
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """按真实观测月份把高分辨率 target 对齐到模型月度 bin。
+
+    高分辨率 source 可能是变长时序，例如哈尔滨只有 202512/202605 两期，
+    海淀光学有 202512-202604，多帧同月则取有效帧均值；没有高分观测的
+    月份 target_mask 为 0，不参与高分重建损失。
+    """
+    batch_size, obs_count, channels, _, _ = frames.shape
+    num_months = global_timestamps.shape[1]
+    out_h, out_w = spatial_size
+
+    target = torch.zeros(
+        batch_size,
+        num_months,
+        channels,
+        out_h,
+        out_w,
+        device=frames.device,
+        dtype=frames.dtype,
+    )
+    target_mask = torch.zeros(
+        batch_size,
+        num_months,
+        device=mask.device,
+        dtype=mask.dtype,
+    )
+    if obs_count == 0:
+        return target, target_mask
+
+    frames_lr = F.adaptive_avg_pool2d(
+        frames.reshape(
+            batch_size * obs_count,
+            channels,
+            frames.shape[-2],
+            frames.shape[-1],
+        ),
+        spatial_size,
+    ).view(batch_size, obs_count, channels, out_h, out_w)
+    obs_months = _timestamps_to_yyyymm(source_timestamps)
+
+    for b in range(batch_size):
+        valid_obs = mask[b] > 0
+        if not bool(valid_obs.any().item()):
+            continue
+        for m in range(num_months):
+            month = global_timestamps[b, m]
+            matches = valid_obs & (obs_months[b] == month)
+            if bool(matches.any().item()):
+                weights = mask[b, matches].to(dtype=frames_lr.dtype)
+                selected = frames_lr[b, matches]
+                target[b, m] = (
+                    selected * weights[:, None, None, None]
+                ).sum(dim=0) / weights.sum().clamp(min=1.0)
+                target_mask[b, m] = 1.0
+
+    return target, target_mask
+
+
 def prepare_batch(
     batch: dict[str, Any],
     target_heads: dict[str, dict[str, Any]],
@@ -67,9 +136,12 @@ def prepare_batch(
 
     主要转换:
         - ``timestamps`` 已由 ``collate_fn`` 合并为单一全局 ``(B, T_month)`` 张量。
+        - ``source_timestamps`` 若存在，会用于把高分辨率重建监督按真实月份对齐；
+          没有观测的月份不会产生高分辨率重建损失。
         - 为每个 target head 构造逐月 ``targets`` 与 ``target_masks``。
         - 若存在名称以 ``highres`` 开头的高分辨率 source，将其各自聚合为单帧与
-          可用性掩码并从时序源中移除。
+          可用性掩码并从时序源中移除；聚合单帧只用于可选高分融合输入，不用于
+          高分重建 target。
         - 将 ``worldcover`` 等 target-only 源从喂给模型的 ``source_frames`` 中移除。
 
     参数:
@@ -88,6 +160,7 @@ def prepare_batch(
     source_frames = dict(batch["source_frames"])
     source_masks = dict(batch["source_masks"])
     global_timestamps = batch["timestamps"]
+    source_timestamps = batch.get("source_timestamps", {})
     patch_ids = batch["patch_ids"]
 
     if not source_frames:
@@ -136,18 +209,19 @@ def prepare_batch(
 
             if loss_type == "continuous":
                 if source_name.startswith("highres"):
-                    # 高分辨率 source 的观测不按月组织：先按时间掩码聚合为单帧，
-                    # 下采样到与模型输出一致的空间尺寸，再复制到所有月度 bin；
-                    # target_mask 反映该样本是否存在高分辨率观测。
-                    highres_frame = _weighted_temporal_mean(frames, masks)  # (B, C, H_hr, W_hr)
-                    target_frame = F.adaptive_avg_pool2d(
-                        highres_frame, (spatial_h, spatial_w)
-                    )  # (B, C, H, W)
-                    target = target_frame.unsqueeze(1).expand(
-                        -1, num_months, -1, -1, -1
-                    ).clone()
-                    sample_avail = (masks.sum(dim=1) > 0).float()  # (B,)
-                    target_mask = sample_avail[:, None].expand(-1, num_months).clone()
+                    timestamps = source_timestamps.get(source_name)
+                    if timestamps is None:
+                        raise KeyError(
+                            f"高分辨率 target {head_name!r} 缺少 "
+                            f"source_timestamps[{source_name!r}]"
+                        )
+                    target, target_mask = _bin_highres_targets_to_months(
+                        frames,
+                        masks,
+                        timestamps,
+                        global_timestamps,
+                        (spatial_h, spatial_w),
+                    )
                 else:
                     # continuous head 直接使用逐月源帧作为目标。
                     target = frames
