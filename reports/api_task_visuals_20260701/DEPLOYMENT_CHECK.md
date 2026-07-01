@@ -47,6 +47,30 @@
 - `haidian/v1/archive/training_output/epoch_90.pt`
 - `haidian/v1/archive/training_output/epoch_100.pt`
 
+## 任务瓦片展示修复
+
+曾发现 API 展示瓦片与诊断图不一致：早期瓦片将连续概率直接映射为红色深浅，红色通道恒为 255，导致道路等概率整体偏高的任务看起来接近整片红。
+
+已修复为按任务阈值二值化展示：
+
+- 红色：预测目标。
+- 白色：背景。
+- `.npy` 概率图保持不变，仍可用于程序分析。
+
+远端抽检结果：
+
+- `road_extraction/patch_000215.png`：红色约 39%，白色约 61%，颜色数为 2。
+- `building_extraction/patch_000041.png`：红色约 12%，白色约 88%，颜色数为 2。
+
+`construction_joint` 的指标阈值高于当前导出概率范围，会导致展示全空；该任务展示阈值已回退为 0.5，并在 `summary.json` 中记录：
+
+```json
+{
+  "visualization_threshold": 0.5,
+  "visualization_threshold_source": "fallback_0.5_metrics_threshold_was_empty"
+}
+```
+
 ## 部署链路修复
 
 发现并修复了一个部署风险：原下载脚本会默认下载整个 ModelScope 数据集，可能连同 `archive` 一起下载，体积约 95G。
