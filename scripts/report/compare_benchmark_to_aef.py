@@ -11,6 +11,9 @@ from typing import Any
 
 TASKS = (
     "construction",
+    "haidian_building_osm",
+    "haidian_road_osm",
+    "haidian_water_osm",
     "building_change",
     "farm_change",
     "rubbish",

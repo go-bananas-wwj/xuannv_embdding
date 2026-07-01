@@ -11,6 +11,9 @@ from pathlib import Path
 
 TASKS = (
     "construction",
+    "haidian_building_osm",
+    "haidian_road_osm",
+    "haidian_water_osm",
     "building_change",
     "farm_change",
     "rubbish",
@@ -21,6 +24,18 @@ TASKS = (
 TASK_INFO = {
     "construction": {
         "label_root": "/data/xuannv_embedding/processed/haidian/labels/construction",
+        "region": "haidian",
+    },
+    "haidian_building_osm": {
+        "label_root": "/data/xuannv_embedding/processed/haidian/labels/building_osm",
+        "region": "haidian",
+    },
+    "haidian_road_osm": {
+        "label_root": "/data/xuannv_embedding/processed/haidian/labels/road_osm",
+        "region": "haidian",
+    },
+    "haidian_water_osm": {
+        "label_root": "/data/xuannv_embedding/processed/haidian/labels/osm_water",
         "region": "haidian",
     },
     "building_change": {
