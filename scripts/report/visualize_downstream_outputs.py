@@ -286,7 +286,7 @@ def make_visual(
         (before_pca, f"Embedding PCA {before_month}", None),
         (after_pca, f"Embedding PCA {after_month}", None),
         (delta, "PDA / Delta Emb PCA", None),
-        (pred, "Prediction Prob", "viridis"),
+        (pred, "Prediction Prob", "Reds"),
         (gt_mask, "GT / True Label", "Reds"),
     ]
     fig, axes = plt.subplots(1, len(panels), figsize=(3.0 * len(panels), 3.3))
