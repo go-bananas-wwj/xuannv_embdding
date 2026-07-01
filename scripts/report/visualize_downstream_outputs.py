@@ -17,6 +17,9 @@ from sklearn.decomposition import PCA
 
 DEFAULT_TASKS = (
     "construction",
+    "haidian_building_osm",
+    "haidian_road_osm",
+    "haidian_water_osm",
     "building_change",
     "farm_change",
     "rubbish",
@@ -26,6 +29,9 @@ DEFAULT_TASKS = (
 
 TASK_REGION = {
     "construction": "haidian",
+    "haidian_building_osm": "haidian",
+    "haidian_road_osm": "haidian",
+    "haidian_water_osm": "haidian",
     "building_change": "harbin",
     "farm_change": "harbin",
     "rubbish": "harbin",
@@ -35,6 +41,9 @@ TASK_REGION = {
 
 TASK_LABEL_DIR = {
     "water": "osm_water",
+    "haidian_building_osm": "building_osm",
+    "haidian_road_osm": "road_osm",
+    "haidian_water_osm": "osm_water",
 }
 
 
