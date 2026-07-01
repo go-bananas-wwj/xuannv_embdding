@@ -1,0 +1,70 @@
+[
+  {
+    "task": "building_extraction",
+    "name_zh": "建筑物提取",
+    "threshold": 0.82,
+    "sample_patches": [
+      "patch_000077",
+      "patch_000093",
+      "patch_000051",
+      "patch_000041",
+      "patch_000066",
+      "patch_000031",
+      "patch_000012",
+      "patch_000063"
+    ],
+    "full_domain_overlay": "/root/workspace/xuannv/reports/api_task_visuals_20260701/best_threshold_overlay_on_imagery/haidian_v1_building_extraction_best_threshold_overlay_full_domain.png",
+    "sample_overlay": "/root/workspace/xuannv/reports/api_task_visuals_20260701/best_threshold_overlay_on_imagery/haidian_v1_building_extraction_best_threshold_overlay_samples.png"
+  },
+  {
+    "task": "road_extraction",
+    "name_zh": "道路提取",
+    "threshold": 0.88,
+    "sample_patches": [
+      "patch_000239",
+      "patch_000215",
+      "patch_000066",
+      "patch_000077",
+      "patch_000006",
+      "patch_000013",
+      "patch_000270",
+      "patch_000053"
+    ],
+    "full_domain_overlay": "/root/workspace/xuannv/reports/api_task_visuals_20260701/best_threshold_overlay_on_imagery/haidian_v1_road_extraction_best_threshold_overlay_full_domain.png",
+    "sample_overlay": "/root/workspace/xuannv/reports/api_task_visuals_20260701/best_threshold_overlay_on_imagery/haidian_v1_road_extraction_best_threshold_overlay_samples.png"
+  },
+  {
+    "task": "construction",
+    "name_zh": "施工变化检测",
+    "threshold": 0.49,
+    "sample_patches": [
+      "patch_000209",
+      "patch_000154",
+      "patch_000198",
+      "patch_000318",
+      "patch_000182",
+      "patch_000090",
+      "patch_000161",
+      "patch_000264"
+    ],
+    "full_domain_overlay": "/root/workspace/xuannv/reports/api_task_visuals_20260701/best_threshold_overlay_on_imagery/haidian_v1_construction_best_threshold_overlay_full_domain.png",
+    "sample_overlay": "/root/workspace/xuannv/reports/api_task_visuals_20260701/best_threshold_overlay_on_imagery/haidian_v1_construction_best_threshold_overlay_samples.png"
+  },
+  {
+    "task": "construction_joint",
+    "name_zh": "施工变化联合检测",
+    "threshold": 0.34,
+    "sample_patches": [
+      "patch_000198",
+      "patch_000209",
+      "patch_000263",
+      "patch_000090",
+      "patch_000161",
+      "patch_000043",
+      "patch_000154",
+      "patch_000024"
+    ],
+    "full_domain_overlay": "/root/workspace/xuannv/reports/api_task_visuals_20260701/best_threshold_overlay_on_imagery/haidian_v1_construction_joint_best_threshold_overlay_full_domain.png",
+    "sample_overlay": "/root/workspace/xuannv/reports/api_task_visuals_20260701/best_threshold_overlay_on_imagery/haidian_v1_construction_joint_best_threshold_overlay_samples.png"
+  }
+]
