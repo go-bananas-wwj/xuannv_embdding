@@ -107,6 +107,7 @@ class TrainingConfig:
     semantic_probe_hard_negative_ratio: float = 0.0
     semantic_probe_hard_negative_weight: float = 0.0
     semantic_probe_hard_negative_warmup_epochs: int = 0
+    input_masking: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -354,6 +355,7 @@ class Config:
                 semantic_probe_hard_negative_warmup_epochs=training_cfg.get(
                     "semantic_probe_hard_negative_warmup_epochs", 0
                 ),
+                input_masking=training_cfg.get("input_masking", {}),
             ),
         )
 

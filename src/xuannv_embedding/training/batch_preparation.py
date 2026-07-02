@@ -6,6 +6,8 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
+from xuannv_embedding.training.masking import InputMaskingConfig, apply_input_masking
+
 
 def _head_source_name(
     head_name: str,
@@ -128,6 +130,7 @@ def prepare_batch(
     batch: dict[str, Any],
     target_heads: dict[str, dict[str, Any]],
     source_dropout_probs: dict[str, float] | None = None,
+    input_masking: InputMaskingConfig | dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """将 collate 后的 batch 转换为 AEFModel / Trainer 需要的格式。
 
@@ -150,8 +153,9 @@ def prepare_batch(
         target_heads: 配置中的 target_heads，每个 head 至少包含
             ``loss_type``（``continuous`` / ``categorical``）与 ``channels``，
             可选 ``source`` 与 ``weight``。
-        source_dropout_probs: 仅作用于模型输入的 source dropout 概率。target 已在
+        source_dropout_probs: 仅作用于模型输入的旧版 source dropout 概率。target 已在
             dropout 前构造，因此不会丢失重建监督。
+        input_masking: 训练时困难遮挡配置，支持模态、月份、空间块遮挡。
 
     返回:
         转换后的 batch 字典，包含 ``highres_frames`` 与 ``highres_masks`` 两个字典
@@ -352,4 +356,6 @@ def prepare_batch(
     if "supervised_labels" in batch:
         prepared["supervised_labels"] = batch["supervised_labels"]
         prepared["supervised_label_masks"] = batch.get("supervised_label_masks", {})
+    if input_masking is not None:
+        prepared = apply_input_masking(prepared, input_masking)
     return prepared

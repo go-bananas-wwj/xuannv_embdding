@@ -118,6 +118,56 @@ training:
     assert cfg.model.ref_month == 12
 
 
+def test_config_input_masking_is_parsed(tmp_path: Path) -> None:
+    """训练配置应保留 input_masking 字段，供训练入口执行困难遮挡。"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+experiment:
+  name: masking_config_test
+data:
+  root: /data/xuannv_embedding/processed/base
+  region: base
+  manifest_path: /data/xuannv_embedding/processed/base/manifest.json
+  num_months: 2
+  months: [2025-12, 2026-01]
+model:
+  embed_dim: 64
+  num_months: 2
+  sensor_channels:
+    s2: 12
+  target_heads:
+    s2_recon:
+      loss_type: continuous
+      channels: 12
+training:
+  epochs: 1
+  lr: 1.0e-4
+  weight_decay: 0.05
+  warmup_epochs: 0
+  gradient_accumulation_steps: 1
+  save_every: 1
+  eval_every: 1
+  input_masking:
+    enabled: true
+    modality_dropout_probs:
+      s2: 0.15
+    month_dropout_prob: 0.5
+    max_months_per_sample: 1
+    spatial_block_prob: 0.25
+    spatial_block_size: 16
+    spatial_block_ratio: 0.2
+""",
+        encoding="utf-8",
+    )
+
+    cfg = Config.from_yaml(config_path)
+
+    assert cfg.training.input_masking["enabled"] is True
+    assert cfg.training.input_masking["modality_dropout_probs"]["s2"] == 0.15
+    assert cfg.training.input_masking["spatial_block_size"] == 16
+
+
 def test_config_temporal_endpoint_defaults_and_overrides(tmp_path: Path) -> None:
     """验证端点月份分离损失的配置字段默认值与显式覆盖。"""
     config_path = tmp_path / "config.yaml"

@@ -46,6 +46,7 @@ def build_dataloader(
         ref_year=ref_year,
         ref_month=ref_month,
         statistics_dirs_by_region=cfg.statistics_dirs_by_region,
+        supervised_label_roots=cfg.supervised_label_roots,
     )
 
     shuffle = split == "train"

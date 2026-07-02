@@ -178,14 +178,19 @@ class Trainer:
         """Call the criterion with optional supervised labels when present."""
         supervised_labels = batch.get("supervised_labels")
         if supervised_labels is None:
-            return self.criterion(output, batch["targets"], batch["target_masks"])
-        return self.criterion(
-            output,
-            batch["targets"],
-            batch["target_masks"],
-            supervised_labels,
-            batch.get("supervised_label_masks"),
-        )
+            losses = self.criterion(output, batch["targets"], batch["target_masks"])
+        else:
+            losses = self.criterion(
+                output,
+                batch["targets"],
+                batch["target_masks"],
+                supervised_labels,
+                batch.get("supervised_label_masks"),
+            )
+        for name, value in batch.get("masking_stats", {}).items():
+            if isinstance(value, torch.Tensor):
+                losses[name] = value.detach()
+        return losses
 
     def _log_to_wandb(self, metrics: dict[str, float], step: int | None = None) -> None:
         """在主进程向 WANDB 发送指标。"""
@@ -372,7 +377,7 @@ class Trainer:
                     "train/lr": self.optimizer.param_groups[0]["lr"],
                 }
                 for name, value in losses.items():
-                    if name.startswith("recon_"):
+                    if name.startswith("recon_") or name.startswith("masking_"):
                         step_metrics[f"train/{name}"] = value.item()
                 memory_mb = self._get_memory_mb()
                 if memory_mb is not None:
@@ -452,7 +457,7 @@ class Trainer:
                 "train/lr": self.optimizer.param_groups[0]["lr"],
             }
             for name, value in metrics.items():
-                if name.startswith("recon_"):
+                if name.startswith("recon_") or name.startswith("masking_"):
                     epoch_metrics[f"train/{name}"] = value
             memory_mb = self._get_memory_mb()
             if memory_mb is not None:

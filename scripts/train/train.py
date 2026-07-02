@@ -203,10 +203,12 @@ def _build_loader(
     def training_collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
         collated = collate_fn(batch)
         source_dropout_probs = cfg.data.source_dropout_probs if split == "train" else {}
+        input_masking = cfg.training.input_masking if split == "train" else {}
         return prepare_batch(
             collated,
             target_heads,
             source_dropout_probs=source_dropout_probs,
+            input_masking=input_masking,
         )
 
     shuffle = (split == "train") and (sampler is None)

@@ -116,6 +116,46 @@ def test_prepare_batch_source_dropout_keeps_targets() -> None:
     assert torch.equal(out["target_masks"]["s2_recon"], torch.ones(1, NUM_MONTHS))
 
 
+def test_prepare_batch_input_masking_keeps_targets() -> None:
+    """困难遮挡只应作用于模型输入，target 仍保留完整重建监督。"""
+    frames = torch.ones(1, NUM_MONTHS, 1, 4, 4)
+    batch = {
+        "patch_ids": ["p0"],
+        "source_frames": {"s2": frames.clone()},
+        "source_masks": {"s2": torch.ones(1, NUM_MONTHS)},
+        "timestamps": MONTH_TENSOR.unsqueeze(0),
+    }
+    target_heads = {
+        "s2_recon": {
+            "loss_type": "continuous",
+            "channels": 1,
+            "weight": 1.0,
+        }
+    }
+
+    out = prepare_batch(
+        batch,
+        target_heads,
+        input_masking={
+            "enabled": True,
+            "modality_dropout_probs": {"s2": 1.0},
+            "month_dropout_prob": 1.0,
+            "max_months_per_sample": 1,
+            "spatial_block_prob": 1.0,
+            "spatial_block_size": 2,
+            "spatial_block_ratio": 1.0,
+        },
+    )
+
+    assert torch.equal(out["source_frames"]["s2"], torch.zeros_like(frames))
+    assert torch.equal(out["source_masks"]["s2"], torch.zeros(1, NUM_MONTHS))
+    assert torch.equal(out["targets"]["s2_recon"], frames)
+    assert torch.equal(out["target_masks"]["s2_recon"], torch.ones(1, NUM_MONTHS))
+    assert out["masking_stats"]["masking_modality_drop_s2"].item() == 1.0
+    assert "masking_month_drop_ratio" in out["masking_stats"]
+    assert "masking_spatial_drop_ratio" in out["masking_stats"]
+
+
 def test_prepare_batch_categorical_target() -> None:
     """categorical head 应通过 argmax 生成逐月 (B, T, H, W) target 与空间掩码。"""
     # (B=1, T=NUM_MONTHS, C=3, H=2, W=2)
