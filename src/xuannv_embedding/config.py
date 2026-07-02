@@ -19,6 +19,8 @@ class DataConfig:
     root: Path
     region: str
     manifest_path: Path
+    train_manifest_path: Path | None = None
+    val_manifest_path: Path | None = None
     num_samples: int | None = None  # 仅作为元数据，实际样本数由 dataset 长度决定
     statistics_dir: Path | None = None
     statistics_dirs_by_region: dict[str, Path] = field(default_factory=dict)
@@ -242,6 +244,16 @@ class Config:
                 root=root,
                 region=region,
                 manifest_path=Path(data_cfg["manifest_path"]),
+                train_manifest_path=(
+                    Path(data_cfg["train_manifest_path"])
+                    if data_cfg.get("train_manifest_path")
+                    else None
+                ),
+                val_manifest_path=(
+                    Path(data_cfg["val_manifest_path"])
+                    if data_cfg.get("val_manifest_path")
+                    else None
+                ),
                 num_samples=data_cfg.get("num_samples"),
                 statistics_dir=statistics_dir,
                 statistics_dirs_by_region=statistics_dirs_by_region,

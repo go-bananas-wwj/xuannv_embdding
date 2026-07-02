@@ -155,8 +155,14 @@ def _build_loader(
     is_distributed: bool,
 ) -> DataLoader:
     """构造训练或验证 DataLoader，内置 ``prepare_batch`` 转换。"""
+    manifest_path = cfg.data.manifest_path
+    if split == "train" and cfg.data.train_manifest_path is not None:
+        manifest_path = cfg.data.train_manifest_path
+    if split == "val" and cfg.data.val_manifest_path is not None:
+        manifest_path = cfg.data.val_manifest_path
+
     dataset = MonthlyEmbeddingDataset(
-        manifest_path=cfg.data.manifest_path,
+        manifest_path=manifest_path,
         statistics_dir=cfg.data.statistics_dir,
         sources=cfg.data.sources,
         patch_size=cfg.data.patch_size,
@@ -204,11 +210,15 @@ def _build_loader(
         collated = collate_fn(batch)
         source_dropout_probs = cfg.data.source_dropout_probs if split == "train" else {}
         input_masking = cfg.training.input_masking if split == "train" else {}
+        keep_highres_inputs = bool(
+            cfg.model.stp.get("highres_fusion_to_embedding", True)
+        )
         return prepare_batch(
             collated,
             target_heads,
             source_dropout_probs=source_dropout_probs,
             input_masking=input_masking,
+            keep_highres_inputs=keep_highres_inputs,
         )
 
     shuffle = (split == "train") and (sampler is None)

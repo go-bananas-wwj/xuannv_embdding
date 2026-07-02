@@ -5,6 +5,7 @@ import pytest
 import torch
 
 from xuannv_embedding.training.batch_preparation import _head_source_name, prepare_batch
+from xuannv_embedding.training.masking import apply_input_masking
 
 NUM_MONTHS = 17
 
@@ -156,6 +157,35 @@ def test_prepare_batch_input_masking_keeps_targets() -> None:
     assert "masking_spatial_drop_ratio" in out["masking_stats"]
 
 
+def test_input_masking_spatial_blocks_updates_highres_masks() -> None:
+    """高分输入被空间遮挡时，可用性 mask 也必须同步遮挡。"""
+    prepared = {
+        "source_frames": {"s2": torch.ones(1, 1, 1, 4, 4)},
+        "source_masks": {"s2": torch.ones(1, 1)},
+        "highres_frames": {"highres": torch.ones(1, 1, 4, 4)},
+        "highres_masks": {"highres": torch.ones(1, 1, 2, 2)},
+    }
+
+    out = apply_input_masking(
+        prepared,
+        {
+            "enabled": True,
+            "spatial_block_prob": 1.0,
+            "spatial_block_size": 2,
+            "spatial_block_ratio": 1.0,
+        },
+    )
+
+    assert torch.equal(
+        out["highres_frames"]["highres"],
+        torch.zeros(1, 1, 4, 4),
+    )
+    assert torch.equal(
+        out["highres_masks"]["highres"],
+        torch.zeros(1, 1, 2, 2),
+    )
+
+
 def test_prepare_batch_categorical_target() -> None:
     """categorical head 应通过 argmax 生成逐月 (B, T, H, W) target 与空间掩码。"""
     # (B=1, T=NUM_MONTHS, C=3, H=2, W=2)
@@ -256,6 +286,42 @@ def test_prepare_batch_highres_separation() -> None:
     # 第二个样本 highres 第二帧缺失，但仍有一帧有效，掩码应为 1。
     assert out["highres_masks"]["highres"][0].sum().item() == 16.0
     assert out["highres_masks"]["highres"][1].sum().item() == 16.0
+
+
+def test_prepare_batch_can_drop_highres_inputs_after_targets() -> None:
+    """关闭高分融合时，应保留 highres target 但丢弃 native highres 模型输入。"""
+    month_tensor = torch.tensor([202512, 202601], dtype=torch.long)
+    batch = {
+        "patch_ids": ["p0"],
+        "source_frames": {
+            "s2": torch.zeros(1, 2, 3, 2, 2),
+            "highres": torch.ones(1, 1, 1, 4, 4),
+        },
+        "source_masks": {
+            "s2": torch.ones(1, 2),
+            "highres": torch.ones(1, 1),
+        },
+        "timestamps": month_tensor.unsqueeze(0),
+        "source_timestamps": {
+            "s2": month_tensor.unsqueeze(0),
+            "highres": torch.tensor([[20251201]], dtype=torch.long),
+        },
+    }
+    target_heads = {
+        "highres_recon": {
+            "source": "highres",
+            "loss_type": "continuous",
+            "channels": 1,
+            "weight": 1.0,
+        }
+    }
+
+    out = prepare_batch(batch, target_heads, keep_highres_inputs=False)
+
+    assert out["highres_frames"] == {}
+    assert out["highres_masks"] == {}
+    assert out["targets"]["highres_recon"].shape == (1, 2, 1, 2, 2)
+    assert torch.equal(out["target_masks"]["highres_recon"], torch.tensor([[1.0, 0.0]]))
 
 
 def test_prepare_batch_highres_targets_are_binned_by_month() -> None:
