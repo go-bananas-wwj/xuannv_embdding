@@ -111,7 +111,7 @@ def test_source_aware_temporal_fusion_all_masked_returns_zero() -> None:
 
 
 def test_native_resolution_highres_encoder() -> None:
-    """NativeResolutionHighResEncoder 应将任意输入下采样并池化到目标分辨率。"""
+    """NativeResolutionHighResEncoder 应将任意输入对齐到目标分辨率。"""
     batch_size = 2
     in_channels = 4
     out_channels = 16
@@ -129,6 +129,28 @@ def test_native_resolution_highres_encoder() -> None:
     assert isinstance(encoder.norm1, nn.GroupNorm)
     assert isinstance(encoder.norm2, nn.GroupNorm)
     assert isinstance(encoder.norm3, nn.GroupNorm)
+
+
+def test_stp_encoder_precision_scale_one_keeps_full_resolution() -> None:
+    """precision_scale=1 时，STP 精度路径应保持输入空间分辨率。"""
+    encoder = STPEncoder(
+        input_channels=8,
+        space_dim=32,
+        time_dim=16,
+        precision_dim=16,
+        num_blocks=1,
+        num_heads=2,
+        time_attention_mode="none",
+        precision_scale=1,
+    )
+    x = torch.randn(2, 3, 16, 16, 8)
+    timestamps = torch.tensor([[202501, 202502, 202503], [202501, 202502, 202503]])
+    mask = torch.ones(2, 3)
+
+    feats, input_size = encoder(x, timestamps, mask)
+
+    assert input_size == (16, 16)
+    assert feats.shape == (2, 3, 16, 16, 16)
 
 
 def test_aef_model_uses_native_resolution_highres_encoder() -> None:
@@ -675,6 +697,48 @@ def test_aef_model_can_disable_highres_fusion_to_embedding() -> None:
         height,
         width,
     )
+
+
+def test_aef_model_highres_fusion_changes_embedding() -> None:
+    """开启高分融合后，同一低分输入的不同高分影像应改变 embedding。"""
+    num_months = 2
+    sensor_channels = {"s2": 10, "highres_optical_haidian": 3}
+    model = AEFModel(
+        sensor_channels,
+        embed_dim=16,
+        target_heads={
+            "s2_recon": ("continuous", 10),
+            "highres_optical_haidian_recon": ("continuous", 3),
+        },
+        stem_dim=16,
+        stp={
+            "space_dim": 64,
+            "time_dim": 32,
+            "precision_dim": 32,
+            "precision_scale": 1,
+            "num_blocks": 1,
+            "num_heads": 2,
+            "time_attention_mode": "none",
+            "highres_fusion_to_embedding": True,
+        },
+        num_months=num_months,
+    )
+    model.eval()
+
+    batch_size, time_steps, height, width = 1, 2, 16, 16
+    source_frames = {"s2": torch.randn(batch_size, time_steps, 10, height, width)}
+    source_masks = {"s2": torch.ones(batch_size, time_steps)}
+    timestamps = _make_yyyymm_timestamps(batch_size, time_steps, start=202501)
+    highres_masks = {"highres_optical_haidian": torch.ones(batch_size, 1, height, width)}
+    highres_a = {"highres_optical_haidian": torch.randn(batch_size, 3, height * 2, width * 2)}
+    highres_b = {"highres_optical_haidian": highres_a["highres_optical_haidian"] + 5.0}
+
+    with torch.no_grad():
+        out_a = model(source_frames, source_masks, timestamps, highres_a, highres_masks)
+        out_b = model(source_frames, source_masks, timestamps, highres_b, highres_masks)
+
+    assert out_a.embedding_map.shape == (batch_size, num_months, 16, height, width)
+    assert not torch.allclose(out_a.embedding_map, out_b.embedding_map, atol=1e-5)
 
 
 def test_aef_model_missing_months_no_nan() -> None:

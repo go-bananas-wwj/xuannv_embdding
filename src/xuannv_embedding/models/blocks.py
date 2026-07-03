@@ -349,7 +349,7 @@ class LearnedSpatialResampling(nn.Module):
 class MultiResolutionSTPBlock(nn.Module):
     """多分辨率 STP 块。
 
-    在 1/16L 空间路径、1/8L 时间路径、1/2L 精度路径上分别执行对应算子，
+    在 1/16L 空间路径、1/8L 时间路径、可配置精度路径上分别执行对应算子，
     并通过六个跨尺度交换分支实现信息融合。
     """
 
@@ -360,6 +360,7 @@ class MultiResolutionSTPBlock(nn.Module):
         precision_dim: int,
         num_heads: int = 8,
         time_attention_mode: str = "full",
+        precision_scale: int = 2,
     ) -> None:
         """初始化 MultiResolutionSTPBlock。
 
@@ -368,11 +369,15 @@ class MultiResolutionSTPBlock(nn.Module):
             time_dim: 时间路径通道数。
             precision_dim: 精度路径通道数。
             num_heads: 注意力算子头数。
+            precision_scale: 精度路径相对输入的下采样倍数，1 表示保持原始空间分辨率。
         """
         super().__init__()
         self.space_dim = space_dim
         self.time_dim = time_dim
         self.precision_dim = precision_dim
+        if precision_scale not in {1, 2}:
+            raise ValueError(f"precision_scale 仅支持 1 或 2，实际为 {precision_scale}")
+        self.precision_scale = int(precision_scale)
 
         self.space_op = STPSpaceOperator(space_dim, num_heads)
         self.time_op = STPTimeOperator(
@@ -381,11 +386,19 @@ class MultiResolutionSTPBlock(nn.Module):
         self.precision_op = STPPrecisionOperator(precision_dim)
 
         self.space_to_time = LearnedSpatialResampling(space_dim, time_dim, 2.0)
-        self.space_to_precision = LearnedSpatialResampling(space_dim, precision_dim, 8.0)
+        self.space_to_precision = LearnedSpatialResampling(
+            space_dim, precision_dim, 16.0 / self.precision_scale
+        )
         self.time_to_space = LearnedSpatialResampling(time_dim, space_dim, 0.5)
-        self.time_to_precision = LearnedSpatialResampling(time_dim, precision_dim, 4.0)
-        self.precision_to_space = LearnedSpatialResampling(precision_dim, space_dim, 0.125)
-        self.precision_to_time = LearnedSpatialResampling(precision_dim, time_dim, 0.25)
+        self.time_to_precision = LearnedSpatialResampling(
+            time_dim, precision_dim, 8.0 / self.precision_scale
+        )
+        self.precision_to_space = LearnedSpatialResampling(
+            precision_dim, space_dim, self.precision_scale / 16.0
+        )
+        self.precision_to_time = LearnedSpatialResampling(
+            precision_dim, time_dim, self.precision_scale / 8.0
+        )
 
     def forward(
         self,
@@ -453,13 +466,12 @@ class STPEncoder(nn.Module):
     """Space-Time-Precision 多分辨率编码器。
 
     将时序多源特征投影到三个分辨率路径，依次通过若干 ``MultiResolutionSTPBlock``，
-    最终将所有路径对齐到 1/2L 精度分辨率并相加，返回特征与原始输入空间尺寸。
+    最终将所有路径对齐到精度路径分辨率并相加，返回特征与原始输入空间尺寸。
     """
 
     # 各路径相对于输入的空间缩放倍数。
     SPACE_SCALE = 16
     TIME_SCALE = 8
-    PRECISION_SCALE = 2
 
     def __init__(
         self,
@@ -471,6 +483,7 @@ class STPEncoder(nn.Module):
         num_heads: int = 8,
         gradient_checkpointing: bool = False,
         time_attention_mode: str = "full",
+        precision_scale: int = 2,
     ) -> None:
         """初始化 STPEncoder。
 
@@ -482,12 +495,17 @@ class STPEncoder(nn.Module):
             num_blocks: STP 块数量。
             num_heads: 注意力头数。
             gradient_checkpointing: 是否启用梯度检查点以节省显存。
+            precision_scale: 精度路径相对输入的下采样倍数；1 表示保持 128x128
+                原生网格，2 表示旧版 64x64 精度路径。
         """
         super().__init__()
         self.space_dim = space_dim
         self.time_dim = time_dim
         self.precision_dim = precision_dim
         self.gradient_checkpointing = gradient_checkpointing
+        if precision_scale not in {1, 2}:
+            raise ValueError(f"precision_scale 仅支持 1 或 2，实际为 {precision_scale}")
+        self.precision_scale = int(precision_scale)
         if time_attention_mode not in {"full", "none"}:
             raise ValueError(
                 "STPEncoder time_attention_mode 仅支持 'full' 或 'none'，"
@@ -507,6 +525,7 @@ class STPEncoder(nn.Module):
                     precision_dim,
                     num_heads,
                     time_attention_mode=time_attention_mode,
+                    precision_scale=self.precision_scale,
                 )
                 for _ in range(num_blocks)
             ]
@@ -514,10 +533,10 @@ class STPEncoder(nn.Module):
 
         # 最终重采样到精度路径分辨率；仅 2× 上采样是可学习的，其余靠插值兜底。
         self.final_space_resample = LearnedSpatialResampling(
-            space_dim, precision_dim, float(self.SPACE_SCALE // self.PRECISION_SCALE)
+            space_dim, precision_dim, float(self.SPACE_SCALE / self.precision_scale)
         )
         self.final_time_resample = LearnedSpatialResampling(
-            time_dim, precision_dim, float(self.TIME_SCALE // self.PRECISION_SCALE)
+            time_dim, precision_dim, float(self.TIME_SCALE / self.precision_scale)
         )
         self.norm = nn.LayerNorm(precision_dim)
 
@@ -539,7 +558,7 @@ class STPEncoder(nn.Module):
 
         Returns:
             (features, input_size) 元组：
-            - features: ``(B, T, H//2, W//2, precision_dim)``
+            - features: ``(B, T, H//precision_scale, W//precision_scale, precision_dim)``
             - input_size: ``(H, W)``，用于后续上采样对齐。
         """
         B, T, H, W, C = x.shape
@@ -575,15 +594,18 @@ class STPEncoder(nn.Module):
             B, T, self.time_dim, H // self.TIME_SCALE, W // self.TIME_SCALE
         ).permute(0, 1, 3, 4, 2)
 
-        # 精度路径：保持 precision_dim，下采样到 1/2L
+        precision_h = H // self.precision_scale
+        precision_w = W // self.precision_scale
+
+        # 精度路径：保持 precision_dim，可选保持原始分辨率或下采样到 1/2L。
         precision_features = x_proj.permute(0, 1, 4, 2, 3).reshape(
             B * T, self.precision_dim, H, W
         )
         precision_features = F.adaptive_avg_pool2d(
-            precision_features, (H // self.PRECISION_SCALE, W // self.PRECISION_SCALE)
+            precision_features, (precision_h, precision_w)
         )
         precision_features = precision_features.view(
-            B, T, self.precision_dim, H // self.PRECISION_SCALE, W // self.PRECISION_SCALE
+            B, T, self.precision_dim, precision_h, precision_w
         ).permute(0, 1, 3, 4, 2)
 
         for block in self.blocks:
@@ -621,16 +643,16 @@ class STPEncoder(nn.Module):
             B * T, self.time_dim, H // self.TIME_SCALE, W // self.TIME_SCALE
         )
         precision_2d = precision_features.permute(0, 1, 4, 2, 3).reshape(
-            B * T, self.precision_dim, H // self.PRECISION_SCALE, W // self.PRECISION_SCALE
+            B * T, self.precision_dim, precision_h, precision_w
         )
 
-        target_size = (H // self.PRECISION_SCALE, W // self.PRECISION_SCALE)
+        target_size = (precision_h, precision_w)
         space_resampled = self.final_space_resample(space_2d, target_size=target_size)
         time_resampled = self.final_time_resample(time_2d, target_size=target_size)
 
         final_features = space_resampled + time_resampled + precision_2d
         final_features = final_features.view(
-            B, T, self.precision_dim, H // self.PRECISION_SCALE, W // self.PRECISION_SCALE
+            B, T, self.precision_dim, precision_h, precision_w
         ).permute(0, 1, 3, 4, 2)
 
         return self.norm(final_features), input_size

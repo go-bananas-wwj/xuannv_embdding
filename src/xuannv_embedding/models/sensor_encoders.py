@@ -188,10 +188,9 @@ class SourceAwareTemporalFusion(nn.Module):
 class NativeResolutionHighResEncoder(nn.Module):
     """原生分辨率高分数据源编码器（阶段二使用）。
 
-    对来自不同传感器、不同原生分辨率与 GSD 的高分辨率影像，先通过 3 层 stride=2
-    卷积（每层后接 GroupNorm + GELU）逐步下采样并扩展感受野，最后通过
-    ``AdaptiveAvgPool2d`` 统一到与低分辨率基础特征相同的空间尺寸，输出通道数为
-    ``out_channels``。
+    对来自不同传感器、不同原生分辨率与 GSD 的高分辨率影像，先使用双线性重采样
+    对齐到 embedding 网格，再通过轻量 3x3 卷积提取边界与纹理。相比先多次 stride=2
+    再全局池化，这个实现更适合保留 3m 高分影像中的岛屿、岸线、窄路等细节。
     """
 
     def __init__(
@@ -213,12 +212,11 @@ class NativeResolutionHighResEncoder(nn.Module):
         self.out_channels = out_channels
         self.target_size = target_size
 
-        # 3 层 stride=2 下采样：2^3 = 8 倍下采样。
-        self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=3, stride=2, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1)
-        self.conv3 = nn.Conv2d(64, out_channels, kernel_size=3, stride=2, padding=1)
+        self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=3, stride=1, padding=1)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
+        self.conv3 = nn.Conv2d(64, out_channels, kernel_size=3, stride=1, padding=1)
 
-        # 每层 stride=2 卷积后接 GroupNorm + GELU。
+        # 每层卷积后接 GroupNorm + GELU。
         self.norm1 = nn.GroupNorm(32, 32)
         self.norm2 = nn.GroupNorm(32, 64)
         num_groups = 8 if out_channels % 8 == 0 else out_channels
@@ -236,9 +234,10 @@ class NativeResolutionHighResEncoder(nn.Module):
         Returns:
             输出张量，形状 ``(B, out_channels, H_target, W_target)``。
         """
+        target_size = target_size if target_size is not None else self.target_size
+        if x.shape[-2:] != target_size:
+            x = F.interpolate(x, size=target_size, mode="bilinear", align_corners=False)
         x = F.gelu(self.norm1(self.conv1(x)))
         x = F.gelu(self.norm2(self.conv2(x)))
         x = F.gelu(self.norm3(self.conv3(x)))
-        target_size = target_size if target_size is not None else self.target_size
-        x = F.adaptive_avg_pool2d(x, target_size)
         return x

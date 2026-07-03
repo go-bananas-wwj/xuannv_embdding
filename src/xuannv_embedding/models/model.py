@@ -93,6 +93,7 @@ class AEFModel(nn.Module):
             "space_dim": 512,
             "time_dim": 256,
             "precision_dim": 128,
+            "precision_scale": 2,
             "num_blocks": 6,
             "num_heads": num_space_heads,
             "temporal_fusion": "concat",
@@ -151,6 +152,7 @@ class AEFModel(nn.Module):
             num_heads=stp_cfg["num_heads"],
             gradient_checkpointing=stp_cfg["gradient_checkpointing"],
             time_attention_mode=stp_cfg["time_attention_mode"],
+            precision_scale=stp_cfg["precision_scale"],
         )
 
         self.monthly_embed = MonthlyEmbeddingModule(
@@ -259,23 +261,26 @@ class AEFModel(nn.Module):
         combined_mask = torch.stack(masks, dim=0).amax(dim=0)  # (B, T)
         self._validate_month_range(global_timestamps, combined_mask)
 
-        # 3) STP 编码器输出 1/2L 精度特征，同时拿回原始输入尺寸。
+        # 3) STP 编码器输出精度路径特征，同时拿回原始输入尺寸。
         feats, _ = self.stp_encoder(
             temporal_input, global_timestamps, mask=combined_mask
-        )  # (B, T, H//2, W//2, precision_dim)
+        )  # (B, T, H//precision_scale, W//precision_scale, precision_dim)
 
         # 4) 月度嵌入：按 YYYYMM 分 bin，缺失月份用 missing_token。
         monthly_feats, monthly_mask = self.monthly_embed(
             feats, global_timestamps, combined_mask
-        )  # (B, T_month, H//2, W//2, embed_dim), (B, T_month)
+        )  # (B, T_month, H', W', embed_dim), (B, T_month)
 
-        # 5) 逐月上采样回原始分辨率；奇数尺寸时使用 target_size 兜底。
+        # 5) 逐月恢复到原始分辨率。precision_scale=1 时避免无意义的上采样再缩回。
         Bm, M, Hh, Wh, D = monthly_feats.shape
-        monthly_feats_flat = monthly_feats.reshape(Bm * M, Hh, Wh, D)
-        mu_up_flat = self.upsample_head(
-            monthly_feats_flat, target_size=input_size
-        )  # (B*T_month, H, W, embed_dim)
-        mu_up = mu_up_flat.view(Bm, M, H, W, D)
+        if (Hh, Wh) == input_size:
+            mu_up = monthly_feats
+        else:
+            monthly_feats_flat = monthly_feats.reshape(Bm * M, Hh, Wh, D)
+            mu_up_flat = self.upsample_head(
+                monthly_feats_flat, target_size=input_size
+            )  # (B*T_month, H, W, embed_dim)
+            mu_up = mu_up_flat.view(Bm, M, H, W, D)
         embedding_map = mu_up.permute(0, 1, 4, 2, 3)  # (B, T_month, D, H, W)
 
         # 6) 可选高分辨率 availability-aware 融合（逐月重复同一高分辨率特征）。

@@ -177,6 +177,7 @@ class Config:
             "space_dim": 512,
             "time_dim": 256,
             "precision_dim": 128,
+            "precision_scale": 2,
             "num_blocks": 6,
             "num_heads": 8,
             "temporal_fusion": "concat",
