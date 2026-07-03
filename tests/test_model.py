@@ -178,6 +178,71 @@ def test_aef_model_uses_native_resolution_highres_encoder() -> None:
         assert encoder.out_channels == embed_dim
 
 
+def test_stp_precision_operator_preserves_channels_last_layout_with_zero_convs() -> None:
+    """精度算子应正确处理 channels-last 输入，不能用裸 reshape 打乱布局。"""
+    op = STPPrecisionOperator(dim=3)
+    with torch.no_grad():
+        op.conv1.weight.zero_()
+        op.conv1.bias.zero_()
+        op.conv2.weight.zero_()
+        op.conv2.bias.zero_()
+
+    x = torch.arange(2 * 2 * 4 * 5 * 3, dtype=torch.float32).view(2, 2, 4, 5, 3)
+    y = op(x)
+
+    assert torch.equal(y, x)
+
+
+def test_multi_resolution_block_preserves_layout_when_cross_resampling_zeroed() -> None:
+    """STP block 内部转为 channels-first 时不应打乱空间和通道顺序。"""
+
+    class _Identity(nn.Module):
+        def forward(self, x: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+            return x
+
+    class _ZeroResample(nn.Module):
+        def __init__(self, out_channels: int) -> None:
+            super().__init__()
+            self.out_channels = out_channels
+
+        def forward(
+            self,
+            x: torch.Tensor,
+            target_size: tuple[int, int] | None = None,
+        ) -> torch.Tensor:
+            height, width = target_size if target_size is not None else x.shape[-2:]
+            return x.new_zeros((x.shape[0], self.out_channels, height, width))
+
+    block = MultiResolutionSTPBlock(
+        space_dim=3,
+        time_dim=3,
+        precision_dim=3,
+        num_heads=1,
+        time_attention_mode="none",
+        precision_scale=1,
+    )
+    block.space_op = _Identity()
+    block.time_op = _Identity()
+    block.precision_op = _Identity()
+    block.space_to_time = _ZeroResample(3)
+    block.space_to_precision = _ZeroResample(3)
+    block.time_to_space = _ZeroResample(3)
+    block.time_to_precision = _ZeroResample(3)
+    block.precision_to_space = _ZeroResample(3)
+    block.precision_to_time = _ZeroResample(3)
+
+    space = torch.arange(1 * 2 * 2 * 2 * 3, dtype=torch.float32).view(1, 2, 2, 2, 3)
+    time = torch.arange(1 * 2 * 3 * 3 * 3, dtype=torch.float32).view(1, 2, 3, 3, 3)
+    precision = torch.arange(1 * 2 * 4 * 4 * 3, dtype=torch.float32).view(1, 2, 4, 4, 3)
+    timestamps = torch.tensor([[202501, 202502]], dtype=torch.long)
+
+    out_space, out_time, out_precision = block(space, time, precision, timestamps)
+
+    assert torch.equal(out_space, space)
+    assert torch.equal(out_time, time)
+    assert torch.equal(out_precision, precision)
+
+
 def test_aef_model_uses_gated_temporal_fusion() -> None:
     """gated_sum 模式应启用源感知融合，并保持 STP 输入通道为 stem_dim。"""
     sensor_channels = {"s2": 10, "s1": 2, "landsat": 6}
@@ -363,6 +428,24 @@ def test_availability_aware_fusion() -> None:
     assert out_zero.shape == (batch_size, dim, height, width)
     assert out_one.shape == (batch_size, dim, height, width)
     assert not torch.allclose(out_zero, out_one)
+
+
+def test_availability_aware_fusion_masks_highres_features() -> None:
+    """高分不可用时，不同 highres_feat 不应改变融合输出。"""
+    batch_size = 2
+    dim = 16
+    height, width = 8, 8
+
+    fusion = AvailabilityAwareFusion(dim)
+    base_feat = torch.randn(batch_size, dim, height, width)
+    highres_a = torch.randn(batch_size, dim, height, width)
+    highres_b = highres_a + 100.0
+    mask_zero = torch.zeros(batch_size, 1, height, width)
+
+    out_a = fusion(base_feat, highres_a, mask_zero)
+    out_b = fusion(base_feat, highres_b, mask_zero)
+
+    assert torch.allclose(out_a, out_b, atol=1e-6)
 
 
 def test_availability_aware_fusion_rejects_size_mismatch() -> None:
@@ -681,7 +764,9 @@ def test_aef_model_can_disable_highres_fusion_to_embedding() -> None:
     source_frames = {"s2": torch.randn(batch_size, time_steps, 10, height, width)}
     source_masks = {"s2": torch.ones(batch_size, time_steps)}
     timestamps = _make_yyyymm_timestamps(batch_size, time_steps, start=202501)
-    highres_masks = {"highres_optical_haidian": torch.ones(batch_size, 1, height, width)}
+    highres_masks = {
+        "highres_optical_haidian": torch.ones(batch_size, 1, height * 2, width * 2)
+    }
     highres_a = {"highres_optical_haidian": torch.randn(batch_size, 3, height, width)}
     highres_b = {"highres_optical_haidian": highres_a["highres_optical_haidian"] + 10.0}
 
@@ -729,7 +814,9 @@ def test_aef_model_highres_fusion_changes_embedding() -> None:
     source_frames = {"s2": torch.randn(batch_size, time_steps, 10, height, width)}
     source_masks = {"s2": torch.ones(batch_size, time_steps)}
     timestamps = _make_yyyymm_timestamps(batch_size, time_steps, start=202501)
-    highres_masks = {"highres_optical_haidian": torch.ones(batch_size, 1, height, width)}
+    highres_masks = {
+        "highres_optical_haidian": torch.ones(batch_size, 1, height * 2, width * 2)
+    }
     highres_a = {"highres_optical_haidian": torch.randn(batch_size, 3, height * 2, width * 2)}
     highres_b = {"highres_optical_haidian": highres_a["highres_optical_haidian"] + 5.0}
 

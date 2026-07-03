@@ -41,6 +41,15 @@ highres_fusion_to_embedding: true
 | Teacher-student | 没有完整路径 | 当前没有 AEF 论文里的 teacher video model / student video model / text alignment 三模型联合训练。 |
 | Text alignment | 没有 | 当前只用 OSM 弱语义和重建目标，没有 Wikipedia/GBIF 文本对齐。 |
 
+## 审查后修复
+
+子智能体审查发现了三个训练前必须处理的问题，已修复：
+
+- STP 内部 `(B,T,H,W,C)` 到 `(B*T,C,H,W)` 的转换不能直接 `reshape`，否则会打乱空间和通道。现在已统一改为 `permute(...).reshape(...)`，并补了值级别回归测试。
+- 高分 mask 现在会在模型内对齐到 embedding 网格，避免原生 mask 尺寸与 128x128 embedding 不一致。
+- 高分不可用区域会把 `highres_feat` 置零，不再让无效高分内容进入融合。
+- 6 卡 DDP 下 `TotalLoss` 中的 semantic probe 参数现在会随 criterion 一起 DDP 同步，避免各 rank 自己更新 probe。
+
 ## 新配置
 
 `configs/v2_p7a_haidian_202512_202605_fullres_highres_fusion_20260703.yaml`
@@ -57,13 +66,18 @@ highres_fusion_to_embedding: true
 ## 验证
 
 - `PYTHONPATH=/root/workspace/xuannv/src pytest -q tests/test_model.py tests/test_smoke.py`
-  - 结果：51 passed
-- P7A 配置 smoke：
-  - 输出 `embedding_map` shape：`(1, 6, 64, 16, 16)`
+  - 结果：54 passed
+- `PYTHONPATH=/root/workspace/xuannv/src pytest -q tests/test_training.py::test_trainer_checkpoint_best_and_latest3 tests/test_training.py::test_trainer_load_restores_best_state tests/test_training.py::test_trainer_best_pt_when_save_and_eval_aligned tests/test_training.py::test_batch_uniformity_loss tests/test_training.py::test_batch_uniformity_loss_temporal`
+  - 结果：5 passed
+- P7A 真实 batch smoke：
+  - 低分输入：`s2/s1/landsat = (3, 6, C, 128, 128)`
+  - 高分输入：`highres_optical/highres_sar = (3, C, 427, 427)`
+  - 输出 `embedding_map` shape：`(3, 6, 64, 128, 128)`
   - vMF 后像素范数均值：`1.0`
   - 高分 optical/SAR 重建头正常存在
+
+备注：P7A 训练集和验证集 patch 有重叠，`val_loss` 只用于训练过程监控与 best checkpoint 选择，不作为严格泛化指标。最终效果仍以下游 5-fold 测评为准。
 
 ## 下一步
 
 P7A 代码层面已经可以进入训练前数据检查。训练前建议先可视化 1-2 个 patch 的 6 个月输入，确认高分、S2、Landsat、S1、OSM landcover 和 pixel mask 没问题，再启动 6 卡训练。
-

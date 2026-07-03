@@ -284,7 +284,7 @@ class STPPrecisionOperator(nn.Module):
             输出张量，形状 ``(B, T, H, W, C)``。
         """
         B, T, H, W, C = x.shape
-        x_conv = x.reshape(B * T, C, H, W)
+        x_conv = x.permute(0, 1, 4, 2, 3).reshape(B * T, C, H, W)
         residual = x_conv
 
         x_conv = self.conv1(self.norm1(x_conv))
@@ -292,7 +292,7 @@ class STPPrecisionOperator(nn.Module):
         x_conv = self.conv2(self.norm2(x_conv))
         x_conv = residual + x_conv
 
-        return x_conv.view(B, T, H, W, C)
+        return x_conv.view(B, T, C, H, W).permute(0, 1, 3, 4, 2)
 
 
 class LearnedSpatialResampling(nn.Module):
@@ -429,9 +429,15 @@ class MultiResolutionSTPBlock(nn.Module):
         time_H, time_W = time_out.shape[2:4]
         precision_H, precision_W = precision_out.shape[2:4]
 
-        space_2d = space_out.reshape(B * T, self.space_dim, space_H, space_W)
-        time_2d = time_out.reshape(B * T, self.time_dim, time_H, time_W)
-        precision_2d = precision_out.reshape(B * T, self.precision_dim, precision_H, precision_W)
+        space_2d = space_out.permute(0, 1, 4, 2, 3).reshape(
+            B * T, self.space_dim, space_H, space_W
+        )
+        time_2d = time_out.permute(0, 1, 4, 2, 3).reshape(
+            B * T, self.time_dim, time_H, time_W
+        )
+        precision_2d = precision_out.permute(0, 1, 4, 2, 3).reshape(
+            B * T, self.precision_dim, precision_H, precision_W
+        )
 
         time_to_space = self.time_to_space(time_2d, target_size=(space_H, space_W))
         precision_to_space = self.precision_to_space(precision_2d, target_size=(space_H, space_W))

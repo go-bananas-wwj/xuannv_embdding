@@ -60,6 +60,12 @@ class AvailabilityAwareFusion(nn.Module):
             f"base_feat spatial size {base_feat.shape[2:]} does not match "
             f"highres_feat spatial size {highres_feat.shape[2:]}"
         )
+        if avail_mask.shape[2:] != base_feat.shape[2:]:
+            raise ValueError(
+                f"avail_mask spatial size {avail_mask.shape[2:]} does not match "
+                f"base_feat spatial size {base_feat.shape[2:]}"
+            )
+        highres_feat = highres_feat * avail_mask.float()
         avail_embed = self.avail_embed(avail_mask.float())  # (B, C, H, W)
         combined = torch.cat([base_feat + avail_embed, highres_feat], dim=1)  # (B, 2C, H, W)
         fused = self.fusion(combined)  # (B, C, H, W)

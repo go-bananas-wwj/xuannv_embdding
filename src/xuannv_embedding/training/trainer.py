@@ -73,9 +73,11 @@ class Trainer:
             if self.device.type in ("cuda", "npu"):
                 ddp_kwargs["device_ids"] = [device_index]
             self.model = DDP(self.model, **ddp_kwargs)
+            if any(param.requires_grad for param in self.criterion.parameters()):
+                self.criterion = DDP(self.criterion, **ddp_kwargs)
 
         self.optimizer = build_optimizer(
-            itertools.chain(self._unwrap_model().parameters(), self.criterion.parameters()),
+            itertools.chain(self._unwrap_model().parameters(), self._unwrap_criterion().parameters()),
             lr=cfg.training.lr,
             weight_decay=cfg.training.weight_decay,
         )
@@ -143,6 +145,12 @@ class Trainer:
         if isinstance(self.model, DDP):
             return self.model.module
         return self.model
+
+    def _unwrap_criterion(self) -> nn.Module:
+        """获取未包装 DDP 的原始损失模块。"""
+        if isinstance(self.criterion, DDP):
+            return self.criterion.module
+        return self.criterion
 
     def _move_batch_to_device(self, batch: dict[str, Any]) -> dict[str, Any]:
         """将 batch 中所有 Tensor 移动到训练设备。"""
@@ -598,8 +606,9 @@ class Trainer:
         try:
             for epoch in range(self.epoch, total_epochs):
                 self.epoch = epoch
-                if hasattr(self.criterion, "set_epoch"):
-                    self.criterion.set_epoch(epoch)
+                criterion = self._unwrap_criterion()
+                if hasattr(criterion, "set_epoch"):
+                    criterion.set_epoch(epoch)
                 if self.train_sampler is not None:
                     self.train_sampler.set_epoch(epoch)
                 train_metrics = self.train_epoch()
@@ -626,7 +635,7 @@ class Trainer:
                                 "best_val_loss": self.best_val_loss,
                                 "best_epoch": self.best_epoch,
                             },
-                            criterion=self.criterion,
+                            criterion=self._unwrap_criterion(),
                         )
 
                         # 更新 best.pt。
@@ -674,7 +683,7 @@ class Trainer:
                 "best_val_loss": self.best_val_loss,
                 "best_epoch": self.best_epoch,
             },
-            criterion=self.criterion,
+            criterion=self._unwrap_criterion(),
         )
 
     def load(self, path: str | Path) -> dict[str, Any]:
@@ -685,7 +694,7 @@ class Trainer:
             self.optimizer,
             self.scheduler,
             device=self.device,
-            criterion=self.criterion,
+            criterion=self._unwrap_criterion(),
         )
         self.epoch = state.get("epoch", 0) + 1
         trainer_state = state.get("trainer_state", {}) or {}

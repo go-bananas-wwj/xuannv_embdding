@@ -299,6 +299,15 @@ class AEFModel(nn.Module):
                 highres_feat = self.highres_encoders[source](
                     highres_frame, target_size=input_size
                 )  # (B, D, H, W)
+                highres_mask = highres_mask.to(
+                    device=highres_feat.device, dtype=highres_feat.dtype
+                )
+                if highres_mask.shape[-2:] != input_size:
+                    highres_mask = F.interpolate(
+                        highres_mask,
+                        size=input_size,
+                        mode="nearest",
+                    )
                 highres_feat_rep = (
                     highres_feat.unsqueeze(1)
                     .expand(-1, M, -1, -1, -1)
