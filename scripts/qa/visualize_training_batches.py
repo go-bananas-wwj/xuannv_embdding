@@ -36,6 +36,18 @@ CLASS_RULES = [
     (12, "major road", "osm_major_road", "#f4d35e"),
     (13, "building", "osm_building", "#d62828"),
 ]
+LANDCOVER_RULES = [
+    (1, "residential", "#f9844a"),
+    (2, "commercial", "#ff70a6"),
+    (3, "industrial", "#6d6875"),
+    (4, "agriculture", "#90be6d"),
+    (5, "green", "#43aa8b"),
+    (6, "recreation", "#577590"),
+    (7, "construction", "#9d4edd"),
+    (8, "water", "#4aa3df"),
+    (9, "building", "#d62828"),
+    (10, "transport", "#f4d35e"),
+]
 
 
 def _month_int(month: str) -> int:
@@ -94,6 +106,14 @@ def _osm_cmap() -> ListedColormap:
     max_id = max(rule[0] for rule in CLASS_RULES)
     colors = [BACKGROUND] * (max_id + 1)
     for class_id, _name, _task, color in CLASS_RULES:
+        colors[class_id] = color
+    return ListedColormap(colors)
+
+
+def _landcover_cmap() -> ListedColormap:
+    max_id = max(rule[0] for rule in LANDCOVER_RULES)
+    colors = [BACKGROUND] * (max_id + 1)
+    for class_id, _name, color in LANDCOVER_RULES:
         colors[class_id] = color
     return ListedColormap(colors)
 
@@ -161,7 +181,8 @@ def visualize_batch(
 ) -> Path:
     month_ints = [_month_int(month) for month in months]
     patch_ids = list(batch["patch_ids"])
-    rows_per_sample = len(sources) + 1
+    has_landcover = "worldcover" in batch["source_frames"]
+    rows_per_sample = len(sources) + 1 + int(has_landcover)
     nrows = len(patch_ids) * rows_per_sample
     ncols = len(months)
     fig, axes = plt.subplots(
@@ -171,6 +192,7 @@ def visualize_batch(
         squeeze=False,
     )
     osm_cmap = _osm_cmap()
+    landcover_cmap = _landcover_cmap()
 
     for sample_idx, patch_id in enumerate(patch_ids):
         row_base = sample_idx * rows_per_sample
@@ -187,8 +209,25 @@ def visualize_batch(
                 ax.set_xticks([])
                 ax.set_yticks([])
 
+        if has_landcover:
+            row = row_base + len(sources)
+            landcover = batch["source_frames"]["worldcover"][sample_idx, 0, 0].detach().cpu().numpy()
+            for month_idx, _month in enumerate(month_ints):
+                ax = axes[row][month_idx]
+                ax.imshow(
+                    landcover,
+                    cmap=landcover_cmap,
+                    vmin=0,
+                    vmax=len(LANDCOVER_RULES),
+                    interpolation="nearest",
+                )
+                if month_idx == 0:
+                    ax.set_ylabel(f"{patch_id}\nOSM landcover", fontsize=9)
+                ax.set_xticks([])
+                ax.set_yticks([])
+
         osm_label = _osm_multiclass(batch.get("supervised_labels", {}), sample_idx)
-        row = row_base + len(sources)
+        row = row_base + len(sources) + int(has_landcover)
         for month_idx, _month in enumerate(month_ints):
             ax = axes[row][month_idx]
             ax.imshow(osm_label, cmap=osm_cmap, vmin=0, vmax=len(CLASS_RULES), interpolation="nearest")
@@ -197,7 +236,12 @@ def visualize_batch(
             ax.set_xticks([])
             ax.set_yticks([])
 
-    legend = "\n".join(f"{class_id}: {name}" for class_id, name, _task, _color in CLASS_RULES)
+    legend = "\n".join(
+        ["OSM landcover target:"]
+        + [f"{class_id}: {name}" for class_id, name, _color in LANDCOVER_RULES]
+        + ["", "OSM weak labels:"]
+        + [f"{class_id}: {name}" for class_id, name, _task, _color in CLASS_RULES]
+    )
     fig.text(0.995, 0.5, legend, va="center", ha="right", fontsize=8, family="monospace")
     fig.suptitle(f"Filtered training batch {batch_idx}", fontsize=14)
     fig.tight_layout(rect=[0, 0, 0.90, 0.975])

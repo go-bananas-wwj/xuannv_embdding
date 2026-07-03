@@ -46,7 +46,7 @@ model:
     worldcover:
       source: worldcover
       loss_type: categorical
-      channels: 9
+      channels: 11
       weight: 0.3
     highres_optical_haidian_recon:
       source: highres_optical_haidian
@@ -158,8 +158,8 @@ training:
 data:
   root: /data/xuannv_embedding/processed/haidian
   region: haidian
-  manifest_path: /data/xuannv_embedding/processed/haidian/manifest_p6a_202512_202605_pixelmask_clean.json
-  train_manifest_path: /data/xuannv_embedding/processed/haidian/manifest_p6a_202512_202605_pixelmask_clean.json
+  manifest_path: /data/xuannv_embedding/processed/haidian/manifest_p6a_202512_202605_pixelmask_clean_osm_landcover.json
+  train_manifest_path: /data/xuannv_embedding/processed/haidian/manifest_p6a_202512_202605_pixelmask_clean_osm_landcover.json
   val_manifest_path: /data/xuannv_embedding/processed/haidian/manifest_p5h_random20_val_seed42.json
   statistics_dir: /data/xuannv_embedding/statistics/haidian
   statistics_dirs_by_region: {}
