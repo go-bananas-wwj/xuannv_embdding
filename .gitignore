@@ -11,8 +11,11 @@ venv/
 /data/
 outputs/
 out/
-!docs/bp_deck/outputs/
-!docs/bp_deck/outputs/**
+reports/
+fonts/
+manual_annotations/
+.superpowers/
+docs/bp_deck/outputs/
 docs/bp_deck/assets/render_cache/
 *.tiff
 *.tif
@@ -20,6 +23,10 @@ docs/bp_deck/assets/render_cache/
 *.pt
 *.pth
 *.ckpt
+*.docx
+*.pptx
+*.pdf
+*.mov
 
 # IDEs
 .vscode/
