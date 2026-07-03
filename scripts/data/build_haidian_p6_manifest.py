@@ -16,11 +16,11 @@ from typing import Any
 
 MONTHS = ("202512", "202601", "202602", "202603", "202604", "202605")
 HIGHRES_OPTICAL_DATES = (
-    "20251201",
-    "20260101",
-    "20260201",
-    "20260301",
-    "20260401",
+    "20251209",
+    "20260110",
+    "20260204",
+    "20260309",
+    "20260407",
     "20260501",
 )
 DATE_RE = re.compile(r"_(20\d{6})_")
@@ -49,11 +49,19 @@ def _highres_optical_paths(patch_id: str) -> list[str]:
     ]
 
 
-def _validate_paths(root: Path, paths: list[str] | None, missing: list[str]) -> None:
+def _validate_paths(
+    root: Path,
+    paths: list[str] | None,
+    missing: list[str],
+    require_mask: bool = True,
+) -> None:
     for rel in paths or []:
         full = root / rel
         if not full.exists():
             missing.append(str(full))
+            continue
+        if not require_mask:
+            continue
         mask = full.with_name(f"{full.stem}_mask.tif")
         if not mask.exists():
             missing.append(str(mask))
@@ -99,7 +107,7 @@ def build_manifest(root: Path, base_manifest: Path) -> tuple[list[dict[str, Any]
             for month in seen_months:
                 if month in coverage[source]:
                     coverage[source][month] += 1
-        _validate_paths(root, item.get("worldcover"), missing)
+        _validate_paths(root, item.get("worldcover"), missing, require_mask=False)
         out.append(item)
 
     meta = {
