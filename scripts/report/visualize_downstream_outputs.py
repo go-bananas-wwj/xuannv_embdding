@@ -7,7 +7,7 @@ import argparse
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -47,6 +47,12 @@ TASK_LABEL_DIR = {
 }
 
 
+class PcaView(NamedTuple):
+    model: PCA
+    lo: np.ndarray
+    hi: np.ndarray
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--benchmark-root", type=Path, required=True)
@@ -61,6 +67,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--months", nargs=2, default=["202512", "202605"])
     parser.add_argument("--samples-per-task", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--embedding-pca-mode",
+        choices=["global", "patch"],
+        default="global",
+        help="global uses one PCA projection for all selected samples; patch fits PCA per patch.",
+    )
+    parser.add_argument(
+        "--pca-sample-pixels",
+        type=int,
+        default=200000,
+        help="Maximum embedding pixels sampled to fit global PCA.",
+    )
     return parser.parse_args()
 
 
@@ -114,15 +132,35 @@ def load_prediction(pred_path: Path) -> np.ndarray:
         return src.read(1)
 
 
-def load_task_threshold(benchmark_root: Path, task: str) -> float:
+def load_task_thresholds(benchmark_root: Path, task: str) -> dict[int, float]:
     summary_path = benchmark_root / task / "summary.json"
     if not summary_path.exists():
-        return 0.5
+        return {}
     with summary_path.open("r", encoding="utf-8") as f:
         summary = json.load(f)
-    if not summary:
-        return 0.5
-    return float(summary[0].get("val_threshold", summary[0].get("threshold", 0.5)))
+    thresholds: dict[int, float] = {}
+    for row in summary:
+        if "fold" not in row:
+            continue
+        thresholds[int(row["fold"])] = float(row.get("val_threshold", row.get("threshold", 0.5)))
+    return thresholds
+
+
+def fold_from_prediction(pred_path: Path) -> int | None:
+    match = re.match(r"fold_(\d+)$", pred_path.parent.parent.name)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+def threshold_for_prediction(pred_path: Path, thresholds: dict[int, float]) -> tuple[float, str]:
+    fold = fold_from_prediction(pred_path)
+    if fold is not None and fold in thresholds:
+        return thresholds[fold], f"fold_{fold}"
+    if thresholds:
+        values = list(thresholds.values())
+        return float(np.median(values)), "median_fallback"
+    return 0.5, "default_0.5"
 
 
 def load_gt_mask(
@@ -198,24 +236,94 @@ def load_embedding(
     return None
 
 
-def embedding_pca(embedding: torch.Tensor | None) -> np.ndarray | None:
+def fit_global_embedding_pca(
+    samples: list[tuple[str, Path]],
+    embedding_root: Path,
+    months: list[str],
+    max_pixels: int,
+    seed: int,
+) -> PcaView | None:
+    rng = np.random.default_rng(seed)
+    chunks: list[np.ndarray] = []
+    total_pixels = 0
+    for task, pred_path in samples:
+        patch_id = pred_path.stem.removesuffix("_prob")
+        for month in months:
+            embedding = load_embedding(embedding_root, task, patch_id, month)
+            if embedding is None:
+                continue
+            arr = embedding.float().numpy()
+            channels, height, width = arr.shape
+            flat = arr.reshape(channels, height * width).T
+            if flat.shape[0] == 0:
+                continue
+            remaining = max_pixels - total_pixels
+            if remaining <= 0:
+                break
+            take = min(flat.shape[0], remaining)
+            if take < flat.shape[0]:
+                idx = rng.choice(flat.shape[0], size=take, replace=False)
+                flat = flat[idx]
+            chunks.append(flat.astype(np.float32, copy=False))
+            total_pixels += flat.shape[0]
+        if total_pixels >= max_pixels:
+            break
+    if not chunks:
+        return None
+    fit_data = np.concatenate(chunks, axis=0)
+    if float(np.nanstd(fit_data)) < 1e-8:
+        return None
+    pca = PCA(n_components=3)
+    coords = pca.fit_transform(fit_data)
+    lo = np.percentile(coords, 2.0, axis=0).astype(np.float32)
+    hi = np.percentile(coords, 98.0, axis=0).astype(np.float32)
+    hi = np.where(hi <= lo, lo + 1.0, hi).astype(np.float32)
+    return PcaView(pca, lo, hi)
+
+
+def stretch_with_bounds(image: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> np.ndarray:
+    out = np.zeros_like(image, dtype=np.float32)
+    for channel in range(image.shape[-1]):
+        out[..., channel] = np.clip(
+            (image[..., channel] - lo[channel]) / (hi[channel] - lo[channel]),
+            0.0,
+            1.0,
+        )
+    return out
+
+
+def embedding_pca(
+    embedding: torch.Tensor | None,
+    pca_view: PcaView | None = None,
+) -> np.ndarray | None:
     if embedding is None:
         return None
     arr = embedding.float().numpy()
     channels, height, width = arr.shape
     flat = arr.reshape(channels, -1).T
-    flat = flat - flat.mean(axis=0, keepdims=True)
     if float(np.nanstd(flat)) < 1e-8:
         return np.zeros((height, width, 3), dtype=np.float32)
-    pca = PCA(n_components=3)
-    rgb = pca.fit_transform(flat).reshape(height, width, 3)
-    return stretch(rgb)
+    if pca_view is None:
+        flat = flat - flat.mean(axis=0, keepdims=True)
+        pca_model = PCA(n_components=3)
+        rgb = pca_model.fit_transform(flat).reshape(height, width, 3)
+        return stretch(rgb)
+    else:
+        rgb = pca_view.model.transform(flat).reshape(height, width, 3)
+        return stretch_with_bounds(rgb, pca_view.lo, pca_view.hi)
 
 
-def embedding_delta(before: torch.Tensor | None, after: torch.Tensor | None) -> np.ndarray | None:
+def embedding_delta(
+    before: torch.Tensor | None,
+    after: torch.Tensor | None,
+    pca_view: PcaView | None = None,
+) -> np.ndarray | None:
     if before is None or after is None:
         return None
-    return embedding_pca(after.float() - before.float())
+    if pca_view is None:
+        return embedding_pca(after.float() - before.float())
+    delta = after.float() - before.float()
+    return embedding_pca(delta, None)
 
 
 def positive_pixels_for_task(processed_root: Path, task: str, patch_id: str) -> int:
@@ -272,6 +380,8 @@ def make_visual(
     output_dir: Path,
     months: list[str],
     threshold: float,
+    threshold_source: str,
+    pca_view: PcaView | None,
 ) -> dict[str, Any]:
     patch_id = pred_path.stem.removesuffix("_prob")
     source_region, source_patch = resolve_region_patch(task, patch_id)
@@ -281,8 +391,8 @@ def make_visual(
     after_hr = load_highres(processed_root, source_region, source_patch, after_month)
     before_emb = load_embedding(embedding_root, task, patch_id, before_month)
     after_emb = load_embedding(embedding_root, task, patch_id, after_month)
-    before_pca = embedding_pca(before_emb)
-    after_pca = embedding_pca(after_emb)
+    before_pca = embedding_pca(before_emb, pca_view)
+    after_pca = embedding_pca(after_emb, pca_view)
     delta = embedding_delta(before_emb, after_emb)
     pred_prob = load_prediction(pred_path)
     pred = stretch(pred_prob, lower=0.0, upper=100.0)
@@ -301,7 +411,7 @@ def make_visual(
         (after_pca, f"Embedding PCA {after_month}", None),
         (delta, "PDA / Delta Emb PCA", None),
         (pred, "Prediction Prob", "Reds"),
-        (pred_binary, f"Pred >= {threshold:.3f}", "Reds"),
+        (pred_binary, f"Pred >= {threshold:.3f} ({threshold_source})", "Reds"),
         (gt_mask, "GT / True Label", "Reds"),
     ]
     fig, axes = plt.subplots(1, len(panels), figsize=(3.0 * len(panels), 3.3))
@@ -322,6 +432,8 @@ def make_visual(
         "prediction": str(pred_path),
         "figure": str(out_path),
         "threshold": threshold,
+        "threshold_source": threshold_source,
+        "fold": fold_from_prediction(pred_path),
         "gt_mask": gt_path,
         "gt_positive_pixels": gt_positive_pixels,
         "missing": {
@@ -363,26 +475,48 @@ def write_index(records: list[dict[str, Any]], output_root: Path) -> None:
 def main() -> None:
     args = parse_args()
     records: list[dict[str, Any]] = []
+    selected: list[tuple[str, Path]] = []
     for task in args.tasks:
-        task_output = args.output_root / task
-        threshold = load_task_threshold(args.benchmark_root, task)
         for pred_path in select_predictions(
             args.benchmark_root,
             args.processed_root,
             task,
             args.samples_per_task,
         ):
-            records.append(
-                make_visual(
-                    task,
-                    pred_path,
-                    args.embedding_root,
-                    args.processed_root,
-                    task_output,
-                    [str(month) for month in args.months],
-                    threshold,
-                )
+            selected.append((task, pred_path))
+
+    pca_view = None
+    if args.embedding_pca_mode == "global":
+        pca_view = fit_global_embedding_pca(
+            selected,
+            args.embedding_root,
+            [str(month) for month in args.months],
+            args.pca_sample_pixels,
+            args.seed,
+        )
+
+    thresholds_by_task = {
+        task: load_task_thresholds(args.benchmark_root, task) for task in args.tasks
+    }
+    for task, pred_path in selected:
+        task_output = args.output_root / task
+        threshold, threshold_source = threshold_for_prediction(
+            pred_path,
+            thresholds_by_task.get(task, {}),
+        )
+        records.append(
+            make_visual(
+                task,
+                pred_path,
+                args.embedding_root,
+                args.processed_root,
+                task_output,
+                [str(month) for month in args.months],
+                threshold,
+                threshold_source,
+                pca_view,
             )
+        )
     args.output_root.mkdir(parents=True, exist_ok=True)
     write_index(records, args.output_root)
     print(f"saved {len(records)} visualizations to {args.output_root}")
