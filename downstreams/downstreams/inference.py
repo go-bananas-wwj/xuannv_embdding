@@ -67,6 +67,11 @@ def build_inference_loader(cfg: Config, region: str, split: str = "all") -> Data
         statistics_dir = cfg.data.statistics_dir
         statistics_dirs_by_region = cfg.data.statistics_dirs_by_region
         region_filter = region
+    elif region == cfg.data.region and cfg.data.manifest_path.exists():
+        manifest_path = cfg.data.manifest_path
+        statistics_dir = cfg.data.statistics_dir or Path(cfg.data.root).parent / "statistics" / region
+        statistics_dirs_by_region = {}
+        region_filter = None
     else:
         manifest_path = Path(cfg.data.root).parent / region / "manifest.json"
         statistics_dir = Path(cfg.data.root).parent / "statistics" / region
