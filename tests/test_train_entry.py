@@ -321,7 +321,10 @@ def test_prepare_batch_can_drop_highres_inputs_after_targets() -> None:
     assert out["highres_frames"] == {}
     assert out["highres_masks"] == {}
     assert out["targets"]["highres_recon"].shape == (1, 2, 1, 2, 2)
-    assert torch.equal(out["target_masks"]["highres_recon"], torch.tensor([[1.0, 0.0]]))
+    expected_mask = torch.tensor(
+        [[[[1.0, 1.0], [1.0, 1.0]], [[0.0, 0.0], [0.0, 0.0]]]]
+    )
+    assert torch.equal(out["target_masks"]["highres_recon"], expected_mask)
 
 
 def test_prepare_batch_highres_targets_are_binned_by_month() -> None:
@@ -369,9 +372,12 @@ def test_prepare_batch_highres_targets_are_binned_by_month() -> None:
     target = out["targets"]["highres_recon"]
     target_mask = out["target_masks"]["highres_recon"]
     assert target.shape == (1, 6, 1, 2, 2)
+    expected_mask = torch.zeros(1, 6, 2, 2)
+    expected_mask[:, 0] = 1.0
+    expected_mask[:, 5] = 1.0
     assert torch.equal(
         target_mask,
-        torch.tensor([[1.0, 0.0, 0.0, 0.0, 0.0, 1.0]]),
+        expected_mask,
     )
     assert torch.equal(target[0, 0], torch.full((1, 2, 2), 10.0))
     assert torch.equal(target[0, 5], torch.full((1, 2, 2), 30.0))

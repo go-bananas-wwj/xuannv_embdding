@@ -30,6 +30,7 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
         "patch_ids": patch_ids,
         "source_frames": {},
         "source_masks": {},
+        "source_pixel_masks": {},
         "timestamps": {},
     }
     if "supervised_labels" in batch[0]:
@@ -46,6 +47,7 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
     for source in source_names:
         frames_list = [item["source_frames"][source] for item in batch]
         masks_list = [item["source_masks"][source] for item in batch]
+        pixel_masks_list = [item["source_pixel_masks"][source] for item in batch]
         timestamps_list = [item["timestamps"][source] for item in batch]
 
         if source.startswith("highres"):
@@ -60,14 +62,18 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
                     batch_size, 0, channels, height, width, dtype=torch.float32
                 )
                 batched_masks = torch.zeros(batch_size, 0, dtype=torch.float32)
+                batched_pixel_masks = torch.zeros(
+                    batch_size, 0, height, width, dtype=torch.float32
+                )
                 batched_timestamps = torch.zeros(batch_size, 0, dtype=torch.long)
             else:
                 padded_frames: list[torch.Tensor] = []
                 padded_masks: list[torch.Tensor] = []
+                padded_pixel_masks: list[torch.Tensor] = []
                 padded_timestamps: list[torch.Tensor] = []
 
-                for frames, masks, timestamps in zip(
-                    frames_list, masks_list, timestamps_list
+                for frames, masks, pixel_masks, timestamps in zip(
+                    frames_list, masks_list, pixel_masks_list, timestamps_list
                 ):
                     t = frames.shape[0]
                     if t < max_t:
@@ -78,24 +84,33 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
                             pad_t, channels, height, width, dtype=torch.float32
                         )
                         pad_masks = torch.zeros(pad_t, dtype=torch.float32)
+                        pad_pixel_masks = torch.zeros(
+                            pad_t, height, width, dtype=torch.float32
+                        )
                         pad_timestamps = torch.zeros(pad_t, dtype=torch.long)
 
                         padded_frames.append(torch.cat([frames, pad_frames], dim=0))
                         padded_masks.append(torch.cat([masks, pad_masks], dim=0))
+                        padded_pixel_masks.append(
+                            torch.cat([pixel_masks, pad_pixel_masks], dim=0)
+                        )
                         padded_timestamps.append(
                             torch.cat([timestamps, pad_timestamps], dim=0)
                         )
                     else:
                         padded_frames.append(frames)
                         padded_masks.append(masks)
+                        padded_pixel_masks.append(pixel_masks)
                         padded_timestamps.append(timestamps)
 
                 batched_frames = torch.stack(padded_frames)
                 batched_masks = torch.stack(padded_masks)
+                batched_pixel_masks = torch.stack(padded_pixel_masks)
                 batched_timestamps = torch.stack(padded_timestamps)
 
             collated["source_frames"][source] = batched_frames
             collated["source_masks"][source] = batched_masks
+            collated["source_pixel_masks"][source] = batched_pixel_masks
             collated["timestamps"][source] = batched_timestamps
             continue
 
@@ -117,6 +132,7 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
 
         collated["source_frames"][source] = torch.stack(frames_list)
         collated["source_masks"][source] = torch.stack(masks_list)
+        collated["source_pixel_masks"][source] = torch.stack(pixel_masks_list)
         collated["timestamps"][source] = torch.stack(timestamps_list)
 
     # 在将 timestamps 收敛为全局月度时间戳前，保留每个 source 的原始时间戳。

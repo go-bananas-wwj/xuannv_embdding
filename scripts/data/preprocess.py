@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 TOLERANCE = 1e-3
 MASTER_RES = 10.0
 
-# S2 SCL 有效类别：植被、裸土、水、低云、雪
+# S2 SCL 有效类别：植被、裸土、水、未分类、雪/冰
 S2_VALID_SCL = {4, 5, 6, 7, 11}
 
 

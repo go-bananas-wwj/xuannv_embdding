@@ -210,6 +210,7 @@ def test_monthly_binning_with_synthetic_data(tmp_path: Path) -> None:
     sample = dataset[0]
     s2_frames = sample["source_frames"]["s2"]
     assert s2_frames.shape == (2, 1, 4, 4)
+    assert sample["source_pixel_masks"]["s2"].shape == (2, 4, 4)
     assert torch.allclose(s2_frames[0], torch.full((1, 4, 4), 1.0))
     assert torch.allclose(s2_frames[1], torch.full((1, 4, 4), 5.0))
     assert torch.equal(
@@ -224,6 +225,61 @@ def test_monthly_binning_with_synthetic_data(tmp_path: Path) -> None:
         sample["timestamps"]["worldcover"],
         torch.tensor([202501, 202502], dtype=torch.long),
     )
+
+
+def test_monthly_binning_uses_pixel_masks(tmp_path: Path) -> None:
+    """同月多帧合成时，被像素 mask 屏蔽的观测不应参与平均。"""
+    root = tmp_path / "processed" / "test"
+    root.mkdir(parents=True)
+    stats_dir = tmp_path / "statistics" / "test"
+    stats_dir.mkdir(parents=True)
+
+    s2_dir = root / "patches" / "s2"
+    _write_tiff(
+        s2_dir / "s2_20250102_patch_000000.tif",
+        np.full((1, 4, 4), 10.0, dtype=np.float32),
+    )
+    _write_tiff(
+        s2_dir / "s2_20250102_patch_000000_mask.tif",
+        np.zeros((1, 4, 4), dtype=np.uint8),
+    )
+    _write_tiff(
+        s2_dir / "s2_20250115_patch_000000.tif",
+        np.full((1, 4, 4), 2.0, dtype=np.float32),
+    )
+    _write_tiff(
+        s2_dir / "s2_20250115_patch_000000_mask.tif",
+        np.ones((1, 4, 4), dtype=np.uint8),
+    )
+
+    manifest = [
+        {
+            "patch_id": "patch_000000",
+            "s2": [
+                "patches/s2/s2_20250102_patch_000000.tif",
+                "patches/s2/s2_20250115_patch_000000.tif",
+            ],
+        }
+    ]
+    import json
+
+    manifest_path = root / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    dataset = MonthlyEmbeddingDataset(
+        manifest_path=manifest_path,
+        statistics_dir=stats_dir,
+        sources=["s2"],
+        num_months=1,
+        patch_size=4,
+    )
+
+    sample = dataset[0]
+    assert torch.allclose(
+        sample["source_frames"]["s2"][0],
+        torch.full((1, 4, 4), 2.0),
+    )
+    assert torch.equal(sample["source_pixel_masks"]["s2"][0], torch.ones(4, 4))
 
 
 def test_mixed_region_manifest_uses_region_statistics(tmp_path: Path) -> None:

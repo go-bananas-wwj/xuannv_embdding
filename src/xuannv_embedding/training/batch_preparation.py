@@ -41,19 +41,29 @@ def _head_source_name(
     return None
 
 
-def _weighted_temporal_mean(frames: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+def _weighted_temporal_mean(
+    frames: torch.Tensor,
+    mask: torch.Tensor,
+    pixel_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
     """对时序帧按时间掩码加权取平均。
 
     参数:
         frames: 输入帧，形状 ``[B, T, C, H, W]``。
         mask: 时间有效掩码，形状 ``[B, T]``。
+        pixel_mask: 可选逐像素有效掩码，形状 ``[B, T, H, W]``。
 
     返回:
         加权平均后的帧，形状 ``[B, C, H, W]``。
     """
-    m = mask[..., None, None, None]
+    if pixel_mask is None:
+        m = mask[..., None, None, None]
+        count = mask.sum(dim=1, keepdim=True)[..., None, None]
+    else:
+        m = mask[..., None, None] * pixel_mask
+        m = m[:, :, None]
+        count = m.sum(dim=1)
     weighted = (frames * m).sum(dim=1)
-    count = mask.sum(dim=1, keepdim=True)[..., None, None]
     return weighted / count.clamp(min=1.0)
 
 
@@ -65,6 +75,7 @@ def _timestamps_to_yyyymm(timestamps: torch.Tensor) -> torch.Tensor:
 def _bin_highres_targets_to_months(
     frames: torch.Tensor,
     mask: torch.Tensor,
+    pixel_mask: torch.Tensor | None,
     source_timestamps: torch.Tensor,
     global_timestamps: torch.Tensor,
     spatial_size: tuple[int, int],
@@ -91,21 +102,55 @@ def _bin_highres_targets_to_months(
     target_mask = torch.zeros(
         batch_size,
         num_months,
+        out_h,
+        out_w,
         device=mask.device,
         dtype=mask.dtype,
     )
     if obs_count == 0:
         return target, target_mask
 
-    frames_lr = F.adaptive_avg_pool2d(
-        frames.reshape(
+    if pixel_mask is None:
+        frames_lr = F.adaptive_avg_pool2d(
+            frames.reshape(
+                batch_size * obs_count,
+                channels,
+                frames.shape[-2],
+                frames.shape[-1],
+            ),
+            spatial_size,
+        ).view(batch_size, obs_count, channels, out_h, out_w)
+        pixel_mask_lr = torch.ones(
+            batch_size,
+            obs_count,
+            out_h,
+            out_w,
+            device=frames.device,
+            dtype=frames.dtype,
+        )
+    else:
+        native_pixel_mask = pixel_mask.to(device=frames.device, dtype=frames.dtype)
+        native_pixel_mask = native_pixel_mask[:, :, None]
+        flat_mask = native_pixel_mask.reshape(
             batch_size * obs_count,
-            channels,
+            1,
             frames.shape[-2],
             frames.shape[-1],
-        ),
-        spatial_size,
-    ).view(batch_size, obs_count, channels, out_h, out_w)
+        )
+        mask_lr = F.adaptive_avg_pool2d(flat_mask, spatial_size).view(
+            batch_size, obs_count, 1, out_h, out_w
+        )
+        weighted_frames_lr = F.adaptive_avg_pool2d(
+            (frames * native_pixel_mask).reshape(
+                batch_size * obs_count,
+                channels,
+                frames.shape[-2],
+                frames.shape[-1],
+            ),
+            spatial_size,
+        ).view(batch_size, obs_count, channels, out_h, out_w)
+        frames_lr = weighted_frames_lr / mask_lr.clamp(min=1e-6)
+        pixel_mask_lr = mask_lr[:, :, 0]
     obs_months = _timestamps_to_yyyymm(source_timestamps)
 
     for b in range(batch_size):
@@ -116,12 +161,15 @@ def _bin_highres_targets_to_months(
             month = global_timestamps[b, m]
             matches = valid_obs & (obs_months[b] == month)
             if bool(matches.any().item()):
-                weights = mask[b, matches].to(dtype=frames_lr.dtype)
                 selected = frames_lr[b, matches]
+                selected_masks = pixel_mask_lr[b, matches] * mask[
+                    b, matches
+                ].to(dtype=frames_lr.dtype)[:, None, None]
+                valid_count = selected_masks.sum(dim=0)
                 target[b, m] = (
-                    selected * weights[:, None, None, None]
-                ).sum(dim=0) / weights.sum().clamp(min=1.0)
-                target_mask[b, m] = 1.0
+                    selected * selected_masks[:, None]
+                ).sum(dim=0) / valid_count.clamp(min=1e-6)[None]
+                target_mask[b, m] = (valid_count > 0).to(dtype=target_mask.dtype)
 
     return target, target_mask
 
@@ -166,6 +214,7 @@ def prepare_batch(
     """
     source_frames = dict(batch["source_frames"])
     source_masks = dict(batch["source_masks"])
+    source_pixel_masks = dict(batch.get("source_pixel_masks", {}))
     global_timestamps = batch["timestamps"]
     source_timestamps = batch.get("source_timestamps", {})
     patch_ids = batch["patch_ids"]
@@ -225,6 +274,7 @@ def prepare_batch(
                     target, target_mask = _bin_highres_targets_to_months(
                         frames,
                         masks,
+                        source_pixel_masks.get(source_name),
                         timestamps,
                         global_timestamps,
                         (spatial_h, spatial_w),
@@ -232,7 +282,14 @@ def prepare_batch(
                 else:
                     # continuous head 直接使用逐月源帧作为目标。
                     target = frames
-                    target_mask = masks
+                    pixel_mask = source_pixel_masks.get(source_name)
+                    if pixel_mask is not None and pixel_mask.shape[:2] == masks.shape:
+                        target_mask = (
+                            pixel_mask.to(device=masks.device, dtype=masks.dtype)
+                            * masks[..., None, None]
+                        )
+                    else:
+                        target_mask = masks
                     if target.shape[1] != num_months:
                         raise ValueError(
                             f"continuous head {head_name!r} 的目标时间维度 "
@@ -295,14 +352,26 @@ def prepare_batch(
     for source in highres_sources:
         hr_frames = source_frames.pop(source)
         hr_masks = source_masks.pop(source)
+        hr_pixel_masks = source_pixel_masks.pop(source, None)
         if hr_frames.shape[1] > 0:
-            highres_frame = _weighted_temporal_mean(hr_frames, hr_masks)
+            highres_frame = _weighted_temporal_mean(hr_frames, hr_masks, hr_pixel_masks)
             avail = (hr_masks.sum(dim=1) > 0).float()
-            # 高分辨率 mask 最终会与编码到 (H, W) 的低分辨率特征融合，
-            # 因此直接使用低分辨率参考尺寸即可；有高分数据时该空间掩码全 1。
-            highres_mask = avail[:, None, None, None].expand(
-                -1, 1, spatial_h, spatial_w
-            )
+            if hr_pixel_masks is None:
+                # 高分辨率 mask 最终会与编码到 (H, W) 的低分辨率特征融合。
+                highres_mask = avail[:, None, None, None].expand(
+                    -1, 1, spatial_h, spatial_w
+                )
+            else:
+                native_mask = (
+                    hr_pixel_masks.to(device=hr_frames.device, dtype=hr_frames.dtype)
+                    * hr_masks[..., None, None]
+                )
+                merged_mask = (native_mask.sum(dim=1) > 0).float()
+                highres_mask = F.interpolate(
+                    merged_mask[:, None],
+                    size=(spatial_h, spatial_w),
+                    mode="nearest",
+                )
             highres_frames[source] = highres_frame
             highres_masks[source] = highres_mask
 
@@ -315,6 +384,7 @@ def prepare_batch(
         if source == "worldcover":
             source_frames.pop(source)
             source_masks.pop(source)
+            source_pixel_masks.pop(source, None)
 
     dropout_probs = source_dropout_probs or {}
     for source, prob in dropout_probs.items():

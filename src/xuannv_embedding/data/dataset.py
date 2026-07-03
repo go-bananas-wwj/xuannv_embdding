@@ -291,6 +291,7 @@ class MonthlyEmbeddingDataset(Dataset):
             "patch_id": patch_id,
             "source_frames": {},
             "source_masks": {},
+            "source_pixel_masks": {},
             "timestamps": {},
             "supervised_labels": {},
             "supervised_label_masks": {},
@@ -311,6 +312,10 @@ class MonthlyEmbeddingDataset(Dataset):
                         dtype=torch.float32,
                     )
                     sample["source_masks"][source] = torch.zeros((0,), dtype=torch.float32)
+                    sample["source_pixel_masks"][source] = torch.zeros(
+                        (0, height, width),
+                        dtype=torch.float32,
+                    )
                     sample["timestamps"][source] = torch.zeros((0,), dtype=torch.long)
                 else:
                     sample["source_frames"][source] = torch.zeros(
@@ -320,15 +325,40 @@ class MonthlyEmbeddingDataset(Dataset):
                     sample["source_masks"][source] = torch.zeros(
                         (self.num_months,), dtype=torch.float32
                     )
+                    sample["source_pixel_masks"][source] = torch.zeros(
+                        (self.num_months, height, width),
+                        dtype=torch.float32,
+                    )
                     sample["timestamps"][source] = month_timestamps
                 continue
 
             frame_list: list[torch.Tensor] = []
+            pixel_mask_list: list[torch.Tensor] = []
             timestamp_list: list[int] = []
 
             for path in paths:
                 array = load_tiff(self.root_dir / path)
                 array = array.astype(np.float32, copy=False)
+                mask_path = (self.root_dir / path).with_name(f"{path.stem}_mask.tif")
+                if mask_path.exists():
+                    pixel_mask = load_tiff(mask_path)[0]
+                    pixel_mask = np.nan_to_num(
+                        pixel_mask,
+                        nan=0.0,
+                        posinf=0.0,
+                        neginf=0.0,
+                    )
+                    pixel_mask = (pixel_mask > 0).astype(np.float32, copy=False)
+                    if pixel_mask.shape != array.shape[-2:]:
+                        logger.warning(
+                            "像素 mask 尺寸不匹配: %s mask=%s image=%s，退化为主波段有效性",
+                            mask_path,
+                            pixel_mask.shape,
+                            array.shape[-2:],
+                        )
+                        pixel_mask = np.isfinite(array[0]).astype(np.float32)
+                else:
+                    pixel_mask = np.isfinite(array[0]).astype(np.float32)
                 # 将影像中的 NaN/Inf 填充为 0；有效性由独立的 source_masks 控制。
                 if np.issubdtype(array.dtype, np.floating):
                     array = np.nan_to_num(array, nan=0.0, posinf=0.0, neginf=0.0)
@@ -337,11 +367,13 @@ class MonthlyEmbeddingDataset(Dataset):
                     array = normalize(array, stats["mean"], stats["std"])
 
                 frame_list.append(torch.from_numpy(array))
+                pixel_mask_list.append(torch.from_numpy(pixel_mask))
                 timestamp_list.append(parse_timestamp_from_filename(path.name))
 
             # 按时间戳排序，保证时序顺序
             order = np.argsort(timestamp_list)
             frames = torch.stack([frame_list[i] for i in order])
+            pixel_masks = torch.stack([pixel_mask_list[i] for i in order])
             timestamps = torch.tensor(
                 [timestamp_list[i] for i in order],
                 dtype=torch.long,
@@ -353,6 +385,7 @@ class MonthlyEmbeddingDataset(Dataset):
                 sample["source_masks"][source] = torch.ones(
                     (frames.shape[0],), dtype=torch.float32
                 )
+                sample["source_pixel_masks"][source] = pixel_masks
                 sample["timestamps"][source] = timestamps
                 continue
 
@@ -360,11 +393,16 @@ class MonthlyEmbeddingDataset(Dataset):
                 # WorldCover 是静态 target-only 标签，直接在时间维度取平均后
                 # 复制到所有月度 bin，便于下游 prepare_batch 构造逐月目标。
                 static_frame = frames.mean(dim=0, keepdim=True)  # (1, C, H, W)
+                static_pixel_mask = (pixel_masks.sum(dim=0, keepdim=True) > 0).float()
                 binned_frames = static_frame.expand(self.num_months, -1, -1, -1).clone()
+                binned_pixel_masks = static_pixel_mask.expand(
+                    self.num_months, -1, -1
+                ).clone()
                 sample["source_frames"][source] = binned_frames
                 sample["source_masks"][source] = torch.ones(
                     (self.num_months,), dtype=torch.float32
                 )
+                sample["source_pixel_masks"][source] = binned_pixel_masks
                 sample["timestamps"][source] = month_timestamps
                 continue
 
@@ -374,6 +412,10 @@ class MonthlyEmbeddingDataset(Dataset):
                 dtype=torch.float32,
             )
             binned_masks = torch.zeros((self.num_months,), dtype=torch.float32)
+            binned_pixel_masks = torch.zeros(
+                (self.num_months, height, width),
+                dtype=torch.float32,
+            )
 
             month_indices = torch.tensor(
                 [self._yyyymm_to_index(ts.item()) for ts in timestamps],
@@ -384,11 +426,17 @@ class MonthlyEmbeddingDataset(Dataset):
             for m in range(self.num_months):
                 matches = (month_indices == m) & in_range
                 if matches.any():
-                    binned_frames[m] = frames[matches].mean(dim=0)
-                    binned_masks[m] = 1.0
+                    selected_masks = pixel_masks[matches]
+                    valid_count = selected_masks.sum(dim=0)
+                    binned_frames[m] = (
+                        frames[matches] * selected_masks[:, None]
+                    ).sum(dim=0) / valid_count.clamp(min=1.0)[None]
+                    binned_pixel_masks[m] = (valid_count > 0).float()
+                    binned_masks[m] = float(binned_pixel_masks[m].any().item())
 
             sample["source_frames"][source] = binned_frames
             sample["source_masks"][source] = binned_masks
+            sample["source_pixel_masks"][source] = binned_pixel_masks
             sample["timestamps"][source] = month_timestamps
 
         for task, label_root in self.supervised_label_roots.items():
