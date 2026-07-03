@@ -20,6 +20,7 @@ import numpy as np
 import rasterio
 import torch
 from rasterio.env import Env
+from rasterio.windows import Window
 from rasterio.warp import Resampling, reproject, transform_bounds
 from shapely.geometry import box
 
@@ -45,6 +46,32 @@ def s3_to_vsis3(path: str) -> str:
     if path.startswith("s3://"):
         return "/vsis3/" + path.removeprefix("s3://")
     return path
+
+
+def bounds_to_window(src: rasterio.io.DatasetReader, bounds: Any) -> Window:
+    """Build a robust window for north-up or south-up source transforms."""
+    corners = [
+        (bounds.left, bounds.top),
+        (bounds.right, bounds.top),
+        (bounds.left, bounds.bottom),
+        (bounds.right, bounds.bottom),
+    ]
+    rows: list[int] = []
+    cols: list[int] = []
+    for x, y in corners:
+        row, col = src.index(x, y)
+        rows.append(row)
+        cols.append(col)
+    row_start = max(min(rows), 0)
+    row_stop = min(max(rows), src.height)
+    col_start = max(min(cols), 0)
+    col_stop = min(max(cols), src.width)
+    return Window(
+        col_start,
+        row_start,
+        max(col_stop - col_start, 1),
+        max(row_stop - row_start, 1),
+    )
 
 
 def load_patch_ids(label_root: Path | None, patch_ids: list[str] | None) -> list[str]:
@@ -116,9 +143,31 @@ def read_aef_patch(cog_path: str, ref_path: Path) -> torch.Tensor:
         dst_crs = ref.crs
         dst_transform = ref.transform
         dst_shape = (ref.height, ref.width)
+        dst_bounds = ref.bounds
 
     with Env(AWS_NO_SIGN_REQUEST="YES"):
         with rasterio.open(s3_to_vsis3(cog_path)) as src:
+            if src.crs == dst_crs:
+                window = bounds_to_window(src, dst_bounds)
+                raw = src.read(
+                    out_shape=(src.count, *dst_shape),
+                    window=window,
+                    boundless=True,
+                    fill_value=src.nodata if src.nodata is not None else AEF_NODATA,
+                    resampling=Resampling.bilinear,
+                )
+                if src.transform.e > 0 and dst_transform.e < 0:
+                    raw = raw[:, ::-1, :]
+                if src.transform.a < 0 and dst_transform.a > 0:
+                    raw = raw[:, :, ::-1]
+                dst = raw.astype(np.float32, copy=False)
+                return torch.from_numpy(
+                    np.ascontiguousarray(
+                        np.nan_to_num(dequantize(dst), nan=0.0, posinf=0.0, neginf=0.0)
+                    )
+                    .astype(np.float32, copy=False)
+                )
+
             dst = np.full((src.count, *dst_shape), np.nan, dtype=np.float32)
             for band_idx in range(1, src.count + 1):
                 band = np.full(dst_shape, np.nan, dtype=np.float32)
