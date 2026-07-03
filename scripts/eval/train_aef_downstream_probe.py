@@ -31,6 +31,14 @@ class PatchItem:
     mask_path: Path
 
 
+@dataclass(frozen=True)
+class LoadedPatch:
+    patch_id: str
+    embedding: torch.Tensor
+    mask: torch.Tensor
+    mask_path: Path
+
+
 class PixelProbe(nn.Module):
     def __init__(self, embed_dim: int, head: str, hidden_dim: int) -> None:
         super().__init__()
@@ -73,6 +81,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-every", type=int, default=5)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--l2-normalize", action="store_true")
+    parser.add_argument(
+        "--no-cache-patches",
+        action="store_true",
+        help="Disable in-memory patch cache. By default, each fold caches AEF tensors once.",
+    )
     parser.add_argument("--save-predictions", action="store_true")
     return parser.parse_args()
 
@@ -135,7 +148,13 @@ def build_items(
     return items
 
 
-def load_patch(item: PatchItem, l2_normalize: bool) -> tuple[torch.Tensor, torch.Tensor]:
+def load_patch(
+    item: PatchItem | LoadedPatch,
+    l2_normalize: bool,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if isinstance(item, LoadedPatch):
+        return item.embedding, item.mask
+
     emb = torch.load(item.embedding_path, map_location="cpu", weights_only=True).float()
     if emb.ndim != 3:
         raise ValueError(f"Expected (D,H,W) embedding, got {tuple(emb.shape)}: {item.embedding_path}")
@@ -149,6 +168,21 @@ def load_patch(item: PatchItem, l2_normalize: bool) -> tuple[torch.Tensor, torch
             f"Shape mismatch for {item.patch_id}: embedding {emb.shape[-2:]}, mask {tuple(mask.shape)}"
         )
     return emb, mask
+
+
+def cache_items(items: list[PatchItem], l2_normalize: bool) -> list[LoadedPatch]:
+    cached: list[LoadedPatch] = []
+    for item in items:
+        emb, mask = load_patch(item, l2_normalize=l2_normalize)
+        cached.append(
+            LoadedPatch(
+                patch_id=item.patch_id,
+                embedding=emb,
+                mask=mask,
+                mask_path=item.mask_path,
+            )
+        )
+    return cached
 
 
 def sample_pixels(
@@ -187,7 +221,7 @@ def iter_patch_batches(items: list[PatchItem], batch_patches: int) -> list[list[
 
 
 def make_train_batch(
-    items: list[PatchItem],
+    items: list[PatchItem | LoadedPatch],
     max_pixels_per_patch: int,
     positive_fraction: float,
     l2_normalize: bool,
@@ -209,7 +243,7 @@ def make_train_batch(
 
 def logits_for_items(
     model: nn.Module,
-    items: list[PatchItem],
+    items: list[PatchItem | LoadedPatch],
     device: torch.device,
     l2_normalize: bool,
     chunk_pixels: int = 262144,
@@ -303,7 +337,7 @@ def compute_binary_f1(probs: np.ndarray, target: np.ndarray, threshold: float) -
 
 def save_predictions(
     model: nn.Module,
-    items: list[PatchItem],
+    items: list[PatchItem | LoadedPatch],
     out_dir: Path,
     device: torch.device,
     l2_normalize: bool,
@@ -340,6 +374,11 @@ def train_fold(
     train_items = build_items(embedding_region_root, args.label_root, fold_info["train"], args.month)
     val_items = build_items(embedding_region_root, args.label_root, fold_info["val"], args.month)
     test_items = build_items(embedding_region_root, args.label_root, fold_info["test"], args.month)
+    if not args.no_cache_patches:
+        LOGGER.info("fold=%d caching patches in memory", fold_idx)
+        train_items = cache_items(train_items, l2_normalize=args.l2_normalize)
+        val_items = cache_items(val_items, l2_normalize=args.l2_normalize)
+        test_items = cache_items(test_items, l2_normalize=args.l2_normalize)
 
     model = PixelProbe(args.embed_dim, args.head, args.hidden_dim).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
