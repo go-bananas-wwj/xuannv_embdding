@@ -161,8 +161,11 @@ def discover_harbin_inputs(input_root: Path) -> dict[str, dict[str, Any]]:
     return months
 
 
-def discover_haidian_inputs(input_root: Path) -> dict[str, dict[str, Any]]:
-    """发现海淀 PlanetScene 输入：按月份分组 SR 与 UDM2 文件。"""
+def discover_haidian_inputs(
+    input_root: Path,
+    group_by: str = "month",
+) -> dict[str, dict[str, Any]]:
+    """发现海淀 PlanetScene 输入：按月份或日期分组 SR 与 UDM2 文件。"""
     scene_dir = input_root / "_unzipped" / "PSScene"
     if not scene_dir.exists():
         scene_dir = input_root / "_raw"
@@ -178,23 +181,42 @@ def discover_haidian_inputs(input_root: Path) -> dict[str, dict[str, Any]]:
         date_str = f.name[:8]
         if not date_str.isdigit():
             continue
-        month_key = date_str[:6]
+        period_key = date_str if group_by == "date" else date_str[:6]
         udm_file = f.parent / f.name.replace(
             "_AnalyticMS_SR_clip.tif", "_udm2_clip.tif"
         )
-        months.setdefault(month_key, {"sr": [], "mask": []})
-        months[month_key]["sr"].append(f)
+        months.setdefault(period_key, {"sr": [], "mask": []})
+        months[period_key]["sr"].append(f)
         if udm_file.exists():
-            months[month_key]["mask"].append(udm_file)
+            months[period_key]["mask"].append(udm_file)
 
-    for month_key, files in months.items():
+    for period_key, files in months.items():
         logger.info(
             "Haidian %s: %d SR scene(s), %d UDM2 mask(s)",
-            month_key,
+            period_key,
             len(files["sr"]),
             len(files["mask"]),
         )
     return months
+
+
+def _filter_periods(
+    periods: dict[str, dict[str, Any]],
+    requested: set[str] | None,
+) -> dict[str, dict[str, Any]]:
+    if requested is None:
+        return periods
+    return {
+        key: value
+        for key, value in periods.items()
+        if key in requested or key[:6] in requested
+    }
+
+
+def _period_to_date_str(period_key: str) -> str:
+    if len(period_key) == 8:
+        return period_key
+    return f"{period_key}01"
 
 
 def build_mosaic(
@@ -495,6 +517,12 @@ def main(argv: list[str] | None = None) -> int:
         help="仅处理指定月份，逗号分隔，如 202512,202601",
     )
     parser.add_argument(
+        "--group-by",
+        choices=["month", "date"],
+        default="month",
+        help="海淀 PlanetScope 数据分组方式；date 会按 YYYYMMDD 单日输出。",
+    )
+    parser.add_argument(
         "--max-patches",
         type=int,
         default=None,
@@ -557,7 +585,7 @@ def main(argv: list[str] | None = None) -> int:
     if region == "harbin":
         months = discover_harbin_inputs(input_root)
     elif region == "haidian":
-        months = discover_haidian_inputs(input_root)
+        months = discover_haidian_inputs(input_root, group_by=args.group_by)
     else:
         months = {}
 
@@ -568,7 +596,7 @@ def main(argv: list[str] | None = None) -> int:
     month_filter = None
     if args.months:
         month_filter = set(args.months.split(","))
-        months = {k: v for k, v in months.items() if k in month_filter}
+        months = _filter_periods(months, month_filter)
         if not months:
             logger.warning("No months matched filter: %s", args.months)
             return 0
@@ -582,7 +610,7 @@ def main(argv: list[str] | None = None) -> int:
 
         for month_key in sorted(months.keys()):
             files = months[month_key]
-            date_str = f"{month_key}01"
+            date_str = _period_to_date_str(month_key)
             logger.info("Processing month %s (%s)", month_key, date_str)
 
             # 构建 SR mosaic（统一输出 RGB 3 波段）
