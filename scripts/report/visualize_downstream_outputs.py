@@ -114,6 +114,17 @@ def load_prediction(pred_path: Path) -> np.ndarray:
         return src.read(1)
 
 
+def load_task_threshold(benchmark_root: Path, task: str) -> float:
+    summary_path = benchmark_root / task / "summary.json"
+    if not summary_path.exists():
+        return 0.5
+    with summary_path.open("r", encoding="utf-8") as f:
+        summary = json.load(f)
+    if not summary:
+        return 0.5
+    return float(summary[0].get("val_threshold", summary[0].get("threshold", 0.5)))
+
+
 def load_gt_mask(
     processed_root: Path,
     task: str,
@@ -260,6 +271,7 @@ def make_visual(
     processed_root: Path,
     output_dir: Path,
     months: list[str],
+    threshold: float,
 ) -> dict[str, Any]:
     patch_id = pred_path.stem.removesuffix("_prob")
     source_region, source_patch = resolve_region_patch(task, patch_id)
@@ -272,7 +284,9 @@ def make_visual(
     before_pca = embedding_pca(before_emb)
     after_pca = embedding_pca(after_emb)
     delta = embedding_delta(before_emb, after_emb)
-    pred = stretch(load_prediction(pred_path), lower=0.0, upper=100.0)
+    pred_prob = load_prediction(pred_path)
+    pred = stretch(pred_prob, lower=0.0, upper=100.0)
+    pred_binary = (pred_prob >= threshold).astype(np.float32)
     gt_mask, gt_path, gt_positive_pixels = load_gt_mask(
         processed_root,
         task,
@@ -287,6 +301,7 @@ def make_visual(
         (after_pca, f"Embedding PCA {after_month}", None),
         (delta, "PDA / Delta Emb PCA", None),
         (pred, "Prediction Prob", "Reds"),
+        (pred_binary, f"Pred >= {threshold:.3f}", "Reds"),
         (gt_mask, "GT / True Label", "Reds"),
     ]
     fig, axes = plt.subplots(1, len(panels), figsize=(3.0 * len(panels), 3.3))
@@ -306,6 +321,7 @@ def make_visual(
         "source_patch_id": source_patch,
         "prediction": str(pred_path),
         "figure": str(out_path),
+        "threshold": threshold,
         "gt_mask": gt_path,
         "gt_positive_pixels": gt_positive_pixels,
         "missing": {
@@ -349,6 +365,7 @@ def main() -> None:
     records: list[dict[str, Any]] = []
     for task in args.tasks:
         task_output = args.output_root / task
+        threshold = load_task_threshold(args.benchmark_root, task)
         for pred_path in select_predictions(
             args.benchmark_root,
             args.processed_root,
@@ -363,6 +380,7 @@ def main() -> None:
                     args.processed_root,
                     task_output,
                     [str(month) for month in args.months],
+                    threshold,
                 )
             )
     args.output_root.mkdir(parents=True, exist_ok=True)
