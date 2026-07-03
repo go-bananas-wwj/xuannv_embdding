@@ -9,6 +9,8 @@ import os
 import subprocess
 from pathlib import Path
 
+import yaml
+
 TASKS = (
     "construction",
     "haidian_building_osm",
@@ -89,6 +91,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-training", action="store_true")
     parser.add_argument("--skip-visualization", action="store_true")
     parser.add_argument("--skip-v1-comparison", action="store_true")
+    parser.add_argument(
+        "--visualization-months",
+        nargs=2,
+        default=None,
+        help=(
+            "Two YYYYMM months used by visualization. If omitted, infer from "
+            "training.months in the downstream config; single-month configs are duplicated."
+        ),
+    )
     parser.add_argument("--timestamp", default=None)
     return parser.parse_args()
 
@@ -106,6 +117,19 @@ def build_env(npu: str) -> dict[str, str]:
     env["PYTHONPATH"] = f"{src}:{downstreams}:{old_pythonpath}"
     env["ASCEND_RT_VISIBLE_DEVICES"] = npu
     return env
+
+
+def infer_visualization_months(config_path: Path) -> list[str]:
+    with config_path.open("r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f)
+    months = raw.get("training", {}).get("months")
+    if not months:
+        month = raw.get("training", {}).get("month", 202604)
+        return [str(month), str(month)]
+    month_values = [str(month) for month in months]
+    if len(month_values) == 1:
+        return [month_values[0], month_values[0]]
+    return [month_values[0], month_values[-1]]
 
 
 def write_report(benchmark_root: Path, run_id: str, tasks: list[str], mode: str) -> None:
@@ -214,6 +238,11 @@ def main() -> None:
         )
 
     if not args.skip_visualization:
+        visualization_months = (
+            [str(month) for month in args.visualization_months]
+            if args.visualization_months is not None
+            else infer_visualization_months(args.config)
+        )
         run(
             [
                 "python",
@@ -228,6 +257,8 @@ def main() -> None:
                 *args.tasks,
                 "--samples-per-task",
                 str(args.samples_per_task),
+                "--months",
+                *visualization_months,
             ],
             env,
         )
