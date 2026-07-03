@@ -8,6 +8,7 @@ from torch import nn
 
 from xuannv_embedding.models.blocks import (
     EmbeddingUpsampleHead,
+    LearnedSpatialResampling,
     MonthlyEmbeddingModule,
     MultiResolutionSTPBlock,
     STPEncoder,
@@ -971,6 +972,19 @@ def test_embedding_upsample_head_temporal_reshape() -> None:
     x = torch.randn(batch_size * time_steps, height, width, dim)
     y = head(x)
     assert y.shape == (batch_size * time_steps, height * 2, width * 2, dim)
+
+
+def test_spatial_resampling_avoids_transposed_conv() -> None:
+    """空间重采样不应使用 Ascend 反传不稳定的 ConvTranspose2d。"""
+    up = LearnedSpatialResampling(8, 16, 16.0)
+    down = LearnedSpatialResampling(16, 8, 1.0 / 16.0)
+    x_up = torch.randn(2, 8, 4, 4)
+    x_down = torch.randn(2, 16, 64, 64)
+
+    assert not any(isinstance(m, nn.ConvTranspose2d) for m in up.modules())
+    assert not any(isinstance(m, nn.ConvTranspose2d) for m in down.modules())
+    assert up(x_up, target_size=(64, 64)).shape == (2, 16, 64, 64)
+    assert down(x_down, target_size=(4, 4)).shape == (2, 8, 4, 4)
 
 
 def test_aef_model_odd_size() -> None:

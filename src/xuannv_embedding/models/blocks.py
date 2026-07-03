@@ -298,9 +298,9 @@ class STPPrecisionOperator(nn.Module):
 class LearnedSpatialResampling(nn.Module):
     """可学习的空间重采样层。
 
-    仅对 2× 上采样是真正可学习的 ``ConvTranspose2d``。当 ``scale_factor > 1``
-    且不是 2 的整数倍时，卷积输出尺寸与目标不一致，调用方会通过
-    ``F.interpolate`` 兜底；下采样与 1× 采样使用普通 ``Conv2d`` 实现。
+    先用无参数重采样对齐空间尺寸，再用小卷积做通道投影。早期实现用
+    ``ConvTranspose2d`` 和大 stride/downsample kernel，在 Ascend NPU 反传时容易
+    触发 ``Conv2DBackpropInput`` L1 tiling 限制；这里避免使用转置卷积和大卷积核。
     """
 
     def __init__(self, in_channels: int, out_channels: int, scale_factor: float) -> None:
@@ -313,21 +313,12 @@ class LearnedSpatialResampling(nn.Module):
         """
         super().__init__()
         self.scale_factor = scale_factor
-        if scale_factor > 1:
-            self.conv = nn.ConvTranspose2d(
-                in_channels, out_channels, kernel_size=4, stride=2, padding=1
-            )
-        elif scale_factor < 1:
-            stride = int(1.0 / scale_factor)
-            self.conv = nn.Conv2d(
-                in_channels,
-                out_channels,
-                kernel_size=stride * 2 - 1,
-                stride=stride,
-                padding=stride - 1,
-            )
-        else:
-            self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+        groups = 8 if out_channels % 8 == 0 else 1
+        self.proj = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=1),
+            nn.GroupNorm(groups, out_channels),
+            nn.GELU(),
+        )
 
     def forward(self, x: torch.Tensor, target_size: Tuple[int, int] | None = None) -> torch.Tensor:
         """可学习重采样。
@@ -340,10 +331,19 @@ class LearnedSpatialResampling(nn.Module):
         Returns:
             输出张量，形状 ``(N, out_channels, H_target, W_target)``。
         """
-        out = self.conv(x)
-        if target_size is not None and out.shape[2:] != target_size:
-            out = F.interpolate(out, size=target_size, mode="bilinear", align_corners=False)
-        return out
+        if target_size is None:
+            target_size = (
+                max(1, int(round(x.shape[2] * self.scale_factor))),
+                max(1, int(round(x.shape[3] * self.scale_factor))),
+            )
+        if x.shape[2:] != target_size:
+            if target_size[0] < x.shape[2] or target_size[1] < x.shape[3]:
+                out = F.adaptive_avg_pool2d(x, target_size)
+            else:
+                out = F.interpolate(x, size=target_size, mode="bilinear", align_corners=False)
+        else:
+            out = x
+        return self.proj(out)
 
 
 class MultiResolutionSTPBlock(nn.Module):
@@ -667,8 +667,8 @@ class STPEncoder(nn.Module):
 class EmbeddingUpsampleHead(nn.Module):
     """嵌入上采样头。
 
-    将 1/2L 分辨率的嵌入特征通过转置卷积上采样回原始输入分辨率，
-    并使用 1x1 卷积做最后的精化。
+    将低分辨率嵌入特征通过双线性插值上采样回原始输入分辨率，并使用小卷积
+    精化。避免 ``ConvTranspose2d``，使 NPU 反传更稳定。
     """
 
     def __init__(self, in_dim: int, out_dim: int | None = None) -> None:
@@ -683,7 +683,7 @@ class EmbeddingUpsampleHead(nn.Module):
         self.out_dim = out_dim
         num_groups = 8 if out_dim % 8 == 0 else out_dim
         self.net = nn.Sequential(
-            nn.ConvTranspose2d(in_dim, out_dim, kernel_size=4, stride=2, padding=1),
+            nn.Conv2d(in_dim, out_dim, kernel_size=3, padding=1),
             nn.GroupNorm(num_groups, out_dim),
             nn.GELU(),
             nn.Conv2d(out_dim, out_dim, kernel_size=1),
@@ -697,8 +697,7 @@ class EmbeddingUpsampleHead(nn.Module):
         Args:
             x: 输入张量，形状 ``(B, H, W, C)``。
             target_size: 可选的目标空间尺寸 ``(H_target, W_target)``。当输入的
-                高度或宽度为奇数时，转置卷积输出可能与原始尺寸不一致，此时通过
-                ``F.interpolate`` 强制对齐。若未提供，调用方需自行保证输入为偶数。
+                若未提供，默认上采样到 ``(2H, 2W)``。
 
         Returns:
             输出张量，形状 ``(B, H_target, W_target, out_dim)``（未提供 target_size
@@ -706,9 +705,11 @@ class EmbeddingUpsampleHead(nn.Module):
         """
         B, H, W, C = x.shape
         x = x.permute(0, 3, 1, 2)  # (B, C, H, W)
-        x = self.net(x)
-        if target_size is not None and x.shape[2:] != target_size:
+        if target_size is None:
+            target_size = (H * 2, W * 2)
+        if x.shape[2:] != target_size:
             x = F.interpolate(x, size=target_size, mode="bilinear", align_corners=False)
+        x = self.net(x)
         return x.permute(0, 2, 3, 1)
 
 
