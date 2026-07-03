@@ -26,9 +26,10 @@ def load_model_for_inference(
     config_path: str | Path,
     checkpoint_path: str | Path | None,
     random_init: bool = False,
+    device_preference: str | None = None,
 ) -> tuple[AEFModel, Config, torch.device]:
     cfg = Config.from_yaml(config_path)
-    device = get_device()
+    device = get_device(device_preference)
 
     aef_target_heads = {
         name: (head_cfg["loss_type"], head_cfg["channels"])

@@ -25,6 +25,7 @@ def main() -> None:
     p.add_argument("--output-root", type=Path, required=True)
     p.add_argument("--suffix", default="")
     p.add_argument("--split", default="all")
+    p.add_argument("--device", default=None, help="Override inference device, e.g. npu:0 or cpu.")
     p.add_argument(
         "--months",
         nargs="+",
@@ -46,7 +47,10 @@ def main() -> None:
         p.error(f"checkpoint 不存在: {args.checkpoint}")
 
     model, cfg, device = load_model_for_inference(
-        args.config, args.checkpoint, random_init=args.random_init
+        args.config,
+        args.checkpoint,
+        random_init=args.random_init,
+        device_preference=args.device,
     )
 
     date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
