@@ -11,6 +11,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import rasterio
+import torch
+import torch.nn.functional as F
 from matplotlib.colors import ListedColormap
 
 CLASS_RULES = [
@@ -48,6 +50,14 @@ def build_multiclass(label_root: Path, patch_id: str, shape: tuple[int, int]) ->
     return label
 
 
+def _resize_label_nearest(label: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    if label.shape == shape:
+        return label
+    tensor = torch.from_numpy(label.astype(np.int64))[None, None].float()
+    resized = F.interpolate(tensor, size=shape, mode="nearest")[0, 0]
+    return resized.numpy().astype(label.dtype)
+
+
 def _stretch_rgb(arr: np.ndarray) -> np.ndarray:
     img = np.moveaxis(arr[:3].astype(np.float32), 0, -1)
     finite = np.isfinite(img)
@@ -79,7 +89,8 @@ def visualize_patch(
 ) -> Path:
     label_root = processed_root / "labels"
     reference = _read_reference_rgb(processed_root, patch_id, reference_date)
-    label = build_multiclass(label_root, patch_id, reference.shape[:2])
+    label_lowres = build_multiclass(label_root, patch_id, (128, 128))
+    label = _resize_label_nearest(label_lowres, reference.shape[:2])
 
     colors = [BACKGROUND] + [color for *_rest, color in CLASS_RULES]
     names = ["background"] + [name for _id, name, _task, _color in CLASS_RULES]
