@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import datetime as dt
 import os
 import subprocess
@@ -16,11 +17,6 @@ TASKS = (
     "haidian_building_osm",
     "haidian_road_osm",
     "haidian_water_osm",
-    "building_change",
-    "farm_change",
-    "rubbish",
-    "water",
-    "construction_joint",
 )
 
 TASK_INFO = {
@@ -38,6 +34,10 @@ TASK_INFO = {
     },
     "haidian_water_osm": {
         "label_root": "/data/xuannv_embedding/processed/haidian/labels/osm_water",
+        "region": "haidian",
+    },
+    "haidian_construction": {
+        "label_root": "/data/xuannv_embedding/processed/haidian/labels/construction",
         "region": "haidian",
     },
     "building_change": {
@@ -81,12 +81,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config",
         type=Path,
-        default=Path("downstreams/configs/v2_acceptance_quick_concat_diff.yaml"),
+        default=Path("downstreams/configs/v2_probe_mlp_single_202604.yaml"),
     )
     parser.add_argument("--tasks", nargs="+", default=list(TASKS))
     parser.add_argument("--fold", type=int, default=0, help="Default quick mode runs fold 0.")
     parser.add_argument("--all-folds", action="store_true")
-    parser.add_argument("--npu", default="0")
+    parser.add_argument(
+        "--npu",
+        default="0",
+        help="NPU id or comma-separated ids, for example 0 or 0,1,2.",
+    )
+    parser.add_argument(
+        "--parallel-tasks",
+        action="store_true",
+        help="Run different downstream tasks in parallel across the visible NPU ids.",
+    )
     parser.add_argument("--samples-per-task", type=int, default=4)
     parser.add_argument("--skip-training", action="store_true")
     parser.add_argument("--skip-visualization", action="store_true")
@@ -117,6 +126,13 @@ def build_env(npu: str) -> dict[str, str]:
     env["PYTHONPATH"] = f"{src}:{downstreams}:{old_pythonpath}"
     env["ASCEND_RT_VISIBLE_DEVICES"] = npu
     return env
+
+
+def parse_npu_ids(raw: str) -> list[str]:
+    npu_ids = [part.strip() for part in raw.split(",") if part.strip()]
+    if not npu_ids:
+        raise ValueError("--npu 至少需要一个设备 id")
+    return npu_ids
 
 
 def infer_visualization_months(config_path: Path) -> list[str]:
@@ -168,10 +184,11 @@ def main() -> None:
     run_id = f"{args.run_name}_{timestamp}"
     benchmark_root = args.benchmark_root or args.benchmark_base / run_id
     benchmark_root.mkdir(parents=True, exist_ok=True)
-    env = build_env(args.npu)
+    npu_ids = parse_npu_ids(args.npu)
+    env = build_env(npu_ids[0])
 
     if not args.skip_training:
-        for task in args.tasks:
+        def train_task(task: str, npu: str) -> None:
             info = TASK_INFO[task]
             cmd = [
                 "python",
@@ -192,7 +209,24 @@ def main() -> None:
             ]
             if not args.all_folds:
                 cmd.extend(["--fold", str(args.fold)])
-            run(cmd, env)
+            run(cmd, build_env(npu))
+
+        if args.parallel_tasks and len(args.tasks) > 1:
+            max_workers = min(len(args.tasks), len(npu_ids))
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {
+                    pool.submit(train_task, task, npu_ids[idx % len(npu_ids)]): task
+                    for idx, task in enumerate(args.tasks)
+                }
+                for future in as_completed(futures):
+                    task = futures[future]
+                    try:
+                        future.result()
+                    except Exception as exc:
+                        raise RuntimeError(f"下游任务失败: {task}") from exc
+        else:
+            for idx, task in enumerate(args.tasks):
+                train_task(task, npu_ids[idx % len(npu_ids)])
 
     run(
         [

@@ -124,6 +124,7 @@ def main() -> None:
     if eval_every <= 0:
         raise ValueError(f"eval_every 必须为正整数，实际得到 {eval_every}")
     early_stop_metric = str(cfg["training"].get("early_stop_metric", "miou"))
+    use_early_stopping = bool(cfg["training"].get("use_early_stopping", True))
 
     region = args.region if args.region else args.label_root.parent.name
     emb_region_root = args.embedding_root / region
@@ -282,7 +283,7 @@ def main() -> None:
                 }
                 (out_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
                 torch.save(best_state, out_dir / "checkpoints" / "best.pt")
-            else:
+            elif use_early_stopping:
                 patience_counter += 1
                 if patience_counter >= cfg["training"]["early_stop_patience"]:
                     logger.info("早停于 epoch %d", epoch)
@@ -295,6 +296,7 @@ def main() -> None:
         test_metrics["fold"] = fold_idx
         test_metrics["best_epoch"] = best_epoch
         test_metrics["early_stop_metric"] = early_stop_metric
+        test_metrics["use_early_stopping"] = use_early_stopping
         test_metrics["best_val_score"] = best_score
         test_metrics["val_threshold"] = best_threshold
         test_metrics["months"] = months
@@ -333,6 +335,7 @@ def main() -> None:
         "summary_path": str(summary_path),
         "legacy_summary_5fold_path": str(legacy_path),
         "early_stop_metric": early_stop_metric,
+        "use_early_stopping": use_early_stopping,
     }
     with open(args.output_root / "summary_meta.json", "w", encoding="utf-8") as f:
         json.dump(summary_meta, f, ensure_ascii=False, indent=2)

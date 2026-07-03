@@ -47,16 +47,16 @@
 
 ## 4. 下游头训练
 
-当前默认使用二分类分割头：
+当前默认使用简单二分类分割探针：
 
 - embedding 主干冻结，只读取预导出的 `*_embedding_map.pt`；
 - 每个任务单独训练一个二分类 head；
-- 当前默认 head 是 `unet`；
+- 当前默认 head 是 `mlp`，并固定保留 `linear` 作为更严格的表示探针；
 - 当前默认 loss 是 `bce_dice_tversky`；
 - 训练集只做同步水平/垂直翻转；
-- 早停指标默认是验证集 `f1_best`。
+- 默认不早停，完整跑完固定 epoch，但仍然用验证集 `f1_best` 选择 best epoch 和阈值。
 
-注意：`unet` head 能看应用上限，但不是最纯粹的“简单探针”。为了判断 embedding 本身是不是强，正式报告后续应同时增加一组 `linear/mlp probe`，作为表示能力的主证据；`unet` 结果作为应用上限。
+注意：`linear/mlp probe` 只做逐像素 1x1 通道映射，不引入 U-Net 这类空间上下文，适合判断 embedding 本身是否已经把地物语义分开。`unet` 后续只作为应用上限，不作为默认主结论。
 
 ## 5. 数据划分
 
@@ -98,7 +98,7 @@
 最近若干次结果主要是快速开发结果：
 
 - 多数只跑了 `fold0`；
-- 当前 head 是 `unet`，不是简单 `linear/mlp probe`；
+- 旧版 head 是 `unet`，不是简单 `linear/mlp probe`；当前默认已经改成 `mlp`，并补充 `linear` 配置；
 - 海淀 OSM 建筑、道路、水体缺少可直接比较的 AEF 结果；
 - 旧版可视化流程默认使用 `202512/202605`，单月 202604 任务可能会误配月份；现在 `post_training_eval.py` 已改为从配置自动推断，也可以显式传 `--visualization-months`；
 - `test f1_best` 不能作为正式结论，只能看 `f1_at_threshold`。
@@ -112,9 +112,11 @@ PYTHONPATH=/root/workspace/xuannv/src:/root/workspace/xuannv/downstreams \
 python scripts/scale/post_training_eval.py \
   --embedding-root /data/xuannv_embedding/embeddings/v2_202512_202605/EXPORT_DIR \
   --run-name RUN_NAME \
-  --config downstreams/configs/v2_acceptance_quick_single_202604.yaml \
+  --config downstreams/configs/v2_probe_mlp_single_202604.yaml \
   --tasks haidian_building_osm haidian_road_osm haidian_water_osm \
   --fold 0 \
+  --npu 0,1,2 \
+  --parallel-tasks \
   --skip-v1-comparison
 ```
 
@@ -125,9 +127,11 @@ PYTHONPATH=/root/workspace/xuannv/src:/root/workspace/xuannv/downstreams \
 python scripts/scale/post_training_eval.py \
   --embedding-root /data/xuannv_embedding/embeddings/v2_202512_202605/EXPORT_DIR \
   --run-name RUN_NAME \
-  --config downstreams/configs/v2_acceptance_quick_single_202604.yaml \
+  --config downstreams/configs/v2_probe_mlp_single_202604.yaml \
   --tasks haidian_building_osm haidian_road_osm haidian_water_osm \
   --all-folds \
+  --npu 0,1,2 \
+  --parallel-tasks \
   --skip-v1-comparison
 ```
 
@@ -135,10 +139,10 @@ python scripts/scale/post_training_eval.py \
 
 ## 10. 后续补强
 
-为了更符合“好的 embedding 用简单头也应该好”的判断，下一步建议增加两套固定配置：
+为了更符合“好的 embedding 用简单头也应该好”的判断，正式测评固定保留三套口径：
 
-- `linear_probe`：1x1 conv 或像素级线性分类，作为最严格表示测评；
-- `mlp_probe`：轻量 2-3 层 MLP/1x1 conv，作为 few-shot 友好测评；
+- `linear_probe`：1x1 conv 像素级线性分类，作为最严格表示测评；
+- `mlp_probe`：轻量 2 层 1x1 conv，作为 few-shot 友好测评；
 - `unet_head`：保留当前配置，作为应用上限测评。
 
 三套 head 共用同一 split、同一阈值规则、同一可视化流程。
