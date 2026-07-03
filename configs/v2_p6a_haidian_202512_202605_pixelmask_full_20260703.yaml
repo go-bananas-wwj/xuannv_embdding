@@ -110,7 +110,6 @@ training:
   - haidian_osm_construction
   - haidian_osm_path_walk
   - haidian_osm_playground
-  - haidian_osm_activity_poi
   semantic_probe_task_weights:
     haidian_osm_building: 1.0
     haidian_osm_major_road: 1.0
@@ -125,7 +124,6 @@ training:
     haidian_osm_construction: 0.5
     haidian_osm_path_walk: 0.4
     haidian_osm_playground: 0.4
-    haidian_osm_activity_poi: 0.25
   semantic_probe_pos_weight: 2.0
   semantic_probe_pos_weights:
     haidian_osm_building: 2.5
@@ -141,7 +139,6 @@ training:
     haidian_osm_construction: 2.0
     haidian_osm_path_walk: 3.0
     haidian_osm_playground: 2.0
-    haidian_osm_activity_poi: 1.5
   semantic_probe_hidden_dim: 0
   semantic_probe_hard_negative_ratio: 0.0
   semantic_probe_hard_negative_weight: 0.0
@@ -180,7 +177,6 @@ data:
     haidian_osm_construction: /data/xuannv_embedding/processed/haidian/labels/osm_construction
     haidian_osm_path_walk: /data/xuannv_embedding/processed/haidian/labels/osm_path_walk
     haidian_osm_playground: /data/xuannv_embedding/processed/haidian/labels/osm_playground
-    haidian_osm_activity_poi: /data/xuannv_embedding/processed/haidian/labels/osm_activity_poi
   num_samples: 320
   max_patches: null
   batch_size: 3

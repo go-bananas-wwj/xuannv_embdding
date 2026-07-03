@@ -146,6 +146,8 @@ TASK_RULES: dict[str, dict[str, Any]] = {
         "point_buffer_m": 35.0,
     },
 }
+NOISY_DEFAULT_EXCLUDED_TASKS = {"osm_activity_poi"}
+DEFAULT_TASKS = sorted(set(TASK_RULES) - NOISY_DEFAULT_EXCLUDED_TASKS)
 
 
 @dataclass(frozen=True)
@@ -163,11 +165,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--processed-root", type=Path, default=DEFAULT_PROCESSED_ROOT)
     parser.add_argument("--cache-root", type=Path, default=DEFAULT_CACHE_ROOT)
     parser.add_argument("--regions", nargs="+", default=["haidian", "harbin"])
-    parser.add_argument("--tasks", nargs="+", default=sorted(TASK_RULES))
+    parser.add_argument("--tasks", nargs="+", default=DEFAULT_TASKS)
+    parser.add_argument(
+        "--include-noisy-tasks",
+        action="store_true",
+        help="Append noisy point-buffer tasks such as osm_activity_poi to the default task list.",
+    )
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--log-level", default="INFO")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.include_noisy_tasks and args.tasks == DEFAULT_TASKS:
+        args.tasks = sorted(TASK_RULES)
+    return args
 
 
 def patch_id_from_name(path: Path) -> str | None:
