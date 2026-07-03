@@ -25,6 +25,12 @@ def main() -> None:
     p.add_argument("--output-root", type=Path, required=True)
     p.add_argument("--suffix", default="")
     p.add_argument("--split", default="all")
+    p.add_argument(
+        "--months",
+        nargs="+",
+        default=None,
+        help="Only save selected YYYYMM embedding months. Defaults to all model months.",
+    )
     init_group = p.add_mutually_exclusive_group(required=True)
     init_group.add_argument("--checkpoint", type=Path, default=None)
     init_group.add_argument(
@@ -54,7 +60,7 @@ def main() -> None:
         logger.info("生成 %s embedding", region)
         loader = build_inference_loader(cfg, region, split=args.split)
         region_dir = out_root / region
-        precompute_embeddings(model, loader, device, region_dir)
+        precompute_embeddings(model, loader, device, region_dir, months=args.months)
 
     write_meta_json(out_root, args.checkpoint, args.config, " ".join(sys.argv))
     logger.info("embedding 保存至 %s", out_root)

@@ -103,8 +103,10 @@ def precompute_embeddings(
     loader: DataLoader,
     device: torch.device,
     output_dir: Path,
+    months: list[str] | None = None,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
+    selected_months = {str(month) for month in months} if months is not None else None
     with torch.no_grad():
         for batch in loader:
             patch_ids = batch["patch_ids"]
@@ -145,8 +147,12 @@ def precompute_embeddings(
                 for m in range(emb_map.shape[1]):
                     month_int = int(ts[b, m].item())
                     assert 190000 < month_int < 210000, f"timestamp {month_int} 不是 YYYYMM 格式"
-                    torch.save(emb_map[b, m], patch_dir / f"{month_int}_embedding_map.pt")
-                    torch.save(scene_emb[b, m], patch_dir / f"{month_int}_scene_embedding.pt")
+                    if selected_months is not None and str(month_int) not in selected_months:
+                        continue
+                    month_map = emb_map[b, m].contiguous().clone()
+                    month_scene = scene_emb[b, m].contiguous().clone()
+                    torch.save(month_map, patch_dir / f"{month_int}_embedding_map.pt")
+                    torch.save(month_scene, patch_dir / f"{month_int}_scene_embedding.pt")
 
 
 def write_meta_json(
