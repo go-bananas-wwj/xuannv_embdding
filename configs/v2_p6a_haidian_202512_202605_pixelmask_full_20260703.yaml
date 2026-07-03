@@ -161,8 +161,8 @@ training:
 data:
   root: /data/xuannv_embedding/processed/haidian
   region: haidian
-  manifest_path: /data/xuannv_embedding/processed/haidian/manifest_stage2.json
-  train_manifest_path: /data/xuannv_embedding/processed/haidian/manifest_stage2.json
+  manifest_path: /data/xuannv_embedding/processed/haidian/manifest_p6a_202512_202605_pixelmask.json
+  train_manifest_path: /data/xuannv_embedding/processed/haidian/manifest_p6a_202512_202605_pixelmask.json
   val_manifest_path: /data/xuannv_embedding/processed/haidian/manifest_p5h_random20_val_seed42.json
   statistics_dir: /data/xuannv_embedding/statistics/haidian
   statistics_dirs_by_region: {}
