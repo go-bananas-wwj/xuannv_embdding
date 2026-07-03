@@ -12,12 +12,14 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import shutil
 from pathlib import Path
 from typing import Any
 
 import geopandas as gpd
 import numpy as np
 import rasterio
+import s3fs
 import torch
 from rasterio.env import Env
 from rasterio.windows import Window
@@ -46,6 +48,23 @@ def s3_to_vsis3(path: str) -> str:
     if path.startswith("s3://"):
         return "/vsis3/" + path.removeprefix("s3://")
     return path
+
+
+def cache_cog(cog_path: str, cache_dir: Path | None) -> str:
+    if cache_dir is None or not cog_path.startswith("s3://"):
+        return cog_path
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    local_path = cache_dir / Path(cog_path).name
+    if local_path.exists() and local_path.stat().st_size > 0:
+        return str(local_path)
+
+    tmp_path = local_path.with_suffix(local_path.suffix + ".part")
+    LOGGER.info("Downloading AEF COG to local cache: %s -> %s", cog_path, local_path)
+    fs = s3fs.S3FileSystem(anon=True)
+    with fs.open(cog_path, "rb") as src, open(tmp_path, "wb") as dst:
+        shutil.copyfileobj(src, dst, length=64 * 1024 * 1024)
+    tmp_path.replace(local_path)
+    return str(local_path)
 
 
 def bounds_to_window(src: rasterio.io.DatasetReader, bounds: Any) -> Window:
@@ -138,6 +157,22 @@ def find_aef_cog(index: gpd.GeoDataFrame, ref_path: Path) -> str:
     raise KeyError("AEF index row has neither assets.data.href nor path")
 
 
+def build_patch_cog_map(
+    index: gpd.GeoDataFrame,
+    processed_region_root: Path,
+    patch_ids: list[str],
+    cache_dir: Path | None,
+) -> dict[str, str]:
+    patch_to_cog: dict[str, str] = {}
+    for patch_id in patch_ids:
+        ref_path = find_reference_raster(processed_region_root, patch_id)
+        patch_to_cog[patch_id] = find_aef_cog(index, ref_path)
+    unique_cogs = sorted(set(patch_to_cog.values()))
+    LOGGER.info("AEF COGs intersecting requested patches: %d", len(unique_cogs))
+    cog_to_local = {cog: cache_cog(cog, cache_dir) for cog in unique_cogs}
+    return {patch_id: cog_to_local[cog] for patch_id, cog in patch_to_cog.items()}
+
+
 def read_aef_patch(cog_path: str, ref_path: Path) -> torch.Tensor:
     with rasterio.open(ref_path) as ref:
         dst_crs = ref.crs
@@ -146,7 +181,8 @@ def read_aef_patch(cog_path: str, ref_path: Path) -> torch.Tensor:
         dst_bounds = ref.bounds
 
     with Env(AWS_NO_SIGN_REQUEST="YES"):
-        with rasterio.open(s3_to_vsis3(cog_path)) as src:
+        open_path = s3_to_vsis3(cog_path) if cog_path.startswith("s3://") else cog_path
+        with rasterio.open(open_path) as src:
             if src.crs == dst_crs:
                 window = bounds_to_window(src, dst_bounds)
                 raw = src.read(
@@ -214,6 +250,12 @@ def main() -> None:
     parser.add_argument("--label-root", type=Path)
     parser.add_argument("--patch-ids", nargs="*")
     parser.add_argument("--out-root", type=Path, default=Path("/data/xuannv_embedding/embeddings/aef_official_2025_annual"))
+    parser.add_argument(
+        "--cog-cache-dir",
+        type=Path,
+        default=None,
+        help="Optional local cache for official AEF COGs before patch extraction.",
+    )
     parser.add_argument("--month", default="202512")
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
@@ -231,6 +273,12 @@ def main() -> None:
     region_out = args.out_root / args.region
     region_out.mkdir(parents=True, exist_ok=True)
     write_meta(args.out_root, args, patch_ids)
+    patch_to_cog = build_patch_cog_map(
+        index,
+        processed_region_root,
+        patch_ids,
+        args.cog_cache_dir,
+    )
 
     for idx, patch_id in enumerate(patch_ids, start=1):
         patch_dir = region_out / patch_id
@@ -241,7 +289,7 @@ def main() -> None:
             continue
         ref_path = find_reference_raster(processed_region_root, patch_id)
         try:
-            cog_path = find_aef_cog(index, ref_path)
+            cog_path = patch_to_cog[patch_id]
             emb = read_aef_patch(cog_path, ref_path)
             torch.save(emb, out_path)
             LOGGER.info(
