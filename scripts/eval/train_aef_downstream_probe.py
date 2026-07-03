@@ -39,6 +39,12 @@ class LoadedPatch:
     mask_path: Path
 
 
+@dataclass(frozen=True)
+class FeatureCache:
+    x: torch.Tensor
+    y: torch.Tensor
+
+
 class PixelProbe(nn.Module):
     def __init__(self, embed_dim: int, head: str, hidden_dim: int) -> None:
         super().__init__()
@@ -85,6 +91,21 @@ def parse_args() -> argparse.Namespace:
         "--no-cache-patches",
         action="store_true",
         help="Disable in-memory patch cache. By default, each fold caches AEF tensors once.",
+    )
+    parser.add_argument(
+        "--cache-device",
+        choices=["none", "cpu", "npu"],
+        default="npu",
+        help=(
+            "Materialize sampled train pixels once. 'npu' keeps the feature matrix on the "
+            "training device and avoids per-epoch CPU sampling/copies."
+        ),
+    )
+    parser.add_argument(
+        "--eval-cache-device",
+        choices=["none", "cpu", "npu"],
+        default="cpu",
+        help="Materialize val/test pixels for faster threshold search and metrics.",
     )
     parser.add_argument("--save-predictions", action="store_true")
     return parser.parse_args()
@@ -241,6 +262,74 @@ def make_train_batch(
     return torch.cat(xs, dim=0), torch.cat(ys, dim=0)
 
 
+def materialize_sampled_features(
+    items: list[PatchItem | LoadedPatch],
+    max_pixels_per_patch: int,
+    positive_fraction: float,
+    l2_normalize: bool,
+    device: torch.device | None = None,
+) -> FeatureCache:
+    x_cpu, y_cpu = make_train_batch(
+        items,
+        max_pixels_per_patch=max_pixels_per_patch,
+        positive_fraction=positive_fraction,
+        l2_normalize=l2_normalize,
+    )
+    if device is not None:
+        return FeatureCache(
+            x=x_cpu.to(device, non_blocking=True),
+            y=y_cpu.to(device, non_blocking=True),
+        )
+    return FeatureCache(x=x_cpu, y=y_cpu)
+
+
+def materialize_full_features(
+    items: list[PatchItem | LoadedPatch],
+    l2_normalize: bool,
+    device: torch.device | None = None,
+) -> FeatureCache:
+    xs: list[torch.Tensor] = []
+    ys: list[torch.Tensor] = []
+    for item in items:
+        emb, mask = load_patch(item, l2_normalize=l2_normalize)
+        x = emb.permute(1, 2, 0).reshape(-1, emb.shape[0]).contiguous()
+        y = mask.reshape(-1).float()
+        valid = y >= 0
+        xs.append(x[valid])
+        ys.append(y[valid])
+    x_all = torch.cat(xs, dim=0)
+    y_all = torch.cat(ys, dim=0)
+    if device is not None:
+        return FeatureCache(
+            x=x_all.to(device, non_blocking=True),
+            y=y_all.to(device, non_blocking=True),
+        )
+    return FeatureCache(x=x_all, y=y_all)
+
+
+def train_epoch_from_feature_cache(
+    model: nn.Module,
+    cache: FeatureCache,
+    optimizer: torch.optim.Optimizer,
+    loss_fn: nn.Module,
+    batch_pixels: int,
+) -> float:
+    model.train()
+    total = int(cache.y.shape[0])
+    order = torch.randperm(total, device=cache.y.device)
+    losses: list[float] = []
+    for start in range(0, total, batch_pixels):
+        idx = order[start : start + batch_pixels]
+        x = cache.x.index_select(0, idx)
+        y = cache.y.index_select(0, idx)
+        optimizer.zero_grad(set_to_none=True)
+        loss = loss_fn(model(x), y)
+        loss.backward()
+        optimizer.step()
+        losses.append(float(loss.detach().cpu()))
+    return float(np.mean(losses))
+
+
 def logits_for_items(
     model: nn.Module,
     items: list[PatchItem | LoadedPatch],
@@ -263,6 +352,23 @@ def logits_for_items(
             all_logits.append(logits)
             all_targets.append(mask.reshape(-1).numpy())
     return np.concatenate(all_logits), np.concatenate(all_targets)
+
+
+def logits_for_cache(
+    model: nn.Module,
+    cache: FeatureCache,
+    device: torch.device,
+    chunk_pixels: int = 262144,
+) -> tuple[np.ndarray, np.ndarray]:
+    model.eval()
+    logits_parts: list[torch.Tensor] = []
+    with torch.no_grad():
+        for start in range(0, cache.y.shape[0], chunk_pixels):
+            x = cache.x[start : start + chunk_pixels].to(device, non_blocking=True)
+            logits_parts.append(model(x).detach().cpu())
+    logits = torch.cat(logits_parts, dim=0).numpy()
+    targets = cache.y.detach().cpu().numpy()
+    return logits, targets
 
 
 def compute_metrics(
@@ -379,6 +485,38 @@ def train_fold(
         train_items = cache_items(train_items, l2_normalize=args.l2_normalize)
         val_items = cache_items(val_items, l2_normalize=args.l2_normalize)
         test_items = cache_items(test_items, l2_normalize=args.l2_normalize)
+    train_feature_cache: FeatureCache | None = None
+    val_feature_cache: FeatureCache | None = None
+    test_feature_cache: FeatureCache | None = None
+    if args.cache_device != "none":
+        cache_device = device if args.cache_device == "npu" else None
+        LOGGER.info("fold=%d materializing train pixel cache on %s", fold_idx, args.cache_device)
+        train_feature_cache = materialize_sampled_features(
+            train_items,
+            max_pixels_per_patch=args.max_pixels_per_patch,
+            positive_fraction=args.positive_fraction,
+            l2_normalize=args.l2_normalize,
+            device=cache_device,
+        )
+        LOGGER.info(
+            "fold=%d train feature cache shape=%s device=%s",
+            fold_idx,
+            tuple(train_feature_cache.x.shape),
+            train_feature_cache.x.device,
+        )
+    if args.eval_cache_device != "none":
+        eval_device = device if args.eval_cache_device == "npu" else None
+        LOGGER.info("fold=%d materializing eval caches on %s", fold_idx, args.eval_cache_device)
+        val_feature_cache = materialize_full_features(
+            val_items,
+            l2_normalize=args.l2_normalize,
+            device=eval_device,
+        )
+        test_feature_cache = materialize_full_features(
+            test_items,
+            l2_normalize=args.l2_normalize,
+            device=eval_device,
+        )
 
     model = PixelProbe(args.embed_dim, args.head, args.hidden_dim).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -389,42 +527,56 @@ def train_fold(
     best_score = -math.inf
     best_epoch = -1
     best_threshold = 0.5
+    batch_pixels = max(1, args.batch_patches * args.max_pixels_per_patch)
     for epoch in range(args.epochs):
-        model.train()
-        losses: list[float] = []
-        for batch_items in iter_patch_batches(train_items, args.batch_patches):
-            x_cpu, y_cpu = make_train_batch(
-                batch_items,
-                max_pixels_per_patch=args.max_pixels_per_patch,
-                positive_fraction=args.positive_fraction,
-                l2_normalize=args.l2_normalize,
+        if train_feature_cache is not None:
+            train_loss = train_epoch_from_feature_cache(
+                model,
+                train_feature_cache,
+                optimizer,
+                loss_fn,
+                batch_pixels=batch_pixels,
             )
-            x = x_cpu.to(device, non_blocking=True)
-            y = y_cpu.to(device, non_blocking=True)
-            optimizer.zero_grad(set_to_none=True)
-            loss = loss_fn(model(x), y)
-            loss.backward()
-            optimizer.step()
-            losses.append(float(loss.detach().cpu()))
+        else:
+            model.train()
+            losses: list[float] = []
+            for batch_items in iter_patch_batches(train_items, args.batch_patches):
+                x_cpu, y_cpu = make_train_batch(
+                    batch_items,
+                    max_pixels_per_patch=args.max_pixels_per_patch,
+                    positive_fraction=args.positive_fraction,
+                    l2_normalize=args.l2_normalize,
+                )
+                x = x_cpu.to(device, non_blocking=True)
+                y = y_cpu.to(device, non_blocking=True)
+                optimizer.zero_grad(set_to_none=True)
+                loss = loss_fn(model(x), y)
+                loss.backward()
+                optimizer.step()
+                losses.append(float(loss.detach().cpu()))
+            train_loss = float(np.mean(losses))
         scheduler.step()
 
         should_eval = (epoch == 0) or ((epoch + 1) % args.eval_every == 0)
         if not should_eval:
-            LOGGER.info("fold=%d epoch=%d train_loss=%.4f val=skipped", fold_idx, epoch, np.mean(losses))
+            LOGGER.info("fold=%d epoch=%d train_loss=%.4f val=skipped", fold_idx, epoch, train_loss)
             continue
-        val_logits, val_target = logits_for_items(
-            model,
-            val_items,
-            device=device,
-            l2_normalize=args.l2_normalize,
-        )
+        if val_feature_cache is not None:
+            val_logits, val_target = logits_for_cache(model, val_feature_cache, device=device)
+        else:
+            val_logits, val_target = logits_for_items(
+                model,
+                val_items,
+                device=device,
+                l2_normalize=args.l2_normalize,
+            )
         val_metrics = compute_metrics(val_logits, val_target)
         val_score = float(val_metrics["f1_best"])
         LOGGER.info(
             "fold=%d epoch=%d train_loss=%.4f val_f1_best=%.4f val_ap=%.4f",
             fold_idx,
             epoch,
-            np.mean(losses),
+            train_loss,
             val_score,
             val_metrics["ap"],
         )
@@ -443,12 +595,15 @@ def train_fold(
     if best_state is None:
         raise RuntimeError(f"No checkpoint selected for fold {fold_idx}")
     model.load_state_dict(best_state)
-    test_logits, test_target = logits_for_items(
-        model,
-        test_items,
-        device=device,
-        l2_normalize=args.l2_normalize,
-    )
+    if test_feature_cache is not None:
+        test_logits, test_target = logits_for_cache(model, test_feature_cache, device=device)
+    else:
+        test_logits, test_target = logits_for_items(
+            model,
+            test_items,
+            device=device,
+            l2_normalize=args.l2_normalize,
+        )
     test_metrics = compute_metrics(test_logits, test_target, threshold=best_threshold)
     result: dict[str, Any] = {
         **test_metrics,
@@ -460,6 +615,8 @@ def train_fold(
         "month": args.month,
         "region": args.region,
         "l2_normalize": bool(args.l2_normalize),
+        "cache_device": args.cache_device,
+        "eval_cache_device": args.eval_cache_device,
         "trainer": "aef_pixel_probe",
     }
     (out_dir / "metrics.json").write_text(
@@ -513,6 +670,8 @@ def main() -> None:
         "epochs": args.epochs,
         "max_pixels_per_patch": args.max_pixels_per_patch,
         "positive_fraction": args.positive_fraction,
+        "cache_device": args.cache_device,
+        "eval_cache_device": args.eval_cache_device,
     }
     (args.output_root / "summary_meta.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2),
