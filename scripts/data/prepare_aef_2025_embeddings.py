@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Prepare AlphaEarth Foundations 2025 annual embeddings for local patches.
 
-The public AEF mosaic is stored as int8 quantized annual embeddings in EPSG:4326.
-This script crops the 2025 slice for each local patch, dequantizes it, and
-warps it onto the existing 128x128 patch grid so downstream probe code can read
-the result as ``{month}_embedding_map.pt``.
+The public AEF release provides annual embedding COGs indexed by a GeoParquet
+file. This script finds the 2025 COG intersecting each local patch, streams the
+needed pixels from Source Cooperative, dequantizes them, and warps them onto the
+existing 128x128 patch grid so downstream probe code can read the result as
+``{month}_embedding_map.pt``.
 """
 from __future__ import annotations
 
@@ -14,18 +15,21 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import geopandas as gpd
 import numpy as np
 import rasterio
 import torch
-import xarray as xr
-from pyproj import Transformer
-from rasterio.transform import from_bounds
+from rasterio.env import Env
 from rasterio.warp import Resampling, reproject, transform_bounds
+from shapely.geometry import box
 
 LOGGER = logging.getLogger(__name__)
 
-AEF_ZARR_URL = "s3://us-west-2.opendata.source.coop/tge-labs/aef-mosaic/"
-AEF_TIME_INDEX_2025 = 8
+AEF_INDEX_URL = (
+    "s3://us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/"
+    "aef_index_stac_geoparquet.parquet"
+)
+AEF_YEAR = 2025
 AEF_NODATA = -128
 
 
@@ -35,6 +39,12 @@ def dequantize(values: np.ndarray) -> np.ndarray:
     out = ((x / 127.5) ** 2) * np.sign(x)
     out[values == AEF_NODATA] = np.nan
     return out
+
+
+def s3_to_vsis3(path: str) -> str:
+    if path.startswith("s3://"):
+        return "/vsis3/" + path.removeprefix("s3://")
+    return path
 
 
 def load_patch_ids(label_root: Path | None, patch_ids: list[str] | None) -> list[str]:
@@ -65,67 +75,68 @@ def find_reference_raster(processed_region_root: Path, patch_id: str) -> Path:
     raise FileNotFoundError(f"No reference GeoTIFF found for {patch_id}")
 
 
-def _coord_slice(values: np.ndarray, lo: float, hi: float) -> slice:
-    if values[0] <= values[-1]:
-        return slice(lo, hi)
-    return slice(hi, lo)
+def load_aef_index(index_path: str) -> gpd.GeoDataFrame:
+    LOGGER.info("Loading AEF COG index: %s", index_path)
+    index = gpd.read_parquet(index_path, storage_options={"anon": True})
+    if "datetime" in index.columns:
+        index = index[index["datetime"].dt.year == AEF_YEAR].copy()
+    elif "year" in index.columns:
+        index = index[index["year"] == AEF_YEAR].copy()
+    if index.empty:
+        raise RuntimeError(f"No AEF records found for year {AEF_YEAR}")
+    if index.crs is None:
+        index = index.set_crs("OGC:CRS84")
+    return index
 
 
-def aef_transform(data: xr.DataArray) -> rasterio.Affine:
-    x = data.coords["x"].values
-    y = data.coords["y"].values
-    if len(x) < 2 or len(y) < 2:
-        raise ValueError("AEF crop is too small to build a transform.")
-    dx = float(np.median(np.diff(x)))
-    dy = float(np.median(np.diff(y)))
-    minx = float(x.min() - abs(dx) / 2.0)
-    maxx = float(x.max() + abs(dx) / 2.0)
-    miny = float(y.min() - abs(dy) / 2.0)
-    maxy = float(y.max() + abs(dy) / 2.0)
-    return from_bounds(minx, miny, maxx, maxy, len(x), len(y))
+def patch_wgs84_geometry(ref_path: Path) -> Any:
+    with rasterio.open(ref_path) as ref:
+        min_lon, min_lat, max_lon, max_lat = transform_bounds(
+            ref.crs, "OGC:CRS84", *ref.bounds, densify_pts=21
+        )
+    return box(min_lon, min_lat, max_lon, max_lat)
 
 
-def read_aef_patch(ds: xr.Dataset, ref_path: Path) -> torch.Tensor:
+def find_aef_cog(index: gpd.GeoDataFrame, ref_path: Path) -> str:
+    geom = patch_wgs84_geometry(ref_path)
+    matches = index[index.intersects(geom)]
+    if matches.empty:
+        raise FileNotFoundError(f"No AEF 2025 COG intersects {ref_path}")
+    row = matches.iloc[0]
+    assets = row.get("assets")
+    if isinstance(assets, dict) and "data" in assets:
+        return str(assets["data"]["href"])
+    if "path" in matches.columns:
+        return str(row["path"])
+    raise KeyError("AEF index row has neither assets.data.href nor path")
+
+
+def read_aef_patch(cog_path: str, ref_path: Path) -> torch.Tensor:
     with rasterio.open(ref_path) as ref:
         dst_crs = ref.crs
         dst_transform = ref.transform
         dst_shape = (ref.height, ref.width)
-        bounds = ref.bounds
 
-    wgs84_bounds = transform_bounds(dst_crs, "EPSG:4326", *bounds, densify_pts=21)
-    min_lon, min_lat, max_lon, max_lat = wgs84_bounds
-    pad_lon = max((max_lon - min_lon) * 0.05, 1e-4)
-    pad_lat = max((max_lat - min_lat) * 0.05, 1e-4)
+    with Env(AWS_NO_SIGN_REQUEST="YES"):
+        with rasterio.open(s3_to_vsis3(cog_path)) as src:
+            dst = np.full((src.count, *dst_shape), np.nan, dtype=np.float32)
+            for band_idx in range(1, src.count + 1):
+                band = np.full(dst_shape, np.nan, dtype=np.float32)
+                reproject(
+                    source=rasterio.band(src, band_idx),
+                    destination=band,
+                    src_transform=src.transform,
+                    src_crs=src.crs,
+                    src_nodata=src.nodata,
+                    dst_transform=dst_transform,
+                    dst_crs=dst_crs,
+                    dst_nodata=np.nan,
+                    resampling=Resampling.bilinear,
+                    num_threads=4,
+                )
+                dst[band_idx - 1] = band
 
-    x_values = ds["embeddings"].coords["x"].values
-    y_values = ds["embeddings"].coords["y"].values
-    data = (
-        ds["embeddings"]
-        .isel(time=AEF_TIME_INDEX_2025)
-        .sel(
-            x=_coord_slice(x_values, min_lon - pad_lon, max_lon + pad_lon),
-            y=_coord_slice(y_values, min_lat - pad_lat, max_lat + pad_lat),
-        )
-        .compute()
-    )
-    values = data.values
-    if values.ndim != 3:
-        raise ValueError(f"Expected AEF crop with 3 dims, got {values.shape}")
-    emb = dequantize(values)
-    src_transform = aef_transform(data)
-    dst = np.full((emb.shape[0], *dst_shape), np.nan, dtype=np.float32)
-    reproject(
-        source=emb,
-        destination=dst,
-        src_transform=src_transform,
-        src_crs="EPSG:4326",
-        src_nodata=np.nan,
-        dst_transform=dst_transform,
-        dst_crs=dst_crs,
-        dst_nodata=np.nan,
-        resampling=Resampling.bilinear,
-        num_threads=4,
-    )
+    dst = dequantize(dst)
     dst = np.nan_to_num(dst, nan=0.0, posinf=0.0, neginf=0.0)
     return torch.from_numpy(dst.astype(np.float32, copy=False))
 
@@ -133,9 +144,8 @@ def read_aef_patch(ds: xr.Dataset, ref_path: Path) -> torch.Tensor:
 def write_meta(out_root: Path, args: argparse.Namespace, patch_ids: list[str]) -> None:
     meta: dict[str, Any] = {
         "source": "AlphaEarth Foundations Satellite Embedding Dataset",
-        "aef_zarr_url": args.aef_zarr_url,
-        "aef_time_index": AEF_TIME_INDEX_2025,
-        "aef_year": 2025,
+        "aef_index_path": args.aef_index_path,
+        "aef_year": AEF_YEAR,
         "month_alias": args.month,
         "region": args.region,
         "num_patches": len(patch_ids),
@@ -149,7 +159,7 @@ def write_meta(out_root: Path, args: argparse.Namespace, patch_ids: list[str]) -
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--aef-zarr-url", default=AEF_ZARR_URL)
+    parser.add_argument("--aef-index-path", default=AEF_INDEX_URL)
     parser.add_argument("--processed-root", type=Path, default=Path("/data/xuannv_embedding/processed"))
     parser.add_argument("--region", default="haidian")
     parser.add_argument("--label-root", type=Path)
@@ -165,9 +175,8 @@ def main() -> None:
         label_root = args.processed_root / args.region / "labels" / "building_osm"
     patch_ids = load_patch_ids(label_root, args.patch_ids)
 
-    LOGGER.info("Opening AEF mosaic: %s", args.aef_zarr_url)
-    ds = xr.open_zarr(args.aef_zarr_url, storage_options={"anon": True}, consolidated=False)
-    LOGGER.info("AEF embeddings shape: %s", ds["embeddings"].shape)
+    index = load_aef_index(args.aef_index_path)
+    LOGGER.info("AEF index records for %d: %d", AEF_YEAR, len(index))
 
     processed_region_root = args.processed_root / args.region
     region_out = args.out_root / args.region
@@ -183,9 +192,17 @@ def main() -> None:
             continue
         ref_path = find_reference_raster(processed_region_root, patch_id)
         try:
-            emb = read_aef_patch(ds, ref_path)
+            cog_path = find_aef_cog(index, ref_path)
+            emb = read_aef_patch(cog_path, ref_path)
             torch.save(emb, out_path)
-            LOGGER.info("[%d/%d] saved %s shape=%s", idx, len(patch_ids), out_path, tuple(emb.shape))
+            LOGGER.info(
+                "[%d/%d] saved %s shape=%s cog=%s",
+                idx,
+                len(patch_ids),
+                out_path,
+                tuple(emb.shape),
+                cog_path,
+            )
         except Exception:
             LOGGER.exception("[%d/%d] failed %s using %s", idx, len(patch_ids), patch_id, ref_path)
 
