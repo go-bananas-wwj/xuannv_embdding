@@ -12,6 +12,7 @@ class InputMaskingConfig:
     """Training-only hard masking for multimodal monthly reconstruction."""
 
     enabled: bool = False
+    drop_availability_masks: bool = True
     modality_dropout_probs: dict[str, float] = field(default_factory=dict)
     month_dropout_prob: float = 0.0
     max_months_per_sample: int = 1
@@ -24,6 +25,7 @@ class InputMaskingConfig:
         raw = raw or {}
         return cls(
             enabled=bool(raw.get("enabled", False)),
+            drop_availability_masks=bool(raw.get("drop_availability_masks", True)),
             modality_dropout_probs={
                 str(k): float(v)
                 for k, v in raw.get("modality_dropout_probs", {}).items()
@@ -44,6 +46,7 @@ def _drop_temporal_source(
     frames: torch.Tensor,
     masks: torch.Tensor,
     prob: float,
+    drop_masks: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     if prob <= 0.0 or frames.shape[0] == 0:
         return frames, masks, _metric(0.0, frames)
@@ -55,7 +58,8 @@ def _drop_temporal_source(
         keep = (torch.rand(batch_size, device=frames.device) >= prob).to(frames.dtype)
     dropped = 1.0 - keep
     frames = frames * keep[:, None, None, None, None]
-    masks = masks * keep[:, None]
+    if drop_masks:
+        masks = masks * keep[:, None]
     return frames, masks, dropped.mean().detach()
 
 
@@ -63,6 +67,7 @@ def _drop_highres_source(
     frames: torch.Tensor,
     masks: torch.Tensor,
     prob: float,
+    drop_masks: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     if prob <= 0.0 or frames.shape[0] == 0:
         return frames, masks, _metric(0.0, frames)
@@ -74,7 +79,8 @@ def _drop_highres_source(
         keep = (torch.rand(batch_size, device=frames.device) >= prob).to(frames.dtype)
     dropped = 1.0 - keep
     frames = frames * keep[:, None, None, None]
-    masks = masks * keep[:, None, None, None]
+    if drop_masks:
+        masks = masks * keep[:, None, None, None]
     return frames, masks, dropped.mean().detach()
 
 
@@ -83,6 +89,7 @@ def _drop_months(
     source_masks: dict[str, torch.Tensor],
     prob: float,
     max_months_per_sample: int,
+    drop_masks: bool = True,
 ) -> dict[str, torch.Tensor]:
     stats: dict[str, torch.Tensor] = {}
     if prob <= 0.0 or max_months_per_sample <= 0:
@@ -113,7 +120,8 @@ def _drop_months(
     keep = 1.0 - drop
     for source in temporal_sources:
         source_frames[source] = source_frames[source] * keep[:, :, None, None, None]
-        source_masks[source] = source_masks[source] * keep
+        if drop_masks:
+            source_masks[source] = source_masks[source] * keep
 
     stats["masking_month_drop_ratio"] = drop.mean().detach()
     return stats
@@ -143,6 +151,7 @@ def _drop_spatial_blocks(
     prob: float,
     block_size: int,
     block_ratio: float,
+    drop_highres_masks: bool = True,
 ) -> dict[str, torch.Tensor]:
     stats: dict[str, torch.Tensor] = {}
     if prob <= 0.0 or block_ratio <= 0.0:
@@ -205,7 +214,7 @@ def _drop_spatial_blocks(
             keep_masks[key] = keep
         keep = keep_masks[key]
         highres_frames[source] = frames * keep
-        if source in highres_masks:
+        if drop_highres_masks and source in highres_masks:
             highres_masks[source] = highres_masks[source] * F.interpolate(
                 keep,
                 size=highres_masks[source].shape[-2:],
@@ -237,14 +246,20 @@ def apply_input_masking(
     for source, prob in cfg.modality_dropout_probs.items():
         if source in source_frames:
             frames, masks, dropped = _drop_temporal_source(
-                source_frames[source], source_masks[source], prob
+                source_frames[source],
+                source_masks[source],
+                prob,
+                drop_masks=cfg.drop_availability_masks,
             )
             source_frames[source] = frames
             source_masks[source] = masks
             stats[f"masking_modality_drop_{source}"] = dropped
         elif source in highres_frames:
             frames, masks, dropped = _drop_highres_source(
-                highres_frames[source], highres_masks[source], prob
+                highres_frames[source],
+                highres_masks[source],
+                prob,
+                drop_masks=cfg.drop_availability_masks,
             )
             highres_frames[source] = frames
             highres_masks[source] = masks
@@ -256,6 +271,7 @@ def apply_input_masking(
             source_masks,
             cfg.month_dropout_prob,
             cfg.max_months_per_sample,
+            drop_masks=cfg.drop_availability_masks,
         )
     )
     stats.update(
@@ -266,6 +282,7 @@ def apply_input_masking(
             cfg.spatial_block_prob,
             cfg.spatial_block_size,
             cfg.spatial_block_ratio,
+            drop_highres_masks=cfg.drop_availability_masks,
         )
     )
     prepared["masking_stats"] = stats
