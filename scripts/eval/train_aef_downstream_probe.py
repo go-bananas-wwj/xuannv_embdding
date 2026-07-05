@@ -84,6 +84,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-patches", type=int, default=8)
     parser.add_argument("--max-pixels-per-patch", type=int, default=4096)
     parser.add_argument("--positive-fraction", type=float, default=0.5)
+    parser.add_argument(
+        "--train-positive-patches",
+        type=int,
+        default=None,
+        help=(
+            "Use only this many positive training patches for sparse-label mapping. "
+            "Validation and test splits are unchanged. Selection is deterministic per fold/seed."
+        ),
+    )
+    parser.add_argument(
+        "--train-negative-patches",
+        type=int,
+        default=None,
+        help=(
+            "Optional number of all-negative training patches to add for sparse-label mapping. "
+            "Defaults to min(train-positive-patches, available negatives)."
+        ),
+    )
     parser.add_argument("--eval-every", type=int, default=5)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--l2-normalize", action="store_true")
@@ -148,6 +166,54 @@ def resolve_mask(mask_dir: Path, patch_id: str) -> Path:
     if not candidates:
         return exact
     return candidates[-1]
+
+
+def patch_has_positive(mask_dir: Path, patch_id: str) -> bool:
+    mask_path = resolve_mask(mask_dir, patch_id)
+    if not mask_path.exists():
+        raise FileNotFoundError(f"Missing mask for sparse selection: {mask_path}")
+    with rasterio.open(mask_path) as src:
+        mask = src.read(1, masked=True)
+    return bool(np.asarray(mask.filled(0) == 1).any())
+
+
+def select_sparse_train_patch_ids(
+    label_root: Path,
+    train_patch_ids: list[str],
+    fold_idx: int,
+    seed: int,
+    positive_budget: int | None,
+    negative_budget: int | None,
+) -> list[str]:
+    if positive_budget is None:
+        return list(train_patch_ids)
+    if positive_budget <= 0:
+        raise ValueError("--train-positive-patches must be positive when provided")
+
+    mask_dir = label_root / "masks"
+    positives: list[str] = []
+    negatives: list[str] = []
+    for patch_id in train_patch_ids:
+        if patch_has_positive(mask_dir, patch_id):
+            positives.append(patch_id)
+        else:
+            negatives.append(patch_id)
+
+    rng = random.Random(seed + fold_idx * 1009)
+    rng.shuffle(positives)
+    rng.shuffle(negatives)
+    selected_pos = positives[: min(positive_budget, len(positives))]
+    if negative_budget is None:
+        negative_budget = len(selected_pos)
+    selected_neg = negatives[: min(max(0, negative_budget), len(negatives))]
+    selected = selected_pos + selected_neg
+    rng.shuffle(selected)
+    if not selected:
+        raise RuntimeError(
+            f"Sparse selection for fold {fold_idx} produced no train patches: "
+            f"positives={len(positives)} negatives={len(negatives)}"
+        )
+    return selected
 
 
 def build_items(
@@ -477,9 +543,35 @@ def train_fold(
     fold_idx = int(fold_info["fold"])
     out_dir = args.output_root / f"fold_{fold_idx}"
     out_dir.mkdir(parents=True, exist_ok=True)
-    train_items = build_items(embedding_region_root, args.label_root, fold_info["train"], args.month)
+    selected_train_patch_ids = select_sparse_train_patch_ids(
+        label_root=args.label_root,
+        train_patch_ids=list(fold_info["train"]),
+        fold_idx=fold_idx,
+        seed=args.seed,
+        positive_budget=args.train_positive_patches,
+        negative_budget=args.train_negative_patches,
+    )
+    train_items = build_items(embedding_region_root, args.label_root, selected_train_patch_ids, args.month)
     val_items = build_items(embedding_region_root, args.label_root, fold_info["val"], args.month)
     test_items = build_items(embedding_region_root, args.label_root, fold_info["test"], args.month)
+    (out_dir / "sparse_train_selection.json").write_text(
+        json.dumps(
+            {
+                "fold": fold_idx,
+                "seed": args.seed,
+                "train_positive_patches": args.train_positive_patches,
+                "train_negative_patches": args.train_negative_patches,
+                "selected_train_patch_count": len(selected_train_patch_ids),
+                "selected_train_patch_ids": selected_train_patch_ids,
+                "full_train_patch_count": len(fold_info["train"]),
+                "val_patch_count": len(fold_info["val"]),
+                "test_patch_count": len(fold_info["test"]),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     if not args.no_cache_patches:
         LOGGER.info("fold=%d caching patches in memory", fold_idx)
         train_items = cache_items(train_items, l2_normalize=args.l2_normalize)
@@ -618,6 +710,9 @@ def train_fold(
         "cache_device": args.cache_device,
         "eval_cache_device": args.eval_cache_device,
         "trainer": "aef_pixel_probe",
+        "train_positive_patches": args.train_positive_patches,
+        "train_negative_patches": args.train_negative_patches,
+        "selected_train_patch_count": len(selected_train_patch_ids),
     }
     (out_dir / "metrics.json").write_text(
         json.dumps(result, ensure_ascii=False, indent=2),
@@ -670,6 +765,8 @@ def main() -> None:
         "epochs": args.epochs,
         "max_pixels_per_patch": args.max_pixels_per_patch,
         "positive_fraction": args.positive_fraction,
+        "train_positive_patches": args.train_positive_patches,
+        "train_negative_patches": args.train_negative_patches,
         "cache_device": args.cache_device,
         "eval_cache_device": args.eval_cache_device,
     }

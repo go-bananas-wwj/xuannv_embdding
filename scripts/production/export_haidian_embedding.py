@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -33,6 +34,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    repo_root = Path(__file__).resolve().parents[2]
+    pythonpath_parts = [
+        str(repo_root),
+        str(repo_root / "downstreams"),
+    ]
+    if os.environ.get("PYTHONPATH"):
+        pythonpath_parts.append(os.environ["PYTHONPATH"])
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
     cmd = [
         sys.executable,
         "downstreams/scripts/precompute_embeddings.py",
@@ -51,7 +61,7 @@ def main() -> None:
         "--device",
         args.device,
     ]
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True, cwd=repo_root, env=env)
 
 
 if __name__ == "__main__":
