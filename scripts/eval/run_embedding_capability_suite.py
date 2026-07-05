@@ -26,6 +26,18 @@ DEFAULT_TASKS = {
     "rail": "/data/xuannv_embedding/processed/haidian/labels/osm_rail",
     "playground": "/data/xuannv_embedding/processed/haidian/labels/osm_playground",
     "path_walk": "/data/xuannv_embedding/processed/haidian/labels/osm_path_walk",
+    "park": "/data/xuannv_embedding/processed/haidian/labels/osm_park",
+    "garden": "/data/xuannv_embedding/processed/haidian/labels/osm_garden",
+    "pitch": "/data/xuannv_embedding/processed/haidian/labels/osm_pitch",
+    "sports": "/data/xuannv_embedding/processed/haidian/labels/osm_sports",
+    "school": "/data/xuannv_embedding/processed/haidian/labels/osm_school",
+    "university": "/data/xuannv_embedding/processed/haidian/labels/osm_university",
+    "hospital": "/data/xuannv_embedding/processed/haidian/labels/osm_hospital",
+    "parking": "/data/xuannv_embedding/processed/haidian/labels/osm_parking",
+    "forest": "/data/xuannv_embedding/processed/haidian/labels/osm_forest",
+    "grass": "/data/xuannv_embedding/processed/haidian/labels/osm_grass",
+    "retail": "/data/xuannv_embedding/processed/haidian/labels/osm_retail",
+    "research_gov": "/data/xuannv_embedding/processed/haidian/labels/osm_research_gov",
 }
 
 

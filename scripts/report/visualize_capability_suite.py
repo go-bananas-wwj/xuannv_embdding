@@ -41,6 +41,18 @@ TASKS = {
     "rail": {"label_task": "osm_rail", "title": "Rail"},
     "playground": {"label_task": "osm_playground", "title": "Playground"},
     "path_walk": {"label_task": "osm_path_walk", "title": "Path Walk"},
+    "park": {"label_task": "osm_park", "title": "Park"},
+    "garden": {"label_task": "osm_garden", "title": "Garden"},
+    "pitch": {"label_task": "osm_pitch", "title": "Pitch"},
+    "sports": {"label_task": "osm_sports", "title": "Sports"},
+    "school": {"label_task": "osm_school", "title": "School"},
+    "university": {"label_task": "osm_university", "title": "University"},
+    "hospital": {"label_task": "osm_hospital", "title": "Hospital"},
+    "parking": {"label_task": "osm_parking", "title": "Parking"},
+    "forest": {"label_task": "osm_forest", "title": "Forest"},
+    "grass": {"label_task": "osm_grass", "title": "Grass"},
+    "retail": {"label_task": "osm_retail", "title": "Retail"},
+    "research_gov": {"label_task": "osm_research_gov", "title": "Research/Gov"},
 }
 
 
