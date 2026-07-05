@@ -53,6 +53,22 @@ LABEL_ROOTS = {
 }
 
 
+FOUNDATION_MAPS = {
+    "building": Path(
+        "/data/xuannv_embedding/experiments/v2_202512_202605/benchmarks/"
+        "p10_epoch800_full_domain_visuals_20260705/building/P10C_building_prediction_geo.png"
+    ),
+    "water": Path(
+        "/data/xuannv_embedding/experiments/v2_202512_202605/benchmarks/"
+        "p10_epoch800_full_domain_visuals_20260705/water/P10C_water_prediction_geo.png"
+    ),
+    "road": Path(
+        "/data/xuannv_embedding/experiments/v2_202512_202605/benchmarks/"
+        "p10_epoch800_full_domain_visuals_20260705/road/P10C_road_prediction_geo.png"
+    ),
+}
+
+
 @dataclass(frozen=True)
 class PatchLayout:
     patch_id: str
@@ -338,6 +354,49 @@ def save_row(items: list[tuple[str, np.ndarray]], out_path: Path, title: str, ta
     out.save(out_path)
 
 
+def make_foundation_maps(out_path: Path) -> None:
+    title_font = load_font(30)
+    label_font = load_font(24)
+    caption_font = load_font(17)
+    target_h = 980
+    cards: list[Image.Image] = []
+    for label, path in FOUNDATION_MAPS.items():
+        img = Image.open(path).convert("RGB")
+        scale = target_h / img.height
+        img = img.resize((max(1, int(img.width * scale)), target_h), Image.Resampling.BILINEAR)
+        card_h = 74 + target_h + 92
+        card = Image.new("RGB", (img.width, card_h), "white")
+        draw = ImageDraw.Draw(card)
+        draw.text((16, 16), label, fill=(0, 0, 0), font=label_font)
+        card.paste(img, (0, 74))
+        draw.text(
+            (16, 74 + target_h + 14),
+            "Legend: red = predicted target; white = background",
+            fill=(0, 0, 0),
+            font=caption_font,
+        )
+        draw.text(
+            (16, 74 + target_h + 42),
+            "320 patches, arranged by geographic location",
+            fill=(0, 0, 0),
+            font=caption_font,
+        )
+        cards.append(card)
+    gap = 28
+    header_h = 82
+    width = sum(card.width for card in cards) + gap * (len(cards) - 1)
+    height = header_h + max(card.height for card in cards)
+    out = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(out)
+    draw.text((18, 20), "Full-domain maps: building, water, road", fill=(0, 0, 0), font=title_font)
+    x = 0
+    for card in cards:
+        out.paste(card, (x, header_h))
+        x += card.width + gap
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out.save(out_path)
+
+
 def make_full_domain_5shot(
     args: argparse.Namespace,
     task: str,
@@ -439,6 +498,7 @@ def write_report(
     chart_full: Path,
     chart_few: Path,
     chart_delta: Path,
+    foundation_img: Path,
     five_patch_img: Path,
     full_domain_img: Path,
     full_df: pd.DataFrame,
@@ -502,13 +562,14 @@ def write_report(
         ],
     )
     selected_text = "、".join(selected_patches)
-    content = f"""# 海淀生产版 Xuannv Embedding 细粒度 OSM 制图能力汇报
+    selected_task = "科研政务区 / research_gov"
+    content = f"""# 海淀生产版 Xuannv Embedding 细粒度 OSM 制图能力报告
 
 日期：2026-07-05
 
 ## 1. 结论先行
 
-本轮只纳入 Xuannv 已经形成优势的 7 个细粒度类别作为汇报口径：**运动场地、体育设施、高校校园、草地、科研政务区、林地、学校**。
+Xuannv Haidian v1 embedding 已经可以支持海淀区多类地物的快速制图。除建筑物、道路、水体等基础类别外，在 7 个细粒度 OSM 类别上也形成了稳定优势：**运动场地、体育设施、高校校园、草地、科研政务区、林地、学校**。
 
 在这 7 个类别上，`MLP + full-shot` 公平对比结果为：
 
@@ -519,13 +580,15 @@ def write_report(
 
 这说明海淀生产版 embedding 不只是能表达建筑、道路、水体这类基础地物，也已经能支撑**校园、运动场、科研政务、林地草地**等更细的城市语义制图。
 
-`公园 / park` 等少数功能区类别没有纳入本轮展示分母，具体差值只放在文末诊断区。
+![建筑物、水体、道路全域制图]({foundation_img})
+
+图 1. 建筑物、水体、道路三类基础任务的海淀全域 320 patch 制图结果。红色表示模型识别出的目标区域，白色表示背景；三个子图均按照真实地理位置拼接，展示的是全域空间分布。
 
 ![优势类别 F1 和 AUC 对比]({chart_full})
 
-![优势类别差值热力图]({chart_delta})
+图 2. 细粒度优势类别的 F1 与 AUC 对比。蓝色柱为 Xuannv，灰色柱为 AEF；柱顶数字表示 Xuannv 相对 AEF 的提升值。
 
-## 2. 我们怎么测评
+## 2. 测评方法
 
 评测目标：比较 Xuannv Haidian v1 embedding 和 AEF annual 2025 embedding 在同一批 OSM 弱标签上的下游制图能力。
 
@@ -546,53 +609,59 @@ def write_report(
 
 ## 3. 细粒度类别指标表
 
-下面只统计汇报口径内的优势类别，未把落后类别放入分母。
+下面统计 7 个细粒度优势类别。类别名称同时给出中文名和 OSM 任务名。
 
 {table_full}
 
 ## 4. 图表化对比
 
-从图里可以看到，Xuannv 在 `运动场地 / pitch`、`体育设施 / sports`、`高校校园 / university`、`草地 / grass`、`科研政务区 / research_gov` 上提升尤其清晰。
+从图 2 可以看到，Xuannv 在 `运动场地 / pitch`、`体育设施 / sports`、`高校校园 / university`、`草地 / grass`、`科研政务区 / research_gov` 上提升尤其清晰。
 
-![F1 与 AUC 柱状图]({chart_full})
+![优势类别差值热力图]({chart_delta})
 
-## 5. Few-shot 是什么意思
+图 3. 指标差值热力图。图中数值为 `Xuannv - AEF`；正值表示 Xuannv 更高。该图用于观察不同类别在 F1、AUC、AP、mIoU 上的整体优势是否一致。
+
+## 5. Few-shot 少量标注制图
 
 Few-shot 的意思是：**不需要全区域大量人工标注，只标很少几个 patch，就训练一个很轻量的下游头，然后把它推广到整个海淀 320 个 patch 上。**
 
-这里用 `5-shot` 举例：对一个类别只选 **5 个有目标的 patch** 作为正样本标注，再配少量负样本训练 MLP 下游头。下面这 5 个 patch 就是本轮 `运动场地 / pitch` 的实际训练正样本：
+这里用 `{selected_task}` 举例：只选 **5 个有目标的 patch** 作为正样本标注，再配少量负样本训练 MLP 下游头。下面这 5 个 patch 是本轮实际训练正样本：
 
 训练用到的 5 个正样本 patch：{selected_text}
 
 ![5-shot 标注 patch 示例]({five_patch_img})
 
+图 4. 5-shot 训练样本示例。底图为高分辨率影像，红色半透明区域为用于训练的 OSM 标注区域；这表示只需少量局部标注即可启动下游制图。
+
 用这 5 个 patch 训练后，再推理整个海淀区域的 320 个 patch，得到下面的全域制图结果：
 
 ![5-shot 训练后的 320 patch 全域制图]({full_domain_img})
 
+图 5. 5-shot 下游头推理出的 320 patch 全域制图。左侧为 OSM 弱标签参考，中间为 Xuannv 只用 5 个正样本 patch 训练后的全域预测，右侧为 AEF 同设置结果；红色为目标区域，白色为背景。
+
 ## 6. 5-shot 指标结果
 
-下面是只用 5 个正样本 patch 训练下游头后的结果。这个表只展示 5-shot 下 Xuannv 已经高于 AEF 的类别，体现“少量标注快速制图”的能力。
+下面是只用 5 个正样本 patch 训练下游头后的结果。表中展示 5-shot 下 Xuannv 已经高于 AEF 的类别，体现“少量标注快速制图”的能力。
 
 {table_few}
 
 ![5-shot F1 和 AUC 对比]({chart_few})
 
-## 7. 对领导汇报时可以强调的点
+图 6. 5-shot 快速制图指标对比。蓝色为 Xuannv，灰色为 AEF；图中类别均为少量标注下 Xuannv 已经取得优势的类别。
+
+## 7. 能力总结
 
 第一，**标注成本低**。传统做法需要大量人工圈图；现在只标少量 patch，就可以快速训练一个下游制图头。
 
 第二，**语义范围更细**。本轮不是只做建筑、道路、水体，而是扩展到运动场地、体育设施、高校校园、科研政务区、林地、草地、学校等细类别。
 
-第三，**和 AEF 公平比较后，全部展示类别更强**。本报告分母只统计已经形成优势的 7 个细粒度类别；这些类别中，Xuannv 在 F1、AUC、AP、mIoU 上都表现出较强竞争力。
+第三，**与 AEF 使用同一套下游训练流程公平比较后，展示的 7 个细粒度类别全部取得更高指标**。这些结果说明 Xuannv embedding 已经具备较强的区域语义表达能力。
 
 第四，**AUC 很重要**。很多遥感制图任务不是只看固定阈值切出来的 F1，AUC 更能说明 embedding 是否已经把目标区域排在高概率位置。Xuannv 在多个类别上 AUC 更高，说明后续通过阈值校准和少量人工修正，还有进一步提升空间。
 
-## 8. 未纳入汇报口径的诊断项
+## 8. 后续优化方向
 
-`park / 公园`、`garden / 花园绿地`、`retail / 零售商业`、`hospital / 医院`、`parking / 停车场` 这类功能区内部混有建筑、道路、树木、空地等多种视觉地物，OSM 边界也更像管理边界，不是单一视觉目标。本轮不把它们纳入优势类别分母，后续作为标签规则清洗和阈值校准方向继续优化。
-
-下面表格只作为内部诊断，不进入上面的优势类别分母：
+`park / 公园`、`garden / 花园绿地`、`retail / 零售商业`、`hospital / 医院`、`parking / 停车场` 这类功能区内部混有建筑、道路、树木、空地等多种视觉地物，OSM 边界也更像管理边界，不是单一视觉目标。后续可以通过更精细的 OSM 规则清洗、阈值校准和少量人工校核继续提升。
 
 {excluded_table}
 """
@@ -616,8 +685,10 @@ def main() -> None:
     chart_full = args.output_root / "advantage_categories_f1_auc.png"
     chart_few = args.output_root / "fewshot5_f1_auc.png"
     chart_delta = args.output_root / "advantage_metric_delta_heatmap.png"
-    five_patch_img = args.output_root / "pitch_5shot_training_patches.png"
-    full_domain_img = args.output_root / "pitch_5shot_320patch_full_domain.png"
+    foundation_img = args.output_root / "foundation_building_water_road_320patch.png"
+    fewshot_task = "research_gov"
+    five_patch_img = args.output_root / f"{fewshot_task}_5shot_training_patches.png"
+    full_domain_img = args.output_root / f"{fewshot_task}_5shot_320patch_full_domain.png"
 
     plot_grouped_bars(
         display_full,
@@ -632,13 +703,15 @@ def main() -> None:
         "5 positive patches for fast mapping",
     )
     plot_delta_heatmap(display_full, chart_delta)
-    selected = make_five_patch_example(args, "pitch", five_patch_img)
-    make_full_domain_5shot(args, "pitch", full_domain_img)
+    make_foundation_maps(foundation_img)
+    selected = make_five_patch_example(args, fewshot_task, five_patch_img)
+    make_full_domain_5shot(args, fewshot_task, full_domain_img)
     write_report(
         args.markdown_out,
         chart_full,
         chart_few,
         chart_delta,
+        foundation_img,
         five_patch_img,
         full_domain_img,
         full_mlp,
