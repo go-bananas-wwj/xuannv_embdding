@@ -11,9 +11,21 @@
 - Fold：fold0 快速矩阵
 - 公平性：同一训练脚本、同一 split、同一 head、同一 epoch、同一阈值选择方式；只替换 embedding
 
+这里的 `80 个 job` 指 80 次公平下游小实验，不是 80 个 embedding 模型：
+
+`4 个任务 × 2 种 head × 5 种 shot × 2 个 embedding × 1 个 fold = 80`
+
+这里的 `5-shot / 10-shot / 20-shot / 50-shot` 指训练下游头时，只从训练 split 中抽取 5/10/20/50 个“含目标正样本”的训练 patch，再配相同数量的负样本 patch。validation 和 test split 不变。因此它模拟的是“只标很少区域，然后快速制图”的场景。
+
 输出目录：
 
 `/data/xuannv_embedding/experiments/haidian_production_capability_suite_20260705/phase1_fold0_sparse_mapping`
+
+可视化目录：
+
+`/data/xuannv_embedding/experiments/haidian_production_capability_suite_20260705/phase1_visualizations_mlp_full`
+
+可视化设置：`MLP + full-shot + fold0`。每张图上面一行是玄女，下面一行是 AEF；列依次为高分影像、embedding PCA、预测概率、预测 mask、GT。
 
 ## 总体结论
 
@@ -49,6 +61,12 @@
 
 结论：建筑语义已经能被简单 MLP 读出来，说明 embedding 对建筑地物有可用表达；但 5-shot 下还不如 AEF 稳，说明极少样本建筑泛化还可以继续优化。
 
+代表性可视化：
+
+- `/data/xuannv_embedding/experiments/haidian_production_capability_suite_20260705/phase1_visualizations_mlp_full/building/building_mlp_shot_full_patch_000126_compare.png`
+- `/data/xuannv_embedding/experiments/haidian_production_capability_suite_20260705/phase1_visualizations_mlp_full/building/building_mlp_shot_full_patch_000066_compare.png`
+- `/data/xuannv_embedding/experiments/haidian_production_capability_suite_20260705/phase1_visualizations_mlp_full/building/building_mlp_shot_full_patch_000109_compare.png`
+
 ## Road
 
 道路提取是本轮最有价值的证据之一。除 linear 5-shot 外，玄女几乎全面超过 AEF，MLP 在 10/20/50-shot 的优势明显。
@@ -61,6 +79,12 @@
 | mlp | full | 0.5249 | 0.4924 | +0.0326 | 0.5806 | 0.5326 |
 
 结论：道路结构在玄女 embedding 中比较清楚，少量标签加 MLP 就能明显释放能力。下一步应重点做道路全域图和空间连续性检查。
+
+代表性可视化：
+
+- `/data/xuannv_embedding/experiments/haidian_production_capability_suite_20260705/phase1_visualizations_mlp_full/road/road_mlp_shot_full_patch_000096_compare.png`
+- `/data/xuannv_embedding/experiments/haidian_production_capability_suite_20260705/phase1_visualizations_mlp_full/road/road_mlp_shot_full_patch_000245_compare.png`
+- `/data/xuannv_embedding/experiments/haidian_production_capability_suite_20260705/phase1_visualizations_mlp_full/road/road_mlp_shot_full_patch_000079_compare.png`
 
 ## Water
 
@@ -75,6 +99,12 @@
 
 结论：玄女 embedding 对水体有信号，尤其少样本下不弱；但 AEF 的年度稳定表征在 full-shot 水体上仍略好。这个任务要结合可视化判断边界、岛屿和阴影误检。
 
+代表性可视化：
+
+- `/data/xuannv_embedding/experiments/haidian_production_capability_suite_20260705/phase1_visualizations_mlp_full/water/water_mlp_shot_full_patch_000107_compare.png`
+- `/data/xuannv_embedding/experiments/haidian_production_capability_suite_20260705/phase1_visualizations_mlp_full/water/water_mlp_shot_full_patch_000109_compare.png`
+- `/data/xuannv_embedding/experiments/haidian_production_capability_suite_20260705/phase1_visualizations_mlp_full/water/water_mlp_shot_full_patch_000022_compare.png`
+
 ## Construction
 
 施工地是玄女最强优势任务。linear full-shot 中，玄女 F1 为 0.3633，AEF 只有 0.0269；MLP 下玄女也持续领先。
@@ -87,6 +117,14 @@
 | mlp | full | 0.4269 | 0.3710 | +0.0559 | 0.4008 | 0.3398 |
 
 结论：施工地更接近月度状态任务，玄女月度 embedding 明显比 AEF 年度 embedding 更适合。这是我们区别于年度 AEF 的重要卖点。
+
+代表性可视化：
+
+- `/data/xuannv_embedding/experiments/haidian_production_capability_suite_20260705/phase1_visualizations_mlp_full/construction/construction_mlp_shot_full_patch_000154_compare.png`
+- `/data/xuannv_embedding/experiments/haidian_production_capability_suite_20260705/phase1_visualizations_mlp_full/construction/construction_mlp_shot_full_patch_000002_compare.png`
+- `/data/xuannv_embedding/experiments/haidian_production_capability_suite_20260705/phase1_visualizations_mlp_full/construction/construction_mlp_shot_full_patch_000134_compare.png`
+
+注意：施工地总体指标玄女明显更强，但单 patch 波动较大。可视化中存在 AEF 更好的失败案例，说明该任务需要做 5-fold 和错误案例复核，不能只看 fold0 均值。
 
 ## 下游嵌入能力判断
 
