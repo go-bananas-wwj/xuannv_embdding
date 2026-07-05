@@ -19,6 +19,11 @@ LABEL_ROOTS = {
     "water": Path("/data/xuannv_embedding/processed/haidian/labels/osm_water"),
     "road": Path("/data/xuannv_embedding/processed/haidian/labels/road_osm"),
     "research_gov": Path("/data/xuannv_embedding/processed/haidian/labels/osm_research_gov"),
+    "education": Path("/data/xuannv_embedding/processed/haidian/labels/osm_education"),
+    "sports": Path("/data/xuannv_embedding/processed/haidian/labels/osm_sports"),
+    "pitch": Path("/data/xuannv_embedding/processed/haidian/labels/osm_pitch"),
+    "park": Path("/data/xuannv_embedding/processed/haidian/labels/osm_park"),
+    "grass": Path("/data/xuannv_embedding/processed/haidian/labels/osm_grass"),
 }
 
 TASK_CN = {
@@ -26,6 +31,11 @@ TASK_CN = {
     "water": "Water",
     "road": "Road",
     "research_gov": "Research/Gov",
+    "education": "Education",
+    "sports": "Sports",
+    "pitch": "Pitch",
+    "park": "Park",
+    "grass": "Grass",
 }
 
 
@@ -46,6 +56,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--aef-month", default="202512")
     parser.add_argument("--tasks", nargs="+", default=["building", "water", "road"])
     parser.add_argument("--query-patches", type=int, default=5)
+    parser.add_argument("--query-mode", choices=["positive_pixels", "bbox_region"], default="bbox_region")
+    parser.add_argument("--bbox-pad", type=int, default=8)
     parser.add_argument("--output-root", type=Path, required=True)
     return parser.parse_args()
 
@@ -120,15 +132,26 @@ def build_prototype(
     region: str,
     month: str,
     query_layouts: list[PatchLayout],
+    query_mode: str,
+    bbox_pad: int,
 ) -> torch.Tensor:
     vectors: list[torch.Tensor] = []
     for layout in query_layouts:
         emb = load_embedding(root, region, layout.patch_id, month)
         _, height, width = emb.shape
         mask = load_mask(layout.mask_path, (height, width))
-        if mask.any():
+        if not mask.any():
+            continue
+        if query_mode == "positive_pixels":
             pixels = emb[:, torch.from_numpy(mask)].T
-            vectors.append(pixels)
+        else:
+            ys, xs = np.where(mask)
+            y0 = max(int(ys.min()) - bbox_pad, 0)
+            y1 = min(int(ys.max()) + bbox_pad + 1, height)
+            x0 = max(int(xs.min()) - bbox_pad, 0)
+            x1 = min(int(xs.max()) + bbox_pad + 1, width)
+            pixels = emb[:, y0:y1, x0:x1].reshape(emb.shape[0], -1).T
+        vectors.append(pixels)
     if not vectors:
         raise ValueError("No positive query pixels found.")
     proto = torch.cat(vectors, dim=0).mean(dim=0)
@@ -238,7 +261,7 @@ def task_panel(
     label_font = load_font(26)
     small_font = load_font(20)
     draw.text((18, 18), f"{TASK_CN.get(task, task)} / {task}", fill=(0, 0, 0), font=title_font)
-    draw.text((18, 56), "query: " + ", ".join(query_ids), fill=(0, 0, 0), font=small_font)
+    draw.text((18, 56), "ROI query patches: " + ", ".join(query_ids), fill=(0, 0, 0), font=small_font)
     x = label_w
     for title, img in resized:
         draw.multiline_text((x + 8, 14), title, fill=(0, 0, 0), font=label_font, spacing=4)
@@ -257,8 +280,22 @@ def main() -> None:
         layouts, grid_rows, grid_cols, tile_h, tile_w = load_layout(label_root)
         query_layouts = select_query_layouts(layouts, args.query_patches)
         query_ids = [layout.patch_id for layout in query_layouts]
-        x_proto = build_prototype(args.xuannv_root, args.region, args.xuannv_month, query_layouts)
-        a_proto = build_prototype(args.aef_root, args.region, args.aef_month, query_layouts)
+        x_proto = build_prototype(
+            args.xuannv_root,
+            args.region,
+            args.xuannv_month,
+            query_layouts,
+            args.query_mode,
+            args.bbox_pad,
+        )
+        a_proto = build_prototype(
+            args.aef_root,
+            args.region,
+            args.aef_month,
+            query_layouts,
+            args.query_mode,
+            args.bbox_pad,
+        )
 
         x_scores, gt, x_pair = score_full_domain(
             args.xuannv_root, args.region, args.xuannv_month, layouts, x_proto, grid_rows, grid_cols, tile_h, tile_w
@@ -271,6 +308,7 @@ def main() -> None:
         rows.append(
             {
                 "task": task,
+                "query_mode": args.query_mode,
                 "query_patches": ",".join(query_ids),
                 "xuannv_auc": x_metrics["auc"],
                 "aef_auc": a_metrics["auc"],
@@ -298,7 +336,7 @@ def main() -> None:
     height = header_h + sum(panel.height for panel in panels) + gap * (len(panels) - 1)
     out = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(out)
-    draw.text((22, 20), "Training-free query-by-example retrieval on frozen embeddings", fill=(0, 0, 0), font=load_font(38))
+    draw.text((22, 20), "Training-free ROI query retrieval on frozen embeddings", fill=(0, 0, 0), font=load_font(38))
     y = header_h
     for panel in panels:
         out.paste(panel, (0, y))
