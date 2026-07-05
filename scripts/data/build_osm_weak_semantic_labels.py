@@ -13,15 +13,107 @@ from typing import Any
 
 import geopandas as gpd
 import numpy as np
+import osmnx as ox
 import rasterio
 from rasterio.features import rasterize
-from shapely.geometry import box
+from shapely.geometry import box, shape
 
 
 LOGGER = logging.getLogger(__name__)
 
 DEFAULT_PROCESSED_ROOT = Path("/data/xuannv_embedding/processed")
 DEFAULT_CACHE_ROOT = Path("/data/xuannv_embedding/experiments/p3a_osm_semantic_audit_20260629/cache")
+
+REGION_AOI = {
+    "haidian": Path("configs/regions/haidian.geojson"),
+    "harbin": Path("configs/regions/harbin.geojson"),
+}
+
+THEME_TAGS: dict[str, dict[str, Any]] = {
+    "landuse": {
+        "landuse": True,
+        "leisure": True,
+        "amenity": True,
+        "natural": True,
+        "shop": True,
+        "office": True,
+        "tourism": True,
+        "healthcare": True,
+        "parking": True,
+        "sport": True,
+    },
+    "natural": {
+        "natural": True,
+        "water": True,
+        "waterway": True,
+        "leisure": True,
+        "landuse": True,
+        "tourism": True,
+        "sport": True,
+    },
+    "transport": {
+        "highway": True,
+        "railway": True,
+        "aeroway": True,
+        "amenity": True,
+        "leisure": True,
+        "landuse": True,
+    },
+    "built": {
+        "building": True,
+        "man_made": True,
+        "construction": True,
+        "amenity": True,
+        "shop": True,
+        "office": True,
+        "tourism": True,
+        "leisure": True,
+        "landuse": True,
+        "healthcare": True,
+    },
+    "activity": {
+        "amenity": True,
+        "shop": True,
+        "office": True,
+        "tourism": True,
+        "leisure": True,
+        "industrial": True,
+        "healthcare": True,
+        "parking": True,
+        "sport": True,
+        "landuse": True,
+        "natural": True,
+        "building": True,
+    },
+}
+
+OSM_KEEP_COLUMNS = [
+    "element",
+    "id",
+    "osmid",
+    "landuse",
+    "natural",
+    "water",
+    "waterway",
+    "highway",
+    "railway",
+    "aeroway",
+    "building",
+    "building:use",
+    "man_made",
+    "construction",
+    "amenity",
+    "shop",
+    "office",
+    "tourism",
+    "leisure",
+    "industrial",
+    "healthcare",
+    "parking",
+    "sport",
+    "name",
+    "geometry",
+]
 
 ROAD_WIDTH_M = {
     "major": 18.0,
@@ -282,6 +374,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--regions", nargs="+", default=["haidian", "harbin"])
     parser.add_argument("--tasks", nargs="+", default=DEFAULT_TASKS)
     parser.add_argument(
+        "--download-missing-cache",
+        action="store_true",
+        help="Download missing OSM theme caches from OSM using osmnx and the region AOI.",
+    )
+    parser.add_argument(
+        "--overwrite-cache",
+        action="store_true",
+        help="Redownload OSM theme caches before rasterization.",
+    )
+    parser.add_argument(
         "--include-noisy-tasks",
         action="store_true",
         help="Append noisy point-buffer tasks such as osm_activity_poi to the default task list.",
@@ -336,6 +438,66 @@ def load_theme(cache_root: Path, region: str, theme: str) -> gpd.GeoDataFrame:
     if gdf.crs is None:
         gdf = gdf.set_crs("EPSG:4326")
     return gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty].copy()
+
+
+def load_aoi_polygon(region: str) -> Any:
+    path = REGION_AOI.get(region)
+    if path is None:
+        raise KeyError(f"No AOI configured for region: {region}")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    polygon = shape(data["features"][0]["geometry"])
+    if polygon.geom_type != "Polygon":
+        polygon = polygon.convex_hull
+    return polygon
+
+
+def sanitize_osm_cache(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    if gdf.empty:
+        return gpd.GeoDataFrame({"geometry": []}, geometry="geometry", crs="EPSG:4326")
+    out = gdf[[col for col in OSM_KEEP_COLUMNS if col in gdf.columns]].copy()
+    for col in out.columns:
+        if col == "geometry":
+            continue
+        out[col] = out[col].map(
+            lambda value: ",".join(map(str, value))
+            if isinstance(value, list)
+            else (None if value is None else str(value))
+        )
+    return out
+
+
+def read_or_download_theme(
+    cache_root: Path,
+    region: str,
+    theme: str,
+    download_missing: bool,
+    overwrite: bool,
+) -> gpd.GeoDataFrame:
+    path = cache_root / f"{region}_{theme}.gpkg"
+    if path.exists() and not overwrite:
+        return load_theme(cache_root, region, theme)
+    if not download_missing and not overwrite:
+        return load_theme(cache_root, region, theme)
+    if theme not in THEME_TAGS:
+        LOGGER.warning("cannot download unknown OSM theme: %s", theme)
+        return load_theme(cache_root, region, theme)
+
+    LOGGER.info("downloading OSM cache for %s / %s to %s", region, theme, path)
+    polygon = load_aoi_polygon(region)
+    gdf = ox.features_from_polygon(polygon, THEME_TAGS[theme])
+    if gdf.empty:
+        out = gpd.GeoDataFrame({"geometry": []}, geometry="geometry", crs="EPSG:4326")
+    else:
+        out = gdf.reset_index()
+        out = out[out.geometry.notna() & ~out.geometry.is_empty].copy()
+        out = out.set_geometry("geometry")
+        if out.crs is None:
+            out = out.set_crs("EPSG:4326")
+        out = sanitize_osm_cache(out)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    out.to_file(path, driver="GPKG")
+    LOGGER.info("cached %d OSM features to %s", len(out), path)
+    return out
 
 
 def value_mask(gdf: gpd.GeoDataFrame, column: str, values: Any) -> np.ndarray:
@@ -466,7 +628,13 @@ def build_region(args: argparse.Namespace, region: str) -> dict[str, Any]:
     if not refs:
         raise RuntimeError(f"no S2 patch refs found for {region}")
     themes = {
-        theme: load_theme(args.cache_root, region, theme)
+        theme: read_or_download_theme(
+            args.cache_root,
+            region,
+            theme,
+            download_missing=args.download_missing_cache,
+            overwrite=args.overwrite_cache,
+        )
         for theme in sorted({theme for task in args.tasks for theme in TASK_RULES[task]["themes"]})
     }
 
