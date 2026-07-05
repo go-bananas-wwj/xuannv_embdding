@@ -102,6 +102,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--region", default="haidian")
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--markdown-out", type=Path, required=True)
+    parser.add_argument("--retrieval-image", type=Path, default=None)
+    parser.add_argument("--retrieval-metrics", type=Path, default=None)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--chunk-pixels", type=int, default=262144)
     return parser.parse_args()
@@ -154,6 +156,22 @@ def md_table(df: pd.DataFrame, columns: list[tuple[str, str]]) -> str:
             cells.append(fmt(value) if isinstance(value, float) else str(value))
         rows.append("| " + " | ".join(cells) + " |")
     return "\n".join(rows)
+
+
+def read_retrieval_metrics(path: Path | None) -> pd.DataFrame | None:
+    if path is None or not path.exists():
+        return None
+    df = pd.read_csv(path)
+    if df.empty:
+        return None
+    labels = {
+        "building": "建筑物 / building",
+        "water": "水体 / water",
+        "road": "道路 / road",
+        "research_gov": "科研政务区 / research_gov",
+    }
+    df["task_label"] = df["task"].map(labels).fillna(df["task"])
+    return df
 
 
 def plot_grouped_bars(
@@ -558,6 +576,8 @@ def write_report(
     full_df: pd.DataFrame,
     few_df: pd.DataFrame,
     selected_patches: list[str],
+    retrieval_img: Path | None = None,
+    retrieval_metrics: pd.DataFrame | None = None,
 ) -> None:
     display = full_df[full_df["task"].isin(ADVANTAGE_TASKS)].copy()
     display = display.sort_values("delta_f1", ascending=False)
@@ -617,6 +637,44 @@ def write_report(
     )
     selected_text = "、".join(selected_patches)
     selected_task = "科研政务区 / research_gov"
+    retrieval_section = ""
+    if retrieval_img is not None and retrieval_metrics is not None and not retrieval_metrics.empty:
+        retrieval_table = md_table(
+            retrieval_metrics,
+            [
+                ("类别", "task_label"),
+                ("Xuannv AUC", "xuannv_auc"),
+                ("AEF AUC", "aef_auc"),
+                ("ΔAUC", "delta_auc"),
+                ("Xuannv AP", "xuannv_ap"),
+                ("AEF AP", "aef_ap"),
+                ("ΔAP", "delta_ap"),
+            ],
+        )
+        retrieval_section = f"""
+## 8. Feature 读取方式与相似度检索诊断
+
+当前报告中的下游制图不是重新训练一个复杂大模型，而是固定 Xuannv/AEF embedding 后，只接一个逐像素 `linear` 或浅层 `MLP` probe。这个设置的优点是公平、简单，能测试 embedding 是否容易被读出来；局限是它仍然是有监督下游头，不能完全代表 feature 本身的无监督检索能力。
+
+因此这里补充一个 training-free 的 query-by-example 检索实验：只取少量 query patch 中的目标像素，在 embedding 空间里求平均 prototype，然后对全海淀 320 patch 的每个像素计算 cosine similarity。这个实验不训练任何下游头，更直接检验“相似地物在 embedding 空间里是否靠近”。
+
+![Embedding 相似度检索诊断]({retrieval_img})
+
+图 7. Training-free embedding 相似度检索。左列为 OSM 参考标签，中间为 Xuannv embedding 的 cosine similarity 检索结果，右列为 AEF embedding 的同设置结果；颜色越红表示与 query 目标越相似。
+
+{retrieval_table}
+
+这个结果需要分开看：`road / 道路` 上 Xuannv 的 AUC 和 AP 都明显高于 AEF，说明道路结构在当前 embedding 里已经有较好的相似度组织；`building / 建筑物` 基本持平但略低；`water / 水体` 和 `research_gov / 科研政务区` 仍低于 AEF。这说明当前 feature 不是全面强于 AEF，尤其在“无需训练、直接靠相似度检索”的能力上还有明显升级空间。
+
+行业里的 AEF/AlphaEarth、OlmoEarth、Clay、Prithvi 等地理 embedding 通常会同时报告 linear probe、kNN/query-by-example 检索、聚类、变化检测和少量标注制图。只展示 MLP probe 容易把“下游头能学到什么”和“embedding 本身是否有结构”混在一起。后续报告和模型迭代应把相似度检索作为固定评测项。
+
+公开实践参考：
+
+- [Google Satellite Embedding / AlphaEarth Foundations](https://developers.google.com/earth-engine/datasets/catalog/GOOGLE_SATELLITE_EMBEDDING_V1_ANNUAL)：64 维、10 m、unit-length embedding，推荐用于聚类、分类和变化检测，并用 dot product/cosine 表示 embedding 相似度。
+- [Clay Foundation Model](https://clay-foundation.github.io/model/)：强调生成任意位置和时间的 semantic embeddings，并用于 feature search 和下游任务。
+- [OlmoEarth pretrain](https://github.com/allenai/olmoearth_pretrain)：公开 Earth system foundation model 的数据、训练和评测代码。
+- [Prithvi-EO-2.0](https://github.com/NASA-IMPACT/Prithvi-EO-2.0)：使用 GEO-Bench 等标准 benchmark 对 geospatial foundation model 做系统评测。
+"""
     content = f"""# 海淀生产版 Xuannv Embedding 细粒度 OSM 制图能力报告
 
 日期：2026-07-05
@@ -717,7 +775,9 @@ Shot-based 少量标注制图的意思是：**不需要全区域大量人工标�
 
 图 6. 50-shot 快速制图指标对比。蓝色为 Xuannv，灰色为 AEF；图中类别均为少量标注下 Xuannv 已经取得优势的类别。
 
-## 8. 能力总结
+{retrieval_section}
+
+## 9. 能力总结
 
 第一，**标注成本低**。传统做法需要大量人工圈图；现在只标少量 patch，就可以快速训练一个下游制图头。
 
@@ -727,7 +787,7 @@ Shot-based 少量标注制图的意思是：**不需要全区域大量人工标�
 
 第四，**AUC 很重要**。很多遥感制图任务不是只看固定阈值切出来的 F1，AUC 更能说明 embedding 是否已经把目标区域排在高概率位置。Xuannv 在多个类别上 AUC 更高，说明后续通过阈值校准和少量人工修正，还有进一步提升空间。
 
-## 9. 后续优化方向
+## 10. 后续优化方向
 
 `park / 公园`、`garden / 花园绿地`、`retail / 零售商业`、`hospital / 医院`、`parking / 停车场` 这类功能区内部混有建筑、道路、树木、空地等多种视觉地物，OSM 边界也更像管理边界，不是单一视觉目标。后续可以通过更精细的 OSM 规则清洗、阈值校准和少量人工校核继续提升。
 
@@ -759,6 +819,7 @@ def main() -> None:
     fewshot_root = args.phase3_summary.parent
     five_patch_img = args.output_root / f"{fewshot_task}_shot50_training_patches.png"
     full_domain_img = args.output_root / f"{fewshot_task}_shot50_320patch_full_domain.png"
+    retrieval_metrics = read_retrieval_metrics(args.retrieval_metrics)
 
     plot_grouped_bars(
         display_full,
@@ -787,6 +848,8 @@ def main() -> None:
         full_mlp,
         few_mlp,
         selected,
+        args.retrieval_image,
+        retrieval_metrics,
     )
 
 

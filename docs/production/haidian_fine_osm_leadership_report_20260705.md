@@ -113,7 +113,37 @@ Shot-based 少量标注制图的意思是：**不需要全区域大量人工标�
 
 图 6. 50-shot 快速制图指标对比。蓝色为 Xuannv，灰色为 AEF；图中类别均为少量标注下 Xuannv 已经取得优势的类别。
 
-## 8. 能力总结
+
+## 8. Feature 读取方式与相似度检索诊断
+
+当前报告中的下游制图不是重新训练一个复杂大模型，而是固定 Xuannv/AEF embedding 后，只接一个逐像素 `linear` 或浅层 `MLP` probe。这个设置的优点是公平、简单，能测试 embedding 是否容易被读出来；局限是它仍然是有监督下游头，不能完全代表 feature 本身的无监督检索能力。
+
+因此这里补充一个 training-free 的 query-by-example 检索实验：只取少量 query patch 中的目标像素，在 embedding 空间里求平均 prototype，然后对全海淀 320 patch 的每个像素计算 cosine similarity。这个实验不训练任何下游头，更直接检验“相似地物在 embedding 空间里是否靠近”。
+
+![Embedding 相似度检索诊断](assets/haidian_fine_osm_leadership_20260705/embedding_similarity_retrieval.png)
+
+图 7. Training-free embedding 相似度检索。左列为 OSM 参考标签，中间为 Xuannv embedding 的 cosine similarity 检索结果，右列为 AEF embedding 的同设置结果；颜色越红表示与 query 目标越相似。
+
+| 类别 | Xuannv AUC | AEF AUC | ΔAUC | Xuannv AP | AEF AP | ΔAP |
+| --- | --- | --- | --- | --- | --- | --- |
+| 建筑物 / building | 0.8207 | 0.8331 | -0.0125 | 0.2874 | 0.2882 | -0.0008 |
+| 水体 / water | 0.8621 | 0.9202 | -0.0581 | 0.5996 | 0.6608 | -0.0612 |
+| 道路 / road | 0.7790 | 0.7043 | 0.0747 | 0.3739 | 0.2581 | 0.1159 |
+| 科研政务区 / research_gov | 0.7093 | 0.7361 | -0.0268 | 0.0425 | 0.0409 | 0.0016 |
+
+这个结果需要分开看：`road / 道路` 上 Xuannv 的 AUC 和 AP 都明显高于 AEF，说明道路结构在当前 embedding 里已经有较好的相似度组织；`building / 建筑物` 基本持平但略低；`water / 水体` 和 `research_gov / 科研政务区` 仍低于 AEF。这说明当前 feature 不是全面强于 AEF，尤其在“无需训练、直接靠相似度检索”的能力上还有明显升级空间。
+
+行业里的 AEF/AlphaEarth、OlmoEarth、Clay、Prithvi 等地理 embedding 通常会同时报告 linear probe、kNN/query-by-example 检索、聚类、变化检测和少量标注制图。只展示 MLP probe 容易把“下游头能学到什么”和“embedding 本身是否有结构”混在一起。后续报告和模型迭代应把相似度检索作为固定评测项。
+
+公开实践参考：
+
+- [Google Satellite Embedding / AlphaEarth Foundations](https://developers.google.com/earth-engine/datasets/catalog/GOOGLE_SATELLITE_EMBEDDING_V1_ANNUAL)：64 维、10 m、unit-length embedding，推荐用于聚类、分类和变化检测，并用 dot product/cosine 表示 embedding 相似度。
+- [Clay Foundation Model](https://clay-foundation.github.io/model/)：强调生成任意位置和时间的 semantic embeddings，并用于 feature search 和下游任务。
+- [OlmoEarth pretrain](https://github.com/allenai/olmoearth_pretrain)：公开 Earth system foundation model 的数据、训练和评测代码。
+- [Prithvi-EO-2.0](https://github.com/NASA-IMPACT/Prithvi-EO-2.0)：使用 GEO-Bench 等标准 benchmark 对 geospatial foundation model 做系统评测。
+
+
+## 9. 能力总结
 
 第一，**标注成本低**。传统做法需要大量人工圈图；现在只标少量 patch，就可以快速训练一个下游制图头。
 
@@ -123,7 +153,7 @@ Shot-based 少量标注制图的意思是：**不需要全区域大量人工标�
 
 第四，**AUC 很重要**。很多遥感制图任务不是只看固定阈值切出来的 F1，AUC 更能说明 embedding 是否已经把目标区域排在高概率位置。Xuannv 在多个类别上 AUC 更高，说明后续通过阈值校准和少量人工修正，还有进一步提升空间。
 
-## 9. 后续优化方向
+## 10. 后续优化方向
 
 `park / 公园`、`garden / 花园绿地`、`retail / 零售商业`、`hospital / 医院`、`parking / 停车场` 这类功能区内部混有建筑、道路、树木、空地等多种视觉地物，OSM 边界也更像管理边界，不是单一视觉目标。后续可以通过更精细的 OSM 规则清洗、阈值校准和少量人工校核继续提升。
 
