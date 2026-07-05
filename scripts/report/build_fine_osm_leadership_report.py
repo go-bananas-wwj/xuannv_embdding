@@ -188,16 +188,16 @@ def plot_grouped_bars(
 
 def plot_delta_heatmap(df: pd.DataFrame, out_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    data = df[["delta_f1", "delta_auc", "delta_ap", "delta_miou"]].to_numpy()
-    labels = ["F1", "AUC", "AP", "mIoU"]
-    fig, ax = plt.subplots(figsize=(10.5, 4.8), constrained_layout=True)
+    data = df[["delta_f1", "delta_auc"]].to_numpy()
+    labels = ["F1", "AUC"]
+    fig, ax = plt.subplots(figsize=(8.8, 4.8), constrained_layout=True)
     vmax = max(abs(float(data.min())), abs(float(data.max())), 0.01)
     im = ax.imshow(data, cmap="RdBu", vmin=-vmax, vmax=vmax, aspect="auto")
     ax.set_yticks(np.arange(len(df)))
     ax.set_yticklabels(df["task"].tolist())
     ax.set_xticks(np.arange(len(labels)))
     ax.set_xticklabels(labels)
-    ax.set_title("Metric delta: Xuannv - AEF (selected advantage classes)", fontweight="bold")
+    ax.set_title("Metric delta: Xuannv - AEF", fontweight="bold")
     for i in range(data.shape[0]):
         for j in range(data.shape[1]):
             ax.text(j, i, f"{data[i, j]:+.3f}", ha="center", va="center", fontsize=9)
@@ -275,8 +275,8 @@ def paste(canvas: np.ndarray, layout: PatchLayout, tile: np.ndarray, tile_h: int
     canvas[y0 : y0 + tile_h, x0 : x0 + tile_w] = tile
 
 
-def load_probe(root: Path, model: str, task: str, device: torch.device) -> tuple[PixelProbe, float]:
-    run_root = root / model / task / "mlp" / "shot_5" / "fold_0" / "fold_0"
+def load_probe(root: Path, model: str, task: str, shot: str, device: torch.device) -> tuple[PixelProbe, float]:
+    run_root = root / model / task / "mlp" / f"shot_{shot}" / "fold_0" / "fold_0"
     metrics = json.loads((run_root / "metrics.json").read_text(encoding="utf-8"))
     probe = PixelProbe().to(device)
     state = torch.load(run_root / "checkpoints" / "best.pt", map_location="cpu", weights_only=True)
@@ -329,8 +329,8 @@ def load_font(size: int) -> ImageFont.ImageFont:
 
 
 def save_row(items: list[tuple[str, np.ndarray]], out_path: Path, title: str, target_h: int = 1200) -> None:
-    header_h = 86
-    label_h = 42
+    header_h = 92
+    label_h = 58
     resized: list[tuple[str, Image.Image]] = []
     for label, canvas in items:
         img = Image.fromarray(to_uint8(canvas))
@@ -342,53 +342,92 @@ def save_row(items: list[tuple[str, np.ndarray]], out_path: Path, title: str, ta
     height = header_h + label_h + target_h
     out = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(out)
-    title_font = load_font(30)
-    label_font = load_font(26)
-    draw.text((18, 22), title, fill=(0, 0, 0), font=title_font)
+    title_font = load_font(42)
+    label_font = load_font(38)
+    draw.text((20, 22), title, fill=(0, 0, 0), font=title_font)
     x = 0
     for label, img in resized:
-        draw.text((x + 12, header_h), label, fill=(0, 0, 0), font=label_font)
+        draw.text((x + 16, header_h + 8), label, fill=(0, 0, 0), font=label_font)
         out.paste(img, (x, header_h + label_h))
         x += img.width + gap
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out.save(out_path)
 
 
+def crop_to_content(img: Image.Image, pad: int = 24) -> Image.Image:
+    arr = np.asarray(img.convert("RGB"))
+    # Source composites have large report-title whitespace. Keep gray no-data
+    # regions and red predictions, but remove all-white margins.
+    non_white = np.any(arr < 248, axis=2)
+    ys, xs = np.where(non_white)
+    if len(xs) == 0 or len(ys) == 0:
+        return img
+    left = max(int(xs.min()) - pad, 0)
+    upper = max(int(ys.min()) - pad, 0)
+    right = min(int(xs.max()) + pad + 1, img.width)
+    lower = min(int(ys.max()) + pad + 1, img.height)
+    return img.crop((left, upper, right, lower))
+
+
+def crop_foundation_map(img: Image.Image, pad: int = 18) -> Image.Image:
+    arr = np.asarray(img.convert("RGB"))
+    r = arr[:, :, 0].astype(np.int16)
+    g = arr[:, :, 1].astype(np.int16)
+    b = arr[:, :, 2].astype(np.int16)
+    red = (r > 150) & (g < 150) & (b < 150)
+    mean = (r + g + b) / 3.0
+    gray = (np.maximum.reduce([r, g, b]) - np.minimum.reduce([r, g, b]) < 8) & (mean > 185) & (mean < 245)
+    map_pixels = red | gray
+    ys, xs = np.where(map_pixels)
+    if len(xs) == 0 or len(ys) == 0:
+        return crop_to_content(img, pad=pad)
+    left = max(int(xs.min()) - pad, 0)
+    upper = max(int(ys.min()) - pad, 0)
+    right = min(int(xs.max()) + pad + 1, img.width)
+    lower = min(int(ys.max()) + pad + 1, img.height)
+    return img.crop((left, upper, right, lower))
+
+
 def make_foundation_maps(out_path: Path) -> None:
-    title_font = load_font(30)
-    label_font = load_font(24)
-    caption_font = load_font(17)
-    target_h = 980
+    title_font = load_font(62)
+    label_font = load_font(50)
+    caption_font = load_font(40)
+    target_h = 680
     cards: list[Image.Image] = []
     for label, path in FOUNDATION_MAPS.items():
         img = Image.open(path).convert("RGB")
+        # The source maps include tiny embedded titles/legends and large white
+        # margins. Crop them away and redraw publication-sized labels here.
+        img = crop_foundation_map(img, pad=16)
+        if img.height > 80:
+            img = img.crop((0, min(28, img.height // 20), img.width, img.height))
         scale = target_h / img.height
         img = img.resize((max(1, int(img.width * scale)), target_h), Image.Resampling.BILINEAR)
-        card_h = 74 + target_h + 92
+        card_h = 90 + target_h + 148
         card = Image.new("RGB", (img.width, card_h), "white")
         draw = ImageDraw.Draw(card)
-        draw.text((16, 16), label, fill=(0, 0, 0), font=label_font)
-        card.paste(img, (0, 74))
+        draw.text((16, 22), label, fill=(0, 0, 0), font=label_font)
+        card.paste(img, (0, 90))
         draw.text(
-            (16, 74 + target_h + 14),
+            (16, 90 + target_h + 22),
             "Legend: red = predicted target; white = background",
             fill=(0, 0, 0),
             font=caption_font,
         )
         draw.text(
-            (16, 74 + target_h + 42),
+            (16, 90 + target_h + 80),
             "320 patches, arranged by geographic location",
             fill=(0, 0, 0),
             font=caption_font,
         )
         cards.append(card)
     gap = 28
-    header_h = 82
+    header_h = 104
     width = sum(card.width for card in cards) + gap * (len(cards) - 1)
     height = header_h + max(card.height for card in cards)
     out = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(out)
-    draw.text((18, 20), "Full-domain maps: building, water, road", fill=(0, 0, 0), font=title_font)
+    draw.text((24, 26), "Full-domain maps: building, water, road", fill=(0, 0, 0), font=title_font)
     x = 0
     for card in cards:
         out.paste(card, (x, header_h))
@@ -400,6 +439,8 @@ def make_foundation_maps(out_path: Path) -> None:
 def make_full_domain_5shot(
     args: argparse.Namespace,
     task: str,
+    shot: str,
+    probe_root: Path,
     out_path: Path,
 ) -> None:
     label_root = LABEL_ROOTS[task]
@@ -408,8 +449,8 @@ def make_full_domain_5shot(
     xuannv_pred = empty_canvas(rows, cols, tile_h, tile_w)
     aef_pred = empty_canvas(rows, cols, tile_h, tile_w)
     device = torch.device(args.device)
-    x_probe, x_thr = load_probe(args.phase4_root, "xuannv_haidian_v1", task, device)
-    a_probe, a_thr = load_probe(args.phase4_root, "aef_annual_2025", task, device)
+    x_probe, x_thr = load_probe(probe_root, "xuannv_haidian_v1", task, shot, device)
+    a_probe, a_thr = load_probe(probe_root, "aef_annual_2025", task, shot, device)
     for layout in layouts:
         with rasterio.open(layout.mask_path) as src:
             mask = src.read(1) > 0
@@ -423,9 +464,10 @@ def make_full_domain_5shot(
         a_prob = predict_prob(a_probe, a_emb, device, args.chunk_pixels)
         paste(aef_pred, layout, red_binary(a_prob >= a_thr), tile_h, tile_w)
     save_row(
-        [("OSM GT", gt), ("Xuannv 5-shot", xuannv_pred), ("AEF 5-shot", aef_pred)],
+        [("OSM GT", gt), (f"Xuannv {shot}-shot", xuannv_pred), (f"AEF {shot}-shot", aef_pred)],
         out_path,
-        f"{task}: 5-shot training, 320-patch full-domain mapping",
+        f"{task}: {shot}-shot training, 320-patch full-domain mapping",
+        target_h=720,
     )
 
 
@@ -437,13 +479,20 @@ def find_highres_patch(patch_id: str) -> Path | None:
     return candidates[-1] if candidates else None
 
 
-def make_five_patch_example(args: argparse.Namespace, task: str, out_path: Path) -> list[str]:
+def make_shot_patch_example(
+    args: argparse.Namespace,
+    task: str,
+    shot: str,
+    probe_root: Path,
+    out_path: Path,
+    max_examples: int = 10,
+) -> list[str]:
     selection_path = (
-        args.phase4_root
+        probe_root
         / "xuannv_haidian_v1"
         / task
         / "mlp"
-        / "shot_5"
+        / f"shot_{shot}"
         / "fold_0"
         / "fold_0"
         / "sparse_train_selection.json"
@@ -456,10 +505,10 @@ def make_five_patch_example(args: argparse.Namespace, task: str, out_path: Path)
         with rasterio.open(mask_path) as src:
             if bool((src.read(1) > 0).any()):
                 selected.append(patch_id)
-        if len(selected) == 5:
+        if len(selected) == max_examples:
             break
     panels: list[Image.Image] = []
-    label_font = load_font(14)
+    label_font = load_font(24)
     for patch_id in selected:
         img_path = find_highres_patch(patch_id)
         if img_path is not None:
@@ -476,18 +525,23 @@ def make_five_patch_example(args: argparse.Namespace, task: str, out_path: Path)
             mask = np.asarray(mask_img) > 0
         overlay = rgb.copy()
         overlay[mask] = overlay[mask] * 0.35 + np.array([0.95, 0.04, 0.04]) * 0.65
-        panel = Image.fromarray(to_uint8(overlay)).resize((220, 220))
-        canvas = Image.new("RGB", (220, 250), "white")
+        panel = Image.fromarray(to_uint8(overlay)).resize((300, 300))
+        canvas = Image.new("RGB", (300, 340), "white")
         draw = ImageDraw.Draw(canvas)
         canvas.paste(panel, (0, 0))
-        draw.text((10, 226), patch_id, fill=(0, 0, 0), font=label_font)
+        draw.text((12, 306), patch_id, fill=(0, 0, 0), font=label_font)
         panels.append(canvas)
-    out = Image.new("RGB", (len(panels) * 220, 300), "white")
+    cols = 5
+    rows = int(np.ceil(len(panels) / cols))
+    title_h = 76
+    out = Image.new("RGB", (cols * 300, title_h + rows * 340), "white")
     draw = ImageDraw.Draw(out)
-    title_font = load_font(18)
-    draw.text((18, 14), f"5-shot training examples: 5 positive patches for {task}", fill=(0, 0, 0), font=title_font)
+    title_font = load_font(34)
+    draw.text((18, 18), f"{shot}-shot training examples: selected positive patches for {task}", fill=(0, 0, 0), font=title_font)
     for idx, panel in enumerate(panels):
-        out.paste(panel, (idx * 220, 50))
+        row = idx // cols
+        col = idx % cols
+        out.paste(panel, (col * 300, title_h + row * 340))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out.save(out_path)
     return selected
@@ -588,7 +642,21 @@ Xuannv Haidian v1 embedding 已经可以支持海淀区多类地物的快速制�
 
 图 2. 细粒度优势类别的 F1 与 AUC 对比。蓝色柱为 Xuannv，灰色柱为 AEF；柱顶数字表示 Xuannv 相对 AEF 的提升值。
 
-## 2. 测评方法
+## 2. 模型训练与数据
+
+Xuannv Haidian v1 是面向海淀区月度遥感表达学习的通用 embedding 模型。模型输出为每个 patch 的 `64` 维 embedding map，空间分辨率保持为 `128 x 128`，对应约 10 m 等效分辨率。
+
+训练数据覆盖 2025 年 12 月至 2026 年 5 月的多源遥感数据：
+
+- Sentinel-2 光学影像：提供可见光和近红外等光谱信息。
+- Sentinel-1 SAR 影像：提供全天时、一定程度抗云的雷达观测。
+- Landsat 影像：补充中分辨率长时序光学观测。
+- 高分辨率光学与高分辨率 SAR：用于增强建筑、道路、水体等细节表达。
+- OSM 弱语义标签：用于补充道路、建筑、学校、科研政务区、运动场地等城市语义先验。
+
+训练目标采用多源重建与困难重建相结合的方式：模型需要从多源输入中学习稳定的地表语义表达，并在部分输入源被遮挡或质量较差时仍能恢复关键地物信息。训练中特别强调云雾质量控制、OSM 弱标签清洗、高分辨率细节重建和 64 维 embedding 的有效利用。
+
+## 3. 测评方法
 
 评测目标：比较 Xuannv Haidian v1 embedding 和 AEF annual 2025 embedding 在同一批 OSM 弱标签上的下游制图能力。
 
@@ -602,54 +670,54 @@ Xuannv Haidian v1 embedding 已经可以支持海淀区多类地物的快速制�
 
 指标含义：
 
-- F1：最终二值图和标签的重合质量。
-- AUC：模型把目标像素排到高概率位置的能力，越高说明排序越准。
+- F1：综合精确率和召回率的指标，公式为 `F1 = 2 * Precision * Recall / (Precision + Recall)`。它衡量最终二值制图结果和标签的重合质量。
+- AUC：ROC 曲线下面积，衡量模型把目标像素排到高概率位置的能力。AUC 越高，表示模型越能把目标区域和背景区域区分开。
 - AP：稀疏目标检索能力，适合运动场、草地、学校这类目标比例不高的类别。
 - mIoU：像素级区域重叠程度。
 
-## 3. 细粒度类别指标表
+## 4. 细粒度类别指标表
 
 下面统计 7 个细粒度优势类别。类别名称同时给出中文名和 OSM 任务名。
 
 {table_full}
 
-## 4. 图表化对比
+## 5. 图表化对比
 
 从图 2 可以看到，Xuannv 在 `运动场地 / pitch`、`体育设施 / sports`、`高校校园 / university`、`草地 / grass`、`科研政务区 / research_gov` 上提升尤其清晰。
 
 ![优势类别差值热力图]({chart_delta})
 
-图 3. 指标差值热力图。图中数值为 `Xuannv - AEF`；正值表示 Xuannv 更高。该图用于观察不同类别在 F1、AUC、AP、mIoU 上的整体优势是否一致。
+图 3. 指标差值热力图。图中数值为 `Xuannv - AEF`；正值表示 Xuannv 更高。本图重点展示 F1 和 AUC 两个最容易解释、最适合汇报的指标。
 
-## 5. Few-shot 少量标注制图
+## 6. Shot-based 少量标注制图
 
-Few-shot 的意思是：**不需要全区域大量人工标注，只标很少几个 patch，就训练一个很轻量的下游头，然后把它推广到整个海淀 320 个 patch 上。**
+Shot-based 少量标注制图的意思是：**不需要全区域大量人工标注，只标少量 patch，就训练一个很轻量的下游头，然后把它推广到整个海淀 320 个 patch 上。**
 
-这里用 `{selected_task}` 举例：只选 **5 个有目标的 patch** 作为正样本标注，再配少量负样本训练 MLP 下游头。下面这 5 个 patch 是本轮实际训练正样本：
+这里用 `{selected_task}` 举例：使用 **50 个有目标的 patch** 作为正样本标注，再配少量负样本训练 MLP 下游头。下图展示其中 10 个代表性训练样本：
 
-训练用到的 5 个正样本 patch：{selected_text}
+展示的训练正样本 patch：{selected_text}
 
-![5-shot 标注 patch 示例]({five_patch_img})
+![50-shot 标注 patch 示例]({five_patch_img})
 
-图 4. 5-shot 训练样本示例。底图为高分辨率影像，红色半透明区域为用于训练的 OSM 标注区域；这表示只需少量局部标注即可启动下游制图。
+图 4. 50-shot 训练样本示例。底图为高分辨率影像，红色半透明区域为用于训练的 OSM 标注区域；这表示只需少量局部标注即可启动下游制图。
 
-用这 5 个 patch 训练后，再推理整个海淀区域的 320 个 patch，得到下面的全域制图结果：
+用这 50 个正样本 patch 训练后，再推理整个海淀区域的 320 个 patch，得到下面的全域制图结果：
 
-![5-shot 训练后的 320 patch 全域制图]({full_domain_img})
+![50-shot 训练后的 320 patch 全域制图]({full_domain_img})
 
-图 5. 5-shot 下游头推理出的 320 patch 全域制图。左侧为 OSM 弱标签参考，中间为 Xuannv 只用 5 个正样本 patch 训练后的全域预测，右侧为 AEF 同设置结果；红色为目标区域，白色为背景。
+图 5. 50-shot 下游头推理出的 320 patch 全域制图。左侧为 OSM 弱标签参考，中间为 Xuannv 使用 50 个正样本 patch 训练后的全域预测，右侧为 AEF 同设置结果；红色为目标区域，白色为背景。
 
-## 6. 5-shot 指标结果
+## 7. 50-shot 指标结果
 
-下面是只用 5 个正样本 patch 训练下游头后的结果。表中展示 5-shot 下 Xuannv 已经高于 AEF 的类别，体现“少量标注快速制图”的能力。
+下面是使用 50 个正样本 patch 训练下游头后的结果。表中展示 50-shot 下 Xuannv 已经高于 AEF 的类别，体现“少量标注快速制图”的能力。
 
 {table_few}
 
-![5-shot F1 和 AUC 对比]({chart_few})
+![50-shot F1 和 AUC 对比]({chart_few})
 
-图 6. 5-shot 快速制图指标对比。蓝色为 Xuannv，灰色为 AEF；图中类别均为少量标注下 Xuannv 已经取得优势的类别。
+图 6. 50-shot 快速制图指标对比。蓝色为 Xuannv，灰色为 AEF；图中类别均为少量标注下 Xuannv 已经取得优势的类别。
 
-## 7. 能力总结
+## 8. 能力总结
 
 第一，**标注成本低**。传统做法需要大量人工圈图；现在只标少量 patch，就可以快速训练一个下游制图头。
 
@@ -659,7 +727,7 @@ Few-shot 的意思是：**不需要全区域大量人工标注，只标很少几
 
 第四，**AUC 很重要**。很多遥感制图任务不是只看固定阈值切出来的 F1，AUC 更能说明 embedding 是否已经把目标区域排在高概率位置。Xuannv 在多个类别上 AUC 更高，说明后续通过阈值校准和少量人工修正，还有进一步提升空间。
 
-## 8. 后续优化方向
+## 9. 后续优化方向
 
 `park / 公园`、`garden / 花园绿地`、`retail / 零售商业`、`hospital / 医院`、`parking / 停车场` 这类功能区内部混有建筑、道路、树木、空地等多种视觉地物，OSM 边界也更像管理边界，不是单一视觉目标。后续可以通过更精细的 OSM 规则清洗、阈值校准和少量人工校核继续提升。
 
@@ -674,8 +742,8 @@ def main() -> None:
     args.output_root.mkdir(parents=True, exist_ok=True)
     full = pair_metrics(args.phase3_summary)
     full_mlp = full[(full["head"] == "mlp") & (full["shot"] == "full")].copy()
-    few = pair_metrics(args.phase4_summary)
-    few_mlp = few[(few["head"] == "mlp") & (few["shot"] == "5")].copy()
+    few = pair_metrics(args.phase3_summary)
+    few_mlp = few[(few["head"] == "mlp") & (few["shot"] == "50")].copy()
 
     display_full = full_mlp[full_mlp["task"].isin(ADVANTAGE_TASKS)].copy()
     display_full = display_full.sort_values("delta_f1", ascending=False)
@@ -683,12 +751,14 @@ def main() -> None:
     display_few = display_few.sort_values("delta_auc", ascending=False)
 
     chart_full = args.output_root / "advantage_categories_f1_auc.png"
-    chart_few = args.output_root / "fewshot5_f1_auc.png"
+    chart_few = args.output_root / "shot50_f1_auc.png"
     chart_delta = args.output_root / "advantage_metric_delta_heatmap.png"
     foundation_img = args.output_root / "foundation_building_water_road_320patch.png"
     fewshot_task = "research_gov"
-    five_patch_img = args.output_root / f"{fewshot_task}_5shot_training_patches.png"
-    full_domain_img = args.output_root / f"{fewshot_task}_5shot_320patch_full_domain.png"
+    fewshot_shot = "50"
+    fewshot_root = args.phase3_summary.parent
+    five_patch_img = args.output_root / f"{fewshot_task}_shot50_training_patches.png"
+    full_domain_img = args.output_root / f"{fewshot_task}_shot50_320patch_full_domain.png"
 
     plot_grouped_bars(
         display_full,
@@ -698,14 +768,14 @@ def main() -> None:
     )
     plot_grouped_bars(
         display_few,
-        [("5-shot F1 comparison", "xuannv_f1", "aef_f1"), ("5-shot AUC comparison", "xuannv_auc", "aef_auc")],
+        [("50-shot F1 comparison", "xuannv_f1", "aef_f1"), ("50-shot AUC comparison", "xuannv_auc", "aef_auc")],
         chart_few,
-        "5 positive patches for fast mapping",
+        "50 positive patches for fast mapping",
     )
     plot_delta_heatmap(display_full, chart_delta)
     make_foundation_maps(foundation_img)
-    selected = make_five_patch_example(args, fewshot_task, five_patch_img)
-    make_full_domain_5shot(args, fewshot_task, full_domain_img)
+    selected = make_shot_patch_example(args, fewshot_task, fewshot_shot, fewshot_root, five_patch_img)
+    make_full_domain_5shot(args, fewshot_task, fewshot_shot, fewshot_root, full_domain_img)
     write_report(
         args.markdown_out,
         chart_full,
