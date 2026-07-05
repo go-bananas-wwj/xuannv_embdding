@@ -56,16 +56,13 @@ def save_state(path: Path, state: dict[str, Any]) -> None:
 
 def find_embedding_dir(
     embedding_root: Path,
-    experiment_name: str,
     checkpoint_stem: str,
     suffix: str,
 ) -> Path:
-    candidates = sorted(
-        embedding_root.glob(f"*_{experiment_name}_{checkpoint_stem[:8]}_{suffix}")
-    )
+    candidates = sorted(embedding_root.glob(f"*_{checkpoint_stem[:8]}_{suffix}"))
     if not candidates:
         raise FileNotFoundError(
-            f"No embedding dir found for {experiment_name} {checkpoint_stem} {suffix}"
+            f"No embedding dir found for {checkpoint_stem} {suffix}"
         )
     return candidates[-1]
 
@@ -103,7 +100,7 @@ def evaluate_checkpoint(
 ) -> None:
     key = f"{spec.name}:epoch_{epoch}"
     checkpoint = spec.output_dir / f"epoch_{epoch}.pt"
-    if key in state["completed"] or key in state["failed"]:
+    if key in state["completed"]:
         return
     if not checkpoint.exists():
         return
@@ -114,31 +111,33 @@ def evaluate_checkpoint(
     embedding_dir: Path | None = None
 
     try:
-        print(f"[monitor] export {spec.name} epoch {epoch}", flush=True)
-        run_cmd(
-            [
-                sys.executable,
-                "downstreams/scripts/precompute_embeddings.py",
-                "--config",
-                str(spec.config),
-                "--regions",
-                args.region,
-                "--output-root",
-                str(args.embedding_root),
-                "--checkpoint",
-                str(checkpoint),
-                "--suffix",
-                suffix,
-                "--months",
-                args.month,
-                "--device",
-                args.export_device,
-            ],
-            log_path,
-        )
-        embedding_dir = find_embedding_dir(
-            args.embedding_root, spec.name, checkpoint.stem, suffix
-        )
+        try:
+            embedding_dir = find_embedding_dir(args.embedding_root, checkpoint.stem, suffix)
+            print(f"[monitor] reuse embedding {embedding_dir}", flush=True)
+        except FileNotFoundError:
+            print(f"[monitor] export {spec.name} epoch {epoch}", flush=True)
+            run_cmd(
+                [
+                    sys.executable,
+                    "downstreams/scripts/precompute_embeddings.py",
+                    "--config",
+                    str(spec.config),
+                    "--regions",
+                    args.region,
+                    "--output-root",
+                    str(args.embedding_root),
+                    "--checkpoint",
+                    str(checkpoint),
+                    "--suffix",
+                    suffix,
+                    "--months",
+                    args.month,
+                    "--device",
+                    args.export_device,
+                ],
+                log_path,
+            )
+            embedding_dir = find_embedding_dir(args.embedding_root, checkpoint.stem, suffix)
 
         for task, label_root in TASKS.items():
             print(f"[monitor] eval {spec.name} epoch {epoch} task {task}", flush=True)
@@ -188,6 +187,7 @@ def evaluate_checkpoint(
             encoding="utf-8",
         )
         state["completed"][key] = report
+        state["failed"].pop(key, None)
         save_state(args.state_path, state)
         print(f"[monitor] done {spec.name} epoch {epoch}: {summary}", flush=True)
     except Exception as exc:  # noqa: BLE001
