@@ -18,6 +18,14 @@ DEFAULT_TASKS = {
     "road": "/data/xuannv_embedding/processed/haidian/labels/road_osm",
     "water": "/data/xuannv_embedding/processed/haidian/labels/osm_water",
     "construction": "/data/xuannv_embedding/processed/haidian/labels/construction",
+    "green": "/data/xuannv_embedding/processed/haidian/labels/osm_green",
+    "residential": "/data/xuannv_embedding/processed/haidian/labels/osm_residential",
+    "commercial": "/data/xuannv_embedding/processed/haidian/labels/osm_commercial",
+    "industrial": "/data/xuannv_embedding/processed/haidian/labels/osm_industrial",
+    "agriculture": "/data/xuannv_embedding/processed/haidian/labels/osm_agriculture",
+    "rail": "/data/xuannv_embedding/processed/haidian/labels/osm_rail",
+    "playground": "/data/xuannv_embedding/processed/haidian/labels/osm_playground",
+    "path_walk": "/data/xuannv_embedding/processed/haidian/labels/osm_path_walk",
 }
 
 

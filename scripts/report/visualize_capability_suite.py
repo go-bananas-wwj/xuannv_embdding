@@ -33,6 +33,14 @@ TASKS = {
     "road": {"label_task": "road_osm", "title": "Road"},
     "water": {"label_task": "osm_water", "title": "Water"},
     "construction": {"label_task": "construction", "title": "Construction"},
+    "green": {"label_task": "osm_green", "title": "Green"},
+    "residential": {"label_task": "osm_residential", "title": "Residential"},
+    "commercial": {"label_task": "osm_commercial", "title": "Commercial"},
+    "industrial": {"label_task": "osm_industrial", "title": "Industrial"},
+    "agriculture": {"label_task": "osm_agriculture", "title": "Agriculture"},
+    "rail": {"label_task": "osm_rail", "title": "Rail"},
+    "playground": {"label_task": "osm_playground", "title": "Playground"},
+    "path_walk": {"label_task": "osm_path_walk", "title": "Path Walk"},
 }
 
 
