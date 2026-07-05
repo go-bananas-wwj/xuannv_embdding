@@ -17,9 +17,9 @@
 
 `公园 / park` 等少数功能区类别没有纳入本轮展示分母，具体差值只放在文末诊断区。
 
-![优势类别 F1 和 AUC 对比](/data/xuannv_embedding/experiments/haidian_production_capability_suite_20260705/phase4_leadership_report_assets/advantage_categories_f1_auc.png)
+![优势类别 F1 和 AUC 对比](assets/haidian_fine_osm_leadership_20260705/advantage_categories_f1_auc.png)
 
-![优势类别差值热力图](/data/xuannv_embedding/experiments/haidian_production_capability_suite_20260705/phase4_leadership_report_assets/advantage_metric_delta_heatmap.png)
+![优势类别差值热力图](assets/haidian_fine_osm_leadership_20260705/advantage_metric_delta_heatmap.png)
 
 ## 2. 我们怎么测评
 
@@ -58,7 +58,7 @@
 
 从图里可以看到，Xuannv 在 `运动场地 / pitch`、`体育设施 / sports`、`高校校园 / university`、`草地 / grass`、`科研政务区 / research_gov` 上提升尤其清晰。
 
-![F1 与 AUC 柱状图](/data/xuannv_embedding/experiments/haidian_production_capability_suite_20260705/phase4_leadership_report_assets/advantage_categories_f1_auc.png)
+![F1 与 AUC 柱状图](assets/haidian_fine_osm_leadership_20260705/advantage_categories_f1_auc.png)
 
 ## 5. Few-shot 是什么意思
 
@@ -68,11 +68,11 @@ Few-shot 的意思是：**不需要全区域大量人工标注，只标很少几
 
 训练用到的 5 个正样本 patch：patch_000103、patch_000173、patch_000066、patch_000278、patch_000080
 
-![5-shot 标注 patch 示例](/data/xuannv_embedding/experiments/haidian_production_capability_suite_20260705/phase4_leadership_report_assets/pitch_5shot_training_patches.png)
+![5-shot 标注 patch 示例](assets/haidian_fine_osm_leadership_20260705/pitch_5shot_training_patches.png)
 
 用这 5 个 patch 训练后，再推理整个海淀区域的 320 个 patch，得到下面的全域制图结果：
 
-![5-shot 训练后的 320 patch 全域制图](/data/xuannv_embedding/experiments/haidian_production_capability_suite_20260705/phase4_leadership_report_assets/pitch_5shot_320patch_full_domain.png)
+![5-shot 训练后的 320 patch 全域制图](assets/haidian_fine_osm_leadership_20260705/pitch_5shot_320patch_full_domain.png)
 
 ## 6. 5-shot 指标结果
 
@@ -86,7 +86,7 @@ Few-shot 的意思是：**不需要全区域大量人工标注，只标很少几
 | 运动场地 / pitch | 0.0397 | 0.0141 | 0.0256 | 0.5731 | 0.5502 | 0.0229 | 0.0141 | 0.0075 |
 | 学校 / school | 0.0663 | 0.0569 | 0.0094 | 0.6140 | 0.6147 | -0.0007 | 0.0314 | 0.0320 |
 
-![5-shot F1 和 AUC 对比](/data/xuannv_embedding/experiments/haidian_production_capability_suite_20260705/phase4_leadership_report_assets/fewshot5_f1_auc.png)
+![5-shot F1 和 AUC 对比](assets/haidian_fine_osm_leadership_20260705/fewshot5_f1_auc.png)
 
 ## 7. 对领导汇报时可以强调的点
 
