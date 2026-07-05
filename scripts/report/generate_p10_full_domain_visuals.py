@@ -36,6 +36,7 @@ class Spec:
     name: str
     embedding_root: Path
     benchmark_root: Path
+    month: str | None = None
 
 
 @dataclass(frozen=True)
@@ -61,9 +62,10 @@ class PixelProbe(nn.Module):
 
 def parse_spec(raw: str) -> Spec:
     parts = raw.split("|")
-    if len(parts) != 3:
-        raise argparse.ArgumentTypeError("spec must be NAME|EMBEDDING_ROOT|BENCHMARK_ROOT")
-    return Spec(parts[0], Path(parts[1]), Path(parts[2]))
+    if len(parts) not in {3, 4}:
+        raise argparse.ArgumentTypeError("spec must be NAME|EMBEDDING_ROOT|BENCHMARK_ROOT or NAME|EMBEDDING_ROOT|BENCHMARK_ROOT|MONTH")
+    month = parts[3] if len(parts) == 4 and parts[3] else None
+    return Spec(parts[0], Path(parts[1]), Path(parts[2]), month)
 
 
 def parse_args() -> argparse.Namespace:
@@ -78,6 +80,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--chunk-pixels", type=int, default=262144)
     parser.add_argument("--keep-probability-maps", action="store_true")
+    parser.add_argument("--skip-downstream-maps", action="store_true")
     return parser.parse_args()
 
 
@@ -180,7 +183,8 @@ def save_canvas(path: Path, canvas: np.ndarray, title: str | None = None) -> Non
 
 
 def embedding_path(spec: Spec, region: str, patch_id: str, month: str) -> Path:
-    return spec.embedding_root / region / patch_id / f"{month}_embedding_map.pt"
+    spec_month = spec.month or month
+    return spec.embedding_root / region / patch_id / f"{spec_month}_embedding_map.pt"
 
 
 def load_embedding(spec: Spec, region: str, patch_id: str, month: str) -> torch.Tensor:
@@ -372,6 +376,13 @@ def main() -> None:
     pca_compare = output_root / f"p10_embedding_pca_{args.month}_compare.png"
     stack_with_labels(pca_items, pca_compare, f"P10 embedding PCA common projection {args.month}")
     metadata["outputs"].append(str(pca_compare))
+
+    if args.skip_downstream_maps:
+        (output_root / "metadata.json").write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return
 
     for task in args.tasks:
         task_root = output_root / task
