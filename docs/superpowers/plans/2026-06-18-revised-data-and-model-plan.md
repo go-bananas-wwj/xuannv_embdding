@@ -270,7 +270,7 @@ python scripts/data/download_baidu.py --links-file scripts/data/baidu_links_haid
 ### Task 5: 继续并完成 ModelScope 海淀 SAR 数据下载
 
 ```bash
-export MODELSCOPE_TOKEN="<REDACTED_MODELSCOPE_TOKEN>"
+export MODELSCOPE_TOKEN="<MODELSCOPE_TOKEN>"
 python scripts/data/download_modelscope.py \
     --dataset WeijieWu/haidian_sar_2025 \
     --output /data/xuannv_embedding/raw/haidian/highres_sar \

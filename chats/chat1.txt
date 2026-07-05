@@ -25,7 +25,7 @@
 北京海淀区高分辨率数据：beijin_rs_psscene_analytic_sr_udm2.zip链接: https://pan.baidu.com/s/1qkz3Rm4KVLzcGRpmTRXiDg 提取码: srgg 
 哈尔滨新区高分辨率数据：链接: https://pan.baidu.com/s/1yWYbxU6Kr5Fy5X3HlR5cnQ 提取码: srgg 
 然后百度网盘的数据可以在github上面找一个百度网盘的工具登陆我的账号下载
-modelscope的数据可以使用我的账号下载；token：<REDACTED_MODELSCOPE_TOKEN>
+modelscope的数据可以使用我的账号下载；token：<MODELSCOPE_TOKEN>
 
 我是一个不能表达清楚需求的菜鸟，请你这个专家读取上面的内容，和我沟通生成完整的计划，布置好这个项目的agents.md 和之后的执行计划
 

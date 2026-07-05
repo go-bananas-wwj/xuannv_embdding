@@ -431,7 +431,7 @@ Note: The exact Repository API may need adjustment based on modelscope version.
 
 Run:
 ```bash
-export MODELSCOPE_SDK_TOKEN=<REDACTED_MODELSCOPE_TOKEN>
+export MODELSCOPE_SDK_TOKEN=<MODELSCOPE_TOKEN>
 python downstreams/scripts/upload_v1.0_to_modelscope.py
 ```
 

@@ -1,54 +1,133 @@
-# xuannv_embedding
+# 玄女海淀区地理嵌入生产版
 
-基于 AEF（AlphaEarth Foundations）论文的 clean re-implementation，用于生成月度地理嵌入。
+生产版本：`haidian-embedding-v1`
 
-## 核心目标
+分支：`haidian`
 
-- 输入：Sentinel-1、Sentinel-2、Landsat，以及稀疏可得的高分辨率数据（SAR / 光学）。
-- 输出：每个区域每个月的地理嵌入（embedding）。
-- 下游：用简单头（kNN / 几层 MLP）即可做变化检测、土地覆盖分类等任务。
+ModelScope 数据集：[WeijieWu/xuannv_haidian_embdding](https://modelscope.cn/datasets/WeijieWu/xuannv_haidian_embdding)
 
-## 项目状态
+## 这个版本是什么
 
-- [x] 项目计划已制定：见 `docs/superpowers/plans/`
-- [x] 数据下载脚本：PC / ModelScope / 百度网盘三类脚本已完成
-- [x] 预处理 pipeline：对齐、patchify、统计量、manifest 生成已完成
-- [x] 模型实现：多分辨率 STP + TemporalSummarizer + EmbeddingUpsampleHead，128×128 输入输出
-- [x] 数据目录整理：patch / 标签 / 地理辅助 / 元数据 分类目录已建立
-- [x] 全量低分辨率数据已下载并预处理为 128×128 patch
-- [x] 高分辨率数据已下载（哈尔滨 DOM、海淀 PlanetScene、天仪 SAR）
-- [ ] 高分辨率 SAR/光学 patch 预处理（需配准/重采样）
-- [ ] 128×128 全量训练启动
+这是面向北京市海淀区的月度地理 embedding 生产包。模型输入多源遥感数据，输出 128×128 空间分辨率的 64 维地理嵌入。下游只用简单 MLP 头，就可以做建筑提取、道路提取和水体提取。
 
-## 目录约定
+本生产版选择实验 `P10C epoch800` 作为当前最优候选：
 
+- 训练区域：海淀区 320 个 patch
+- 训练月份：2025-12 至 2026-05
+- 生产评估月份：2026-04
+- 输出分辨率：128×128，约 10m 等效分辨率
+- embedding 维度：64
+
+## 当前效果
+
+快速验收方式：202604 月 embedding，固定 fold-0，简单 MLP 下游头。
+
+| 任务 | AP | F1_best |
+|---|---:|---:|
+| 建筑提取 | 0.4392 | 0.4832 |
+| 道路提取 | 0.5726 | 0.5232 |
+| 水体提取 | 0.6092 | 0.6306 |
+| 平均 | - | 0.5457 |
+
+## 320 Patch 全域可视化
+
+以下图片保存在 ModelScope 数据集的 `artifacts/haidian-embedding-v1/visualizations/` 目录。
+
+### Embedding PCA
+
+![P10 embedding PCA](https://modelscope.cn/datasets/WeijieWu/xuannv_haidian_embdding/resolve/master/artifacts/haidian-embedding-v1/visualizations/p10_embedding_pca_202604_compare.png)
+
+### 建筑提取
+
+![Building prediction](https://modelscope.cn/datasets/WeijieWu/xuannv_haidian_embdding/resolve/master/artifacts/haidian-embedding-v1/visualizations/building/building_gt_p10a_p10b_p10c_prediction_compare.png)
+
+### 道路提取
+
+![Road prediction](https://modelscope.cn/datasets/WeijieWu/xuannv_haidian_embdding/resolve/master/artifacts/haidian-embedding-v1/visualizations/road/road_gt_p10a_p10b_p10c_prediction_compare.png)
+
+### 水体提取
+
+![Water prediction](https://modelscope.cn/datasets/WeijieWu/xuannv_haidian_embdding/resolve/master/artifacts/haidian-embedding-v1/visualizations/water/water_gt_p10a_p10b_p10c_prediction_compare.png)
+
+## ModelScope Artifacts
+
+大文件不进入 Git，统一放在 ModelScope：
+
+```text
+artifacts/haidian-embedding-v1/
+  checkpoints/
+    haidian_embedding_v1_p10c_epoch800.pt
+  embeddings/
+    haidian_202512_202605_p10c_epoch800/
+  downstream_heads/
+    building_mlp_fold0_best.pt
+    road_mlp_fold0_best.pt
+    water_mlp_fold0_best.pt
+  visualizations/
+    p10_embedding_pca_202604_compare.png
+    building/
+    road/
+    water/
+  manifests/
+    haidian_artifacts_manifest.json
 ```
-/root/workspace/xuannv/          # 代码根
-/data/xuannv_embedding/          # 数据根
+
+详细清单见 [docs/production/haidian_artifacts_manifest.json](docs/production/haidian_artifacts_manifest.json)。
+
+## 本仓库包含什么
+
+```text
+configs/production/haidian_embedding_v1.yaml
+scripts/production/export_haidian_embedding.py
+scripts/production/run_haidian_downstream_probe.py
+scripts/report/generate_p10_full_domain_visuals.py
+docs/production/haidian_data_card.md
+docs/production/haidian_metrics_report.md
+docs/production/haidian_model_card.md
+docs/production/haidian_artifacts_manifest.json
 ```
 
-数据分类与状态详见：
+## 导出海淀区 Embedding
 
-- 数据盘权威文档：`/data/xuannv_embedding/README.md`
-- 项目侧目录说明：`docs/data_layout.md`
-- 实时数据清单：`docs/data_inventory.md`
-
-## 快速开始
+先从 ModelScope 下载生产权重到本地，然后执行：
 
 ```bash
 cd /root/workspace/xuannv
-conda create -n xuannv_emb python=3.11 -y
-conda activate xuannv_emb
-pip install -e .
-pytest tests/test_manifest.py tests/test_model.py tests/test_train_entry.py -q
+export PYTHONPATH=$PWD/src:$PWD/downstreams:$PYTHONPATH
+export ASCEND_RT_VISIBLE_DEVICES=0
+
+python scripts/production/export_haidian_embedding.py \
+  --checkpoint /path/to/haidian_embedding_v1_p10c_epoch800.pt \
+  --output-root /data/xuannv_embedding/embeddings/production \
+  --months 202512 202601 202602 202603 202604 202605 \
+  --device npu:0
 ```
 
-## 训练
+## 跑下游任务
 
 ```bash
-export ASCEND_RT_VISIBLE_DEVICES=0,1,2,3
-torchrun --nproc_per_node=4 scripts/train/train.py --config configs/harbin_128.yaml
+python scripts/production/run_haidian_downstream_probe.py \
+  --embedding-root /data/xuannv_embedding/embeddings/production/<export_dir> \
+  --output-root /data/xuannv_embedding/experiments/production/haidian_v1_downstream \
+  --month 202604 \
+  --tasks building road water \
+  --device npu:0 \
+  --save-predictions
 ```
 
-> 当前 `configs/harbin_128.yaml` 与 `configs/haidian_128.yaml` 已按 `processed/<region>/patches/`、`labels/`、`metadata/` 的新目录结构配置。
+## 训练数据与训练思路
 
+训练数据只使用海淀区 320 个 patch，时间为 2025-12 至 2026-05。输入包含 Sentinel-2、Sentinel-1、Landsat、高分辨率光学、高分辨率 SAR，以及 OSM 弱语义标签。
+
+训练目标包括：
+
+- 多源重建，让 embedding 保留真实地表信息。
+- 高分辨率重建，让 embedding 保留局部纹理和边界。
+- OSM 弱语义，让 embedding 对建筑、道路、水体等地物更可分。
+- 困难重建，随机遮挡模态、月份和空间块，提高对缺失和噪声的鲁棒性。
+
+## 已知限制
+
+- OSM 是弱标签，存在漏标、错标和时间滞后。
+- 当前版本是海淀区专用生产版，不承诺跨城市泛化。
+- README 指标是 quick eval，不是完整 5-fold 产品验收。

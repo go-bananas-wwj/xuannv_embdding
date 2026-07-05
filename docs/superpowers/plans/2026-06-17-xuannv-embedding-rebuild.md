@@ -704,7 +704,7 @@ if __name__ == "__main__":
 - [ ] **Step 2: 测试下载 sample**
 
 ```bash
-export MODELSCOPE_TOKEN="<REDACTED_MODELSCOPE_TOKEN>"
+export MODELSCOPE_TOKEN="<MODELSCOPE_TOKEN>"
 python scripts/data/download_modelscope.py \
     --dataset WeijieWu/haidian_sar_2025 \
     --output /data/xuannv_embedding/raw/haidian/highres_sar \
@@ -2246,7 +2246,7 @@ git push origin main
 - [ ] **Step 1: 下载天仪 SAR 样本**
 
 ```bash
-export MODELSCOPE_TOKEN="<REDACTED_MODELSCOPE_TOKEN>"
+export MODELSCOPE_TOKEN="<MODELSCOPE_TOKEN>"
 python scripts/data/download_modelscope.py \
     --dataset WeijieWu/haidian_sar_2025 \
     --output /data/xuannv_embedding/raw/haidian/highres_sar \

@@ -135,7 +135,7 @@ git push origin main
 
 ```bash
 cd /root/workspace/xuannv
-export MODELSCOPE_TOKEN="<REDACTED_MODELSCOPE_TOKEN>"
+export MODELSCOPE_TOKEN="<MODELSCOPE_TOKEN>"
 python scripts/data/download_modelscope.py \
     --dataset WeijieWu/haidian_sar_2025 \
     --output /data/xuannv_embedding/raw/haidian/highres_sar \
