@@ -145,6 +145,121 @@ TASK_RULES: dict[str, dict[str, Any]] = {
         "geometry": "mixed",
         "point_buffer_m": 35.0,
     },
+    "osm_park": {
+        "themes": ["activity", "landuse", "natural"],
+        "columns": {"leisure": {"park"}},
+        "geometry": "mixed",
+        "point_buffer_m": 25.0,
+    },
+    "osm_garden": {
+        "themes": ["activity", "landuse"],
+        "columns": {"leisure": {"garden"}},
+        "geometry": "mixed",
+        "point_buffer_m": 20.0,
+    },
+    "osm_pitch": {
+        "themes": ["activity", "built"],
+        "columns": {"leisure": {"pitch"}},
+        "geometry": "mixed",
+        "point_buffer_m": 20.0,
+    },
+    "osm_sports": {
+        "themes": ["activity", "built"],
+        "columns": {
+            "leisure": {"sports_centre", "stadium", "track", "fitness_centre", "sports_hall", "swimming_pool"},
+            "building": {"stadium", "grandstand"},
+        },
+        "geometry": "mixed",
+        "point_buffer_m": 25.0,
+    },
+    "osm_school": {
+        "themes": ["activity", "built", "landuse"],
+        "columns": {
+            "amenity": {"school", "kindergarten", "college"},
+            "building": {"school", "kindergarten", "college"},
+            "landuse": {"education"},
+        },
+        "geometry": "mixed",
+        "point_buffer_m": 45.0,
+    },
+    "osm_university": {
+        "themes": ["activity", "built", "landuse"],
+        "columns": {
+            "amenity": {"university", "college"},
+            "building": {"university", "college", "dormitory"},
+            "office": {"university", "educational_institution"},
+        },
+        "geometry": "mixed",
+        "point_buffer_m": 50.0,
+    },
+    "osm_hospital": {
+        "themes": ["activity", "built", "landuse"],
+        "columns": {
+            "amenity": {"hospital", "clinic"},
+            "healthcare": {"hospital", "clinic"},
+            "building": {"hospital"},
+        },
+        "geometry": "mixed",
+        "point_buffer_m": 45.0,
+    },
+    "osm_parking": {
+        "themes": ["activity", "built", "landuse"],
+        "columns": {
+            "amenity": {"parking", "bicycle_parking", "parking_entrance"},
+            "parking": "__any__",
+            "building": {"parking", "garages"},
+        },
+        "geometry": "mixed",
+        "point_buffer_m": 30.0,
+    },
+    "osm_cemetery": {
+        "themes": ["activity", "landuse"],
+        "columns": {
+            "landuse": {"cemetery"},
+            "amenity": {"grave_yard"},
+        },
+        "geometry": "mixed",
+        "point_buffer_m": 30.0,
+    },
+    "osm_forest": {
+        "themes": ["landuse", "natural", "activity"],
+        "columns": {
+            "landuse": {"forest"},
+            "natural": {"wood"},
+            "leisure": {"nature_reserve"},
+        },
+        "geometry": "mixed",
+        "point_buffer_m": 25.0,
+    },
+    "osm_grass": {
+        "themes": ["landuse", "natural", "activity"],
+        "columns": {
+            "landuse": {"grass", "meadow", "flowerbed", "village_green"},
+            "natural": {"grassland", "grass"},
+        },
+        "geometry": "mixed",
+        "point_buffer_m": 20.0,
+    },
+    "osm_retail": {
+        "themes": ["activity", "built", "landuse"],
+        "columns": {
+            "landuse": {"retail"},
+            "shop": {"mall", "supermarket", "department_store", "convenience"},
+            "building": {"retail"},
+        },
+        "geometry": "mixed",
+        "point_buffer_m": 35.0,
+    },
+    "osm_research_gov": {
+        "themes": ["activity", "built", "landuse"],
+        "columns": {
+            "amenity": {"research_institute", "courthouse", "police"},
+            "office": {"research", "government", "quango"},
+            "landuse": {"governmental", "civic_admin"},
+        },
+        "geometry": "mixed",
+        "point_buffer_m": 45.0,
+    },
 }
 NOISY_DEFAULT_EXCLUDED_TASKS = {"osm_activity_poi"}
 DEFAULT_TASKS = sorted(set(TASK_RULES) - NOISY_DEFAULT_EXCLUDED_TASKS)
