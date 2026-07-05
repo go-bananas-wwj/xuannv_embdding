@@ -32,6 +32,7 @@ DEFAULT_TASKS = {
     "sports": "/data/xuannv_embedding/processed/haidian/labels/osm_sports",
     "school": "/data/xuannv_embedding/processed/haidian/labels/osm_school",
     "university": "/data/xuannv_embedding/processed/haidian/labels/osm_university",
+    "education": "/data/xuannv_embedding/processed/haidian/labels/osm_education",
     "hospital": "/data/xuannv_embedding/processed/haidian/labels/osm_hospital",
     "parking": "/data/xuannv_embedding/processed/haidian/labels/osm_parking",
     "forest": "/data/xuannv_embedding/processed/haidian/labels/osm_forest",
@@ -77,7 +78,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--aef-month", default="202512")
     parser.add_argument("--region", default="haidian")
     parser.add_argument("--tasks", nargs="+", default=list(DEFAULT_TASKS))
-    parser.add_argument("--heads", nargs="+", choices=["linear", "mlp"], default=["linear", "mlp"])
+    parser.add_argument("--heads", nargs="+", choices=["linear", "mlp", "mlp_deep"], default=["linear", "mlp"])
     parser.add_argument(
         "--shots",
         nargs="+",

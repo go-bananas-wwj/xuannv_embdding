@@ -57,6 +57,17 @@ class PixelProbe(nn.Module):
                 nn.ReLU(inplace=True),
                 nn.Linear(hidden_dim, 1),
             )
+        elif head == "mlp_deep":
+            self.net = nn.Sequential(
+                nn.LayerNorm(embed_dim),
+                nn.Linear(embed_dim, hidden_dim * 2),
+                nn.GELU(),
+                nn.Dropout(p=0.10),
+                nn.Linear(hidden_dim * 2, hidden_dim),
+                nn.GELU(),
+                nn.Dropout(p=0.10),
+                nn.Linear(hidden_dim, 1),
+            )
         else:
             raise ValueError(f"Unsupported head: {head}")
 
@@ -75,7 +86,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--fold", type=int, default=None)
     parser.add_argument("--device", default="npu:0")
-    parser.add_argument("--head", choices=["linear", "mlp"], default="mlp")
+    parser.add_argument("--head", choices=["linear", "mlp", "mlp_deep"], default="mlp")
     parser.add_argument("--embed-dim", type=int, default=64)
     parser.add_argument("--hidden-dim", type=int, default=128)
     parser.add_argument("--epochs", type=int, default=50)
