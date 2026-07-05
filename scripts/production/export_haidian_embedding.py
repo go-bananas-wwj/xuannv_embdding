@@ -36,6 +36,7 @@ def main() -> None:
     args = parse_args()
     repo_root = Path(__file__).resolve().parents[2]
     pythonpath_parts = [
+        str(repo_root / "src"),
         str(repo_root),
         str(repo_root / "downstreams"),
     ]
