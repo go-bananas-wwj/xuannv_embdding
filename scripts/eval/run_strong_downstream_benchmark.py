@@ -128,7 +128,7 @@ class DeepLabLite(nn.Module):
         self.low = ConvBlock(base, base * 2)
         self.high = ConvBlock(base * 2, base * 4)
         self.aspp = ASPP(base * 4, base * 2)
-        self.decoder = ConvBlock(base * 3, base)
+        self.decoder = ConvBlock(base * 4, base)
         self.out = nn.Conv2d(base, 1, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
