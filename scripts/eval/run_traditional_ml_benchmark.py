@@ -14,7 +14,7 @@ import numpy as np
 import rasterio
 import torch
 from rasterio.enums import Resampling
-from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
+from sklearn.ensemble import ExtraTreesClassifier, HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     auc,
@@ -96,6 +96,12 @@ def parse_args() -> argparse.Namespace:
             "Optional validation/test sampling budget per patch. By default validation "
             "and test use all pixels. Use this for expensive traditional models."
         ),
+    )
+    parser.add_argument(
+        "--eval-sampling-mode",
+        choices=["uniform", "stratified"],
+        default="uniform",
+        help="Sampling mode for validation/test when --max-eval-pixels-per-patch is set.",
     )
     parser.add_argument("--positive-fraction", type=float, default=0.5)
     parser.add_argument("--predict-all", action="store_true")
@@ -334,6 +340,19 @@ def sample_pixels_from_patch(
     return x[idx], y[idx]
 
 
+def sample_uniform_pixels_from_patch(
+    features: np.ndarray,
+    mask: np.ndarray,
+    max_pixels: int,
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray]:
+    x = features.transpose(1, 2, 0).reshape(-1, features.shape[0])
+    y = mask.reshape(-1).astype(np.uint8)
+    total = min(max_pixels, len(y))
+    idx = rng.choice(len(y), size=total, replace=False)
+    return x[idx], y[idx]
+
+
 def build_dataset(
     records: dict[str, PatchRecord],
     task: TaskSpec,
@@ -345,6 +364,7 @@ def build_dataset(
     max_pixels_per_patch: int | None,
     positive_fraction: float,
     seed: int,
+    sampling_mode: str = "stratified",
 ) -> tuple[np.ndarray, np.ndarray]:
     xs: list[np.ndarray] = []
     ys: list[np.ndarray] = []
@@ -356,7 +376,10 @@ def build_dataset(
             x = fmap.transpose(1, 2, 0).reshape(-1, fmap.shape[0])
             y = mask.reshape(-1).astype(np.uint8)
         else:
-            x, y = sample_pixels_from_patch(fmap, mask, max_pixels_per_patch, positive_fraction, rng)
+            if sampling_mode == "uniform":
+                x, y = sample_uniform_pixels_from_patch(fmap, mask, max_pixels_per_patch, rng)
+            else:
+                x, y = sample_pixels_from_patch(fmap, mask, max_pixels_per_patch, positive_fraction, rng)
         xs.append(x)
         ys.append(y)
     return np.concatenate(xs, axis=0), np.concatenate(ys, axis=0)
@@ -379,6 +402,19 @@ def make_model(name: str, seed: int) -> Any:
             n_jobs=-1,
             class_weight="balanced",
             random_state=seed,
+        )
+    if name in {"hgb", "histgb"}:
+        return make_pipeline(
+            StandardScaler(),
+            HistGradientBoostingClassifier(
+                learning_rate=0.06,
+                max_iter=220,
+                max_leaf_nodes=31,
+                min_samples_leaf=20,
+                l2_regularization=1e-3,
+                class_weight="balanced",
+                random_state=seed,
+            ),
         )
     if name == "logistic":
         return make_pipeline(
@@ -434,7 +470,7 @@ def predict_prob(model: Any, x: np.ndarray) -> np.ndarray:
 
 def compute_metrics(prob: np.ndarray, target: np.ndarray, threshold: float = 0.5) -> dict[str, float | int]:
     target = (target == 1).astype(np.uint8)
-    pred = (prob > threshold).astype(np.uint8)
+    pred = (prob >= threshold).astype(np.uint8)
     tp = int(((pred == 1) & (target == 1)).sum())
     fp = int(((pred == 1) & (target == 0)).sum())
     fn = int(((pred == 0) & (target == 1)).sum())
@@ -478,7 +514,7 @@ def compute_metrics(prob: np.ndarray, target: np.ndarray, threshold: float = 0.5
 
 
 def binary_f1(prob: np.ndarray, target: np.ndarray, threshold: float) -> float:
-    pred = (prob > threshold).astype(np.uint8)
+    pred = (prob >= threshold).astype(np.uint8)
     tp = ((pred == 1) & (target == 1)).sum()
     fp = ((pred == 1) & (target == 0)).sum()
     fn = ((pred == 0) & (target == 1)).sum()
@@ -556,6 +592,7 @@ def main() -> None:
                     args.max_pixels_per_patch,
                     args.positive_fraction,
                     args.seed,
+                    "stratified",
                 )
                 val_x, val_y = build_dataset(
                     records,
@@ -568,6 +605,7 @@ def main() -> None:
                     args.max_eval_pixels_per_patch,
                     args.positive_fraction,
                     args.seed + 17,
+                    args.eval_sampling_mode,
                 )
                 test_x, test_y = build_dataset(
                     records,
@@ -580,6 +618,7 @@ def main() -> None:
                     args.max_eval_pixels_per_patch,
                     args.positive_fraction,
                     args.seed + 31,
+                    args.eval_sampling_mode,
                 )
                 for model_name in args.models:
                     out_dir = args.output_root / task_name / feature_set / model_name / f"shot_{shot}" / f"fold_{args.fold}"
@@ -671,6 +710,7 @@ def main() -> None:
         "fold": args.fold,
         "max_pixels_per_patch": args.max_pixels_per_patch,
         "max_eval_pixels_per_patch": args.max_eval_pixels_per_patch,
+        "eval_sampling_mode": args.eval_sampling_mode,
     }
     (args.output_root / "run_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
