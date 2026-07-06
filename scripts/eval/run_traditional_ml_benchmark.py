@@ -88,6 +88,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fold", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-pixels-per-patch", type=int, default=2048)
+    parser.add_argument(
+        "--max-eval-pixels-per-patch",
+        type=int,
+        default=None,
+        help=(
+            "Optional validation/test sampling budget per patch. By default validation "
+            "and test use all pixels. Use this for expensive traditional models."
+        ),
+    )
     parser.add_argument("--positive-fraction", type=float, default=0.5)
     parser.add_argument("--predict-all", action="store_true")
     parser.add_argument("--smoke-patches", type=int, default=None)
@@ -556,7 +565,7 @@ def main() -> None:
                     args.embedding_root,
                     args.region,
                     args.month,
-                    None,
+                    args.max_eval_pixels_per_patch,
                     args.positive_fraction,
                     args.seed + 17,
                 )
@@ -568,7 +577,7 @@ def main() -> None:
                     args.embedding_root,
                     args.region,
                     args.month,
-                    None,
+                    args.max_eval_pixels_per_patch,
                     args.positive_fraction,
                     args.seed + 31,
                 )
@@ -661,6 +670,7 @@ def main() -> None:
         "shots": args.shots,
         "fold": args.fold,
         "max_pixels_per_patch": args.max_pixels_per_patch,
+        "max_eval_pixels_per_patch": args.max_eval_pixels_per_patch,
     }
     (args.output_root / "run_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
