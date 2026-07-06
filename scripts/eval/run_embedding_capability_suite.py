@@ -17,6 +17,7 @@ DEFAULT_TASKS = {
     "building": "/data/xuannv_embedding/processed/haidian/labels/building_osm",
     "road": "/data/xuannv_embedding/processed/haidian/labels/road_osm",
     "water": "/data/xuannv_embedding/processed/haidian/labels/osm_water",
+    "park_green": "/data/xuannv_embedding/processed/haidian/labels/merged_park_green",
     "construction": "/data/xuannv_embedding/processed/haidian/labels/construction",
     "green": "/data/xuannv_embedding/processed/haidian/labels/osm_green",
     "residential": "/data/xuannv_embedding/processed/haidian/labels/osm_residential",
@@ -32,13 +33,15 @@ DEFAULT_TASKS = {
     "sports": "/data/xuannv_embedding/processed/haidian/labels/osm_sports",
     "school": "/data/xuannv_embedding/processed/haidian/labels/osm_school",
     "university": "/data/xuannv_embedding/processed/haidian/labels/osm_university",
-    "education": "/data/xuannv_embedding/processed/haidian/labels/osm_education",
+    "education": "/data/xuannv_embedding/processed/haidian/labels/merged_education",
+    "education_single": "/data/xuannv_embedding/processed/haidian/labels/osm_education",
     "hospital": "/data/xuannv_embedding/processed/haidian/labels/osm_hospital",
     "parking": "/data/xuannv_embedding/processed/haidian/labels/osm_parking",
     "forest": "/data/xuannv_embedding/processed/haidian/labels/osm_forest",
     "grass": "/data/xuannv_embedding/processed/haidian/labels/osm_grass",
     "retail": "/data/xuannv_embedding/processed/haidian/labels/osm_retail",
     "research_gov": "/data/xuannv_embedding/processed/haidian/labels/osm_research_gov",
+    "sports_pitch": "/data/xuannv_embedding/processed/haidian/labels/merged_sports_pitch",
 }
 
 
