@@ -21,11 +21,15 @@ from scripts.eval.run_traditional_ml_benchmark import (
     DEFAULT_TASKS,
     PatchRecord,
     TaskSpec,
+    add_optical_indices,
     load_binary_mask,
     load_feature_map,
     load_manifest,
     load_split,
+    local_stats,
+    read_raster_mean,
     resolve_mask,
+    safe_index,
     select_train_patch_ids,
     task_spec,
 )
@@ -235,6 +239,67 @@ def make_model(name: str, in_ch: int, base: int) -> nn.Module:
     raise KeyError(f"Unknown model {name}")
 
 
+def zeros(channels: int, shape: tuple[int, int] = (128, 128)) -> np.ndarray:
+    return np.zeros((channels, shape[0], shape[1]), dtype=np.float32)
+
+
+def fixed_highres_feature_map(record: PatchRecord, month: str) -> np.ndarray:
+    parts: list[np.ndarray] = []
+
+    s2 = read_raster_mean(record.sources.get("s2", []), month)
+    if s2 is None:
+        parts.append(zeros(17))
+    else:
+        parts.append(np.concatenate(add_optical_indices(s2, "s2"), axis=0))
+
+    s1 = read_raster_mean(record.sources.get("s1", []), month)
+    if s1 is None:
+        parts.append(zeros(3))
+    else:
+        s1_parts = [s1]
+        if s1.shape[0] >= 2:
+            s1_parts.append(safe_index(s1[0], s1[1])[None, :, :])
+        else:
+            s1_parts.append(zeros(1))
+        parts.append(np.concatenate(s1_parts, axis=0)[:3])
+
+    landsat = read_raster_mean(record.sources.get("landsat", []), month)
+    if landsat is None:
+        parts.append(zeros(12))
+    else:
+        parts.append(np.concatenate(add_optical_indices(landsat, "landsat"), axis=0))
+
+    highres_opt = read_raster_mean(record.sources.get("highres_optical_haidian", []), month)
+    if highres_opt is None:
+        parts.append(zeros(6))
+    else:
+        parts.append(np.concatenate([highres_opt, *local_stats(highres_opt)], axis=0)[:6])
+
+    highres_sar = read_raster_mean(record.sources.get("highres_sar_haidian", []), month)
+    if highres_sar is None:
+        parts.append(zeros(4))
+    else:
+        parts.append(np.concatenate([highres_sar, *local_stats(highres_sar)], axis=0)[:4])
+
+    out = np.concatenate(parts, axis=0).astype(np.float32)
+    if out.shape[0] != 42:
+        raise ValueError(f"Expected 42 fixed highres channels, got {out.shape}")
+    out[~np.isfinite(out)] = 0.0
+    return out
+
+
+def load_benchmark_feature_map(
+    feature_set: str,
+    record: PatchRecord,
+    embedding_root: Path,
+    region: str,
+    month: str,
+) -> np.ndarray:
+    if feature_set == "s2_s1_landsat_highres_indices":
+        return fixed_highres_feature_map(record, month)
+    return load_feature_map(feature_set, record, embedding_root, region, month)
+
+
 def load_patch_tensor(
     records: dict[str, PatchRecord],
     task: TaskSpec,
@@ -244,7 +309,7 @@ def load_patch_tensor(
     region: str,
     month: str,
 ) -> PatchTensor:
-    x = load_feature_map(feature_set, records[patch_id], embedding_root, region, month)
+    x = load_benchmark_feature_map(feature_set, records[patch_id], embedding_root, region, month)
     y = load_binary_mask(task, patch_id)
     if x.shape[-2:] != y.shape:
         raise ValueError(f"Shape mismatch patch={patch_id}: x={x.shape}, y={y.shape}")
