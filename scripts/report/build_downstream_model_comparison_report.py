@@ -317,6 +317,20 @@ def markdown_table(df: pd.DataFrame, cols: list[str]) -> str:
     return "\n".join([header, sep, *body])
 
 
+def mark_xuannv_text(value: Any) -> str:
+    text = str(value)
+    if "Xuannv" not in text:
+        return text
+    return f'<span style="color:#d62728;font-weight:700">{text}</span>'
+
+
+def color_xuannv_ticklabels(axis: Any) -> None:
+    for label in axis.get_xticklabels() + axis.get_yticklabels():
+        if "Xuannv" in label.get_text():
+            label.set_color("#d62728")
+            label.set_fontweight("bold")
+
+
 def best_per_method(df: pd.DataFrame, shot: str) -> pd.DataFrame:
     rows: list[pd.Series] = []
     subset = df[(df["shot"].astype(str) == shot) & (df["status"] == "ok")].copy()
@@ -338,11 +352,12 @@ def plot_heatmap(best: pd.DataFrame, metric: str, out_path: Path, title: str) ->
     ordered_cols = [m for m in METHOD_ORDER if m in pivot.columns]
     pivot = pivot.reindex(index=ordered_rows, columns=ordered_cols)
     plt.figure(figsize=(13.5, 4.8), dpi=180)
-    sns.heatmap(pivot, annot=True, fmt=".3f", cmap="YlOrRd", linewidths=0.5, cbar_kws={"label": metric.upper()})
+    ax = sns.heatmap(pivot, annot=True, fmt=".3f", cmap="YlOrRd", linewidths=0.5, cbar_kws={"label": metric.upper()})
     plt.title(title, fontsize=13, fontweight="bold")
     plt.xlabel("")
     plt.ylabel("")
     plt.xticks(rotation=35, ha="right")
+    color_xuannv_ticklabels(ax)
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, bbox_inches="tight")
@@ -388,7 +403,11 @@ def plot_label_efficiency(df: pd.DataFrame, out_path: Path) -> None:
         ax.set_xlim(2, 79)
         ax.grid(alpha=0.25)
     handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="lower center", ncol=4, frameon=False, fontsize=8)
+    legend = fig.legend(handles, labels, loc="lower center", ncol=4, frameon=False, fontsize=8)
+    for text in legend.get_texts():
+        if "Xuannv" in text.get_text():
+            text.set_color("#d62728")
+            text.set_fontweight("bold")
     fig.suptitle("Label efficiency curves with ordered budgets: 5 -> 10 -> 50 -> Full", fontsize=13, fontweight="bold")
     fig.tight_layout(rect=[0, 0.12, 1, 0.96])
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -477,6 +496,10 @@ def plot_four_way_bars(summary: pd.DataFrame, out_path: Path) -> None:
     ax.set_ylabel("F1@validation threshold")
     ax.set_title("Downstream segmentation performance under the 50-shot protocol")
     ax.legend(ncol=4, loc="upper center", bbox_to_anchor=(0.5, -0.12), frameon=False)
+    for text in ax.get_legend().get_texts():
+        if "Xuannv" in text.get_text():
+            text.set_color("#d62728")
+            text.set_fontweight("bold")
     fig.tight_layout(rect=[0, 0.06, 1, 1])
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, bbox_inches="tight")
@@ -533,6 +556,10 @@ def plot_head_upgrade(summary: pd.DataFrame, out_path: Path) -> None:
     ax.set_xlabel("F1@validation threshold")
     ax.set_title("Effect of upgrading Xuannv from a simple head to a spatial head")
     ax.legend(loc="lower right", frameon=False)
+    for text in ax.get_legend().get_texts():
+        if "Xuannv" in text.get_text() or text.get_text() in {"Linear/MLP", "Spatial head"}:
+            text.set_color("#d62728")
+            text.set_fontweight("bold")
     ax.set_xlim(0, min(0.95, max(plot_df["enhanced_f1"].max(), plot_df["simple_f1"].max()) + 0.12))
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -569,6 +596,10 @@ def plot_ap_f1_scatter(best50: pd.DataFrame, out_path: Path) -> None:
     ax.set_ylabel("Average Precision (AP)")
     ax.set_title("F1-AP distribution across downstream tasks and model families")
     ax.legend(frameon=False, fontsize=9)
+    for text in ax.get_legend().get_texts():
+        if "Xuannv" in text.get_text():
+            text.set_color("#d62728")
+            text.set_fontweight("bold")
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, bbox_inches="tight")
@@ -605,10 +636,11 @@ def plot_baseline_zoo(traditional_all: pd.DataFrame, raw_best50: pd.DataFrame, o
     heat = heat.reindex(index=top_methods, columns=[TASK_LABELS_EN[t] for t in TASK_ORDER])
     heat_path = out_dir / "baseline_zoo_f1_heatmap.png"
     plt.figure(figsize=(10.8, 8.2), dpi=220)
-    sns.heatmap(heat, annot=True, fmt=".3f", cmap="YlGnBu", linewidths=0.45, cbar_kws={"label": "F1"})
+    ax = sns.heatmap(heat, annot=True, fmt=".3f", cmap="YlGnBu", linewidths=0.45, cbar_kws={"label": "F1"})
     plt.title("Baseline zoo: raw supervised networks and traditional ML methods (50-shot)")
     plt.xlabel("")
     plt.ylabel("")
+    color_xuannv_ticklabels(ax)
     plt.tight_layout()
     heat_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(heat_path, bbox_inches="tight")
@@ -624,6 +656,7 @@ def plot_baseline_zoo(traditional_all: pd.DataFrame, raw_best50: pd.DataFrame, o
     ax.set_xlabel("Mean F1 across six tasks")
     ax.set_title("Average 50-shot F1 ranking of all compared baselines")
     ax.set_xlim(0, max(0.85, rank_df["f1"].max() + 0.08))
+    color_xuannv_ticklabels(ax)
     fig.tight_layout()
     plt.savefig(rank_path, bbox_inches="tight")
     plt.close(fig)
@@ -696,9 +729,26 @@ def build_report(args: argparse.Namespace) -> Path:
     simple_table = simple_table[["task_label", "method", "shot", "f1", "ap", "auc"]].rename(
         columns={"task_label": "任务 Task", "method": "方法 Method", "shot": "Shot", "f1": "F1", "ap": "AP", "auc": "AUC"}
     )
-    broad_table = best50[["task_label", "method", "shot", "f1", "ap", "auc"]].copy().rename(
-        columns={"task_label": "任务 Task", "method": "方法 Method", "shot": "Shot", "f1": "F1", "ap": "AP", "auc": "AUC"}
+    all_methods_50_table = all_methods[all_methods["shot"].astype(str) == "50"].copy()
+    all_methods_50_table = all_methods_50_table[
+        ["task_label", "method_family", "method", "shot", "f1", "ap", "auc", "iou", "precision", "recall"]
+    ].rename(
+        columns={
+            "task_label": "任务 Task",
+            "method_family": "方法族 Family",
+            "method": "方法 Method",
+            "shot": "Shot",
+            "f1": "F1",
+            "ap": "AP",
+            "auc": "AUC",
+            "iou": "IoU",
+            "precision": "Precision",
+            "recall": "Recall",
+        }
     )
+    all_methods_50_table = all_methods_50_table.sort_values(["任务 Task", "F1", "AP"], ascending=[True, False, False])
+    all_methods_50_table["方法族 Family"] = all_methods_50_table["方法族 Family"].map(mark_xuannv_text)
+    all_methods_50_table["方法 Method"] = all_methods_50_table["方法 Method"].map(mark_xuannv_text)
 
     copied_visuals = copy_full_domain_visuals(args.traditional_visual_root, args.output_root / "figures" / "full_domain")
     wins = int((summary["enhanced_f1"] >= summary["raw_f1"]).sum())
@@ -823,7 +873,9 @@ def build_report(args: argparse.Namespace) -> Path:
             "",
             "## 12. 附录：全部 50-shot 指标",
             "",
-            markdown_table(broad_table.sort_values(["任务 Task", "方法 Method"]), list(broad_table.columns)),
+            "下表把所有 50-shot 实验放在同一张表里，包括 traditional ML、raw-feature 强监督网络、玄女 Linear/MLP，以及玄女 PixelConv/U-Net/DeepLab-lite/SegFormer-lite 增强下游头。红色加粗表示玄女相关方法。",
+            "",
+            markdown_table(all_methods_50_table, list(all_methods_50_table.columns)),
             "",
         ]
     )
