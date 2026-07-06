@@ -84,6 +84,13 @@ FEATURE_NAMES = {
     "xuannv_embedding": "Xuannv Emb.",
 }
 
+FEATURE_DESCRIPTIONS = {
+    "S2": "Sentinel-2 光学指数/波段特征",
+    "S2+S1+Landsat": "Sentinel-2、Sentinel-1 SAR、Landsat 多源指数特征",
+    "S2+S1+Landsat+HR": "Sentinel-2、Sentinel-1、Landsat 加高分光学/高分 SAR 特征",
+    "Xuannv Emb.": "玄女海淀 V1 生成的 64 维 embedding",
+}
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build paper-style downstream model comparison report.")
@@ -322,6 +329,103 @@ def mark_xuannv_text(value: Any) -> str:
     if "Xuannv" not in text:
         return text
     return f'<span style="color:#d62728;font-weight:700">{text}</span>'
+
+
+def describe_method(method: str) -> tuple[str, str, str]:
+    if method == "Xuannv Linear":
+        return (
+            "玄女简单头",
+            "输入为冻结的玄女 64 维 embedding；每个像素接一个线性分类器，不使用邻域卷积。",
+            "用于验证 embedding 线性可分性，代表最简单、成本最低的下游用法。",
+        )
+    if method == "Xuannv MLP":
+        return (
+            "玄女简单头",
+            "输入为冻结的玄女 64 维 embedding；每个像素接一个小型 MLP，不显式使用空间上下文。",
+            "用于验证少量非线性变换能否从 embedding 中读出地物语义。",
+        )
+    if method == "Xuannv PixelConv":
+        return (
+            "玄女增强头",
+            "输入为冻结的玄女 embedding；使用轻量卷积像素头进行分割。",
+            "比 MLP 多一点局部空间建模能力，训练成本仍较低。",
+        )
+    if method == "Xuannv U-Net":
+        return (
+            "玄女增强头",
+            "输入为冻结的玄女 embedding；下游头为 U-Net 风格分割网络。",
+            "用于比较 embedding 加空间上下文后，在边界和连通区域上的提升。",
+        )
+    if method == "Xuannv DeepLab-lite":
+        return (
+            "玄女增强头",
+            "输入为冻结的玄女 embedding；下游头为轻量 DeepLab/空洞卷积分割头。",
+            "用于补充多尺度上下文建模能力。",
+        )
+    if method == "Xuannv SegFormer-lite":
+        return (
+            "玄女增强头",
+            "输入为冻结的玄女 embedding；下游头为轻量 SegFormer 风格分割网络。",
+            "用于测试 transformer/多尺度解码头读取 embedding 的能力。",
+        )
+    if method == "Raw U-Net":
+        return (
+            "Raw 强监督",
+            "不使用玄女 embedding；直接输入多源原始特征，训练 U-Net 分割网络。",
+            "代表业务中常见的端到端强监督分割 baseline。",
+        )
+    if method == "Raw DeepLab-lite":
+        return (
+            "Raw 强监督",
+            "不使用玄女 embedding；直接输入多源原始特征，训练轻量 DeepLab 分割网络。",
+            "用于和玄女 DeepLab-lite 在同类下游头下公平比较。",
+        )
+    if method == "Raw SegFormer-lite":
+        return (
+            "Raw 强监督",
+            "不使用玄女 embedding；直接输入多源原始特征，训练轻量 SegFormer 分割网络。",
+            "用于比较 raw feature 与玄女 embedding 在 transformer 风格分割头上的差异。",
+        )
+    if " (" in method and method.endswith(")"):
+        model, feature = method[:-1].split(" (", 1)
+        model_desc = {
+            "RF": "Random Forest 随机森林",
+            "ExtraTrees": "Extremely Randomized Trees 极端随机树",
+            "HistGB": "Histogram Gradient Boosting 直方图梯度提升树",
+            "Logistic": "Logistic Regression 逻辑回归",
+            "KNN": "K-Nearest Neighbors K 近邻",
+            "SVM": "Support Vector Machine 支持向量机",
+        }.get(model, model)
+        feature_desc = FEATURE_DESCRIPTIONS.get(feature, feature)
+        return (
+            "传统机器学习",
+            f"模型为 {model_desc}；括号内 `{feature}` 表示输入特征为{feature_desc}。",
+            "按像素采样训练传统分类器，不使用深度分割网络；用于衡量传统方法和特征组合的上限。",
+        )
+    if method == "Best Traditional ML":
+        return (
+            "传统机器学习",
+            "每个任务/shot 从所有传统机器学习组合中选择验证集表现最好的一个。",
+            "用于主图中代表传统 ML 方法池的最强结果。",
+        )
+    return ("其他", method, "")
+
+
+def build_method_glossary(methods: list[str], *, highlight: bool) -> pd.DataFrame:
+    rows: list[dict[str, str]] = []
+    for method in methods:
+        family, input_training, purpose = describe_method(method)
+        display_method = mark_xuannv_text(method) if highlight else method
+        display_family = mark_xuannv_text(family) if highlight and "Xuannv" in method else family
+        rows.append(
+            {
+                "方法 Method": display_method,
+                "类别 Family": display_family,
+                "输入与训练方式": input_training,
+                "图中含义": purpose,
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def color_xuannv_ticklabels(axis: Any) -> None:
@@ -749,6 +853,29 @@ def build_report(args: argparse.Namespace) -> Path:
     all_methods_50_table = all_methods_50_table.sort_values(["任务 Task", "F1", "AP"], ascending=[True, False, False])
     all_methods_50_table["方法族 Family"] = all_methods_50_table["方法族 Family"].map(mark_xuannv_text)
     all_methods_50_table["方法 Method"] = all_methods_50_table["方法 Method"].map(mark_xuannv_text)
+    glossary_methods = []
+    for method in [
+        "Xuannv Linear",
+        "Xuannv MLP",
+        "Xuannv PixelConv",
+        "Xuannv U-Net",
+        "Xuannv DeepLab-lite",
+        "Xuannv SegFormer-lite",
+        "Raw U-Net",
+        "Raw DeepLab-lite",
+        "Raw SegFormer-lite",
+    ]:
+        if method in set(all_methods["method"].astype(str)):
+            glossary_methods.append(method)
+    glossary_methods.extend(
+        sorted(
+            method
+            for method in set(all_methods["method"].astype(str))
+            if method not in glossary_methods and ("(" in method or method == "Best Traditional ML")
+        )
+    )
+    method_glossary = build_method_glossary(glossary_methods, highlight=True)
+    build_method_glossary(glossary_methods, highlight=False).to_csv(args.output_root / "method_glossary.csv", index=False)
 
     copied_visuals = copy_full_domain_visuals(args.traditional_visual_root, args.output_root / "figures" / "full_domain")
     wins = int((summary["enhanced_f1"] >= summary["raw_f1"]).sum())
@@ -814,6 +941,12 @@ def build_report(args: argparse.Namespace) -> Path:
         "## 6. Baseline zoo：所有传统方法和强监督模型",
         "",
         "除了主图中的四类方法，本节把之前跑过的传统机器学习方法全部放进来，包括 RF、ExtraTrees、HistGradientBoosting、Logistic Regression，以及不同输入特征组合；同时也包含 raw U-Net、raw DeepLab-lite、raw SegFormer-lite。这样可以看出玄女不是只和一个弱 baseline 比，而是和一组传统/强监督方法池对比。",
+        "",
+        "读图时，纵坐标采用 `模型名 (输入特征)` 的格式。例如 `RF (S2)` 表示使用 Sentinel-2 特征训练随机森林；`ExtraTrees (Xuannv Emb.)` 表示使用玄女 embedding 训练极端随机树；`Raw U-Net` 表示不用玄女 embedding，直接用原始多源特征训练 U-Net；`Xuannv U-Net` 表示冻结玄女 embedding 后，在其上训练 U-Net 下游头。红色加粗的方法均与玄女 embedding 有关。",
+        "",
+        "### 方法图例与实验做法",
+        "",
+        markdown_table(method_glossary, list(method_glossary.columns)),
         "",
         "对应的完整明细已汇总到 `all_methods_metrics.csv`；其中同时包含玄女 Linear/MLP、玄女空间头、raw-feature 强监督网络，以及全部 traditional ML 方法。若只看 50-shot 主实验，可直接使用 `all_methods_50shot_metrics.csv`。",
         "",
