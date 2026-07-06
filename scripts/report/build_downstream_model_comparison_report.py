@@ -67,6 +67,23 @@ FAMILY_COLORS = {
     "Traditional ML": "#9D755D",
 }
 
+TRAD_MODEL_NAMES = {
+    "rf": "RF",
+    "extratrees": "ExtraTrees",
+    "hgb": "HistGB",
+    "histgb": "HistGB",
+    "logistic": "Logistic",
+    "knn": "KNN",
+    "svm": "SVM",
+}
+
+FEATURE_NAMES = {
+    "s2_indices": "S2",
+    "s2_s1_landsat_indices": "S2+S1+Landsat",
+    "s2_s1_landsat_highres_indices": "S2+S1+Landsat+HR",
+    "xuannv_embedding": "Xuannv Emb.",
+}
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build paper-style downstream model comparison report.")
@@ -215,6 +232,24 @@ def collect_traditional(root: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def collect_traditional_all(root: Path) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    if not root.exists():
+        return pd.DataFrame()
+    for path in root.glob("**/metrics.json"):
+        record = json.loads(path.read_text(encoding="utf-8"))
+        if record.get("status") != "ok":
+            continue
+        feature = str(record.get("feature_set", ""))
+        model = str(record.get("model", ""))
+        method = f"{TRAD_MODEL_NAMES.get(model, model)} ({FEATURE_NAMES.get(feature, feature)})"
+        row = metric_row(path, record, "traditional_ml_all", method)
+        row["feature_set"] = feature
+        row["model"] = model
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def markdown_table(df: pd.DataFrame, cols: list[str]) -> str:
     view = df[cols].copy()
     for col in view.columns:
@@ -261,26 +296,47 @@ def plot_heatmap(best: pd.DataFrame, metric: str, out_path: Path, title: str) ->
 
 
 def plot_label_efficiency(df: pd.DataFrame, out_path: Path) -> None:
-    subset = df[(df["task"].isin(TASK_ORDER)) & (df["method"].isin(["Xuannv Linear", "Xuannv MLP", "Raw U-Net", "Raw SegFormer-lite"]))]
+    subset = df[
+        (df["task"].isin(TASK_ORDER))
+        & (
+            df["method"].isin(
+                [
+                    "Xuannv Linear",
+                    "Xuannv MLP",
+                    "Xuannv U-Net",
+                    "Xuannv SegFormer-lite",
+                    "Raw U-Net",
+                    "Raw DeepLab-lite",
+                    "Raw SegFormer-lite",
+                    "Best Traditional ML",
+                ]
+            )
+        )
+    ]
     subset = subset[subset["shot"].astype(str).isin(["5", "10", "50", "full"])].copy()
     subset["task_label"] = subset["task"].map(TASK_LABELS_EN)
     tasks = [task for task in TASK_ORDER if task in set(subset["task"])]
-    fig, axes = plt.subplots(2, 3, figsize=(14, 7.5), dpi=180, sharey=False)
+    shot_pos = {"5": 5, "10": 10, "50": 50, "full": 75}
+    fig, axes = plt.subplots(2, 3, figsize=(15.2, 7.8), dpi=180, sharey=False)
     axes = axes.reshape(-1)
     for ax, task in zip(axes, tasks, strict=False):
         g = subset[subset["task"] == task]
         for method, mg in g.groupby("method"):
             order = ["5", "10", "50", "full"]
             mg = mg.assign(_order=mg["shot"].astype(str).map({v: i for i, v in enumerate(order)})).sort_values("_order")
-            ax.plot(mg["shot"].astype(str), mg["f1"], marker="o", label=method)
+            x = mg["shot"].astype(str).map(shot_pos)
+            ax.plot(x, mg["f1"], marker="o", linewidth=1.6, label=method)
         ax.set_title(TASK_LABELS_EN.get(task, task), fontsize=10)
         ax.set_xlabel("Label budget")
         ax.set_ylabel("F1@val threshold")
+        ax.set_xticks([5, 10, 50, 75])
+        ax.set_xticklabels(["5", "10", "50", "Full"])
+        ax.set_xlim(2, 79)
         ax.grid(alpha=0.25)
     handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="lower center", ncol=4, frameon=False)
-    fig.suptitle("Label efficiency: simple Xuannv heads vs supervised raw-feature models", fontsize=13, fontweight="bold")
-    fig.tight_layout(rect=[0, 0.08, 1, 0.96])
+    fig.legend(handles, labels, loc="lower center", ncol=4, frameon=False, fontsize=8)
+    fig.suptitle("Label efficiency curves with ordered budgets: 5 -> 10 -> 50 -> Full", fontsize=13, fontweight="bold")
+    fig.tight_layout(rect=[0, 0.12, 1, 0.96])
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
@@ -465,6 +521,61 @@ def plot_ap_f1_scatter(best50: pd.DataFrame, out_path: Path) -> None:
     plt.close(fig)
 
 
+def plot_baseline_zoo(traditional_all: pd.DataFrame, raw_best50: pd.DataFrame, out_dir: Path) -> tuple[Path, Path]:
+    trad = traditional_all[
+        (traditional_all["shot"].astype(str) == "50")
+        & (traditional_all["status"] == "ok")
+        & (traditional_all["source"] == "traditional_ml_all")
+    ].copy()
+    raw = raw_best50[
+        (raw_best50["shot"].astype(str) == "50")
+        & (raw_best50["status"] == "ok")
+        & (raw_best50["method"].astype(str).str.startswith("Raw"))
+    ].copy()
+    raw = raw.assign(source="raw_supervised_zoo")
+    zoo = pd.concat([trad, raw], ignore_index=True, sort=False)
+    zoo = zoo[zoo["task"].isin(TASK_ORDER)].copy()
+    zoo["task_label_en"] = zoo["task"].map(TASK_LABELS_EN)
+    zoo["f1"] = pd.to_numeric(zoo["f1"], errors="coerce")
+    zoo["ap"] = pd.to_numeric(zoo["ap"], errors="coerce")
+    zoo["auc"] = pd.to_numeric(zoo["auc"], errors="coerce")
+
+    method_mean = zoo.groupby("method", as_index=False)["f1"].mean().sort_values("f1", ascending=False)
+    top_methods = method_mean.head(18)["method"].tolist()
+    heat = zoo[zoo["method"].isin(top_methods)].pivot_table(
+        index="method",
+        columns="task_label_en",
+        values="f1",
+        aggfunc="max",
+    )
+    heat = heat.reindex(index=top_methods, columns=[TASK_LABELS_EN[t] for t in TASK_ORDER])
+    heat_path = out_dir / "baseline_zoo_f1_heatmap.png"
+    plt.figure(figsize=(10.8, 8.2), dpi=220)
+    sns.heatmap(heat, annot=True, fmt=".3f", cmap="YlGnBu", linewidths=0.45, cbar_kws={"label": "F1"})
+    plt.title("Baseline zoo: raw supervised networks and traditional ML methods (50-shot)")
+    plt.xlabel("")
+    plt.ylabel("")
+    plt.tight_layout()
+    heat_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(heat_path, bbox_inches="tight")
+    plt.close()
+
+    rank_path = out_dir / "baseline_zoo_average_f1_rank.png"
+    rank_df = method_mean.head(18).sort_values("f1")
+    colors = ["#54A24B" if method.startswith("Raw") else "#9D755D" if "Xuannv Emb." not in method else "#4C78A8" for method in rank_df["method"]]
+    fig, ax = plt.subplots(figsize=(9.8, 7.0), dpi=220)
+    ax.barh(rank_df["method"], rank_df["f1"], color=colors)
+    for y, value in enumerate(rank_df["f1"]):
+        ax.text(value + 0.006, y, f"{value:.3f}", va="center", fontsize=8)
+    ax.set_xlabel("Mean F1 across six tasks")
+    ax.set_title("Average 50-shot F1 ranking of all compared baselines")
+    ax.set_xlim(0, max(0.85, rank_df["f1"].max() + 0.08))
+    fig.tight_layout()
+    plt.savefig(rank_path, bbox_inches="tight")
+    plt.close(fig)
+    return heat_path, rank_path
+
+
 def copy_full_domain_visuals(visual_root: Path, out_dir: Path) -> list[tuple[str, Path]]:
     out_dir.mkdir(parents=True, exist_ok=True)
     copied: list[tuple[str, Path]] = []
@@ -486,12 +597,17 @@ def build_report(args: argparse.Namespace) -> Path:
     rows.extend(collect_linear_mlp(args.linear_mlp_root))
     rows.extend(collect_strong(args.strong_roots))
     rows.extend(collect_traditional(args.traditional_root))
+    traditional_all = collect_traditional_all(args.traditional_root)
     df = pd.DataFrame(rows)
     if df.empty:
         raise RuntimeError("No metrics found.")
     for col in ["f1", "ap", "auc", "iou", "precision", "recall"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df.to_csv(args.output_root / "all_downstream_metrics.csv", index=False)
+    if not traditional_all.empty:
+        for col in ["f1", "ap", "auc", "iou", "precision", "recall"]:
+            traditional_all[col] = pd.to_numeric(traditional_all[col], errors="coerce")
+        traditional_all.to_csv(args.output_root / "all_traditional_ml_metrics.csv", index=False)
 
     best50 = best_per_method(df, "50")
     plot_heatmap(best50, "f1", args.output_root / "figures" / "shot50_f1_heatmap.png", "F1 comparison under 50-shot labels")
@@ -517,6 +633,7 @@ def build_report(args: argparse.Namespace) -> Path:
     plot_xuannv_vs_raw_delta(summary, args.output_root / "figures" / "xuannv_vs_raw_relative_gain.png")
     plot_head_upgrade(summary, args.output_root / "figures" / "xuannv_head_upgrade_gain.png")
     plot_ap_f1_scatter(best50, args.output_root / "figures" / "f1_ap_scatter.png")
+    baseline_heatmap, baseline_rank = plot_baseline_zoo(traditional_all, df, args.output_root / "figures")
 
     simple_table = best50[best50["method"].isin(["Xuannv Linear", "Xuannv MLP"])].copy()
     simple_table = simple_table[["task_label", "method", "shot", "f1", "ap", "auc"]].rename(
@@ -585,7 +702,17 @@ def build_report(args: argparse.Namespace) -> Path:
         "",
         "![Label efficiency](figures/label_efficiency_f1.png)",
         "",
-        "## 6. 详细指标热力图",
+        "Figure 5 的横坐标已经显式按照 `5 → 10 → 50 → Full` 排列。`Full` 不代表数值 75，只是放在 50-shot 右侧表示完整训练集，用来和少标注结果做趋势比较。",
+        "",
+        "## 6. Baseline zoo：所有传统方法和强监督模型",
+        "",
+        "除了主图中的四类方法，本节把之前跑过的传统机器学习方法全部放进来，包括 RF、ExtraTrees、HistGradientBoosting、Logistic Regression，以及不同输入特征组合；同时也包含 raw U-Net、raw DeepLab-lite、raw SegFormer-lite。这样可以看出玄女不是只和一个弱 baseline 比，而是和一组传统/强监督方法池对比。",
+        "",
+        f"![Baseline zoo heatmap]({rel(baseline_heatmap, args.output_root)})",
+        "",
+        f"![Baseline zoo rank]({rel(baseline_rank, args.output_root)})",
+        "",
+        "## 7. 详细指标热力图",
         "",
         "热力图作为补充，用于查看每个任务和每个模型的完整 50-shot F1/AP/AUC 数值。",
         "",
@@ -595,7 +722,7 @@ def build_report(args: argparse.Namespace) -> Path:
         "",
         "![50-shot AUC heatmap](figures/shot50_auc_heatmap.png)",
         "",
-        "## 7. 50-shot 结果摘要",
+        "## 8. 50-shot 结果摘要",
         "",
         markdown_table(
             summary_for_csv[
@@ -604,13 +731,13 @@ def build_report(args: argparse.Namespace) -> Path:
             ["任务 Task", "最佳方法 Best", "最佳F1", "玄女朴素头最佳", "朴素头F1", "玄女增强头最佳", "增强头F1", "Raw强监督最佳", "Raw F1"],
         ),
         "",
-        "## 8. 玄女朴素头结果",
+        "## 9. 玄女朴素头结果",
         "",
         "这一节专门回应“只用 Linear/MLP 是否也有效”。结果表明，MLP 在建筑、水体、绿地、道路、体育场地上明显强于 Linear，说明玄女 embedding 中的语义并非只能被复杂空间网络利用；简单非线性头已经能读出相当一部分地物信息。",
         "",
         markdown_table(simple_table.sort_values(["任务 Task", "方法 Method"]), list(simple_table.columns)) if not simple_table.empty else "当前 linear/MLP 结果尚未落盘。",
         "",
-        "## 9. 全域 320 patch 可视化",
+        "## 10. 全域 320 patch 可视化",
         "",
         "下列图已经复制到本报告目录的 `figures/full_domain/` 中，Markdown 使用相对路径引用；直接打开本 Markdown 或导出 PDF 时应能正常显示。红色为目标类别概率或真值区域，白色为背景，用于查看空间连续性与误检情况。",
         "",
@@ -626,7 +753,7 @@ def build_report(args: argparse.Namespace) -> Path:
         )
     lines.extend(
         [
-            "## 10. 评测协议",
+            "## 11. 评测协议",
             "",
             "- 玄女朴素头：`Linear` 与 `MLP`，只使用每个像素的 embedding 向量，不显式使用邻域卷积上下文。",
             "- 玄女增强头：`PixelConv/U-Net/DeepLab-lite/SegFormer-lite`，其中 U-Net、DeepLab-lite、SegFormer-lite 使用空间上下文。",
@@ -635,7 +762,7 @@ def build_report(args: argparse.Namespace) -> Path:
             "- 主指标 F1/AP/AUC 均来自测试集；阈值由验证集决定，避免使用测试集最优阈值。",
             "- `5-shot/10-shot/50-shot` 表示对应数量的正样本 patch，并匹配相同数量的负样本 patch；`full` 表示完整训练划分。",
             "",
-            "## 11. 附录：全部 50-shot 指标",
+            "## 12. 附录：全部 50-shot 指标",
             "",
             markdown_table(broad_table.sort_values(["任务 Task", "方法 Method"]), list(broad_table.columns)),
             "",
