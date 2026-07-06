@@ -21,6 +21,15 @@ TASK_LABELS = {
     "sports_pitch": "运动场地 Sports/Pitch",
 }
 
+TASK_LABELS_EN = {
+    "building": "Building",
+    "road": "Road",
+    "water": "Water",
+    "park_green": "Park/Green",
+    "education": "Education",
+    "sports_pitch": "Sports/Pitch",
+}
+
 TASK_ORDER = ["building", "road", "water", "park_green", "education", "sports_pitch"]
 
 METHOD_ORDER = [
@@ -209,13 +218,14 @@ def best_per_method(df: pd.DataFrame, shot: str) -> pd.DataFrame:
         return pd.DataFrame()
     out = pd.DataFrame(rows)
     out["task_label"] = out["task"].map(TASK_LABELS).fillna(out["task"])
+    out["task_label_en"] = out["task"].map(TASK_LABELS_EN).fillna(out["task"])
     out["method"] = pd.Categorical(out["method"], METHOD_ORDER, ordered=True)
     return out.sort_values(["task", "method"])
 
 
 def plot_heatmap(best: pd.DataFrame, metric: str, out_path: Path, title: str) -> None:
-    pivot = best.pivot_table(index="task_label", columns="method", values=metric, aggfunc="max")
-    ordered_rows = [TASK_LABELS[t] for t in TASK_ORDER if TASK_LABELS[t] in pivot.index]
+    pivot = best.pivot_table(index="task_label_en", columns="method", values=metric, aggfunc="max", observed=False)
+    ordered_rows = [TASK_LABELS_EN[t] for t in TASK_ORDER if TASK_LABELS_EN[t] in pivot.index]
     ordered_cols = [m for m in METHOD_ORDER if m in pivot.columns]
     pivot = pivot.reindex(index=ordered_rows, columns=ordered_cols)
     plt.figure(figsize=(13.5, 4.8), dpi=180)
@@ -233,7 +243,7 @@ def plot_heatmap(best: pd.DataFrame, metric: str, out_path: Path, title: str) ->
 def plot_label_efficiency(df: pd.DataFrame, out_path: Path) -> None:
     subset = df[(df["task"].isin(TASK_ORDER)) & (df["method"].isin(["Xuannv Linear", "Xuannv MLP", "Raw U-Net", "Raw SegFormer-lite"]))]
     subset = subset[subset["shot"].astype(str).isin(["5", "10", "50", "full"])].copy()
-    subset["task_label"] = subset["task"].map(TASK_LABELS)
+    subset["task_label"] = subset["task"].map(TASK_LABELS_EN)
     tasks = [task for task in TASK_ORDER if task in set(subset["task"])]
     fig, axes = plt.subplots(2, 3, figsize=(14, 7.5), dpi=180, sharey=False)
     axes = axes.reshape(-1)
@@ -243,7 +253,7 @@ def plot_label_efficiency(df: pd.DataFrame, out_path: Path) -> None:
             order = ["5", "10", "50", "full"]
             mg = mg.assign(_order=mg["shot"].astype(str).map({v: i for i, v in enumerate(order)})).sort_values("_order")
             ax.plot(mg["shot"].astype(str), mg["f1"], marker="o", label=method)
-        ax.set_title(TASK_LABELS.get(task, task), fontsize=10)
+        ax.set_title(TASK_LABELS_EN.get(task, task), fontsize=10)
         ax.set_xlabel("Label budget")
         ax.set_ylabel("F1@val threshold")
         ax.grid(alpha=0.25)
