@@ -136,13 +136,11 @@ def collect_linear_mlp(root: Path) -> list[dict[str, Any]]:
         record = json.loads(path.read_text(encoding="utf-8"))
         if record.get("status", "ok") != "ok":
             continue
-        head = record.get("head")
-        if not head:
-            parts = path.parts
-            for item in ["linear", "mlp", "mlp_deep"]:
-                if item in parts:
-                    head = item
-                    break
+        rel = path.relative_to(root / "xuannv_haidian_v1")
+        task = rel.parts[0] if len(rel.parts) > 0 else record.get("task", "")
+        head = record.get("head") or (rel.parts[1] if len(rel.parts) > 1 else "")
+        shot = rel.parts[2].removeprefix("shot_") if len(rel.parts) > 2 and rel.parts[2].startswith("shot_") else record.get("shot", "")
+        record = {**record, "task": task, "shot": shot}
         method = normalize_head(str(head))
         rows.append(metric_row(path, record, "xuannv_probe", method))
     return rows
