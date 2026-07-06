@@ -250,6 +250,60 @@ def collect_traditional_all(root: Path) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def method_family(method: str, source: str) -> str:
+    if source == "traditional_ml_all" or source == "traditional_ml":
+        return "Traditional ML"
+    if method in {"Xuannv Linear", "Xuannv MLP"}:
+        return "Xuannv Simple Head"
+    if method.startswith("Xuannv"):
+        return "Xuannv Spatial Head"
+    if method.startswith("Raw"):
+        return "Raw Supervised"
+    return source
+
+
+def build_all_methods_table(df: pd.DataFrame, traditional_all: pd.DataFrame) -> pd.DataFrame:
+    """Create one analysis-ready CSV covering Xuannv, raw supervised and traditional ML."""
+    downstream = df[df["source"] != "traditional_ml"].copy()
+    pieces = [downstream]
+    if not traditional_all.empty:
+        pieces.append(traditional_all.copy())
+    combined = pd.concat(pieces, ignore_index=True, sort=False)
+    combined["task_label"] = combined["task"].map(TASK_LABELS).fillna(combined["task"])
+    combined["task_label_en"] = combined["task"].map(TASK_LABELS_EN).fillna(combined["task"])
+    combined["method_family"] = [
+        method_family(str(method), str(source)) for method, source in zip(combined["method"], combined["source"])
+    ]
+    combined["shot"] = combined["shot"].astype(str)
+    preferred_cols = [
+        "method_family",
+        "source",
+        "method",
+        "task",
+        "task_label",
+        "task_label_en",
+        "shot",
+        "fold",
+        "status",
+        "f1",
+        "ap",
+        "auc",
+        "iou",
+        "precision",
+        "recall",
+        "val_threshold",
+        "train_patch_count",
+        "feature_set",
+        "model",
+        "raw_feature",
+        "raw_model",
+        "path",
+    ]
+    cols = [col for col in preferred_cols if col in combined.columns]
+    extra_cols = [col for col in combined.columns if col not in cols]
+    return combined[cols + extra_cols].sort_values(["shot", "task", "method_family", "method"]).reset_index(drop=True)
+
+
 def markdown_table(df: pd.DataFrame, cols: list[str]) -> str:
     view = df[cols].copy()
     for col in view.columns:
@@ -608,6 +662,9 @@ def build_report(args: argparse.Namespace) -> Path:
         for col in ["f1", "ap", "auc", "iou", "precision", "recall"]:
             traditional_all[col] = pd.to_numeric(traditional_all[col], errors="coerce")
         traditional_all.to_csv(args.output_root / "all_traditional_ml_metrics.csv", index=False)
+    all_methods = build_all_methods_table(df, traditional_all)
+    all_methods.to_csv(args.output_root / "all_methods_metrics.csv", index=False)
+    all_methods[all_methods["shot"].astype(str) == "50"].to_csv(args.output_root / "all_methods_50shot_metrics.csv", index=False)
 
     best50 = best_per_method(df, "50")
     plot_heatmap(best50, "f1", args.output_root / "figures" / "shot50_f1_heatmap.png", "F1 comparison under 50-shot labels")
@@ -707,6 +764,8 @@ def build_report(args: argparse.Namespace) -> Path:
         "## 6. Baseline zoo：所有传统方法和强监督模型",
         "",
         "除了主图中的四类方法，本节把之前跑过的传统机器学习方法全部放进来，包括 RF、ExtraTrees、HistGradientBoosting、Logistic Regression，以及不同输入特征组合；同时也包含 raw U-Net、raw DeepLab-lite、raw SegFormer-lite。这样可以看出玄女不是只和一个弱 baseline 比，而是和一组传统/强监督方法池对比。",
+        "",
+        "对应的完整明细已汇总到 `all_methods_metrics.csv`；其中同时包含玄女 Linear/MLP、玄女空间头、raw-feature 强监督网络，以及全部 traditional ML 方法。若只看 50-shot 主实验，可直接使用 `all_methods_50shot_metrics.csv`。",
         "",
         f"![Baseline zoo heatmap]({rel(baseline_heatmap, args.output_root)})",
         "",
