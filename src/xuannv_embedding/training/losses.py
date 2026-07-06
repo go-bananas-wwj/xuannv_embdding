@@ -110,6 +110,96 @@ def batch_uniformity_loss(emb: torch.Tensor, temperature: float = 2.0) -> torch.
     return torch.log(torch.exp(-temperature * off_diag_dist).mean())
 
 
+def _embedding_tokens(
+    embedding_map: torch.Tensor,
+    pool_size: int,
+) -> torch.Tensor:
+    """Convert dense embedding maps to pooled ``[N, D]`` tokens."""
+    if embedding_map.dim() == 5:
+        batch_size, num_months, dim, height, width = embedding_map.shape
+        x = embedding_map.reshape(batch_size * num_months, dim, height, width)
+    elif embedding_map.dim() == 4:
+        x = embedding_map
+    else:
+        raise ValueError(f"不支持的 embedding_map 形状: {tuple(embedding_map.shape)}")
+    pool_size = max(1, int(pool_size))
+    pool_size = min(pool_size, x.shape[-2], x.shape[-1])
+    if pool_size > 1:
+        x = F.avg_pool2d(x, kernel_size=pool_size, stride=pool_size)
+    return x.permute(0, 2, 3, 1).reshape(-1, x.shape[1])
+
+
+def covariance_regularization_loss(
+    embedding_map: torch.Tensor,
+    std_target: float = 0.08,
+    pool_size: int = 8,
+    eps: float = 1e-4,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """VICReg/VCReg-style variance-covariance regularization.
+
+    The vMF bottleneck already constrains vectors to the unit sphere. This term
+    encourages every dimension to carry non-trivial variance and discourages
+    redundant dimensions, improving effective rank without using downstream
+    fine labels.
+    """
+    tokens = _embedding_tokens(embedding_map, pool_size=pool_size)
+    tokens = F.normalize(tokens, p=2, dim=1)
+    if tokens.shape[0] < 2:
+        zero = embedding_map.sum() * 0.0
+        return zero, {
+            "variance": zero,
+            "covariance": zero,
+            "std_mean": zero,
+            "std_min": zero,
+        }
+
+    tokens = tokens - tokens.mean(dim=0, keepdim=True)
+    std = torch.sqrt(tokens.var(dim=0, unbiased=False) + eps)
+    variance = F.relu(float(std_target) - std).mean()
+    cov = (tokens.t() @ tokens) / max(tokens.shape[0] - 1, 1)
+    off_diag = cov - torch.diag(torch.diag(cov))
+    covariance = off_diag.pow(2).sum() / tokens.shape[1]
+    return variance + covariance, {
+        "variance": variance.detach(),
+        "covariance": covariance.detach(),
+        "std_mean": std.mean().detach(),
+        "std_min": std.min().detach(),
+    }
+
+
+def patch_discrimination_loss(
+    embedding_map: torch.Tensor,
+    temperature: float = 0.15,
+    pool_size: int = 16,
+    max_tokens: int = 512,
+) -> torch.Tensor:
+    """OlmoEarth-inspired token discrimination over pooled embedding patches.
+
+    Each pooled token is matched with its detached copy and contrasted against
+    other tokens in the same batch. This is a lightweight proxy for latent patch
+    discrimination: it pushes local tokens to remain distinguishable while the
+    reconstruction and semantic losses keep nearby same-class regions aligned.
+    """
+    tokens = _embedding_tokens(embedding_map, pool_size=pool_size)
+    tokens = F.normalize(tokens, p=2, dim=1)
+    max_tokens = max(2, int(max_tokens))
+    if tokens.shape[0] > max_tokens:
+        # Deterministic evenly spaced subsampling keeps distributed workers stable.
+        indices = torch.linspace(
+            0,
+            tokens.shape[0] - 1,
+            steps=max_tokens,
+            device=tokens.device,
+        ).long()
+        tokens = tokens.index_select(0, indices)
+    if tokens.shape[0] < 2:
+        return embedding_map.sum() * 0.0
+    logits = tokens @ tokens.detach().t()
+    logits = logits / max(float(temperature), 1e-6)
+    labels = torch.arange(tokens.shape[0], device=tokens.device)
+    return F.cross_entropy(logits, labels)
+
+
 def temporal_endpoint_separation_loss(
     emb: torch.Tensor,
     margin: float = 0.15,
@@ -560,6 +650,15 @@ class TotalLoss(nn.Module):
         uniformity_weight: float = 1.0,
         uniformity_warmup_epochs: int = 0,
         uniformity_temperature: float = 2.0,
+        covariance_weight: float = 0.0,
+        covariance_warmup_epochs: int = 0,
+        covariance_std_target: float = 0.08,
+        covariance_pool_size: int = 8,
+        patch_discrimination_weight: float = 0.0,
+        patch_discrimination_warmup_epochs: int = 0,
+        patch_discrimination_temperature: float = 0.15,
+        patch_discrimination_pool_size: int = 16,
+        patch_discrimination_max_tokens: int = 512,
         temporal_endpoint_weight: float = 0.0,
         temporal_endpoint_warmup_epochs: int = 0,
         temporal_endpoint_margin: float = 0.15,
@@ -613,6 +712,17 @@ class TotalLoss(nn.Module):
         self.uniformity_weight = float(uniformity_weight)
         self.uniformity_warmup_epochs = int(uniformity_warmup_epochs)
         self.uniformity_temperature = float(uniformity_temperature)
+        self.covariance_weight = float(covariance_weight)
+        self.covariance_warmup_epochs = int(covariance_warmup_epochs)
+        self.covariance_std_target = float(covariance_std_target)
+        self.covariance_pool_size = int(covariance_pool_size)
+        self.patch_discrimination_weight = float(patch_discrimination_weight)
+        self.patch_discrimination_warmup_epochs = int(
+            patch_discrimination_warmup_epochs
+        )
+        self.patch_discrimination_temperature = float(patch_discrimination_temperature)
+        self.patch_discrimination_pool_size = int(patch_discrimination_pool_size)
+        self.patch_discrimination_max_tokens = int(patch_discrimination_max_tokens)
         self.temporal_endpoint_weight = float(temporal_endpoint_weight)
         self.temporal_endpoint_warmup_epochs = int(temporal_endpoint_warmup_epochs)
         self.temporal_endpoint_margin = float(temporal_endpoint_margin)
@@ -670,6 +780,26 @@ class TotalLoss(nn.Module):
             return self.uniformity_weight
         progress = min(1.0, float(self.current_epoch + 1) / self.uniformity_warmup_epochs)
         return self.uniformity_weight * progress
+
+    def _warmup_weight(self, weight: float, warmup_epochs: int) -> float:
+        if weight == 0.0:
+            return 0.0
+        if warmup_epochs <= 0:
+            return weight
+        progress = min(1.0, float(self.current_epoch + 1) / warmup_epochs)
+        return weight * progress
+
+    def _current_covariance_weight(self) -> float:
+        return self._warmup_weight(
+            self.covariance_weight,
+            self.covariance_warmup_epochs,
+        )
+
+    def _current_patch_discrimination_weight(self) -> float:
+        return self._warmup_weight(
+            self.patch_discrimination_weight,
+            self.patch_discrimination_warmup_epochs,
+        )
 
     def _current_temporal_endpoint_weight(self) -> float:
         if self.temporal_endpoint_weight == 0.0:
@@ -759,6 +889,35 @@ class TotalLoss(nn.Module):
         )
         uniformity_weight = self._current_uniformity_weight()
         weighted_uniformity = uniformity * uniformity_weight
+        covariance_weight = self._current_covariance_weight()
+        if covariance_weight == 0.0:
+            covariance = output.embedding_map.sum() * 0.0
+            covariance_stats = {
+                "variance": covariance.detach(),
+                "covariance": covariance.detach(),
+                "std_mean": covariance.detach(),
+                "std_min": covariance.detach(),
+            }
+        else:
+            covariance, covariance_stats = covariance_regularization_loss(
+                output.embedding_map,
+                std_target=self.covariance_std_target,
+                pool_size=self.covariance_pool_size,
+            )
+        weighted_covariance = covariance * covariance_weight
+        patch_discrimination_weight = self._current_patch_discrimination_weight()
+        if patch_discrimination_weight == 0.0:
+            patch_discrimination = output.embedding_map.sum() * 0.0
+        else:
+            patch_discrimination = patch_discrimination_loss(
+                output.embedding_map,
+                temperature=self.patch_discrimination_temperature,
+                pool_size=self.patch_discrimination_pool_size,
+                max_tokens=self.patch_discrimination_max_tokens,
+            )
+        weighted_patch_discrimination = (
+            patch_discrimination * patch_discrimination_weight
+        )
         temporal_endpoint = temporal_endpoint_separation_loss(
             output.embedding,
             margin=self.temporal_endpoint_margin,
@@ -807,6 +966,8 @@ class TotalLoss(nn.Module):
         total = (
             total_recon
             + weighted_uniformity
+            + weighted_covariance
+            + weighted_patch_discrimination
             + weighted_temporal_endpoint
             + weighted_temporal_contrast
             + weighted_supervised_change
@@ -820,6 +981,24 @@ class TotalLoss(nn.Module):
             "uniformity_weighted": weighted_uniformity,
             "uniformity_weight": torch.tensor(
                 uniformity_weight,
+                device=output.embedding.device,
+                dtype=output.embedding.dtype,
+            ),
+            "covariance": covariance,
+            "covariance_variance": covariance_stats["variance"],
+            "covariance_covariance": covariance_stats["covariance"],
+            "covariance_std_mean": covariance_stats["std_mean"],
+            "covariance_std_min": covariance_stats["std_min"],
+            "covariance_weighted": weighted_covariance,
+            "covariance_weight": torch.tensor(
+                covariance_weight,
+                device=output.embedding.device,
+                dtype=output.embedding.dtype,
+            ),
+            "patch_discrimination": patch_discrimination,
+            "patch_discrimination_weighted": weighted_patch_discrimination,
+            "patch_discrimination_weight": torch.tensor(
+                patch_discrimination_weight,
                 device=output.embedding.device,
                 dtype=output.embedding.dtype,
             ),

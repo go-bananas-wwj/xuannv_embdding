@@ -20,6 +20,8 @@ from xuannv_embedding.training.checkpoint import load_checkpoint, save_checkpoin
 from xuannv_embedding.training.losses import (
     TotalLoss,
     batch_uniformity_loss,
+    covariance_regularization_loss,
+    patch_discrimination_loss,
     reconstruction_loss,
     supervised_change_alignment_loss,
     temporal_change_aware_contrast_loss,
@@ -368,6 +370,15 @@ training:
   semantic_probe_hard_negative_ratio: 0.05
   semantic_probe_hard_negative_weight: 0.5
   semantic_probe_hard_negative_warmup_epochs: 8
+  covariance_weight: 0.03
+  covariance_warmup_epochs: 5
+  covariance_std_target: 0.07
+  covariance_pool_size: 4
+  patch_discrimination_weight: 0.02
+  patch_discrimination_warmup_epochs: 6
+  patch_discrimination_temperature: 0.2
+  patch_discrimination_pool_size: 8
+  patch_discrimination_max_tokens: 128
 """,
         encoding="utf-8",
     )
@@ -384,6 +395,15 @@ training:
     assert cfg.training.semantic_probe_hard_negative_ratio == 0.05
     assert cfg.training.semantic_probe_hard_negative_weight == 0.5
     assert cfg.training.semantic_probe_hard_negative_warmup_epochs == 8
+    assert cfg.training.covariance_weight == 0.03
+    assert cfg.training.covariance_warmup_epochs == 5
+    assert cfg.training.covariance_std_target == 0.07
+    assert cfg.training.covariance_pool_size == 4
+    assert cfg.training.patch_discrimination_weight == 0.02
+    assert cfg.training.patch_discrimination_warmup_epochs == 6
+    assert cfg.training.patch_discrimination_temperature == 0.2
+    assert cfg.training.patch_discrimination_pool_size == 8
+    assert cfg.training.patch_discrimination_max_tokens == 128
 
 
 def test_config_model_ref_conflict_with_data_first_month(tmp_path: Path) -> None:
@@ -585,6 +605,75 @@ def test_total_loss() -> None:
     # recon 应为加权求和。
     expected_recon = 1.0 * losses["recon_s2_recon"] + 0.5 * losses["recon_worldcover"]
     assert torch.allclose(losses["recon"], expected_recon)
+
+
+def test_covariance_and_patch_discrimination_losses() -> None:
+    """Embedding-space regularizers should be finite and differentiable."""
+    embedding_map = torch.randn(2, 3, 8, 8, 8, requires_grad=True)
+    covariance, stats = covariance_regularization_loss(
+        embedding_map,
+        std_target=0.05,
+        pool_size=2,
+    )
+    patch_disc = patch_discrimination_loss(
+        embedding_map,
+        temperature=0.2,
+        pool_size=4,
+        max_tokens=64,
+    )
+
+    assert torch.isfinite(covariance)
+    assert torch.isfinite(patch_disc)
+    assert covariance.item() >= 0.0
+    assert patch_disc.item() > 0.0
+    assert stats["std_mean"].item() >= 0.0
+
+    (covariance + patch_disc).backward()
+    assert embedding_map.grad is not None
+
+
+def test_total_loss_with_embedding_space_regularizers() -> None:
+    """TotalLoss should include VCReg and patch discrimination when enabled."""
+    batch_size, num_months, embed_dim, height, width = 2, 2, 8, 8, 8
+    embedding_map = torch.randn(
+        batch_size, num_months, embed_dim, height, width, requires_grad=True
+    )
+    output = AEFOutput(
+        embedding_map=embedding_map,
+        embedding=embedding_map.mean(dim=[3, 4]),
+        reconstructions={
+            "s2_recon": torch.randn(batch_size, num_months, 3, height, width),
+        },
+    )
+    targets = {
+        "s2_recon": torch.randn(batch_size, num_months, 3, height, width),
+    }
+    masks = {
+        "s2_recon": torch.ones(batch_size, num_months, height, width),
+    }
+
+    criterion = TotalLoss(
+        {"s2_recon": {"loss_type": "l1", "channels": 3, "weight": 1.0}},
+        uniformity_weight=0.0,
+        covariance_weight=0.2,
+        covariance_pool_size=2,
+        patch_discrimination_weight=0.1,
+        patch_discrimination_pool_size=4,
+        patch_discrimination_max_tokens=64,
+    )
+    losses = criterion(output, targets, masks)
+
+    assert losses["covariance"].item() >= 0.0
+    assert losses["covariance_weight"].item() == pytest.approx(0.2)
+    assert losses["patch_discrimination"].item() > 0.0
+    assert losses["patch_discrimination_weight"].item() == pytest.approx(0.1)
+    assert torch.allclose(
+        losses["total"],
+        losses["recon"]
+        + losses["covariance_weighted"]
+        + losses["patch_discrimination_weighted"],
+        atol=1e-5,
+    )
 
 
 def test_total_loss_with_semantic_probe() -> None:

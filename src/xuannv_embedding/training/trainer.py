@@ -385,7 +385,12 @@ class Trainer:
                     "train/lr": self.optimizer.param_groups[0]["lr"],
                 }
                 for name, value in losses.items():
-                    if name.startswith("recon_") or name.startswith("masking_"):
+                    if (
+                        name.startswith("recon_")
+                        or name.startswith("masking_")
+                        or name.startswith("covariance")
+                        or name.startswith("patch_discrimination")
+                    ):
                         step_metrics[f"train/{name}"] = value.item()
                 memory_mb = self._get_memory_mb()
                 if memory_mb is not None:
@@ -465,7 +470,12 @@ class Trainer:
                 "train/lr": self.optimizer.param_groups[0]["lr"],
             }
             for name, value in metrics.items():
-                if name.startswith("recon_") or name.startswith("masking_"):
+                if (
+                    name.startswith("recon_")
+                    or name.startswith("masking_")
+                    or name.startswith("covariance")
+                    or name.startswith("patch_discrimination")
+                ):
                     epoch_metrics[f"train/{name}"] = value
             memory_mb = self._get_memory_mb()
             if memory_mb is not None:
@@ -561,7 +571,11 @@ class Trainer:
                 ),
             }
             for name, value in metrics.items():
-                if name.startswith("recon_"):
+                if (
+                    name.startswith("recon_")
+                    or name.startswith("covariance")
+                    or name.startswith("patch_discrimination")
+                ):
                     val_metrics[f"val/{name}"] = value
             self._log_to_wandb(val_metrics, step=self.global_step)
 

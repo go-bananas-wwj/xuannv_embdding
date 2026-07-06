@@ -79,6 +79,15 @@ class TrainingConfig:
     uniformity_weight: float = 1.0
     uniformity_warmup_epochs: int = 0
     uniformity_temperature: float = 2.0
+    covariance_weight: float = 0.0
+    covariance_warmup_epochs: int = 0
+    covariance_std_target: float = 0.08
+    covariance_pool_size: int = 8
+    patch_discrimination_weight: float = 0.0
+    patch_discrimination_warmup_epochs: int = 0
+    patch_discrimination_temperature: float = 0.15
+    patch_discrimination_pool_size: int = 16
+    patch_discrimination_max_tokens: int = 512
     temporal_endpoint_weight: float = 0.0
     temporal_endpoint_warmup_epochs: int = 0
     temporal_endpoint_margin: float = 0.15
@@ -303,6 +312,27 @@ class Config:
                 uniformity_weight=training_cfg.get("uniformity_weight", 1.0),
                 uniformity_warmup_epochs=training_cfg.get("uniformity_warmup_epochs", 0),
                 uniformity_temperature=training_cfg.get("uniformity_temperature", 2.0),
+                covariance_weight=training_cfg.get("covariance_weight", 0.0),
+                covariance_warmup_epochs=training_cfg.get(
+                    "covariance_warmup_epochs", 0
+                ),
+                covariance_std_target=training_cfg.get("covariance_std_target", 0.08),
+                covariance_pool_size=training_cfg.get("covariance_pool_size", 8),
+                patch_discrimination_weight=training_cfg.get(
+                    "patch_discrimination_weight", 0.0
+                ),
+                patch_discrimination_warmup_epochs=training_cfg.get(
+                    "patch_discrimination_warmup_epochs", 0
+                ),
+                patch_discrimination_temperature=training_cfg.get(
+                    "patch_discrimination_temperature", 0.15
+                ),
+                patch_discrimination_pool_size=training_cfg.get(
+                    "patch_discrimination_pool_size", 16
+                ),
+                patch_discrimination_max_tokens=training_cfg.get(
+                    "patch_discrimination_max_tokens", 512
+                ),
                 temporal_endpoint_weight=training_cfg.get("temporal_endpoint_weight", 0.0),
                 temporal_endpoint_warmup_epochs=training_cfg.get(
                     "temporal_endpoint_warmup_epochs", 0

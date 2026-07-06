@@ -318,6 +318,19 @@ def main() -> None:
         uniformity_weight=cfg.training.uniformity_weight,
         uniformity_warmup_epochs=cfg.training.uniformity_warmup_epochs,
         uniformity_temperature=cfg.training.uniformity_temperature,
+        covariance_weight=cfg.training.covariance_weight,
+        covariance_warmup_epochs=cfg.training.covariance_warmup_epochs,
+        covariance_std_target=cfg.training.covariance_std_target,
+        covariance_pool_size=cfg.training.covariance_pool_size,
+        patch_discrimination_weight=cfg.training.patch_discrimination_weight,
+        patch_discrimination_warmup_epochs=(
+            cfg.training.patch_discrimination_warmup_epochs
+        ),
+        patch_discrimination_temperature=(
+            cfg.training.patch_discrimination_temperature
+        ),
+        patch_discrimination_pool_size=cfg.training.patch_discrimination_pool_size,
+        patch_discrimination_max_tokens=cfg.training.patch_discrimination_max_tokens,
         temporal_endpoint_weight=cfg.training.temporal_endpoint_weight,
         temporal_endpoint_warmup_epochs=cfg.training.temporal_endpoint_warmup_epochs,
         temporal_endpoint_margin=cfg.training.temporal_endpoint_margin,
