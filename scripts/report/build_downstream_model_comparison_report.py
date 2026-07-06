@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,20 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+
+
+plt.rcParams.update(
+    {
+        "font.family": "DejaVu Sans",
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "axes.grid": True,
+        "grid.alpha": 0.22,
+        "axes.titleweight": "bold",
+        "figure.facecolor": "white",
+        "savefig.facecolor": "white",
+    }
+)
 
 
 TASK_LABELS = {
@@ -44,6 +59,13 @@ METHOD_ORDER = [
     "Raw SegFormer-lite",
     "Best Traditional ML",
 ]
+
+FAMILY_COLORS = {
+    "Xuannv Linear/MLP": "#4C78A8",
+    "Xuannv Spatial Head": "#E45756",
+    "Raw Supervised": "#54A24B",
+    "Traditional ML": "#9D755D",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -264,6 +286,200 @@ def plot_label_efficiency(df: pd.DataFrame, out_path: Path) -> None:
     plt.close(fig)
 
 
+def build_summary(best50: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for task in TASK_ORDER:
+        g = best50[best50["task"] == task].sort_values(["f1", "ap"], ascending=False)
+        if g.empty:
+            continue
+        simple = g[g["method"].isin(["Xuannv Linear", "Xuannv MLP"])].sort_values(["f1", "ap"], ascending=False)
+        enhanced = g[
+            g["method"].astype(str).str.startswith("Xuannv")
+            & ~g["method"].isin(["Xuannv Linear", "Xuannv MLP"])
+        ].sort_values(["f1", "ap"], ascending=False)
+        raw = g[g["method"].astype(str).str.startswith("Raw")].sort_values(["f1", "ap"], ascending=False)
+        trad = g[g["method"] == "Best Traditional ML"].sort_values(["f1", "ap"], ascending=False)
+        top = g.iloc[0]
+        rows.append(
+            {
+                "task": task,
+                "task_label": TASK_LABELS.get(task, task),
+                "task_label_en": TASK_LABELS_EN.get(task, task),
+                "best_method": str(top["method"]),
+                "best_f1": float(top["f1"]),
+                "simple_method": "" if simple.empty else str(simple.iloc[0]["method"]),
+                "simple_f1": np.nan if simple.empty else float(simple.iloc[0]["f1"]),
+                "simple_ap": np.nan if simple.empty else float(simple.iloc[0]["ap"]),
+                "simple_auc": np.nan if simple.empty else float(simple.iloc[0]["auc"]),
+                "enhanced_method": "" if enhanced.empty else str(enhanced.iloc[0]["method"]),
+                "enhanced_f1": np.nan if enhanced.empty else float(enhanced.iloc[0]["f1"]),
+                "enhanced_ap": np.nan if enhanced.empty else float(enhanced.iloc[0]["ap"]),
+                "enhanced_auc": np.nan if enhanced.empty else float(enhanced.iloc[0]["auc"]),
+                "raw_method": "" if raw.empty else str(raw.iloc[0]["method"]),
+                "raw_f1": np.nan if raw.empty else float(raw.iloc[0]["f1"]),
+                "raw_ap": np.nan if raw.empty else float(raw.iloc[0]["ap"]),
+                "raw_auc": np.nan if raw.empty else float(raw.iloc[0]["auc"]),
+                "traditional_f1": np.nan if trad.empty else float(trad.iloc[0]["f1"]),
+                "traditional_ap": np.nan if trad.empty else float(trad.iloc[0]["ap"]),
+                "traditional_auc": np.nan if trad.empty else float(trad.iloc[0]["auc"]),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def plot_four_way_bars(summary: pd.DataFrame, out_path: Path) -> None:
+    plot_df = summary.copy()
+    tasks = plot_df["task_label_en"].tolist()
+    values = {
+        "Xuannv Linear/MLP": plot_df["simple_f1"].to_numpy(dtype=float),
+        "Xuannv Spatial Head": plot_df["enhanced_f1"].to_numpy(dtype=float),
+        "Raw Supervised": plot_df["raw_f1"].to_numpy(dtype=float),
+        "Traditional ML": plot_df["traditional_f1"].to_numpy(dtype=float),
+    }
+    x = np.arange(len(tasks))
+    width = 0.19
+    fig, ax = plt.subplots(figsize=(12.5, 5.2), dpi=220)
+    offsets = [-1.5 * width, -0.5 * width, 0.5 * width, 1.5 * width]
+    for (label, vals), offset in zip(values.items(), offsets, strict=True):
+        bars = ax.bar(
+            x + offset,
+            vals,
+            width=width,
+            label=label,
+            color=FAMILY_COLORS[label],
+            edgecolor="white",
+            linewidth=0.8,
+        )
+        for bar, val in zip(bars, vals, strict=False):
+            if np.isfinite(val):
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + 0.012,
+                    f"{val:.2f}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=8,
+                    rotation=90,
+                )
+    ax.set_xticks(x)
+    ax.set_xticklabels(tasks, rotation=0)
+    ax.set_ylim(0, max(0.9, np.nanmax([v for vals in values.values() for v in vals]) + 0.10))
+    ax.set_ylabel("F1@validation threshold")
+    ax.set_title("Downstream segmentation performance under the 50-shot protocol")
+    ax.legend(ncol=4, loc="upper center", bbox_to_anchor=(0.5, -0.12), frameon=False)
+    fig.tight_layout(rect=[0, 0.06, 1, 1])
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_xuannv_vs_raw_delta(summary: pd.DataFrame, out_path: Path) -> None:
+    plot_df = summary.copy()
+    plot_df["delta"] = plot_df["enhanced_f1"] - plot_df["raw_f1"]
+    plot_df["delta_pct"] = plot_df["delta"] / plot_df["raw_f1"].replace(0, np.nan) * 100.0
+    plot_df = plot_df.sort_values("delta")
+    colors = np.where(plot_df["delta"] >= 0, "#D1495B", "#4C78A8")
+    fig, ax = plt.subplots(figsize=(9.5, 4.7), dpi=220)
+    ax.barh(plot_df["task_label_en"], plot_df["delta_pct"], color=colors, alpha=0.92)
+    ax.axvline(0, color="#333333", linewidth=1.0)
+    for y, val in enumerate(plot_df["delta_pct"]):
+        if np.isfinite(val):
+            ax.text(
+                val + (1.2 if val >= 0 else -1.2),
+                y,
+                f"{val:+.1f}%",
+                va="center",
+                ha="left" if val >= 0 else "right",
+                fontsize=9,
+            )
+    ax.set_xlabel("Relative F1 gain over the best raw supervised model (%)")
+    ax.set_title("Xuannv spatial head vs. strong raw-feature supervised baselines")
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_head_upgrade(summary: pd.DataFrame, out_path: Path) -> None:
+    plot_df = summary.copy()
+    plot_df["gain"] = plot_df["enhanced_f1"] - plot_df["simple_f1"]
+    plot_df = plot_df.sort_values("gain", ascending=False)
+    fig, ax = plt.subplots(figsize=(9.8, 4.8), dpi=220)
+    y = np.arange(len(plot_df))
+    ax.hlines(y, plot_df["simple_f1"], plot_df["enhanced_f1"], color="#B9B9B9", linewidth=3)
+    ax.scatter(plot_df["simple_f1"], y, s=70, color=FAMILY_COLORS["Xuannv Linear/MLP"], label="Linear/MLP")
+    ax.scatter(plot_df["enhanced_f1"], y, s=75, color=FAMILY_COLORS["Xuannv Spatial Head"], label="Spatial head")
+    for idx, row in plot_df.iterrows():
+        ax.text(
+            row["enhanced_f1"] + 0.012,
+            y[list(plot_df.index).index(idx)],
+            f"+{row['gain']:.2f}",
+            va="center",
+            fontsize=9,
+            color="#444444",
+        )
+    ax.set_yticks(y)
+    ax.set_yticklabels(plot_df["task_label_en"])
+    ax.set_xlabel("F1@validation threshold")
+    ax.set_title("Effect of upgrading Xuannv from a simple head to a spatial head")
+    ax.legend(loc="lower right", frameon=False)
+    ax.set_xlim(0, min(0.95, max(plot_df["enhanced_f1"].max(), plot_df["simple_f1"].max()) + 0.12))
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_ap_f1_scatter(best50: pd.DataFrame, out_path: Path) -> None:
+    families = []
+    for method in best50["method"].astype(str):
+        if method in {"Xuannv Linear", "Xuannv MLP"}:
+            families.append("Xuannv Linear/MLP")
+        elif method.startswith("Xuannv"):
+            families.append("Xuannv Spatial Head")
+        elif method.startswith("Raw"):
+            families.append("Raw Supervised")
+        else:
+            families.append("Traditional ML")
+    plot_df = best50.copy()
+    plot_df["family"] = families
+    fig, ax = plt.subplots(figsize=(7.2, 5.7), dpi=220)
+    for family, group in plot_df.groupby("family"):
+        ax.scatter(
+            group["f1"],
+            group["ap"],
+            s=70,
+            color=FAMILY_COLORS.get(family, "#777777"),
+            label=family,
+            alpha=0.88,
+            edgecolor="white",
+            linewidth=0.6,
+        )
+    ax.set_xlabel("F1@validation threshold")
+    ax.set_ylabel("Average Precision (AP)")
+    ax.set_title("F1-AP distribution across downstream tasks and model families")
+    ax.legend(frameon=False, fontsize=9)
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def copy_full_domain_visuals(visual_root: Path, out_dir: Path) -> list[tuple[str, Path]]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    copied: list[tuple[str, Path]] = []
+    for visual in sorted(visual_root.glob("*_shot50_gt_xuannv_traditional_full_domain.png")):
+        task_name = visual.name.split("_shot50_")[0]
+        dst = out_dir / visual.name
+        shutil.copy2(visual, dst)
+        copied.append((task_name, dst))
+    return copied
+
+
+def rel(path: Path, base: Path) -> str:
+    return path.relative_to(base).as_posix()
+
+
 def build_report(args: argparse.Namespace) -> Path:
     args.output_root.mkdir(parents=True, exist_ok=True)
     rows = []
@@ -282,31 +498,25 @@ def build_report(args: argparse.Namespace) -> Path:
     plot_heatmap(best50, "ap", args.output_root / "figures" / "shot50_ap_heatmap.png", "AP comparison under 50-shot labels")
     plot_heatmap(best50, "auc", args.output_root / "figures" / "shot50_auc_heatmap.png", "AUC comparison under 50-shot labels")
     plot_label_efficiency(df, args.output_root / "figures" / "label_efficiency_f1.png")
-
-    best_rows: list[dict[str, Any]] = []
-    for task in TASK_ORDER:
-        g = best50[best50["task"] == task].sort_values(["f1", "ap"], ascending=False)
-        if g.empty:
-            continue
-        top = g.iloc[0]
-        simple = g[g["method"].isin(["Xuannv Linear", "Xuannv MLP"])].sort_values(["f1", "ap"], ascending=False)
-        enhanced = g[g["method"].astype(str).str.startswith("Xuannv") & ~g["method"].isin(["Xuannv Linear", "Xuannv MLP"])].sort_values(["f1", "ap"], ascending=False)
-        raw = g[g["method"].astype(str).str.startswith("Raw")].sort_values(["f1", "ap"], ascending=False)
-        best_rows.append(
-            {
-                "任务 Task": TASK_LABELS.get(task, task),
-                "最佳方法 Best": str(top["method"]),
-                "最佳F1": float(top["f1"]),
-                "玄女朴素头最佳": "" if simple.empty else str(simple.iloc[0]["method"]),
-                "朴素头F1": np.nan if simple.empty else float(simple.iloc[0]["f1"]),
-                "玄女增强头最佳": "" if enhanced.empty else str(enhanced.iloc[0]["method"]),
-                "增强头F1": np.nan if enhanced.empty else float(enhanced.iloc[0]["f1"]),
-                "Raw强监督最佳": "" if raw.empty else str(raw.iloc[0]["method"]),
-                "Raw F1": np.nan if raw.empty else float(raw.iloc[0]["f1"]),
-            }
-        )
-    summary = pd.DataFrame(best_rows)
-    summary.to_csv(args.output_root / "shot50_summary.csv", index=False)
+    summary = build_summary(best50)
+    summary_for_csv = summary.rename(
+        columns={
+            "task_label": "任务 Task",
+            "best_method": "最佳方法 Best",
+            "best_f1": "最佳F1",
+            "simple_method": "玄女朴素头最佳",
+            "simple_f1": "朴素头F1",
+            "enhanced_method": "玄女增强头最佳",
+            "enhanced_f1": "增强头F1",
+            "raw_method": "Raw强监督最佳",
+            "raw_f1": "Raw F1",
+        }
+    )
+    summary_for_csv.to_csv(args.output_root / "shot50_summary.csv", index=False)
+    plot_four_way_bars(summary, args.output_root / "figures" / "main_50shot_four_way_f1.png")
+    plot_xuannv_vs_raw_delta(summary, args.output_root / "figures" / "xuannv_vs_raw_relative_gain.png")
+    plot_head_upgrade(summary, args.output_root / "figures" / "xuannv_head_upgrade_gain.png")
+    plot_ap_f1_scatter(best50, args.output_root / "figures" / "f1_ap_scatter.png")
 
     simple_table = best50[best50["method"].isin(["Xuannv Linear", "Xuannv MLP"])].copy()
     simple_table = simple_table[["task_label", "method", "shot", "f1", "ap", "auc"]].rename(
@@ -316,66 +526,118 @@ def build_report(args: argparse.Namespace) -> Path:
         columns={"task_label": "任务 Task", "method": "方法 Method", "shot": "Shot", "f1": "F1", "ap": "AP", "auc": "AUC"}
     )
 
-    existing_visuals = sorted(args.traditional_visual_root.glob("*_shot50_gt_xuannv_traditional_full_domain.png"))
+    copied_visuals = copy_full_domain_visuals(args.traditional_visual_root, args.output_root / "figures" / "full_domain")
+    wins = int((summary["enhanced_f1"] >= summary["raw_f1"]).sum())
+    avg_simple = float(summary["simple_f1"].mean())
+    avg_enhanced = float(summary["enhanced_f1"].mean())
+    avg_raw = float(summary["raw_f1"].mean())
+    avg_trad = float(summary["traditional_f1"].mean())
+    avg_gain_vs_raw = (avg_enhanced - avg_raw) / max(avg_raw, 1e-8) * 100.0
+    avg_head_gain = (avg_enhanced - avg_simple) / max(avg_simple, 1e-8) * 100.0
     lines = [
-        "# 玄女海淀 V1 下游模型横向对比报告",
+        "# 玄女海淀 V1：下游任务横向评测与实验总结",
         "",
-        "## 摘要",
+        "## 1. 结论先行",
         "",
-        "本报告将玄女 embedding 的朴素下游头与更强的空间下游头、raw-feature 强监督分割模型、传统机器学习方法放在同一评测口径下对比。所有主指标均使用验证集选择阈值后在测试集计算，避免使用测试集最优阈值造成指标偏高。",
+        f"本轮评测将玄女 embedding 的朴素下游头、玄女空间增强头、raw-feature 强监督分割网络、传统机器学习方法放在同一套海淀区下游任务上比较。结果显示：在 50-shot 标注预算下，玄女空间增强头在 {wins}/6 个任务上达到或超过 raw-feature 强监督模型；平均 F1 为 {avg_enhanced:.3f}，raw-feature 强监督平均 F1 为 {avg_raw:.3f}，相对提升 {avg_gain_vs_raw:+.1f}%。",
         "",
-        "比较范围包括建筑、道路、水体、公园绿地、学校高校、运动场地六类任务。`5-shot/10-shot/50-shot` 表示使用对应数量的正样本 patch，并匹配相同数量的负样本 patch；`full` 表示使用完整训练划分。",
+        f"同时，玄女并不完全依赖复杂下游头。只使用朴素 MLP/Linear 头时，平均 F1 已达到 {avg_simple:.3f}；升级为空间头后平均 F1 达到 {avg_enhanced:.3f}，相对朴素头提升 {avg_head_gain:+.1f}%。这说明 embedding 本身已经包含可迁移的地物语义，空间头主要进一步补充边界和上下文。",
         "",
-        "## Figure 1. 50-shot F1 横向热力图",
+        "最重要的对比不是“玄女是否能靠更复杂网络赢”，而是两层结论：第一，玄女 MLP 这种简单头已经能在建筑、道路、水体、绿地等任务上取得可用结果；第二，在业务需要更高精度时，玄女 embedding 接 U-Net/DeepLab-lite/SegFormer-lite 后，多数任务可以超过直接用多源原始影像训练的强监督模型。",
         "",
-        f"![50-shot F1 heatmap]({args.output_root / 'figures' / 'shot50_f1_heatmap.png'})",
+        "## 2. 参考论文式评测口径",
         "",
-        "## Figure 2. 50-shot AP 与 AUC 横向热力图",
+        "遥感基础模型论文通常不会只报告单个任务，而是通过多任务 benchmark、低标注量曲线、强监督 baseline、以及定性可视化来证明表示能力。GEO-Bench 提出用多类地球观测任务来评估预训练模型的泛化价值；Prithvi-EO-2.0 报告不同数据比例下的下游 F1，以体现 label efficiency；PANGAEA 也强调跨任务、跨传感器的 geospatial foundation model benchmark。因此本报告采用同样思路：多任务、同一 split、验证集选阈值、50-shot 主表、少标注效率曲线、全域可视化。",
         "",
-        f"![50-shot AP heatmap]({args.output_root / 'figures' / 'shot50_ap_heatmap.png'})",
+        "参考来源：",
         "",
-        f"![50-shot AUC heatmap]({args.output_root / 'figures' / 'shot50_auc_heatmap.png'})",
+        "- [GEO-Bench: Toward Foundation Models for Earth Monitoring](https://proceedings.neurips.cc/paper_files/paper/2023/file/a0644215d9cff6646fa334dfa5d29c5a-Paper-Datasets_and_Benchmarks.pdf)",
+        "- [Prithvi-EO-2.0: A Versatile Multi-Temporal Foundation Model for Earth Observation Applications](https://arxiv.org/html/2412.02732v3)",
+        "- [PANGAEA: Assessing Geospatial Foundation Models Capabilities](https://arxiv.org/html/2412.04204v1)",
         "",
-        "## Figure 3. 少标注效率曲线",
+        "## 3. 实验演进摘要",
         "",
-        f"![Label efficiency]({args.output_root / 'figures' / 'label_efficiency_f1.png'})",
+        "本项目不是一次性训练得到当前结果，而是经过多轮排查和升级：早期版本主要暴露出云雾干扰、patch 间 PCA 颜色割裂、WorldCover 弱标签过粗、下游阈值不稳定、以及 embedding 保存冗余等问题。后续逐步完成了云/无效像素 mask、OSM 弱语义标签合并、2025-12 到 2026-05 海淀多源数据筛选、高分光学/高分 SAR 重建权重调整、困难重建、800 epoch 长训、P10C 海淀生产版打包，以及传统 ML/AEF/raw 强监督/玄女下游头横向评测。",
         "",
-        "## Table 1. 50-shot 下各任务最佳方法摘要",
+        "这些实验给出的核心经验是：单纯延长训练可以改善 embedding 连续性，但真正影响下游能力的是数据质量、弱语义标签质量、云雾处理、通道对齐、以及评测协议是否公平。当前海淀 V1 的优势主要来自更干净的海淀专用训练数据、OSM 弱语义、困难重建、多源高分数据注入，以及训练后统一的阈值校准和下游评测。",
         "",
-        markdown_table(summary, list(summary.columns)),
+        "## 4. 主结果：50-shot 横向比较",
         "",
-        "## Table 2. 玄女朴素 Linear / MLP 头结果",
+        "Figure 1 把四类方法放在同一张图中：玄女朴素头、玄女空间增强头、raw-feature 强监督模型、传统机器学习。每个任务的纵向比较可以直接看出玄女 embedding 是否在同等标注预算下带来收益。",
+        "",
+        "![Main 50-shot F1 comparison](figures/main_50shot_four_way_f1.png)",
+        "",
+        "Figure 2 进一步只比较“玄女最佳空间头”和“Raw最佳强监督模型”的相对提升。正值表示玄女更强，负值表示 raw-feature 强监督更强。",
+        "",
+        "![Xuannv vs raw relative gain](figures/xuannv_vs_raw_relative_gain.png)",
+        "",
+        "Figure 3 展示从朴素 MLP/Linear 头升级到空间增强头后的收益。教育/学校、建筑、道路、体育场地这类边界和上下文更重要的任务，空间头提升更明显；绿地/公园和水体这类光谱/语义较清晰的任务，朴素 MLP 已经接近较强水平。",
+        "",
+        "![Xuannv head upgrade gain](figures/xuannv_head_upgrade_gain.png)",
+        "",
+        "## 5. 指标分布与少标注效率",
+        "",
+        "Figure 4 将所有任务的 F1 和 AP 放到同一散点图中。右上角代表模型在阈值分割质量和排序质量上都更好。玄女空间头整体分布更靠右上；玄女 MLP 在若干任务上也接近 raw 强监督模型。",
+        "",
+        "![F1 AP scatter](figures/f1_ap_scatter.png)",
+        "",
+        "Figure 5 体现 label efficiency。对于业务标注昂贵的遥感任务，少量 patch 标注能否快速制图是 embedding 模型最重要的价值之一。",
+        "",
+        "![Label efficiency](figures/label_efficiency_f1.png)",
+        "",
+        "## 6. 详细指标热力图",
+        "",
+        "热力图作为补充，用于查看每个任务和每个模型的完整 50-shot F1/AP/AUC 数值。",
+        "",
+        "![50-shot F1 heatmap](figures/shot50_f1_heatmap.png)",
+        "",
+        "![50-shot AP heatmap](figures/shot50_ap_heatmap.png)",
+        "",
+        "![50-shot AUC heatmap](figures/shot50_auc_heatmap.png)",
+        "",
+        "## 7. 50-shot 结果摘要",
+        "",
+        markdown_table(
+            summary_for_csv[
+                ["任务 Task", "最佳方法 Best", "最佳F1", "玄女朴素头最佳", "朴素头F1", "玄女增强头最佳", "增强头F1", "Raw强监督最佳", "Raw F1"]
+            ],
+            ["任务 Task", "最佳方法 Best", "最佳F1", "玄女朴素头最佳", "朴素头F1", "玄女增强头最佳", "增强头F1", "Raw强监督最佳", "Raw F1"],
+        ),
+        "",
+        "## 8. 玄女朴素头结果",
+        "",
+        "这一节专门回应“只用 Linear/MLP 是否也有效”。结果表明，MLP 在建筑、水体、绿地、道路、体育场地上明显强于 Linear，说明玄女 embedding 中的语义并非只能被复杂空间网络利用；简单非线性头已经能读出相当一部分地物信息。",
         "",
         markdown_table(simple_table.sort_values(["任务 Task", "方法 Method"]), list(simple_table.columns)) if not simple_table.empty else "当前 linear/MLP 结果尚未落盘。",
         "",
-        "## Table 3. 全部方法 50-shot 横向指标",
+        "## 9. 全域 320 patch 可视化",
         "",
-        markdown_table(broad_table.sort_values(["任务 Task", "方法 Method"]), list(broad_table.columns)),
-        "",
-        "## 全域 320 patch 可视化示例",
-        "",
-        "下列图来自同一海淀 320 patch 地理拼接布局，红色为目标类别概率或真值区域，白色为背景，用于定性查看空间连续性与误检情况。",
+        "下列图已经复制到本报告目录的 `figures/full_domain/` 中，Markdown 使用相对路径引用；直接打开本 Markdown 或导出 PDF 时应能正常显示。红色为目标类别概率或真值区域，白色为背景，用于查看空间连续性与误检情况。",
         "",
     ]
-    for visual in existing_visuals:
-        task_name = visual.name.split("_shot50_")[0]
+    for task_name, visual in copied_visuals:
         lines.extend(
             [
                 f"### {TASK_LABELS.get(task_name, task_name)}",
                 "",
-                f"![{task_name} full-domain visualization]({visual})",
+                f"![{task_name} full-domain visualization]({rel(visual, args.output_root)})",
                 "",
             ]
         )
     lines.extend(
         [
-            "## 评测说明",
+            "## 10. 评测协议",
             "",
             "- 玄女朴素头：`Linear` 与 `MLP`，只使用每个像素的 embedding 向量，不显式使用邻域卷积上下文。",
             "- 玄女增强头：`PixelConv/U-Net/DeepLab-lite/SegFormer-lite`，其中 U-Net、DeepLab-lite、SegFormer-lite 使用空间上下文。",
             "- Raw 强监督：直接使用 S2/S1/Landsat/高分光学/高分 SAR 指数特征训练分割网络。",
             "- 传统机器学习：从传统 ML 评测结果中按验证集指标选择每个任务/shot 的最佳 raw-feature baseline。",
-            "- 主指标 F1/AP/AUC 均来自测试集；阈值由验证集决定。",
+            "- 主指标 F1/AP/AUC 均来自测试集；阈值由验证集决定，避免使用测试集最优阈值。",
+            "- `5-shot/10-shot/50-shot` 表示对应数量的正样本 patch，并匹配相同数量的负样本 patch；`full` 表示完整训练划分。",
+            "",
+            "## 11. 附录：全部 50-shot 指标",
+            "",
+            markdown_table(broad_table.sort_values(["任务 Task", "方法 Method"]), list(broad_table.columns)),
             "",
         ]
     )
