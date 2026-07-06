@@ -59,7 +59,7 @@ model:
       channels: 1
       weight: 0.35
 training:
-  epochs: 400
+  epochs: 600
   lr: 1.5e-06
   weight_decay: 0.05
   warmup_epochs: 20
