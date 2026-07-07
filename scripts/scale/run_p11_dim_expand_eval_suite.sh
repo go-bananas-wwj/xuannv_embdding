@@ -123,10 +123,15 @@ run_downstream() {
 
 echo "$(date '+%F %T') P11 eval suite start: ${RUN_ROOT}"
 
+export_pids=()
 for idx in "${!TAGS[@]}"; do
   tag="${TAGS[$idx]}"
   device="$((idx % 6))"
-  run_export "${tag}" "${device}"
+  run_export "${tag}" "${device}" &
+  export_pids+=("$!")
+done
+for pid in "${export_pids[@]}"; do
+  wait "${pid}"
 done
 
 for tag in "${TAGS[@]}"; do
