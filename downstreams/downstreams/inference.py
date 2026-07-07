@@ -60,7 +60,12 @@ def load_model_for_inference(
     return model, cfg, device
 
 
-def build_inference_loader(cfg: Config, region: str, split: str = "all") -> DataLoader:
+def build_inference_loader(
+    cfg: Config,
+    region: str,
+    split: str = "all",
+    context_margin: int | None = None,
+) -> DataLoader:
     # TODO: 当 MonthlyEmbeddingDataset 支持 split 过滤时，根据 split 值筛选 patch。
     if cfg.data.statistics_dirs_by_region:
         manifest_path = cfg.data.manifest_path
@@ -83,6 +88,8 @@ def build_inference_loader(cfg: Config, region: str, split: str = "all") -> Data
         statistics_dirs_by_region=statistics_dirs_by_region,
         sources=cfg.data.sources,
         patch_size=cfg.data.patch_size,
+        context_margin=cfg.data.context_margin if context_margin is None else context_margin,
+        patch_grid_path=cfg.data.patch_grid_path,
         num_months=cfg.model.num_months,
         ref_year=cfg.model.ref_year,
         ref_month=cfg.model.ref_month,
@@ -110,6 +117,7 @@ def precompute_embeddings(
     device: torch.device,
     output_dir: Path,
     months: list[str] | None = None,
+    center_crop_size: int | None = None,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     selected_months = {str(month) for month in months} if months is not None else None
@@ -143,8 +151,23 @@ def precompute_embeddings(
 
             # output.embedding_map: (B, T_month, D, H, W)
             # output.embedding:     (B, T_month, D)
-            emb_map = output.embedding_map.cpu()
-            scene_emb = output.embedding.cpu()
+            emb_map_tensor = output.embedding_map
+            if center_crop_size is not None:
+                crop = int(center_crop_size)
+                height, width = emb_map_tensor.shape[-2:]
+                if height < crop or width < crop:
+                    raise ValueError(
+                        f"无法将 embedding_map 从 {(height, width)} 中心裁剪到 {crop}"
+                    )
+                top = (height - crop) // 2
+                left = (width - crop) // 2
+                emb_map_tensor = emb_map_tensor[..., top : top + crop, left : left + crop]
+            emb_map = emb_map_tensor.cpu()
+            scene_emb = torch.nn.functional.normalize(
+                emb_map_tensor.mean(dim=[3, 4]),
+                p=2,
+                dim=-1,
+            ).cpu()
             ts = batch["timestamps"].cpu()  # (B, T_month)
 
             for b, patch_id in enumerate(patch_ids):

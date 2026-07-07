@@ -3,6 +3,7 @@ from __future__ import annotations
 # 月度地理嵌入 Dataset 实现
 import json
 import logging
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,7 @@ from xuannv_embedding.data.transforms import (
 
 logger = logging.getLogger(__name__)
 _MONTH_SUFFIX_RE = re.compile(r"^(?P<patch>.+)_(?P<month>\d{6})$")
+_PATCH_ID_RE = re.compile(r"patch_\d+")
 
 
 class MonthlyEmbeddingDataset(Dataset):
@@ -41,6 +43,8 @@ class MonthlyEmbeddingDataset(Dataset):
         statistics_dirs_by_region: dict[str, Path] | None = None,
         supervised_label_roots: dict[str, Path] | None = None,
         region_filter: str | None = None,
+        context_margin: int = 0,
+        patch_grid_path: Path | None = None,
     ) -> None:
         """初始化 Dataset。
 
@@ -71,6 +75,8 @@ class MonthlyEmbeddingDataset(Dataset):
             task: Path(path) for task, path in (supervised_label_roots or {}).items()
         }
         self.region_filter = region_filter
+        self.context_margin = max(0, int(context_margin))
+        self.patch_grid_path = Path(patch_grid_path) if patch_grid_path else None
 
         self.root_dir = self.manifest_path.parent
         self.manifest: list[dict[str, Any]] = self._load_manifest()
@@ -85,6 +91,10 @@ class MonthlyEmbeddingDataset(Dataset):
         self.statistics_by_region: dict[str, dict[str, dict[str, Any]]] = {}
         self.source_channels: dict[str, int] = {}
         self._load_statistics()
+
+        self.patch_grid: dict[str, tuple[int, int]] = {}
+        self.grid_to_patch: dict[tuple[int, int], str] = {}
+        self._load_patch_grid()
 
         # 记录每个 source 的空间尺寸，缺失时用于构造空张量
         self.source_hw: dict[str, tuple[int, int]] = {}
@@ -125,6 +135,105 @@ class MonthlyEmbeddingDataset(Dataset):
                 else:
                     entry[key] = Path(value)
         return manifest
+
+    def _load_patch_grid(self) -> None:
+        """Load patch adjacency metadata for context-window stitching."""
+        if self.context_margin <= 0:
+            return
+        grid_path = self.patch_grid_path
+        if grid_path is None:
+            candidate = Path("configs/regions") / f"{self.region_filter or 'haidian'}_patches.json"
+            if candidate.exists():
+                grid_path = candidate
+        if grid_path is None or not grid_path.exists():
+            logger.warning(
+                "context_margin=%d 但 patch_grid_path 不存在，退化为边缘 padding",
+                self.context_margin,
+            )
+            return
+        with grid_path.open("r", encoding="utf-8") as f:
+            raw = json.load(f)
+        patches = raw if isinstance(raw, list) else raw.get("patches", [])
+        if not patches:
+            logger.warning("patch_grid 为空: %s", grid_path)
+            return
+        lefts = sorted({round(float(p["bounds"][0]), 3) for p in patches if "bounds" in p})
+        bottoms = sorted({round(float(p["bounds"][1]), 3) for p in patches if "bounds" in p})
+        for patch in patches:
+            if "bounds" not in patch or "patch_id" not in patch:
+                continue
+            col = lefts.index(round(float(patch["bounds"][0]), 3))
+            row = bottoms.index(round(float(patch["bounds"][1]), 3))
+            patch_id = str(patch["patch_id"])
+            self.patch_grid[patch_id] = (col, row)
+            self.grid_to_patch[(col, row)] = patch_id
+
+    def _load_with_context(self, image_path: Path, nodata: float = 0.0) -> np.ndarray:
+        """Read a patch plus a small halo from neighboring patch files.
+
+        Existing processed data is stored as 128x128 per-patch GeoTIFFs. P12 keeps
+        the original patch id and geographic footprint, then borrows neighboring
+        pixels only for model context. Missing AOI-edge neighbors are padded.
+        """
+        center = load_tiff(image_path)
+        margin = self.context_margin
+        if margin <= 0:
+            return center
+
+        patch_match = _PATCH_ID_RE.search(image_path.stem)
+        if patch_match is None:
+            return np.pad(
+                center,
+                ((0, 0), (margin, margin), (margin, margin)),
+                mode="constant",
+                constant_values=nodata,
+            )
+        patch_id = patch_match.group(0)
+        if patch_id not in self.patch_grid:
+            return np.pad(
+                center,
+                ((0, 0), (margin, margin), (margin, margin)),
+                mode="constant",
+                constant_values=nodata,
+            )
+
+        channels, height, width = center.shape
+        canvas = np.full(
+            (channels, height + 2 * margin, width + 2 * margin),
+            nodata,
+            dtype=center.dtype,
+        )
+        center_col, center_row = self.patch_grid[patch_id]
+        col_radius = max(1, math.ceil(margin / max(width, 1)))
+        row_radius = max(1, math.ceil(margin / max(height, 1)))
+        for dcol in range(-col_radius, col_radius + 1):
+            for drow in range(-row_radius, row_radius + 1):
+                neighbor_id = self.grid_to_patch.get((center_col + dcol, center_row + drow))
+                if neighbor_id is None:
+                    continue
+                neighbor_path = image_path.with_name(image_path.name.replace(patch_id, neighbor_id))
+                if not neighbor_path.exists():
+                    continue
+                neighbor = load_tiff(neighbor_path)
+                if neighbor.shape[0] != channels:
+                    continue
+                src_h, src_w = neighbor.shape[-2:]
+                row0 = margin - drow * height
+                col0 = margin + dcol * width
+                dst_y0 = max(row0, 0)
+                dst_x0 = max(col0, 0)
+                dst_y1 = min(row0 + src_h, canvas.shape[-2])
+                dst_x1 = min(col0 + src_w, canvas.shape[-1])
+                if dst_y1 <= dst_y0 or dst_x1 <= dst_x0:
+                    continue
+                src_y0 = dst_y0 - row0
+                src_x0 = dst_x0 - col0
+                src_y1 = src_y0 + (dst_y1 - dst_y0)
+                src_x1 = src_x0 + (dst_x1 - dst_x0)
+                canvas[:, dst_y0:dst_y1, dst_x0:dst_x1] = neighbor[
+                    :, src_y0:src_y1, src_x0:src_x1
+                ]
+        return canvas
 
     @staticmethod
     def _statistics_source_candidates(source: str) -> list[str]:
@@ -181,7 +290,7 @@ class MonthlyEmbeddingDataset(Dataset):
                 if not paths:
                     continue
                 try:
-                    array = load_tiff(self.root_dir / paths[0])
+                    array = self._load_with_context(self.root_dir / paths[0])
                 except Exception as exc:  # pragma: no cover
                     logger.warning("读取 %s 失败: %s", paths[0], exc)
                     continue
@@ -337,11 +446,12 @@ class MonthlyEmbeddingDataset(Dataset):
             timestamp_list: list[int] = []
 
             for path in paths:
-                array = load_tiff(self.root_dir / path)
+                full_path = self.root_dir / path
+                array = self._load_with_context(full_path)
                 array = array.astype(np.float32, copy=False)
-                mask_path = (self.root_dir / path).with_name(f"{path.stem}_mask.tif")
+                mask_path = full_path.with_name(f"{path.stem}_mask.tif")
                 if mask_path.exists():
-                    pixel_mask = load_tiff(mask_path)[0]
+                    pixel_mask = self._load_with_context(mask_path)[0]
                     pixel_mask = np.nan_to_num(
                         pixel_mask,
                         nan=0.0,

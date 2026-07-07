@@ -41,6 +41,8 @@ def build_dataloader(
         statistics_dir=statistics_dir,
         sources=cfg.sources,
         patch_size=cfg.patch_size,
+        context_margin=cfg.context_margin,
+        patch_grid_path=cfg.patch_grid_path,
         max_patches=cfg.max_patches,
         num_months=cfg.num_months,
         ref_year=ref_year,

@@ -7,6 +7,32 @@ from torch import nn
 # 重建损失 + batch uniformity 损失模块。
 
 
+def _center_crop_tensor(x: torch.Tensor, crop_size: int | None) -> torch.Tensor:
+    """Center-crop the last two spatial dimensions when requested."""
+    if crop_size is None or x.dim() < 2:
+        return x
+    crop_size = int(crop_size)
+    if crop_size <= 0:
+        return x
+    height, width = x.shape[-2:]
+    if height == crop_size and width == crop_size:
+        return x
+    if height < crop_size or width < crop_size:
+        raise ValueError(
+            f"无法中心裁剪到 {crop_size}: 输入空间尺寸为 {(height, width)}"
+        )
+    top = (height - crop_size) // 2
+    left = (width - crop_size) // 2
+    return x[..., top : top + crop_size, left : left + crop_size]
+
+
+def _center_crop_dict(
+    values: dict[str, torch.Tensor],
+    crop_size: int | None,
+) -> dict[str, torch.Tensor]:
+    return {name: _center_crop_tensor(value, crop_size) for name, value in values.items()}
+
+
 def reconstruction_loss(
     pred: torch.Tensor,
     target: torch.Tensor,
@@ -692,6 +718,7 @@ class TotalLoss(nn.Module):
         semantic_probe_hard_negative_ratio: float = 0.0,
         semantic_probe_hard_negative_weight: float = 0.0,
         semantic_probe_hard_negative_warmup_epochs: int = 0,
+        loss_crop_size: int | None = None,
     ) -> None:
         """初始化。
 
@@ -765,6 +792,7 @@ class TotalLoss(nn.Module):
             if self.semantic_probe_tasks
             else None
         )
+        self.loss_crop_size = int(loss_crop_size) if loss_crop_size else None
         self.current_epoch = 0
 
     def set_epoch(self, epoch: int) -> None:
@@ -865,12 +893,17 @@ class TotalLoss(nn.Module):
             ``recon_{name}`` 的字典。
         """
         recon_losses: dict[str, torch.Tensor] = {}
+        embedding_map = _center_crop_tensor(output.embedding_map, self.loss_crop_size)
+        embedding = F.normalize(embedding_map.mean(dim=[3, 4]), p=2, dim=-1)
+        reconstructions = _center_crop_dict(output.reconstructions, self.loss_crop_size)
+        targets = _center_crop_dict(targets, self.loss_crop_size)
+        masks = _center_crop_dict(masks, self.loss_crop_size)
         total_recon = torch.tensor(
-            0.0, device=output.embedding.device, dtype=output.embedding.dtype
+            0.0, device=embedding.device, dtype=embedding.dtype
         )
 
         for name, cfg in self.target_cfg.items():
-            pred = output.reconstructions[name]
+            pred = reconstructions[name]
             target = targets[name]
             mask = masks[name]
             loss = reconstruction_loss(
@@ -884,14 +917,14 @@ class TotalLoss(nn.Module):
             total_recon = total_recon + weighted
 
         uniformity = batch_uniformity_loss(
-            output.embedding,
+            embedding,
             temperature=self.uniformity_temperature,
         )
         uniformity_weight = self._current_uniformity_weight()
         weighted_uniformity = uniformity * uniformity_weight
         covariance_weight = self._current_covariance_weight()
         if covariance_weight == 0.0:
-            covariance = output.embedding_map.sum() * 0.0
+            covariance = embedding_map.sum() * 0.0
             covariance_stats = {
                 "variance": covariance.detach(),
                 "covariance": covariance.detach(),
@@ -900,17 +933,17 @@ class TotalLoss(nn.Module):
             }
         else:
             covariance, covariance_stats = covariance_regularization_loss(
-                output.embedding_map,
+                embedding_map,
                 std_target=self.covariance_std_target,
                 pool_size=self.covariance_pool_size,
             )
         weighted_covariance = covariance * covariance_weight
         patch_discrimination_weight = self._current_patch_discrimination_weight()
         if patch_discrimination_weight == 0.0:
-            patch_discrimination = output.embedding_map.sum() * 0.0
+            patch_discrimination = embedding_map.sum() * 0.0
         else:
             patch_discrimination = patch_discrimination_loss(
-                output.embedding_map,
+                embedding_map,
                 temperature=self.patch_discrimination_temperature,
                 pool_size=self.patch_discrimination_pool_size,
                 max_tokens=self.patch_discrimination_max_tokens,
@@ -919,13 +952,13 @@ class TotalLoss(nn.Module):
             patch_discrimination * patch_discrimination_weight
         )
         temporal_endpoint = temporal_endpoint_separation_loss(
-            output.embedding,
+            embedding,
             margin=self.temporal_endpoint_margin,
         )
         temporal_endpoint_weight = self._current_temporal_endpoint_weight()
         weighted_temporal_endpoint = temporal_endpoint * temporal_endpoint_weight
         temporal_contrast, temporal_contrast_stats = temporal_change_aware_contrast_loss(
-            output.embedding_map,
+            embedding_map,
             targets,
             masks,
             source_names=self.temporal_contrast_sources,
@@ -936,7 +969,7 @@ class TotalLoss(nn.Module):
         temporal_contrast_weight = self._current_temporal_contrast_weight()
         weighted_temporal_contrast = temporal_contrast * temporal_contrast_weight
         supervised_change, supervised_change_stats = supervised_change_alignment_loss(
-            output.embedding_map,
+            embedding_map,
             supervised_labels,
             supervised_label_masks,
             tasks=self.supervised_change_tasks,
@@ -950,14 +983,14 @@ class TotalLoss(nn.Module):
         supervised_change_weight = self._current_supervised_change_weight()
         weighted_supervised_change = supervised_change * supervised_change_weight
         if self.semantic_probe is None:
-            semantic_probe = output.embedding_map.sum() * 0.0
+            semantic_probe = embedding_map.sum() * 0.0
             semantic_probe_stats = {
                 "semantic_probe_positive_pixels": semantic_probe.detach(),
                 "semantic_probe_valid_pixels": semantic_probe.detach(),
             }
         else:
             semantic_probe, semantic_probe_stats = self.semantic_probe(
-                output.embedding_map,
+                embedding_map,
                 supervised_labels,
                 supervised_label_masks,
             )

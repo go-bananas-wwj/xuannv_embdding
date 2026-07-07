@@ -166,6 +166,8 @@ def _build_loader(
         statistics_dir=cfg.data.statistics_dir,
         sources=cfg.data.sources,
         patch_size=cfg.data.patch_size,
+        context_margin=cfg.data.context_margin,
+        patch_grid_path=cfg.data.patch_grid_path,
         max_patches=cfg.data.max_patches,
         num_months=cfg.model.num_months,
         ref_year=cfg.model.ref_year,
@@ -368,6 +370,7 @@ def main() -> None:
         semantic_probe_hard_negative_warmup_epochs=(
             cfg.training.semantic_probe_hard_negative_warmup_epochs
         ),
+        loss_crop_size=cfg.training.loss_crop_size,
     )
 
     train_loader = _build_loader(

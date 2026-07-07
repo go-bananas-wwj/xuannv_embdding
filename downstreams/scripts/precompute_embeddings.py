@@ -27,6 +27,18 @@ def main() -> None:
     p.add_argument("--split", default="all")
     p.add_argument("--device", default=None, help="Override inference device, e.g. npu:0 or cpu.")
     p.add_argument(
+        "--context-margin",
+        type=int,
+        default=None,
+        help="Temporarily override data.context_margin for overlap/context export.",
+    )
+    p.add_argument(
+        "--center-crop-size",
+        type=int,
+        default=None,
+        help="Center-crop exported embedding maps to this spatial size, e.g. 128.",
+    )
+    p.add_argument(
         "--months",
         nargs="+",
         default=None,
@@ -62,9 +74,21 @@ def main() -> None:
 
     for region in args.regions:
         logger.info("生成 %s embedding", region)
-        loader = build_inference_loader(cfg, region, split=args.split)
+        loader = build_inference_loader(
+            cfg,
+            region,
+            split=args.split,
+            context_margin=args.context_margin,
+        )
         region_dir = out_root / region
-        precompute_embeddings(model, loader, device, region_dir, months=args.months)
+        precompute_embeddings(
+            model,
+            loader,
+            device,
+            region_dir,
+            months=args.months,
+            center_crop_size=args.center_crop_size,
+        )
 
     write_meta_json(out_root, args.checkpoint, args.config, " ".join(sys.argv))
     logger.info("embedding 保存至 %s", out_root)

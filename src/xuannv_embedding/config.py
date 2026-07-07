@@ -29,6 +29,8 @@ class DataConfig:
     batch_size: int = 4
     num_workers: int = 8
     patch_size: int = 256
+    context_margin: int = 0
+    patch_grid_path: Path | None = None
     num_months: int = 17
     months: list[str] = field(default_factory=lambda: [])
     sources: list[str] = field(default_factory=lambda: ["s2", "s1", "landsat"])
@@ -119,6 +121,7 @@ class TrainingConfig:
     semantic_probe_hard_negative_weight: float = 0.0
     semantic_probe_hard_negative_warmup_epochs: int = 0
     input_masking: dict[str, Any] = field(default_factory=dict)
+    loss_crop_size: int | None = None
 
 
 @dataclass
@@ -272,6 +275,12 @@ class Config:
                 batch_size=data_cfg.get("batch_size", 4),
                 num_workers=data_cfg.get("num_workers", 8),
                 patch_size=data_cfg.get("patch_size", 256),
+                context_margin=data_cfg.get("context_margin", 0),
+                patch_grid_path=(
+                    Path(data_cfg["patch_grid_path"])
+                    if data_cfg.get("patch_grid_path")
+                    else None
+                ),
                 num_months=data_cfg.get("num_months", 17),
                 months=data_cfg.get("months", []),
                 sources=data_cfg.get("sources", ["s2", "s1", "landsat"]),
@@ -399,6 +408,7 @@ class Config:
                     "semantic_probe_hard_negative_warmup_epochs", 0
                 ),
                 input_masking=training_cfg.get("input_masking", {}),
+                loss_crop_size=training_cfg.get("loss_crop_size"),
             ),
         )
 
