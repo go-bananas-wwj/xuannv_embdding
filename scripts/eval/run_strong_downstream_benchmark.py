@@ -74,6 +74,56 @@ class PixelConvHead(nn.Module):
         return self.net(x).squeeze(1)
 
 
+class WideMLPHead(nn.Module):
+    def __init__(self, in_ch: int, hidden: int = 128) -> None:
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(in_ch, hidden, 1),
+            nn.GELU(),
+            nn.Conv2d(hidden, hidden // 2, 1),
+            nn.GELU(),
+            nn.Conv2d(hidden // 2, 1, 1),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x).squeeze(1)
+
+
+class DeepWideMLPHead(nn.Module):
+    def __init__(self, in_ch: int, hidden: int = 256, dropout: float = 0.1) -> None:
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(in_ch, hidden, 1),
+            nn.GELU(),
+            nn.Dropout2d(dropout),
+            nn.Conv2d(hidden, hidden // 2, 1),
+            nn.GELU(),
+            nn.Dropout2d(dropout),
+            nn.Conv2d(hidden // 2, 1, 1),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x).squeeze(1)
+
+
+class Conv3x3Head(nn.Module):
+    def __init__(self, in_ch: int, hidden: int = 128, dropout: float = 0.1) -> None:
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(in_ch, hidden, 3, padding=1, bias=False),
+            nn.BatchNorm2d(hidden),
+            nn.GELU(),
+            nn.Dropout2d(dropout),
+            nn.Conv2d(hidden, hidden // 2, 3, padding=1, bias=False),
+            nn.BatchNorm2d(hidden // 2),
+            nn.GELU(),
+            nn.Conv2d(hidden // 2, 1, 1),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x).squeeze(1)
+
+
 class TinyUNet(nn.Module):
     def __init__(self, in_ch: int, base: int) -> None:
         super().__init__()
@@ -230,6 +280,12 @@ def make_device(name: str) -> torch.device:
 def make_model(name: str, in_ch: int, base: int) -> nn.Module:
     if name == "pixel_conv":
         return PixelConvHead(in_ch, base * 2)
+    if name == "wide_mlp":
+        return WideMLPHead(in_ch, hidden=128)
+    if name == "deep_wide_mlp":
+        return DeepWideMLPHead(in_ch, hidden=256)
+    if name == "conv3x3":
+        return Conv3x3Head(in_ch, hidden=128)
     if name == "unet":
         return TinyUNet(in_ch, base)
     if name == "deeplab_lite":
