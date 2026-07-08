@@ -667,6 +667,161 @@ class SemanticProbeLoss(nn.Module):
         return loss, stats
 
 
+class LatentReconstructionLoss(nn.Module):
+    """Direct latent probes from embedding maps to stable source targets.
+
+    The main reconstruction decoders can learn task-specific decoding paths. In
+    contrast, these tiny 1x1 probes force the embedding map itself to retain
+    modality information that is linearly readable from each pixel token. This
+    follows the OlmoEarth-style idea of predicting stable latent targets from a
+    masked multimodal context while keeping the representation useful for small
+    downstream heads.
+    """
+
+    def __init__(
+        self,
+        embed_dim: int,
+        target_cfg: dict[str, dict],
+        target_names: list[str] | tuple[str, ...],
+        target_weights: dict[str, float] | None = None,
+        hidden_dim: int = 0,
+        loss_type: str = "smooth_l1",
+    ) -> None:
+        super().__init__()
+        self.target_names = tuple(target_names)
+        self.target_weights = dict(target_weights or {})
+        self.loss_type = str(loss_type)
+        hidden_dim = int(hidden_dim)
+        probes: dict[str, nn.Module] = {}
+        for name in self.target_names:
+            cfg = target_cfg.get(name)
+            if cfg is None:
+                raise KeyError(f"latent target {name!r} not found in target_cfg")
+            if cfg["loss_type"] != "l1":
+                raise ValueError(
+                    f"latent target {name!r} must be continuous/l1, got {cfg['loss_type']!r}"
+                )
+            channels = int(cfg["channels"])
+            if hidden_dim <= 0:
+                probes[name] = nn.Conv2d(embed_dim, channels, kernel_size=1)
+            else:
+                probes[name] = nn.Sequential(
+                    nn.Conv2d(embed_dim, hidden_dim, kernel_size=1),
+                    nn.GELU(),
+                    nn.Conv2d(hidden_dim, channels, kernel_size=1),
+                )
+        self.probes = nn.ModuleDict(probes)
+
+    @staticmethod
+    def _masked_channel_standardize(
+        target: torch.Tensor,
+        mask: torch.Tensor,
+        eps: float = 1e-5,
+    ) -> torch.Tensor:
+        valid = mask[:, None].to(dtype=target.dtype)
+        count = valid.sum(dim=[2, 3], keepdim=True).clamp(min=1.0)
+        mean = (target * valid).sum(dim=[2, 3], keepdim=True) / count
+        var = ((target - mean).pow(2) * valid).sum(dim=[2, 3], keepdim=True) / count
+        return (target - mean) / torch.sqrt(var + eps)
+
+    @staticmethod
+    def _loss_map(pred: torch.Tensor, target: torch.Tensor, loss_type: str) -> torch.Tensor:
+        if loss_type == "l1":
+            return F.l1_loss(pred, target, reduction="none").mean(dim=1)
+        if loss_type == "smooth_l1":
+            return F.smooth_l1_loss(pred, target, reduction="none", beta=0.5).mean(dim=1)
+        if loss_type == "mse":
+            return F.mse_loss(pred, target, reduction="none").mean(dim=1)
+        raise ValueError(f"Unsupported latent reconstruction loss_type: {loss_type!r}")
+
+    def forward(
+        self,
+        embedding_map: torch.Tensor,
+        targets: dict[str, torch.Tensor],
+        masks: dict[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        zero = embedding_map.sum() * 0.0
+        if not self.target_names:
+            return zero, {"latent_reconstruction_valid_pixels": zero.detach()}
+
+        if embedding_map.dim() != 5:
+            raise ValueError(
+                f"latent reconstruction expects monthly embedding_map [B,T,D,H,W], got {tuple(embedding_map.shape)}"
+            )
+        batch_size, num_months, dim, height, width = embedding_map.shape
+        emb = embedding_map.reshape(batch_size * num_months, dim, height, width)
+        total = zero
+        weight_sum = zero
+        total_valid_pixels = zero
+        stats: dict[str, torch.Tensor] = {}
+
+        for name in self.target_names:
+            target = targets.get(name)
+            mask = masks.get(name)
+            if target is None or mask is None:
+                continue
+            if target.dim() != 5:
+                raise ValueError(
+                    f"latent target {name!r} must be [B,T,C,H,W], got {tuple(target.shape)}"
+                )
+            target = target.to(device=embedding_map.device, dtype=embedding_map.dtype)
+            mask = _temporal_mask_to_spatial(
+                mask.to(device=embedding_map.device, dtype=embedding_map.dtype),
+                batch_size=batch_size,
+                num_months=num_months,
+                height=target.shape[-2],
+                width=target.shape[-1],
+            )
+            if target.shape[-2:] != (height, width):
+                target = target.reshape(
+                    batch_size * num_months,
+                    target.shape[2],
+                    target.shape[-2],
+                    target.shape[-1],
+                )
+                target = F.interpolate(
+                    target,
+                    size=(height, width),
+                    mode="bilinear",
+                    align_corners=False,
+                )
+                target = target.reshape(batch_size, num_months, target.shape[1], height, width)
+                mask = F.interpolate(
+                    mask.reshape(batch_size * num_months, 1, mask.shape[-2], mask.shape[-1]),
+                    size=(height, width),
+                    mode="nearest",
+                ).reshape(batch_size, num_months, height, width)
+            target = target.reshape(batch_size * num_months, target.shape[2], height, width)
+            mask = mask.reshape(batch_size * num_months, height, width)
+            valid_pixels = mask.sum()
+            if bool((valid_pixels <= 0).item()):
+                stats[f"latent_reconstruction_{name}"] = zero.detach()
+                stats[f"latent_reconstruction_{name}_valid_pixels"] = zero.detach()
+                continue
+
+            target = self._masked_channel_standardize(target, mask)
+            pred = self.probes[name](emb)
+            loss_map = self._loss_map(pred, target.detach(), self.loss_type)
+            loss = (loss_map * mask).sum() / valid_pixels.clamp(min=1.0)
+            weight = torch.tensor(
+                float(self.target_weights.get(name, 1.0)),
+                device=embedding_map.device,
+                dtype=embedding_map.dtype,
+            )
+            total = total + weight * loss
+            weight_sum = weight_sum + weight
+            total_valid_pixels = total_valid_pixels + valid_pixels
+            stats[f"latent_reconstruction_{name}"] = loss.detach()
+            stats[f"latent_reconstruction_{name}_valid_pixels"] = valid_pixels.detach()
+
+        if bool((weight_sum <= 0).item()):
+            return zero, {"latent_reconstruction_valid_pixels": zero.detach(), **stats}
+        return total / weight_sum.clamp(min=1.0), {
+            "latent_reconstruction_valid_pixels": total_valid_pixels.detach(),
+            **stats,
+        }
+
+
 class TotalLoss(nn.Module):
     """AEF 训练总损失：加权重建损失 + 表征正则项。"""
 
@@ -718,6 +873,13 @@ class TotalLoss(nn.Module):
         semantic_probe_hard_negative_ratio: float = 0.0,
         semantic_probe_hard_negative_weight: float = 0.0,
         semantic_probe_hard_negative_warmup_epochs: int = 0,
+        latent_reconstruction_embed_dim: int | None = None,
+        latent_reconstruction_weight: float = 0.0,
+        latent_reconstruction_warmup_epochs: int = 0,
+        latent_reconstruction_targets: list[str] | tuple[str, ...] = (),
+        latent_reconstruction_target_weights: dict[str, float] | None = None,
+        latent_reconstruction_hidden_dim: int = 0,
+        latent_reconstruction_loss_type: str = "smooth_l1",
         loss_crop_size: int | None = None,
     ) -> None:
         """初始化。
@@ -790,6 +952,27 @@ class TotalLoss(nn.Module):
                 ),
             )
             if self.semantic_probe_tasks
+            else None
+        )
+        self.latent_reconstruction_weight = float(latent_reconstruction_weight)
+        self.latent_reconstruction_warmup_epochs = int(
+            latent_reconstruction_warmup_epochs
+        )
+        self.latent_reconstruction_targets = tuple(latent_reconstruction_targets)
+        if self.latent_reconstruction_targets and latent_reconstruction_embed_dim is None:
+            raise ValueError(
+                "latent_reconstruction_embed_dim is required when latent_reconstruction_targets is not empty"
+            )
+        self.latent_reconstruction = (
+            LatentReconstructionLoss(
+                embed_dim=int(latent_reconstruction_embed_dim or 1),
+                target_cfg=target_cfg,
+                target_names=self.latent_reconstruction_targets,
+                target_weights=latent_reconstruction_target_weights,
+                hidden_dim=latent_reconstruction_hidden_dim,
+                loss_type=latent_reconstruction_loss_type,
+            )
+            if self.latent_reconstruction_targets
             else None
         )
         self.loss_crop_size = int(loss_crop_size) if loss_crop_size else None
@@ -872,6 +1055,12 @@ class TotalLoss(nn.Module):
             float(self.current_epoch + 1) / self.semantic_probe_warmup_epochs,
         )
         return self.semantic_probe_weight * progress
+
+    def _current_latent_reconstruction_weight(self) -> float:
+        return self._warmup_weight(
+            self.latent_reconstruction_weight,
+            self.latent_reconstruction_warmup_epochs,
+        )
 
     def forward(
         self,
@@ -996,6 +1185,21 @@ class TotalLoss(nn.Module):
             )
         semantic_probe_weight = self._current_semantic_probe_weight()
         weighted_semantic_probe = semantic_probe * semantic_probe_weight
+        if self.latent_reconstruction is None:
+            latent_reconstruction = embedding_map.sum() * 0.0
+            latent_reconstruction_stats = {
+                "latent_reconstruction_valid_pixels": latent_reconstruction.detach()
+            }
+        else:
+            latent_reconstruction, latent_reconstruction_stats = self.latent_reconstruction(
+                embedding_map,
+                targets,
+                masks,
+            )
+        latent_reconstruction_weight = self._current_latent_reconstruction_weight()
+        weighted_latent_reconstruction = (
+            latent_reconstruction * latent_reconstruction_weight
+        )
         total = (
             total_recon
             + weighted_uniformity
@@ -1005,6 +1209,7 @@ class TotalLoss(nn.Module):
             + weighted_temporal_contrast
             + weighted_supervised_change
             + weighted_semantic_probe
+            + weighted_latent_reconstruction
         )
 
         result: dict[str, torch.Tensor] = {
@@ -1076,12 +1281,25 @@ class TotalLoss(nn.Module):
             ),
             "semantic_probe_positive_pixels": semantic_probe_stats["semantic_probe_positive_pixels"],
             "semantic_probe_valid_pixels": semantic_probe_stats["semantic_probe_valid_pixels"],
+            "latent_reconstruction": latent_reconstruction,
+            "latent_reconstruction_weighted": weighted_latent_reconstruction,
+            "latent_reconstruction_weight": torch.tensor(
+                latent_reconstruction_weight,
+                device=output.embedding.device,
+                dtype=output.embedding.dtype,
+            ),
+            "latent_reconstruction_valid_pixels": latent_reconstruction_stats[
+                "latent_reconstruction_valid_pixels"
+            ],
         }
         for name, value in supervised_change_stats.items():
             if name.startswith("supervised_change_"):
                 result[name] = value
         for name, value in semantic_probe_stats.items():
             if name.startswith("semantic_probe_"):
+                result[name] = value
+        for name, value in latent_reconstruction_stats.items():
+            if name.startswith("latent_reconstruction_"):
                 result[name] = value
         result.update(recon_losses)
         return result

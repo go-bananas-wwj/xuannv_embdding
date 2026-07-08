@@ -390,6 +390,8 @@ class Trainer:
                         or name.startswith("masking_")
                         or name.startswith("covariance")
                         or name.startswith("patch_discrimination")
+                        or name.startswith("semantic_probe")
+                        or name.startswith("latent_reconstruction")
                     ):
                         step_metrics[f"train/{name}"] = value.item()
                 memory_mb = self._get_memory_mb()
@@ -475,6 +477,8 @@ class Trainer:
                     or name.startswith("masking_")
                     or name.startswith("covariance")
                     or name.startswith("patch_discrimination")
+                    or name.startswith("semantic_probe")
+                    or name.startswith("latent_reconstruction")
                 ):
                     epoch_metrics[f"train/{name}"] = value
             memory_mb = self._get_memory_mb()
@@ -575,6 +579,8 @@ class Trainer:
                     name.startswith("recon_")
                     or name.startswith("covariance")
                     or name.startswith("patch_discrimination")
+                    or name.startswith("semantic_probe")
+                    or name.startswith("latent_reconstruction")
                 ):
                     val_metrics[f"val/{name}"] = value
             self._log_to_wandb(val_metrics, step=self.global_step)

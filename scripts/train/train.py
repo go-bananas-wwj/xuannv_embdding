@@ -370,6 +370,19 @@ def main() -> None:
         semantic_probe_hard_negative_warmup_epochs=(
             cfg.training.semantic_probe_hard_negative_warmup_epochs
         ),
+        latent_reconstruction_embed_dim=cfg.model.embed_dim,
+        latent_reconstruction_weight=cfg.training.latent_reconstruction_weight,
+        latent_reconstruction_warmup_epochs=(
+            cfg.training.latent_reconstruction_warmup_epochs
+        ),
+        latent_reconstruction_targets=cfg.training.latent_reconstruction_targets,
+        latent_reconstruction_target_weights=(
+            cfg.training.latent_reconstruction_target_weights
+        ),
+        latent_reconstruction_hidden_dim=(
+            cfg.training.latent_reconstruction_hidden_dim
+        ),
+        latent_reconstruction_loss_type=cfg.training.latent_reconstruction_loss_type,
         loss_crop_size=cfg.training.loss_crop_size,
     )
 

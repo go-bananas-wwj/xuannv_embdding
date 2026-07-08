@@ -120,6 +120,12 @@ class TrainingConfig:
     semantic_probe_hard_negative_ratio: float = 0.0
     semantic_probe_hard_negative_weight: float = 0.0
     semantic_probe_hard_negative_warmup_epochs: int = 0
+    latent_reconstruction_weight: float = 0.0
+    latent_reconstruction_warmup_epochs: int = 0
+    latent_reconstruction_targets: list[str] = field(default_factory=list)
+    latent_reconstruction_target_weights: dict[str, float] = field(default_factory=dict)
+    latent_reconstruction_hidden_dim: int = 0
+    latent_reconstruction_loss_type: str = "smooth_l1"
     input_masking: dict[str, Any] = field(default_factory=dict)
     loss_crop_size: int | None = None
 
@@ -406,6 +412,24 @@ class Config:
                 ),
                 semantic_probe_hard_negative_warmup_epochs=training_cfg.get(
                     "semantic_probe_hard_negative_warmup_epochs", 0
+                ),
+                latent_reconstruction_weight=training_cfg.get(
+                    "latent_reconstruction_weight", 0.0
+                ),
+                latent_reconstruction_warmup_epochs=training_cfg.get(
+                    "latent_reconstruction_warmup_epochs", 0
+                ),
+                latent_reconstruction_targets=training_cfg.get(
+                    "latent_reconstruction_targets", []
+                ),
+                latent_reconstruction_target_weights=training_cfg.get(
+                    "latent_reconstruction_target_weights", {}
+                ),
+                latent_reconstruction_hidden_dim=training_cfg.get(
+                    "latent_reconstruction_hidden_dim", 0
+                ),
+                latent_reconstruction_loss_type=training_cfg.get(
+                    "latent_reconstruction_loss_type", "smooth_l1"
                 ),
                 input_masking=training_cfg.get("input_masking", {}),
                 loss_crop_size=training_cfg.get("loss_crop_size"),
