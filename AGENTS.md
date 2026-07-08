@@ -4,6 +4,14 @@
 
 ## 1. 工作流要求
 
+### 1.0 项目长期记忆
+
+在处理海淀区 embedding 训练、下游评测、报告整理或相关实验设计前，先阅读：
+
+- `docs/agent_memory/haidian_embedding_project_memory.md`
+
+该文档记录了本项目参考 AEF 路线构建通用地理 embedding 的目标、关键实验结论、数据/训练经验、few-shot 评测规范与后续升级方向。它用于避免长对话后上下文遗失或重复踩坑。
+
 ### 1.1 每完成一步，立即同步到 GitHub
 
 本项目的代码仓库托管在 `git@github.com:go-bananas-wwj/xuannv_embdding.git`。
