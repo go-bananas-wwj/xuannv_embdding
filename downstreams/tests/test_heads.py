@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 from downstreams.heads import (
+    BinaryBottleneckMLPProbeHead,
     BottleneckMLPProbeHead,
     ChangeDetectionHead,
     ClassificationHead,
@@ -51,6 +52,12 @@ def test_bottleneck_mlp_probe_head(seg_input: torch.Tensor) -> None:
     assert out.shape == (2, 5, 16, 16)
 
 
+def test_binary_bottleneck_mlp_probe_head(seg_input: torch.Tensor) -> None:
+    head = BinaryBottleneckMLPProbeHead(embed_dim=64)
+    out = head(seg_input)
+    assert out.shape == (2, 1, 16, 16)
+
+
 def test_unet_head(seg_input: torch.Tensor) -> None:
     head = UNetHead(embed_dim=64, num_classes=5)
     out = head(seg_input)
@@ -81,6 +88,17 @@ def test_upernet_head(seg_input: torch.Tensor) -> None:
 def test_build_segmentation_head(head_type: str, expected_cls: type) -> None:
     head = build_segmentation_head(head_type, embed_dim=64, num_classes=5)
     assert isinstance(head, expected_cls)
+
+
+@pytest.mark.parametrize("head_type", ["binary_mlp5", "binary_bottleneck_mlp"])
+def test_build_binary_segmentation_head(head_type: str) -> None:
+    head = build_segmentation_head(head_type, embed_dim=64, num_classes=1)
+    assert isinstance(head, BinaryBottleneckMLPProbeHead)
+
+
+def test_build_binary_segmentation_head_rejects_multiclass() -> None:
+    with pytest.raises(ValueError, match="num_classes=1"):
+        build_segmentation_head("binary_mlp5", embed_dim=64, num_classes=2)
 
 
 def test_build_segmentation_head_unknown() -> None:

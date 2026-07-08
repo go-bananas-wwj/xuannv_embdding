@@ -11,6 +11,17 @@ from downstreams.metrics.segmentation import compute_segmentation_metrics
 from downstreams.tasks.base import BaseTask
 
 
+def foreground_logits(logits: torch.Tensor) -> torch.Tensor:
+    """兼容单通道 binary head 与旧版双通道 head，返回前景 logit。"""
+    if logits.ndim != 4:
+        raise ValueError(f"期望 logits 为 (B,C,H,W)，实际得到 {tuple(logits.shape)}")
+    if logits.shape[1] == 1:
+        return logits[:, 0]
+    if logits.shape[1] >= 2:
+        return logits[:, 1]
+    raise ValueError(f"logits 通道数非法: {logits.shape[1]}")
+
+
 def _dice_loss(pred: torch.Tensor, target: torch.Tensor, smooth: float = 1e-6) -> torch.Tensor:
     pred = torch.sigmoid(pred)
     intersection = (pred * target).sum()
@@ -116,7 +127,7 @@ class ConstructionSegmentationTask(BaseTask):
             emb = batch["embedding_map"].to(device)
             mask = batch["mask"].to(device)  # (B, H, W)
             optimizer.zero_grad()
-            logits = model(emb)[:, 1]  # 二分类只取前景通道
+            logits = foreground_logits(model(emb))
             loss = loss_fn(logits, mask.float())
             loss.backward()
             optimizer.step()
@@ -137,7 +148,7 @@ class ConstructionSegmentationTask(BaseTask):
             for batch in loader:
                 emb = batch["embedding_map"].to(device)
                 mask = batch["mask"].to(device)
-                logits = model(emb)[:, 1]
+                logits = foreground_logits(model(emb))
                 all_logits.append(logits.cpu())
                 all_masks.append(mask.cpu())
         logits = torch.cat([x.flatten() for x in all_logits])

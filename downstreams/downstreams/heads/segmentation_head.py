@@ -44,6 +44,27 @@ class BottleneckMLPProbeHead(TaskHead):
         return self.net(x)
 
 
+class BinaryBottleneckMLPProbeHead(TaskHead):
+    """逐像素二分类瓶颈 MLP：64->32->16->8->4->1，只输出前景 logit。"""
+
+    def __init__(self, embed_dim: int) -> None:
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(embed_dim, 32, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 16, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(16, 8, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(8, 4, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(4, 1, kernel_size=1),
+        )
+
+    def forward(self, x: torch.Tensor, scene_emb: torch.Tensor | None = None) -> torch.Tensor:
+        return self.net(x)
+
+
 class FCNHead(TaskHead):
     def __init__(self, embed_dim: int, num_classes: int, hidden_dim: int = 256) -> None:
         super().__init__()
@@ -137,6 +158,10 @@ def build_segmentation_head(head_type: str, embed_dim: int, num_classes: int) ->
         return MLPProbeHead(embed_dim, num_classes)
     if head_type in {"mlp5", "bottleneck_mlp", "bottleneck_mlp_probe"}:
         return BottleneckMLPProbeHead(embed_dim, num_classes)
+    if head_type in {"binary_mlp5", "binary_bottleneck_mlp", "binary_bottleneck_mlp_probe"}:
+        if num_classes != 1:
+            raise ValueError("binary_mlp5 要求 data.num_classes=1")
+        return BinaryBottleneckMLPProbeHead(embed_dim)
     if head_type == "fcn":
         return FCNHead(embed_dim, num_classes)
     if head_type == "unet":

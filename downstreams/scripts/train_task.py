@@ -12,7 +12,7 @@ import rasterio
 import torch
 from downstreams.data.embedding_dataset import EmbeddingDataset, collate_embeddings
 from downstreams.data.split import create_stratified_folds
-from downstreams.tasks.construction_segmentation import ConstructionSegmentationTask
+from downstreams.tasks.construction_segmentation import ConstructionSegmentationTask, foreground_logits
 from downstreams.utils.config import load_config
 from downstreams.utils.device import get_downstream_device
 from downstreams.utils.reproducibility import set_seed
@@ -62,7 +62,7 @@ def save_test_predictions(
         for batch in loader:
             emb = batch["embedding_map"].to(device)
             patch_ids = batch["patch_ids"]
-            logits = model(emb)[:, 1]
+            logits = foreground_logits(model(emb))
             probs = torch.sigmoid(logits).cpu().numpy()
             for b, patch_id in enumerate(patch_ids):
                 mask_path = resolve_mask_path(mask_dir, patch_id)
@@ -239,7 +239,7 @@ def main() -> None:
                 emb = batch["embedding_map"].to(device)
                 mask = batch["mask"].to(device)
                 optimizer.zero_grad()
-                logits = model(emb)[:, 1]
+                logits = foreground_logits(model(emb))
                 loss = loss_fn(logits, mask.float())
                 loss.backward()
                 optimizer.step()
