@@ -17,7 +17,7 @@
 
 ## 最佳模型对比
 
-![Few-shot best F1](/data/xuannv_embedding/experiments/p12_context_eval_20260707/fewshot_raw_vs_xuannv_20260708/report/fewshot_best_f1.png)
+![Few-shot best F1](assets/haidian_v1_20260708/fewshot_best_f1.png)
 
 | 任务 | Shot | 玄女最佳头 | F1 | Raw最佳头 | RawF1 | 提升 | AP | RawAP | AUC | RawAUC |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -33,11 +33,11 @@
 
 ## 下游头完整热力图
 
-![Few-shot head heatmap](/data/xuannv_embedding/experiments/p12_context_eval_20260707/fewshot_raw_vs_xuannv_20260708/report/fewshot_head_heatmap.png)
+![Few-shot head heatmap](assets/haidian_v1_20260708/fewshot_head_heatmap.png)
 
 ## 5-shot 代表性可视化
 
-![Few-shot examples](/data/xuannv_embedding/experiments/p12_context_eval_20260707/fewshot_raw_vs_xuannv_20260708/report/fewshot_5shot_examples.png)
+![Few-shot examples](assets/haidian_v1_20260708/fewshot_5shot_examples.png)
 
 ## 全部组合指标
 

@@ -18,9 +18,9 @@
 
 ## 核心指标图
 
-![F1 comparison](/data/xuannv_embedding/experiments/p12_context_eval_20260707/raw_202604_head_sweep_20260708_report/raw_vs_xuannv_f1.png)
+![F1 comparison](assets/haidian_v1_20260708/raw_vs_xuannv_f1.png)
 
-![AP comparison](/data/xuannv_embedding/experiments/p12_context_eval_20260707/raw_202604_head_sweep_20260708_report/raw_vs_xuannv_ap.png)
+![AP comparison](assets/haidian_v1_20260708/raw_vs_xuannv_ap.png)
 
 ## 玄女下游头消融
 
@@ -77,15 +77,15 @@
 
 ### Building
 
-![Building examples](/data/xuannv_embedding/experiments/p12_context_eval_20260707/raw_202604_head_sweep_20260708_report/building_xuannv_vs_raw_examples.png)
+![Building examples](assets/haidian_v1_20260708/building_xuannv_vs_raw_examples.png)
 
 ### Road
 
-![Road examples](/data/xuannv_embedding/experiments/p12_context_eval_20260707/raw_202604_head_sweep_20260708_report/road_xuannv_vs_raw_examples.png)
+![Road examples](assets/haidian_v1_20260708/road_xuannv_vs_raw_examples.png)
 
 ### Water
 
-![Water examples](/data/xuannv_embedding/experiments/p12_context_eval_20260707/raw_202604_head_sweep_20260708_report/water_xuannv_vs_raw_examples.png)
+![Water examples](assets/haidian_v1_20260708/water_xuannv_vs_raw_examples.png)
 
 ## 分析
 

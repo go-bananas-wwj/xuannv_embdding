@@ -53,7 +53,7 @@
 - 对标注量、训练时间、工程部署要求更高；
 - 不同任务之间难以直接复用已有训练结果。
 
-![Full-label F1 comparison](/data/xuannv_embedding/experiments/p12_context_eval_20260707/raw_202604_head_sweep_20260708_report/raw_vs_xuannv_f1.png)
+![Full-label F1 comparison](assets/haidian_v1_20260708/raw_vs_xuannv_f1.png)
 
 ## 四、少样本结果
 
@@ -78,17 +78,17 @@
 - 建筑和道路任务在 50-shot 下仍保持领先。
 - 水体在 50-shot 下原始影像 UNet 追平玄女，说明当标注量增加后，原始影像强模型可以逐步追上。
 
-![Few-shot best F1](/data/xuannv_embedding/experiments/p12_context_eval_20260707/fewshot_raw_vs_xuannv_20260708/report/fewshot_best_f1.png)
+![Few-shot best F1](assets/haidian_v1_20260708/fewshot_best_f1.png)
 
 ## 五、可视化效果
 
 下面展示 5-shot 场景下的代表性结果。每一行对应一个任务，包含原始高分影像、真实标签、玄女预测概率、玄女预测结果、原始影像强头预测概率、原始影像强头预测结果。
 
-![Few-shot examples](/data/xuannv_embedding/experiments/p12_context_eval_20260707/fewshot_raw_vs_xuannv_20260708/report/fewshot_5shot_examples.png)
+![Few-shot examples](assets/haidian_v1_20260708/fewshot_5shot_examples.png)
 
 下游头完整热力图如下。可以看到，玄女 embedding 接入 `conv3x3` 空间头整体最稳定；这说明 embedding 本身已经包含可用语义信息，但下游头需要一点局部空间建模才能更好释放边界能力。
 
-![Few-shot head heatmap](/data/xuannv_embedding/experiments/p12_context_eval_20260707/fewshot_raw_vs_xuannv_20260708/report/fewshot_head_heatmap.png)
+![Few-shot head heatmap](assets/haidian_v1_20260708/fewshot_head_heatmap.png)
 
 ## 六、玄女 embedding 的业务意义
 
