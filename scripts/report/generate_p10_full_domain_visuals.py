@@ -16,6 +16,10 @@ from torch import nn
 
 
 TASKS = {
+    "construction": {
+        "label_root": "/data/xuannv_embedding/processed/haidian/labels/construction",
+        "title": "Construction",
+    },
     "building": {
         "label_root": "/data/xuannv_embedding/processed/haidian/labels/building_osm",
         "title": "Building",
