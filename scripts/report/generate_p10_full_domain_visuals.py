@@ -282,11 +282,12 @@ def load_probe(benchmark_root: Path, task: str, device: torch.device) -> tuple[n
         raise FileNotFoundError(ckpt_path)
     metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
     threshold = float(metrics.get("val_threshold", metrics.get("threshold", 0.5)))
+    probability_mode = str(metrics.get("probability_mode", "sigmoid"))
     state = torch.load(ckpt_path, map_location="cpu", weights_only=True)
     model = _build_probe_from_state(state).to(device)
     model.load_state_dict(state)
     model.eval()
-    return model, threshold
+    return model, threshold, probability_mode
 
 
 def predict_probability(
@@ -294,12 +295,16 @@ def predict_probability(
     emb: torch.Tensor,
     device: torch.device,
     chunk_pixels: int,
+    probability_mode: str = "sigmoid",
 ) -> np.ndarray:
     channels, height, width = emb.shape
     if isinstance(model, (BinaryBottleneckMLPProbeHead, BottleneckMLPProbeHead, MLPProbeHead, LinearProbeHead, UperNetHead)):
         with torch.no_grad():
             logits_all = model(emb.unsqueeze(0).to(device, non_blocking=True))
-            logits = logits_all[:, 1] if logits_all.shape[1] > 1 else logits_all[:, 0]
+            if probability_mode == "softmax":
+                logits = logits_all[:, 1] - logits_all[:, 0]
+            else:
+                logits = logits_all[:, 1] if logits_all.shape[1] > 1 else logits_all[:, 0]
             return torch.sigmoid(logits).squeeze(0).detach().cpu().numpy().astype(np.float32)
     x = emb.permute(1, 2, 0).reshape(-1, channels).contiguous()
     parts: list[torch.Tensor] = []
@@ -323,12 +328,12 @@ def make_prediction_canvases(
     device: torch.device,
     chunk_pixels: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    model, threshold = load_probe(spec.benchmark_root, task, device)
+    model, threshold, probability_mode = load_probe(spec.benchmark_root, task, device)
     pred_canvas, pred_valid = empty_canvas(rows, cols, tile_h, tile_w)
     prob_canvas, prob_valid = empty_canvas(rows, cols, tile_h, tile_w)
     for layout in layouts:
         emb = load_embedding(spec, region, layout.patch_id, month)
-        prob = predict_probability(model, emb, device, chunk_pixels)
+        prob = predict_probability(model, emb, device, chunk_pixels, probability_mode=probability_mode)
         paste_tile(prob_canvas, prob_valid, red_probability(prob), layout, tile_h, tile_w)
         paste_tile(pred_canvas, pred_valid, red_binary(prob >= threshold), layout, tile_h, tile_w)
     return pred_canvas, prob_canvas

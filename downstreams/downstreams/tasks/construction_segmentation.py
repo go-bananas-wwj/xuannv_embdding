@@ -11,12 +11,16 @@ from downstreams.metrics.segmentation import compute_segmentation_metrics
 from downstreams.tasks.base import BaseTask
 
 
-def foreground_logits(logits: torch.Tensor) -> torch.Tensor:
-    """兼容单通道 binary head 与旧版双通道 head，返回前景 logit。"""
+def foreground_logits(logits: torch.Tensor, mode: str = "sigmoid") -> torch.Tensor:
+    """兼容单通道 binary head、旧版双通道 sigmoid head 与 softmax CE head。"""
     if logits.ndim != 4:
         raise ValueError(f"期望 logits 为 (B,C,H,W)，实际得到 {tuple(logits.shape)}")
     if logits.shape[1] == 1:
         return logits[:, 0]
+    if mode == "softmax":
+        if logits.shape[1] != 2:
+            raise ValueError(f"softmax 二分类要求 2 个通道，实际得到 {logits.shape[1]}")
+        return logits[:, 1] - logits[:, 0]
     if logits.shape[1] >= 2:
         return logits[:, 1]
     raise ValueError(f"logits 通道数非法: {logits.shape[1]}")
@@ -109,9 +113,14 @@ class ConstructionSegmentationTask(BaseTask):
                     pos_weight=training.get("pos_weight", 1.0),
                     tversky_beta=training.get("tversky_beta", 0.7),
                 )
+            elif loss_name == "cross_entropy":
+                self._loss = nn.CrossEntropyLoss()
             else:
                 raise ValueError(f"未知 loss 类型: {loss_name}")
         return self._loss
+
+    def _uses_softmax_loss(self) -> bool:
+        return self.config.get("training", {}).get("loss", "").lower() == "cross_entropy"
 
     def train_one_epoch(
         self,
@@ -127,8 +136,12 @@ class ConstructionSegmentationTask(BaseTask):
             emb = batch["embedding_map"].to(device)
             mask = batch["mask"].to(device)  # (B, H, W)
             optimizer.zero_grad()
-            logits = foreground_logits(model(emb))
-            loss = loss_fn(logits, mask.float())
+            raw_logits = model(emb)
+            if self._uses_softmax_loss():
+                loss = loss_fn(raw_logits, mask.long())
+            else:
+                logits = foreground_logits(raw_logits)
+                loss = loss_fn(logits, mask.float())
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
@@ -148,7 +161,8 @@ class ConstructionSegmentationTask(BaseTask):
             for batch in loader:
                 emb = batch["embedding_map"].to(device)
                 mask = batch["mask"].to(device)
-                logits = foreground_logits(model(emb))
+                mode = "softmax" if self._uses_softmax_loss() else "sigmoid"
+                logits = foreground_logits(model(emb), mode=mode)
                 all_logits.append(logits.cpu())
                 all_masks.append(mask.cpu())
         logits = torch.cat([x.flatten() for x in all_logits])

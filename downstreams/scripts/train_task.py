@@ -54,6 +54,7 @@ def save_test_predictions(
     device: torch.device,
     pred_dir: Path,
     mask_dir: Path,
+    probability_mode: str = "sigmoid",
 ) -> None:
     """将测试集概率图保存为 GeoTIFF，便于后续可视化与溯源。"""
     model.eval()
@@ -62,7 +63,7 @@ def save_test_predictions(
         for batch in loader:
             emb = batch["embedding_map"].to(device)
             patch_ids = batch["patch_ids"]
-            logits = foreground_logits(model(emb))
+            logits = foreground_logits(model(emb), mode=probability_mode)
             probs = torch.sigmoid(logits).cpu().numpy()
             for b, patch_id in enumerate(patch_ids):
                 mask_path = resolve_mask_path(mask_dir, patch_id)
@@ -217,6 +218,7 @@ def main() -> None:
         )
 
         model = task.build_head().to(device)
+        probability_mode = "softmax" if cfg["training"].get("loss", "").lower() == "cross_entropy" else "sigmoid"
         optimizer = torch.optim.AdamW(
             model.parameters(),
             lr=cfg["training"]["lr"],
@@ -239,8 +241,12 @@ def main() -> None:
                 emb = batch["embedding_map"].to(device)
                 mask = batch["mask"].to(device)
                 optimizer.zero_grad()
-                logits = foreground_logits(model(emb))
-                loss = loss_fn(logits, mask.float())
+                raw_logits = model(emb)
+                if probability_mode == "softmax":
+                    loss = loss_fn(raw_logits, mask.long())
+                else:
+                    logits = foreground_logits(raw_logits)
+                    loss = loss_fn(logits, mask.float())
                 loss.backward()
                 optimizer.step()
                 train_loss += loss.item()
@@ -301,6 +307,8 @@ def main() -> None:
         test_metrics["val_threshold"] = best_threshold
         test_metrics["months"] = months
         test_metrics["temporal_mode"] = temporal_mode
+        test_metrics["loss"] = cfg["training"].get("loss")
+        test_metrics["probability_mode"] = probability_mode
         test_metrics["region"] = region
         test_metrics["fraction"] = args.fraction
         summary.append(test_metrics)
@@ -319,6 +327,7 @@ def main() -> None:
                 device,
                 out_dir / "predictions",
                 mask_dir,
+                probability_mode=probability_mode,
             )
 
     # 汇总。summary_5fold.json 保留为旧脚本兼容别名；summary_meta.json 记录真实 fold 数。
