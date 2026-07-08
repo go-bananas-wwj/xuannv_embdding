@@ -4,6 +4,8 @@ from downstreams.heads.classification_head import ClassificationHead
 from downstreams.heads.linear_probe import LinearProbeHead
 from downstreams.heads.segmentation_head import (
     BinaryBottleneckMLPProbeHead,
+    BinaryConv3x3ProbeHead,
+    BinaryDeepWideMLPProbeHead,
     BinaryWideMLPProbeHead,
     BottleneckMLPProbeHead,
     FCNHead,
@@ -17,6 +19,8 @@ __all__ = [
     "TaskHead",
     "LinearProbeHead",
     "BinaryBottleneckMLPProbeHead",
+    "BinaryConv3x3ProbeHead",
+    "BinaryDeepWideMLPProbeHead",
     "BinaryWideMLPProbeHead",
     "BottleneckMLPProbeHead",
     "MLPProbeHead",

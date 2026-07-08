@@ -82,6 +82,45 @@ class BinaryWideMLPProbeHead(TaskHead):
         return self.net(x)
 
 
+class BinaryDeepWideMLPProbeHead(TaskHead):
+    """逐像素二分类宽 MLP：64->256->128->1，带轻量 dropout。"""
+
+    def __init__(self, embed_dim: int, hidden_dim: int = 256, dropout: float = 0.1) -> None:
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(embed_dim, hidden_dim, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Dropout2d(dropout),
+            nn.Conv2d(hidden_dim, hidden_dim // 2, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Dropout2d(dropout),
+            nn.Conv2d(hidden_dim // 2, 1, kernel_size=1),
+        )
+
+    def forward(self, x: torch.Tensor, scene_emb: torch.Tensor | None = None) -> torch.Tensor:
+        return self.net(x)
+
+
+class BinaryConv3x3ProbeHead(TaskHead):
+    """二分类 3x3 Conv head：增加局部上下文，适合道路和边界类任务。"""
+
+    def __init__(self, embed_dim: int, hidden_dim: int = 128, dropout: float = 0.1) -> None:
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(embed_dim, hidden_dim, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Dropout2d(dropout),
+            nn.Conv2d(hidden_dim, hidden_dim // 2, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(hidden_dim // 2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(hidden_dim // 2, 1, kernel_size=1),
+        )
+
+    def forward(self, x: torch.Tensor, scene_emb: torch.Tensor | None = None) -> torch.Tensor:
+        return self.net(x)
+
+
 class FCNHead(TaskHead):
     def __init__(self, embed_dim: int, num_classes: int, hidden_dim: int = 256) -> None:
         super().__init__()
@@ -183,6 +222,14 @@ def build_segmentation_head(head_type: str, embed_dim: int, num_classes: int) ->
         if num_classes != 1:
             raise ValueError("binary_wide_mlp 要求 data.num_classes=1")
         return BinaryWideMLPProbeHead(embed_dim)
+    if head_type in {"binary_deep_wide_mlp", "binary_256_128_mlp"}:
+        if num_classes != 1:
+            raise ValueError("binary_deep_wide_mlp 要求 data.num_classes=1")
+        return BinaryDeepWideMLPProbeHead(embed_dim)
+    if head_type in {"binary_conv3x3", "binary_conv3x3_head"}:
+        if num_classes != 1:
+            raise ValueError("binary_conv3x3 要求 data.num_classes=1")
+        return BinaryConv3x3ProbeHead(embed_dim)
     if head_type == "fcn":
         return FCNHead(embed_dim, num_classes)
     if head_type == "unet":

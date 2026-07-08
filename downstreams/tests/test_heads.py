@@ -4,6 +4,8 @@ import pytest
 import torch
 from downstreams.heads import (
     BinaryBottleneckMLPProbeHead,
+    BinaryConv3x3ProbeHead,
+    BinaryDeepWideMLPProbeHead,
     BinaryWideMLPProbeHead,
     BottleneckMLPProbeHead,
     ChangeDetectionHead,
@@ -65,6 +67,18 @@ def test_binary_wide_mlp_probe_head(seg_input: torch.Tensor) -> None:
     assert out.shape == (2, 1, 16, 16)
 
 
+def test_binary_deep_wide_mlp_probe_head(seg_input: torch.Tensor) -> None:
+    head = BinaryDeepWideMLPProbeHead(embed_dim=64)
+    out = head(seg_input)
+    assert out.shape == (2, 1, 16, 16)
+
+
+def test_binary_conv3x3_probe_head(seg_input: torch.Tensor) -> None:
+    head = BinaryConv3x3ProbeHead(embed_dim=64)
+    out = head(seg_input)
+    assert out.shape == (2, 1, 16, 16)
+
+
 def test_unet_head(seg_input: torch.Tensor) -> None:
     head = UNetHead(embed_dim=64, num_classes=5)
     out = head(seg_input)
@@ -109,6 +123,18 @@ def test_build_binary_wide_segmentation_head(head_type: str) -> None:
     assert isinstance(head, BinaryWideMLPProbeHead)
 
 
+@pytest.mark.parametrize("head_type", ["binary_deep_wide_mlp", "binary_256_128_mlp"])
+def test_build_binary_deep_wide_segmentation_head(head_type: str) -> None:
+    head = build_segmentation_head(head_type, embed_dim=64, num_classes=1)
+    assert isinstance(head, BinaryDeepWideMLPProbeHead)
+
+
+@pytest.mark.parametrize("head_type", ["binary_conv3x3", "binary_conv3x3_head"])
+def test_build_binary_conv3x3_segmentation_head(head_type: str) -> None:
+    head = build_segmentation_head(head_type, embed_dim=64, num_classes=1)
+    assert isinstance(head, BinaryConv3x3ProbeHead)
+
+
 def test_build_binary_segmentation_head_rejects_multiclass() -> None:
     with pytest.raises(ValueError, match="num_classes=1"):
         build_segmentation_head("binary_mlp5", embed_dim=64, num_classes=2)
@@ -117,6 +143,12 @@ def test_build_binary_segmentation_head_rejects_multiclass() -> None:
 def test_build_binary_wide_segmentation_head_rejects_multiclass() -> None:
     with pytest.raises(ValueError, match="num_classes=1"):
         build_segmentation_head("binary_wide_mlp", embed_dim=64, num_classes=2)
+
+
+@pytest.mark.parametrize("head_type", ["binary_deep_wide_mlp", "binary_conv3x3"])
+def test_build_new_binary_segmentation_heads_reject_multiclass(head_type: str) -> None:
+    with pytest.raises(ValueError, match="num_classes=1"):
+        build_segmentation_head(head_type, embed_dim=64, num_classes=2)
 
 
 def test_build_segmentation_head_unknown() -> None:

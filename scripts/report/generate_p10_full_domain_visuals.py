@@ -13,6 +13,8 @@ import torch
 from downstreams.heads.linear_probe import LinearProbeHead
 from downstreams.heads.segmentation_head import (
     BinaryBottleneckMLPProbeHead,
+    BinaryConv3x3ProbeHead,
+    BinaryDeepWideMLPProbeHead,
     BinaryWideMLPProbeHead,
     BottleneckMLPProbeHead,
     MLPProbeHead,
@@ -272,6 +274,16 @@ def _build_probe_from_state(state: dict[str, torch.Tensor]) -> nn.Module:
         )
     if "net.4.weight" in state and state["net.0.weight"].ndim == 4 and state["net.4.weight"].shape[0] == 1:
         return BinaryWideMLPProbeHead(embed_dim=state["net.0.weight"].shape[1], hidden_dim=state["net.0.weight"].shape[0])
+    if "net.6.weight" in state and state["net.0.weight"].ndim == 4 and state["net.6.weight"].shape[0] == 1:
+        return BinaryDeepWideMLPProbeHead(
+            embed_dim=state["net.0.weight"].shape[1],
+            hidden_dim=state["net.0.weight"].shape[0],
+        )
+    if "net.7.weight" in state and state["net.0.weight"].ndim == 4 and state["net.7.weight"].shape[0] == 1:
+        return BinaryConv3x3ProbeHead(
+            embed_dim=state["net.0.weight"].shape[1],
+            hidden_dim=state["net.0.weight"].shape[0],
+        )
     if "net.0.weight" in state and state["net.0.weight"].ndim == 4:
         return MLPProbeHead(embed_dim=state["net.0.weight"].shape[1], num_classes=state["net.2.weight"].shape[0])
     if "conv.weight" in state and state["conv.weight"].ndim == 4:
@@ -306,7 +318,7 @@ def predict_probability(
     probability_mode: str = "sigmoid",
 ) -> np.ndarray:
     channels, height, width = emb.shape
-    if isinstance(model, (BinaryBottleneckMLPProbeHead, BinaryWideMLPProbeHead, BottleneckMLPProbeHead, MLPProbeHead, LinearProbeHead, UperNetHead)):
+    if isinstance(model, (BinaryBottleneckMLPProbeHead, BinaryConv3x3ProbeHead, BinaryDeepWideMLPProbeHead, BinaryWideMLPProbeHead, BottleneckMLPProbeHead, MLPProbeHead, LinearProbeHead, UperNetHead)):
         with torch.no_grad():
             logits_all = model(emb.unsqueeze(0).to(device, non_blocking=True))
             if probability_mode == "softmax":
