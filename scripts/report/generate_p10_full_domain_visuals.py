@@ -10,6 +10,8 @@ from typing import Any
 import numpy as np
 import rasterio
 import torch
+from downstreams.heads.linear_probe import LinearProbeHead
+from downstreams.heads.segmentation_head import MLPProbeHead
 from PIL import Image, ImageDraw
 from sklearn.decomposition import PCA
 from torch import nn
@@ -248,7 +250,15 @@ def make_pca_canvas(
     return stretched
 
 
-def load_probe(benchmark_root: Path, task: str, device: torch.device) -> tuple[PixelProbe, float]:
+def _build_probe_from_state(state: dict[str, torch.Tensor]) -> nn.Module:
+    if "net.0.weight" in state and state["net.0.weight"].ndim == 4:
+        return MLPProbeHead(embed_dim=state["net.0.weight"].shape[1], num_classes=state["net.2.weight"].shape[0])
+    if "conv.weight" in state and state["conv.weight"].ndim == 4:
+        return LinearProbeHead(embed_dim=state["conv.weight"].shape[1], num_classes=state["conv.weight"].shape[0])
+    return PixelProbe(embed_dim=state["net.0.weight"].shape[1])
+
+
+def load_probe(benchmark_root: Path, task: str, device: torch.device) -> tuple[nn.Module, float]:
     metrics_path = benchmark_root / task / "fold_0" / "metrics.json"
     ckpt_path = benchmark_root / task / "fold_0" / "checkpoints" / "best.pt"
     if not metrics_path.exists():
@@ -257,20 +267,24 @@ def load_probe(benchmark_root: Path, task: str, device: torch.device) -> tuple[P
         raise FileNotFoundError(ckpt_path)
     metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
     threshold = float(metrics.get("val_threshold", metrics.get("threshold", 0.5)))
-    model = PixelProbe().to(device)
     state = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+    model = _build_probe_from_state(state).to(device)
     model.load_state_dict(state)
     model.eval()
     return model, threshold
 
 
 def predict_probability(
-    model: PixelProbe,
+    model: nn.Module,
     emb: torch.Tensor,
     device: torch.device,
     chunk_pixels: int,
 ) -> np.ndarray:
     channels, height, width = emb.shape
+    if isinstance(model, (MLPProbeHead, LinearProbeHead)):
+        with torch.no_grad():
+            logits = model(emb.unsqueeze(0).to(device, non_blocking=True))[:, 1]
+            return torch.sigmoid(logits).squeeze(0).detach().cpu().numpy().astype(np.float32)
     x = emb.permute(1, 2, 0).reshape(-1, channels).contiguous()
     parts: list[torch.Tensor] = []
     with torch.no_grad():
