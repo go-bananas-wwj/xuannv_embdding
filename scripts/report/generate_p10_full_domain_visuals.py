@@ -11,7 +11,13 @@ import numpy as np
 import rasterio
 import torch
 from downstreams.heads.linear_probe import LinearProbeHead
-from downstreams.heads.segmentation_head import BinaryBottleneckMLPProbeHead, BottleneckMLPProbeHead, MLPProbeHead, UperNetHead
+from downstreams.heads.segmentation_head import (
+    BinaryBottleneckMLPProbeHead,
+    BinaryWideMLPProbeHead,
+    BottleneckMLPProbeHead,
+    MLPProbeHead,
+    UperNetHead,
+)
 from PIL import Image, ImageDraw
 from sklearn.decomposition import PCA
 from torch import nn
@@ -264,6 +270,8 @@ def _build_probe_from_state(state: dict[str, torch.Tensor]) -> nn.Module:
             embed_dim=state["net.0.weight"].shape[1],
             num_classes=state["net.8.weight"].shape[0],
         )
+    if "net.4.weight" in state and state["net.0.weight"].ndim == 4 and state["net.4.weight"].shape[0] == 1:
+        return BinaryWideMLPProbeHead(embed_dim=state["net.0.weight"].shape[1], hidden_dim=state["net.0.weight"].shape[0])
     if "net.0.weight" in state and state["net.0.weight"].ndim == 4:
         return MLPProbeHead(embed_dim=state["net.0.weight"].shape[1], num_classes=state["net.2.weight"].shape[0])
     if "conv.weight" in state and state["conv.weight"].ndim == 4:
@@ -298,7 +306,7 @@ def predict_probability(
     probability_mode: str = "sigmoid",
 ) -> np.ndarray:
     channels, height, width = emb.shape
-    if isinstance(model, (BinaryBottleneckMLPProbeHead, BottleneckMLPProbeHead, MLPProbeHead, LinearProbeHead, UperNetHead)):
+    if isinstance(model, (BinaryBottleneckMLPProbeHead, BinaryWideMLPProbeHead, BottleneckMLPProbeHead, MLPProbeHead, LinearProbeHead, UperNetHead)):
         with torch.no_grad():
             logits_all = model(emb.unsqueeze(0).to(device, non_blocking=True))
             if probability_mode == "softmax":

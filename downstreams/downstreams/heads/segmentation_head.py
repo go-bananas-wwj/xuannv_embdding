@@ -65,6 +65,23 @@ class BinaryBottleneckMLPProbeHead(TaskHead):
         return self.net(x)
 
 
+class BinaryWideMLPProbeHead(TaskHead):
+    """逐像素二分类宽 MLP：64->128->64->1，保留更多 embedding 语义容量。"""
+
+    def __init__(self, embed_dim: int, hidden_dim: int = 128) -> None:
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(embed_dim, hidden_dim, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(hidden_dim, hidden_dim // 2, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(hidden_dim // 2, 1, kernel_size=1),
+        )
+
+    def forward(self, x: torch.Tensor, scene_emb: torch.Tensor | None = None) -> torch.Tensor:
+        return self.net(x)
+
+
 class FCNHead(TaskHead):
     def __init__(self, embed_dim: int, num_classes: int, hidden_dim: int = 256) -> None:
         super().__init__()
@@ -162,6 +179,10 @@ def build_segmentation_head(head_type: str, embed_dim: int, num_classes: int) ->
         if num_classes != 1:
             raise ValueError("binary_mlp5 要求 data.num_classes=1")
         return BinaryBottleneckMLPProbeHead(embed_dim)
+    if head_type in {"binary_wide_mlp", "binary_mlp_wide", "binary_128_64_mlp"}:
+        if num_classes != 1:
+            raise ValueError("binary_wide_mlp 要求 data.num_classes=1")
+        return BinaryWideMLPProbeHead(embed_dim)
     if head_type == "fcn":
         return FCNHead(embed_dim, num_classes)
     if head_type == "unet":
