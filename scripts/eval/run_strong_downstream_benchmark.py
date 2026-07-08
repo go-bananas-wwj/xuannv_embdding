@@ -42,6 +42,9 @@ class PatchTensor:
     y: torch.Tensor
 
 
+FEATURE_CACHE: dict[tuple[str, str, str, str], np.ndarray] = {}
+
+
 class ConvBlock(nn.Module):
     def __init__(self, in_ch: int, out_ch: int) -> None:
         super().__init__()
@@ -365,7 +368,12 @@ def load_patch_tensor(
     region: str,
     month: str,
 ) -> PatchTensor:
-    x = load_benchmark_feature_map(feature_set, records[patch_id], embedding_root, region, month)
+    cache_key = (feature_set, patch_id, region, month)
+    cached = FEATURE_CACHE.get(cache_key)
+    if cached is None:
+        cached = load_benchmark_feature_map(feature_set, records[patch_id], embedding_root, region, month)
+        FEATURE_CACHE[cache_key] = cached
+    x = cached
     y = load_binary_mask(task, patch_id)
     if x.shape[-2:] != y.shape:
         raise ValueError(f"Shape mismatch patch={patch_id}: x={x.shape}, y={y.shape}")
