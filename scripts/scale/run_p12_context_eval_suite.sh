@@ -106,8 +106,13 @@ run_downstream() {
   echo "$(date '+%F %T') downstream done ${tag}: ${out_dir}"
 }
 
+export_pids=()
 for idx in "${!TAGS[@]}"; do
-  run_export "${TAGS[$idx]}" "$((idx % 6))"
+  run_export "${TAGS[$idx]}" "$((idx % 6))" &
+  export_pids+=("$!")
+done
+for pid in "${export_pids[@]}"; do
+  wait "${pid}"
 done
 
 for tag in "${TAGS[@]}"; do
