@@ -11,7 +11,7 @@ import numpy as np
 import rasterio
 import torch
 from downstreams.heads.linear_probe import LinearProbeHead
-from downstreams.heads.segmentation_head import MLPProbeHead
+from downstreams.heads.segmentation_head import MLPProbeHead, UperNetHead
 from PIL import Image, ImageDraw
 from sklearn.decomposition import PCA
 from torch import nn
@@ -255,6 +255,8 @@ def _build_probe_from_state(state: dict[str, torch.Tensor]) -> nn.Module:
         return MLPProbeHead(embed_dim=state["net.0.weight"].shape[1], num_classes=state["net.2.weight"].shape[0])
     if "conv.weight" in state and state["conv.weight"].ndim == 4:
         return LinearProbeHead(embed_dim=state["conv.weight"].shape[1], num_classes=state["conv.weight"].shape[0])
+    if "classifier.weight" in state and "psp_modules.0.1.weight" in state:
+        return UperNetHead(embed_dim=state["psp_modules.0.1.weight"].shape[1], num_classes=state["classifier.weight"].shape[0])
     return PixelProbe(embed_dim=state["net.0.weight"].shape[1])
 
 
@@ -281,9 +283,10 @@ def predict_probability(
     chunk_pixels: int,
 ) -> np.ndarray:
     channels, height, width = emb.shape
-    if isinstance(model, (MLPProbeHead, LinearProbeHead)):
+    if isinstance(model, (MLPProbeHead, LinearProbeHead, UperNetHead)):
         with torch.no_grad():
-            logits = model(emb.unsqueeze(0).to(device, non_blocking=True))[:, 1]
+            logits_all = model(emb.unsqueeze(0).to(device, non_blocking=True))
+            logits = logits_all[:, 1] if logits_all.shape[1] > 1 else logits_all[:, 0]
             return torch.sigmoid(logits).squeeze(0).detach().cpu().numpy().astype(np.float32)
     x = emb.permute(1, 2, 0).reshape(-1, channels).contiguous()
     parts: list[torch.Tensor] = []
