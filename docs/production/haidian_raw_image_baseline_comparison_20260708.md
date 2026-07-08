@@ -4,7 +4,8 @@
 
 - 只换下游头时，`conv3x3` 空间头在建筑、道路、水体三类任务上稳定优于原来的局部头、wide MLP 和 deep-wide MLP，说明玄女 embedding 中存在可被轻量空间头释放的局部边界信息。
 - 使用 2026 年 4 月原始多源影像直接训练下游头时，强监督的 UNet/DeepLab-lite 在 full train split 场景下可以达到或超过玄女轻量头；但这类方法依赖更重的输入、更大的下游模型和完整监督训练。
-- 公平解释是：玄女 embedding 的价值不应只看 full-label 强监督上限，更应强调少量标注、轻量头、快速制图和跨任务复用；raw+UNet 是强基线，适合展示“如果不用 embedding，需要更重下游模型才能追上”。
+- Few-shot 补充评测显示，在 5-shot 和 10-shot 设置下，玄女 embedding 的最佳下游头在建筑、道路、水体三类任务上均超过 raw 2026-04 原始影像的最佳强头；50-shot 下建筑、道路仍领先，水体基本打平。详见 [Few-shot 原始影像基线对比](/root/workspace/xuannv/docs/production/haidian_fewshot_raw_vs_xuannv_20260708.md)。
+- 公平解释是：玄女 embedding 的价值不应只看 full-label 强监督上限，更应强调少量标注、轻量头、快速制图和跨任务复用；raw+UNet 是强基线，适合展示“如果不用 embedding，需要更重下游模型和更多标注才能追上”。
 
 ## 评测设置
 
