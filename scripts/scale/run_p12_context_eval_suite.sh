@@ -22,17 +22,21 @@ mkdir -p "${EMBED_ROOT}" "${BENCH_ROOT}" "${LOG_ROOT}"
 
 declare -A CONFIGS=(
   [p12a_p10c_context]="configs/v2_p10c_haidian_202512_202605_osm_semantic_hardneg_20260704.yaml"
+  [p12b_best]="configs/v2_p12b_context160_center128_haidian_202512_202605_20260707.yaml"
   [p12b_e400]="configs/v2_p12b_context160_center128_haidian_202512_202605_20260707.yaml"
+  [p12c_best]="configs/v2_p12c_context160_semantic_rich_haidian_202512_202605_20260707.yaml"
   [p12c_e400]="configs/v2_p12c_context160_semantic_rich_haidian_202512_202605_20260707.yaml"
 )
 
 declare -A CHECKPOINTS=(
   [p12a_p10c_context]="/data/xuannv_embedding/outputs/v2_p10c_haidian_202512_202605_osm_semantic_hardneg_20260704/epoch_800.pt"
+  [p12b_best]="/data/xuannv_embedding/outputs/v2_p12b_context160_center128_haidian_202512_202605_20260707/best.pt"
   [p12b_e400]="/data/xuannv_embedding/outputs/v2_p12b_context160_center128_haidian_202512_202605_20260707/epoch_400.pt"
+  [p12c_best]="/data/xuannv_embedding/outputs/v2_p12c_context160_semantic_rich_haidian_202512_202605_20260707/best.pt"
   [p12c_e400]="/data/xuannv_embedding/outputs/v2_p12c_context160_semantic_rich_haidian_202512_202605_20260707/epoch_400.pt"
 )
 
-TAGS=(p12a_p10c_context p12b_e400 p12c_e400)
+TAGS=(p12a_p10c_context p12b_best p12b_e400 p12c_best p12c_e400)
 
 run_export() {
   local tag="$1"
@@ -91,6 +95,7 @@ run_downstream() {
     --embedding-root "${embedding_root}" \
     --run-name "${tag}" \
     --benchmark-root "${out_dir}" \
+    --config downstreams/configs/v2_probe_mlp_single_202604.yaml \
     --tasks construction haidian_building_osm haidian_road_osm haidian_water_osm \
     --npu 0,1,2,3 \
     --parallel-tasks \
