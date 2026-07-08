@@ -81,6 +81,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--month", default="202604")
     parser.add_argument("--region", default="haidian")
     parser.add_argument("--tasks", nargs="+", default=list(TASKS))
+    parser.add_argument(
+        "--layout-label-root",
+        type=Path,
+        default=None,
+        help="Use this label mask directory for geographic layout; missing task masks are rendered as empty.",
+    )
     parser.add_argument("--pca-sample-pixels-per-spec", type=int, default=220000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="cpu")
@@ -332,11 +338,19 @@ def make_gt_canvas(
     cols: int,
     tile_h: int,
     tile_w: int,
+    label_root: Path | None = None,
 ) -> np.ndarray:
     canvas, valid = empty_canvas(rows, cols, tile_h, tile_w)
     for layout in layouts:
-        with rasterio.open(layout.mask_path) as src:
-            mask = src.read(1) > 0
+        mask_path = layout.mask_path
+        if label_root is not None:
+            candidate = label_root / "masks" / f"{layout.patch_id}.tif"
+            mask_path = candidate if candidate.exists() else mask_path
+        if label_root is not None and not (label_root / "masks" / f"{layout.patch_id}.tif").exists():
+            mask = np.zeros((tile_h, tile_w), dtype=bool)
+        else:
+            with rasterio.open(mask_path) as src:
+                mask = src.read(1) > 0
         paste_tile(canvas, valid, red_binary(mask), layout, tile_h, tile_w)
     return canvas
 
@@ -370,7 +384,8 @@ def main() -> None:
 
         torch.npu.set_device(device)
 
-    layouts, rows, cols, tile_h, tile_w = load_layout(Path(TASKS["building"]["label_root"]))
+    layout_label_root = args.layout_label_root or Path(TASKS["building"]["label_root"])
+    layouts, rows, cols, tile_h, tile_w = load_layout(layout_label_root)
     pca = fit_common_pca(
         specs,
         layouts,
@@ -413,8 +428,16 @@ def main() -> None:
     for task in args.tasks:
         task_root = output_root / task
         label_root = Path(TASKS[task]["label_root"])
-        task_layouts, task_rows, task_cols, task_tile_h, task_tile_w = load_layout(label_root)
-        gt_canvas = make_gt_canvas(task_layouts, task_rows, task_cols, task_tile_h, task_tile_w)
+        task_layout_root = args.layout_label_root or label_root
+        task_layouts, task_rows, task_cols, task_tile_h, task_tile_w = load_layout(task_layout_root)
+        gt_canvas = make_gt_canvas(
+            task_layouts,
+            task_rows,
+            task_cols,
+            task_tile_h,
+            task_tile_w,
+            label_root=label_root if args.layout_label_root is not None else None,
+        )
         gt_path = task_root / f"{task}_gt_geo.png"
         save_canvas(gt_path, gt_canvas, f"{TASKS[task]['title']} GT")
         metadata["outputs"].append(str(gt_path))
