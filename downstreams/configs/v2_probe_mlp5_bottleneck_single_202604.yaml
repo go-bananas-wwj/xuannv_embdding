@@ -1,0 +1,30 @@
+experiment:
+  name: v2_probe_mlp5_bottleneck_single_202604
+  seed: 42
+  device: auto
+
+training:
+  epochs: 50
+  lr: 0.0001
+  weight_decay: 0.0001
+  batch_size: 32
+  num_workers: 4
+  prefetch_factor: 2
+  use_early_stopping: false
+  early_stop_patience: 0
+  eval_every: 5
+  save_predictions: false
+  head_type: mlp5
+  loss: bce_dice_tversky
+  pos_weight: 1.0
+  tversky_beta: 0.7
+  label_fraction: 1.0
+  months:
+  - 202604
+  temporal_mode: single
+  early_stop_metric: f1_best
+  use_threshold_tuning: true
+
+data:
+  embed_dim: 64
+  num_classes: 2

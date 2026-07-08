@@ -23,6 +23,27 @@ class MLPProbeHead(TaskHead):
         return self.net(x)
 
 
+class BottleneckMLPProbeHead(TaskHead):
+    """逐像素瓶颈 MLP：64->32->16->8->4->2，只做 1x1 通道混合。"""
+
+    def __init__(self, embed_dim: int, num_classes: int) -> None:
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(embed_dim, 32, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 16, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(16, 8, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(8, 4, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(4, num_classes, kernel_size=1),
+        )
+
+    def forward(self, x: torch.Tensor, scene_emb: torch.Tensor | None = None) -> torch.Tensor:
+        return self.net(x)
+
+
 class FCNHead(TaskHead):
     def __init__(self, embed_dim: int, num_classes: int, hidden_dim: int = 256) -> None:
         super().__init__()
@@ -114,6 +135,8 @@ def build_segmentation_head(head_type: str, embed_dim: int, num_classes: int) ->
         return LinearProbeHead(embed_dim, num_classes)
     if head_type == "mlp" or head_type == "mlp_probe":
         return MLPProbeHead(embed_dim, num_classes)
+    if head_type in {"mlp5", "bottleneck_mlp", "bottleneck_mlp_probe"}:
+        return BottleneckMLPProbeHead(embed_dim, num_classes)
     if head_type == "fcn":
         return FCNHead(embed_dim, num_classes)
     if head_type == "unet":

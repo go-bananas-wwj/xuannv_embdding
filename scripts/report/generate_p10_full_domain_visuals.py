@@ -11,7 +11,7 @@ import numpy as np
 import rasterio
 import torch
 from downstreams.heads.linear_probe import LinearProbeHead
-from downstreams.heads.segmentation_head import MLPProbeHead, UperNetHead
+from downstreams.heads.segmentation_head import BottleneckMLPProbeHead, MLPProbeHead, UperNetHead
 from PIL import Image, ImageDraw
 from sklearn.decomposition import PCA
 from torch import nn
@@ -251,6 +251,11 @@ def make_pca_canvas(
 
 
 def _build_probe_from_state(state: dict[str, torch.Tensor]) -> nn.Module:
+    if "net.8.weight" in state and state["net.0.weight"].ndim == 4:
+        return BottleneckMLPProbeHead(
+            embed_dim=state["net.0.weight"].shape[1],
+            num_classes=state["net.8.weight"].shape[0],
+        )
     if "net.0.weight" in state and state["net.0.weight"].ndim == 4:
         return MLPProbeHead(embed_dim=state["net.0.weight"].shape[1], num_classes=state["net.2.weight"].shape[0])
     if "conv.weight" in state and state["conv.weight"].ndim == 4:
@@ -283,7 +288,7 @@ def predict_probability(
     chunk_pixels: int,
 ) -> np.ndarray:
     channels, height, width = emb.shape
-    if isinstance(model, (MLPProbeHead, LinearProbeHead, UperNetHead)):
+    if isinstance(model, (BottleneckMLPProbeHead, MLPProbeHead, LinearProbeHead, UperNetHead)):
         with torch.no_grad():
             logits_all = model(emb.unsqueeze(0).to(device, non_blocking=True))
             logits = logits_all[:, 1] if logits_all.shape[1] > 1 else logits_all[:, 0]

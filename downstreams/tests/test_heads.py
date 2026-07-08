@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 from downstreams.heads import (
+    BottleneckMLPProbeHead,
     ChangeDetectionHead,
     ClassificationHead,
     FCNHead,
@@ -44,6 +45,12 @@ def test_mlp_probe_head(seg_input: torch.Tensor) -> None:
     assert out.shape == (2, 5, 16, 16)
 
 
+def test_bottleneck_mlp_probe_head(seg_input: torch.Tensor) -> None:
+    head = BottleneckMLPProbeHead(embed_dim=64, num_classes=5)
+    out = head(seg_input)
+    assert out.shape == (2, 5, 16, 16)
+
+
 def test_unet_head(seg_input: torch.Tensor) -> None:
     head = UNetHead(embed_dim=64, num_classes=5)
     out = head(seg_input)
@@ -64,6 +71,8 @@ def test_upernet_head(seg_input: torch.Tensor) -> None:
         ("linear_probe", LinearProbeHead),
         ("mlp", MLPProbeHead),
         ("mlp_probe", MLPProbeHead),
+        ("mlp5", BottleneckMLPProbeHead),
+        ("bottleneck_mlp", BottleneckMLPProbeHead),
         ("fcn", FCNHead),
         ("unet", UNetHead),
         ("upernet", UperNetHead),
