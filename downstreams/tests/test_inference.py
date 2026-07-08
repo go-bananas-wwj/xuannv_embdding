@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from downstreams.inference import precompute_embeddings, write_meta_json
+from downstreams.inference import build_inference_loader, precompute_embeddings, write_meta_json
 
 
 class _SimpleOutput:
@@ -96,3 +96,41 @@ def test_precompute_embeddings_structure(tmp_path: Path) -> None:
     patch_dir = output_dir / "patch_000001"
     assert (patch_dir / "202604_embedding_map.pt").exists()
     assert (patch_dir / "202604_scene_embedding.pt").exists()
+
+
+def test_build_inference_loader_shard_validation(monkeypatch: Any, tmp_path: Path) -> None:
+    class _FakeDataConfig:
+        statistics_dirs_by_region = {}
+        region = "haidian"
+        manifest_path = tmp_path / "manifest.json"
+        statistics_dir = tmp_path / "statistics"
+        root = tmp_path / "data"
+        sources = []
+        patch_size = 128
+        context_margin = 0
+        patch_grid_path = None
+
+    class _FakeModelConfig:
+        num_months = 1
+        ref_year = 2026
+        ref_month = 4
+        target_heads = {}
+
+    class _FakeConfig:
+        data = _FakeDataConfig()
+        model = _FakeModelConfig()
+
+    class _FakeDataset:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.items = list(range(10))
+
+        def __len__(self) -> int:
+            return len(self.items)
+
+        def __getitem__(self, idx: int) -> dict[str, Any]:
+            return {"idx": idx}
+
+    monkeypatch.setattr("downstreams.inference.MonthlyEmbeddingDataset", _FakeDataset)
+
+    loader = build_inference_loader(_FakeConfig(), "haidian", shard_id=1, num_shards=3)
+    assert list(loader.dataset.indices) == [1, 4, 7]

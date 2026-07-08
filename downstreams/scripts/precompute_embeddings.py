@@ -27,6 +27,18 @@ def main() -> None:
     p.add_argument("--split", default="all")
     p.add_argument("--device", default=None, help="Override inference device, e.g. npu:0 or cpu.")
     p.add_argument(
+        "--num-shards",
+        type=int,
+        default=None,
+        help="Split patches across this many export workers.",
+    )
+    p.add_argument(
+        "--shard-id",
+        type=int,
+        default=None,
+        help="Current export worker id in [0, num_shards).",
+    )
+    p.add_argument(
         "--context-margin",
         type=int,
         default=None,
@@ -79,6 +91,8 @@ def main() -> None:
             region,
             split=args.split,
             context_margin=args.context_margin,
+            shard_id=args.shard_id,
+            num_shards=args.num_shards,
         )
         region_dir = out_root / region
         precompute_embeddings(

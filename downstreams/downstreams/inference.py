@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 from xuannv_embedding.config import Config
 from xuannv_embedding.data.collate import collate_fn
@@ -65,6 +65,8 @@ def build_inference_loader(
     region: str,
     split: str = "all",
     context_margin: int | None = None,
+    shard_id: int | None = None,
+    num_shards: int | None = None,
 ) -> DataLoader:
     # TODO: 当 MonthlyEmbeddingDataset 支持 split 过滤时，根据 split 值筛选 patch。
     if cfg.data.statistics_dirs_by_region:
@@ -95,6 +97,15 @@ def build_inference_loader(
         ref_month=cfg.model.ref_month,
         region_filter=region_filter,
     )
+    if num_shards is not None:
+        if shard_id is None:
+            raise ValueError("设置 num_shards 时必须同时设置 shard_id")
+        if num_shards <= 0:
+            raise ValueError(f"num_shards 必须为正数，当前为 {num_shards}")
+        if shard_id < 0 or shard_id >= num_shards:
+            raise ValueError(f"shard_id 必须位于 [0, {num_shards})，当前为 {shard_id}")
+        indices = list(range(shard_id, len(dataset), num_shards))
+        dataset = Subset(dataset, indices)
 
     target_heads = cfg.model.target_heads
 
