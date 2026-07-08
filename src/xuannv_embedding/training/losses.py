@@ -764,6 +764,11 @@ class LatentReconstructionLoss(nn.Module):
                 raise ValueError(
                     f"latent target {name!r} must be [B,T,C,H,W], got {tuple(target.shape)}"
                 )
+            if target.shape[0] != batch_size or target.shape[1] != num_months:
+                raise ValueError(
+                    f"latent target {name!r} batch/time mismatch: expected "
+                    f"({batch_size}, {num_months}), got {tuple(target.shape[:2])}"
+                )
             target = target.to(device=embedding_map.device, dtype=embedding_map.dtype)
             mask = _temporal_mask_to_spatial(
                 mask.to(device=embedding_map.device, dtype=embedding_map.dtype),
@@ -772,6 +777,11 @@ class LatentReconstructionLoss(nn.Module):
                 height=target.shape[-2],
                 width=target.shape[-1],
             )
+            if mask.shape[:2] != (batch_size, num_months):
+                raise ValueError(
+                    f"latent mask {name!r} batch/time mismatch: expected "
+                    f"({batch_size}, {num_months}), got {tuple(mask.shape[:2])}"
+                )
             if target.shape[-2:] != (height, width):
                 target = target.reshape(
                     batch_size * num_months,
@@ -793,6 +803,9 @@ class LatentReconstructionLoss(nn.Module):
                 ).reshape(batch_size, num_months, height, width)
             target = target.reshape(batch_size * num_months, target.shape[2], height, width)
             mask = mask.reshape(batch_size * num_months, height, width)
+            finite_mask = torch.isfinite(target).all(dim=1).to(dtype=mask.dtype)
+            mask = mask * finite_mask
+            target = torch.nan_to_num(target, nan=0.0, posinf=0.0, neginf=0.0)
             valid_pixels = mask.sum()
             if bool((valid_pixels <= 0).item()):
                 stats[f"latent_reconstruction_{name}"] = zero.detach()

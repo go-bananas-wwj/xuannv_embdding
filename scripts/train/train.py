@@ -250,12 +250,17 @@ def _init_model_from_checkpoint(
     state = torch.load(init_from, map_location="cpu", weights_only=True)
     missing, unexpected = model.load_state_dict(state["model"], strict=False)
 
+    if missing or unexpected:
+        missing_preview = ", ".join(missing[:20])
+        unexpected_preview = ", ".join(unexpected[:20])
+        raise RuntimeError(
+            "初始化 checkpoint 与当前模型结构不完全匹配，已中止以避免半加载训练。"
+            f" missing={len(missing)} [{missing_preview}],"
+            f" unexpected={len(unexpected)} [{unexpected_preview}]"
+        )
+
     if is_main_process:
         logger.info("从 %s 初始化模型权重", init_from)
-        if missing:
-            logger.info("缺失 keys (%d): %s ...", len(missing), missing[:5])
-        if unexpected:
-            logger.info("多余 keys (%d): %s ...", len(unexpected), unexpected[:5])
 
 
 def main() -> None:

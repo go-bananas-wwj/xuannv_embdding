@@ -3,7 +3,6 @@ from __future__ import annotations
 import itertools
 import logging
 import re
-import shutil
 from pathlib import Path
 from typing import Any
 
@@ -640,6 +639,34 @@ class Trainer:
                         log_msg += f", val_loss={val_metrics['val_loss']:.6f}"
                     logger.info(log_msg)
 
+                    # best.pt 必须随验证/训练指标即时更新，而不是等到 save_every 的轮次；
+                    # 否则 eval_every 小于 save_every 时会丢掉真正的最佳 epoch。
+                    current_loss: float | None = None
+                    if val_metrics is not None:
+                        current_loss = val_metrics["val_loss"]
+                    elif self.val_loader is None:
+                        current_loss = train_metrics["train_loss"]
+                    if current_loss is not None and current_loss < self.best_val_loss:
+                        self.best_val_loss = current_loss
+                        self.best_epoch = epoch
+                        best_path = self.output_dir / "best.pt"
+                        save_checkpoint(
+                            best_path,
+                            self._unwrap_model(),
+                            self.optimizer,
+                            self.scheduler,
+                            epoch,
+                            {"train": train_metrics, "val": val_metrics},
+                            trainer_state={
+                                "best_val_loss": self.best_val_loss,
+                                "best_epoch": self.best_epoch,
+                            },
+                            criterion=self._unwrap_criterion(),
+                        )
+                        logger.info(
+                            "新的最佳 checkpoint: epoch=%d, loss=%.6f", epoch, current_loss
+                        )
+
                     # 保存 checkpoint。
                     if self._should_save_checkpoint(epoch, total_epochs):
                         one_based_epoch = epoch + 1
@@ -657,22 +684,6 @@ class Trainer:
                             },
                             criterion=self._unwrap_criterion(),
                         )
-
-                        # 更新 best.pt。
-                        current_loss: float | None = None
-                        if val_metrics is not None:
-                            current_loss = val_metrics["val_loss"]
-                        elif self.val_loader is None:
-                            current_loss = train_metrics["train_loss"]
-
-                        if current_loss is not None and current_loss < self.best_val_loss:
-                            self.best_val_loss = current_loss
-                            self.best_epoch = epoch
-                            best_path = self.output_dir / "best.pt"
-                            shutil.copy2(epoch_path, best_path)
-                            logger.info(
-                                "新的最佳 checkpoint: epoch=%d, loss=%.6f", epoch, current_loss
-                            )
 
                         self._cleanup_old_checkpoints(keep_last=3)
         finally:

@@ -150,6 +150,8 @@ training:
       s2: 0.18
       s1: 0.35
       landsat: 0.35
+      highres_optical_haidian: 0.20
+      highres_sar_haidian: 0.35
     month_dropout_prob: 0.72
     max_months_per_sample: 4
     spatial_block_prob: 0.72
@@ -169,15 +171,11 @@ training:
   latent_reconstruction_targets:
   - s2_recon
   - landsat_recon
-  - highres_optical_haidian_recon
   - s1_recon
-  - highres_sar_haidian_recon
   latent_reconstruction_target_weights:
     s2_recon: 0.8
     landsat_recon: 0.6
-    highres_optical_haidian_recon: 1.2
     s1_recon: 0.3
-    highres_sar_haidian_recon: 0.3
   latent_reconstruction_hidden_dim: 0
   latent_reconstruction_loss_type: smooth_l1
 data:
