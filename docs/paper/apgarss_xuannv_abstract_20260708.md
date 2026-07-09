@@ -2,11 +2,11 @@
 
 **Special Session:** SS095 Open Source GeoAI Practice with ModelScope
 
-**Authors:** Weijie Wu, Xinyi Fan, and Long Zhao
+**Authors:** Weijie Wu^1, Xinyi Fan^2, and Long Zhao^1
 
-**Affiliations:** University of Chinese Academy of Sciences; Aerospace Information Research Institute, Chinese Academy of Sciences
+**Affiliations:** ^1 Aerospace Information Research Institute, Chinese Academy of Sciences; ^2 Institute of Geographic Sciences and Natural Resources Research, Chinese Academy of Sciences
 
-**Corresponding Author:** Weijie Wu, wuweijie25@mails.ucas.ac.cn
+**Corresponding Author:** Long Zhao, zhaolong@aircas.ac.cn
 
 **Abstract**
 
