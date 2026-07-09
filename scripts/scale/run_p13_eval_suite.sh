@@ -20,6 +20,8 @@ MONTH="${MONTH:-202604}"
 CONFIG="${CONFIG:-configs/v2_p13a_c_latent_dim_haidian_202512_202605_20260708.yaml}"
 DOWNSTREAM_CONFIG="${DOWNSTREAM_CONFIG:-downstreams/configs/v2_probe_binary_conv3x3_single_202604.yaml}"
 TASKS=(construction haidian_building_osm haidian_road_osm haidian_water_osm)
+EXPORT_SHARDS_PER_TAG="${EXPORT_SHARDS_PER_TAG:-2}"
+EXPORT_DEVICES=(${EXPORT_DEVICES:-0 1 2 3 4 5})
 
 mkdir -p "${EMBED_ROOT}" "${BENCH_ROOT}" "${LOG_ROOT}"
 
@@ -33,40 +35,70 @@ TAGS=(p13_best p13_e600 p13_e800)
 
 run_export() {
   local tag="$1"
-  local device="$2"
+  local tag_index="$2"
   local marker="${RUN_ROOT}/${tag}_embedding_root.txt"
   if [[ -s "${marker}" ]]; then
     local existing
     existing="$(cat "${marker}")"
     if [[ -d "${existing}" ]]; then
+      local count
+      count="$(find "${existing}/haidian" -name "${MONTH}_embedding_map.pt" 2>/dev/null | wc -l)"
+      if [[ "${count}" -ge 320 ]]; then
       echo "$(date '+%F %T') export exists ${tag}: ${existing}"
       return
+      fi
+      echo "$(date '+%F %T') export marker incomplete ${tag}: ${existing} (${count}/320), resuming"
     fi
   fi
   if [[ ! -f "${CHECKPOINTS[$tag]}" ]]; then
     echo "$(date '+%F %T') checkpoint missing: ${CHECKPOINTS[$tag]}" >&2
     exit 1
   fi
-  echo "$(date '+%F %T') export start ${tag} on NPU ${device}"
-  ASCEND_RT_VISIBLE_DEVICES="${device}" python downstreams/scripts/precompute_embeddings.py \
-    --config "${CONFIG}" \
-    --regions haidian \
-    --output-root "${EMBED_ROOT}" \
-    --checkpoint "${CHECKPOINTS[$tag]}" \
-    --suffix "${tag}" \
-    --months "${MONTH}" \
-    --context-margin 16 \
-    --center-crop-size 128 \
-    --device npu:0 \
-    > "${LOG_ROOT}/${tag}_export.log" 2>&1
+  if [[ "${EXPORT_SHARDS_PER_TAG}" -le 0 ]]; then
+    echo "EXPORT_SHARDS_PER_TAG must be positive, got ${EXPORT_SHARDS_PER_TAG}" >&2
+    exit 1
+  fi
+  local pids=()
+  for shard_id in $(seq 0 "$((EXPORT_SHARDS_PER_TAG - 1))"); do
+    local device_index=$((tag_index * EXPORT_SHARDS_PER_TAG + shard_id))
+    local device="${EXPORT_DEVICES[$device_index]:-}"
+    if [[ -z "${device}" ]]; then
+      echo "Not enough EXPORT_DEVICES for ${tag} shard ${shard_id}" >&2
+      exit 1
+    fi
+    echo "$(date '+%F %T') export start ${tag} shard ${shard_id}/${EXPORT_SHARDS_PER_TAG} on NPU ${device}"
+    ASCEND_RT_VISIBLE_DEVICES="${device}" python downstreams/scripts/precompute_embeddings.py \
+      --config "${CONFIG}" \
+      --regions haidian \
+      --output-root "${EMBED_ROOT}" \
+      --checkpoint "${CHECKPOINTS[$tag]}" \
+      --suffix "${tag}" \
+      --months "${MONTH}" \
+      --context-margin 16 \
+      --center-crop-size 128 \
+      --num-shards "${EXPORT_SHARDS_PER_TAG}" \
+      --shard-id "${shard_id}" \
+      --device npu:0 \
+      > "${LOG_ROOT}/${tag}_export_shard${shard_id}.log" 2>&1 &
+    pids+=("$!")
+  done
+  for pid in "${pids[@]}"; do
+    wait "${pid}"
+  done
   local out_dir
   out_dir="$(find "${EMBED_ROOT}" -maxdepth 1 -type d -name "*_${tag}" | sort | tail -n 1)"
   if [[ -z "${out_dir}" || ! -d "${out_dir}" ]]; then
     echo "Failed to locate exported embedding root for ${tag}" >&2
     exit 1
   fi
+  local count
+  count="$(find "${out_dir}/haidian" -name "${MONTH}_embedding_map.pt" 2>/dev/null | wc -l)"
+  if [[ "${count}" -lt 320 ]]; then
+    echo "Export incomplete for ${tag}: ${count}/320 maps in ${out_dir}" >&2
+    exit 1
+  fi
   echo "${out_dir}" > "${marker}"
-  echo "$(date '+%F %T') export done ${tag}: ${out_dir}"
+  echo "$(date '+%F %T') export done ${tag}: ${out_dir} (${count}/320)"
 }
 
 run_downstream() {
