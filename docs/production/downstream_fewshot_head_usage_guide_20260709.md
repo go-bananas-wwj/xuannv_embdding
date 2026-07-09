@@ -2,6 +2,12 @@
 
 本文档说明：如果已经有玄女 64 维 embedding，想针对某一类地物做少量标注快速制图，应该选什么下游头、怎么训练、代码在哪里。
 
+代码仓库：
+
+```text
+https://github.com/go-bananas-wwj/xuannv_embdding/tree/haidian
+```
+
 ## 一句话建议
 
 做 few-shot 单类别检测时，默认先用 `mlp` 或 `binary_conv3x3`：
@@ -34,9 +40,7 @@
 
 使用脚本：
 
-```bash
-scripts/eval/train_aef_downstream_probe.py
-```
+[scripts/eval/train_aef_downstream_probe.py](https://github.com/go-bananas-wwj/xuannv_embdding/blob/haidian/scripts/eval/train_aef_downstream_probe.py)
 
 这个脚本直接在像素 embedding 上采样训练，支持：
 
@@ -52,7 +56,8 @@ scripts/eval/train_aef_downstream_probe.py
 示例：用 10-shot 训练“公园/绿地”检测头：
 
 ```bash
-PYTHONPATH=/root/workspace/xuannv/src:/root/workspace/xuannv/downstreams \
+cd $REPO_ROOT
+PYTHONPATH=$REPO_ROOT/src:$REPO_ROOT/downstreams \
 python scripts/eval/train_aef_downstream_probe.py \
   --embedding-root /data/xuannv_embedding/experiments/haidian_production_capability_suite_20260705/embeddings/20260705_haidian_embedding_v1_p10c_epoch800_production_epoch_80_p10c_epoch800_capability \
   --label-root /data/xuannv_embedding/processed/haidian/labels/merged_park_green \
@@ -85,9 +90,7 @@ python scripts/eval/train_aef_downstream_probe.py \
 
 使用脚本：
 
-```bash
-downstreams/scripts/train_task.py
-```
+[downstreams/scripts/train_task.py](https://github.com/go-bananas-wwj/xuannv_embdding/blob/haidian/downstreams/scripts/train_task.py)
 
 这个脚本按 patch 读取 embedding map，训练一个分割 head，保存预测概率图。它支持更多 head，包括 `binary_conv3x3`。
 
@@ -126,14 +129,13 @@ data:
 
 仓库已有配置：
 
-```bash
-downstreams/configs/v2_probe_binary_conv3x3_single_202604.yaml
-```
+[downstreams/configs/v2_probe_binary_conv3x3_single_202604.yaml](https://github.com/go-bananas-wwj/xuannv_embdding/blob/haidian/downstreams/configs/v2_probe_binary_conv3x3_single_202604.yaml)
 
 训练命令：
 
 ```bash
-PYTHONPATH=/root/workspace/xuannv/src:/root/workspace/xuannv/downstreams \
+cd $REPO_ROOT
+PYTHONPATH=$REPO_ROOT/src:$REPO_ROOT/downstreams \
 python downstreams/scripts/train_task.py \
   --task construction_segmentation \
   --config downstreams/configs/v2_probe_binary_conv3x3_single_202604.yaml \
@@ -151,9 +153,7 @@ python downstreams/scripts/train_task.py \
 
 文件：
 
-```bash
-downstreams/downstreams/heads/linear_probe.py
-```
+[downstreams/downstreams/heads/linear_probe.py](https://github.com/go-bananas-wwj/xuannv_embdding/blob/haidian/downstreams/downstreams/heads/linear_probe.py)
 
 核心代码：
 
@@ -175,9 +175,7 @@ class LinearProbeHead(TaskHead):
 
 文件：
 
-```bash
-downstreams/downstreams/heads/segmentation_head.py
-```
+[downstreams/downstreams/heads/segmentation_head.py](https://github.com/go-bananas-wwj/xuannv_embdding/blob/haidian/downstreams/downstreams/heads/segmentation_head.py)
 
 核心代码：
 
@@ -203,9 +201,7 @@ class MLPProbeHead(TaskHead):
 
 文件：
 
-```bash
-downstreams/downstreams/heads/segmentation_head.py
-```
+[downstreams/downstreams/heads/segmentation_head.py](https://github.com/go-bananas-wwj/xuannv_embdding/blob/haidian/downstreams/downstreams/heads/segmentation_head.py)
 
 核心代码：
 
@@ -320,4 +316,3 @@ AUC 只看排序，不看固定阈值。很多情况下预测概率都挤在一�
 - 训练、验证、测试都使用同一套 patch split。
 - 阈值只在验证集选择，不能在测试集挑阈值。
 - 对比 AEF 或其他模型时，下游头、shot、fold、epoch、采样像素数、阈值规则必须完全一致。
-
