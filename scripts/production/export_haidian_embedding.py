@@ -29,6 +29,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--device", default="npu:0")
     parser.add_argument("--suffix", default="haidian_embedding_v1")
+    parser.add_argument("--num-shards", type=int, default=None)
+    parser.add_argument("--shard-id", type=int, default=None)
+    parser.add_argument("--context-margin", type=int, default=None)
+    parser.add_argument("--center-crop-size", type=int, default=None)
     return parser.parse_args()
 
 
@@ -62,6 +66,14 @@ def main() -> None:
         "--device",
         args.device,
     ]
+    if args.num_shards is not None:
+        cmd.extend(["--num-shards", str(args.num_shards)])
+    if args.shard_id is not None:
+        cmd.extend(["--shard-id", str(args.shard_id)])
+    if args.context_margin is not None:
+        cmd.extend(["--context-margin", str(args.context_margin)])
+    if args.center_crop_size is not None:
+        cmd.extend(["--center-crop-size", str(args.center_crop_size)])
     subprocess.run(cmd, check=True, cwd=repo_root, env=env)
 
 

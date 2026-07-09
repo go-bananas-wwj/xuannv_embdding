@@ -2,13 +2,13 @@
 
 生产版本：`haidian-embedding-v1`
 
-分支：`haidian`
+生产分支：`codex/haidian-embedding-v1-production`
 
 ModelScope 数据集：[WeijieWu/xuannv_haidian_embdding](https://modelscope.cn/datasets/WeijieWu/xuannv_haidian_embdding)
 
 ## 这个版本是什么
 
-这是面向北京市海淀区的月度地理 embedding 生产包。模型输入多源遥感数据，输出 128×128 空间分辨率的 64 维地理嵌入。下游只用简单 MLP 头，就可以做建筑提取、道路提取和水体提取。
+这是面向北京市海淀区的月度地理 embedding 生产包。模型输入多源遥感数据，输出 128×128 空间分辨率的 64 维地理嵌入。随包发布的下游头是已验证的轻量 MLP 头，可用于建筑提取、道路提取和水体提取。
 
 本生产版选择实验 `P10C epoch800` 作为当前最优候选：
 
@@ -58,7 +58,7 @@ artifacts/haidian-embedding-v1/
   checkpoints/
     haidian_embedding_v1_p10c_epoch800.pt
   embeddings/
-    haidian_202512_202605_p10c_epoch800/
+    haidian_202512_202605_p10c_epoch800.tar.gz
   downstream_heads/
     building_mlp_fold0_best.pt
     road_mlp_fold0_best.pt
@@ -79,7 +79,10 @@ artifacts/haidian-embedding-v1/
 ```text
 configs/production/haidian_embedding_v1.yaml
 scripts/production/export_haidian_embedding.py
+scripts/production/export_haidian_v1_embeddings.sh
 scripts/production/run_haidian_downstream_probe.py
+scripts/production/package_haidian_embedding_v1.py
+scripts/production/upload_modelscope_artifacts.py
 scripts/report/generate_p10_full_domain_visuals.py
 docs/production/haidian_data_card.md
 docs/production/haidian_metrics_report.md
@@ -103,6 +106,12 @@ python scripts/production/export_haidian_embedding.py \
   --device npu:0
 ```
 
+6 卡分片导出完整 2025-12 至 2026-05 月度 embedding：
+
+```bash
+bash scripts/production/export_haidian_v1_embeddings.sh
+```
+
 ## 跑下游任务
 
 ```bash
@@ -112,6 +121,7 @@ python scripts/production/run_haidian_downstream_probe.py \
   --month 202604 \
   --tasks building road water \
   --device npu:0 \
+  --head mlp \
   --save-predictions
 ```
 

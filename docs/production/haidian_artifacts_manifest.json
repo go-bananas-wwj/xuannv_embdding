@@ -30,7 +30,7 @@
       }
     },
     "monthly_embeddings": {
-      "modelscope_path": "artifacts/haidian-embedding-v1/embeddings/haidian_202512_202605_p10c_epoch800/"
+      "modelscope_path": "artifacts/haidian-embedding-v1/embeddings/haidian_202512_202605_p10c_epoch800.tar.gz"
     },
     "visualizations": {
       "modelscope_path": "artifacts/haidian-embedding-v1/visualizations/",
