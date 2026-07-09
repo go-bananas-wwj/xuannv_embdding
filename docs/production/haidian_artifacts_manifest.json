@@ -1,36 +1,50 @@
 {
   "release": "haidian-embedding-v1",
+  "created_at_utc": "2026-07-09T15:43:59.602707+00:00",
   "modelscope_dataset": "WeijieWu/xuannv_haidian_embdding",
-  "modelscope_base_url": "https://modelscope.cn/datasets/WeijieWu/xuannv_haidian_embdding",
+  "github_branch": "codex/haidian-embedding-v1-production",
   "source_experiment": "v2_p10c_haidian_202512_202605_osm_semantic_hardneg_20260704",
   "selected_checkpoint": "epoch_800.pt",
-  "month_range": ["202512", "202601", "202602", "202603", "202604", "202605"],
+  "month_range": [
+    "202512",
+    "202601",
+    "202602",
+    "202603",
+    "202604",
+    "202605"
+  ],
   "artifacts": {
     "embedding_model": {
       "modelscope_path": "artifacts/haidian-embedding-v1/checkpoints/haidian_embedding_v1_p10c_epoch800.pt",
       "local_source": "/data/xuannv_embedding/outputs/v2_p10c_haidian_202512_202605_osm_semantic_hardneg_20260704/epoch_800.pt",
-      "sha256": "69dfd81c898544413a747f5c7304cc9210ad1cf420ce724864b8bd7deb6ed790",
-      "bytes": 407703076
+      "bytes": 407703076,
+      "sha256": "69dfd81c898544413a747f5c7304cc9210ad1cf420ce724864b8bd7deb6ed790"
     },
     "downstream_heads": {
       "building": {
         "modelscope_path": "artifacts/haidian-embedding-v1/downstream_heads/building_mlp_fold0_best.pt",
         "local_source": "/data/xuannv_embedding/experiments/v2_202512_202605/benchmarks/p10_periodic/p10c_epoch800_202604_fold0/building/fold_0/checkpoints/best.pt",
+        "bytes": 35512,
         "sha256": "fc0cf5cd14621383fc7a63f9bf20100dae7b48b13d918dc02307401fc0d65727"
       },
       "road": {
         "modelscope_path": "artifacts/haidian-embedding-v1/downstream_heads/road_mlp_fold0_best.pt",
         "local_source": "/data/xuannv_embedding/experiments/v2_202512_202605/benchmarks/p10_periodic/p10c_epoch800_202604_fold0/road/fold_0/checkpoints/best.pt",
+        "bytes": 35512,
         "sha256": "207d553f016998470a4679d85a48f2b9e4d815b12f3a6a71a8e0e6afc0ecee55"
       },
       "water": {
         "modelscope_path": "artifacts/haidian-embedding-v1/downstream_heads/water_mlp_fold0_best.pt",
         "local_source": "/data/xuannv_embedding/experiments/v2_202512_202605/benchmarks/p10_periodic/p10c_epoch800_202604_fold0/water/fold_0/checkpoints/best.pt",
+        "bytes": 35512,
         "sha256": "4cd7ccb4bf430f10a33a6f6e94279407155c42208074bb659ad65dcef36106e7"
       }
     },
     "monthly_embeddings": {
-      "modelscope_path": "artifacts/haidian-embedding-v1/embeddings/haidian_202512_202605_p10c_epoch800.tar.gz"
+      "modelscope_path": "artifacts/haidian-embedding-v1/embeddings/haidian_202512_202605_p10c_epoch800.tar.gz",
+      "local_source": "/data/xuannv_embedding/embeddings/production/20260709_haidian_embedding_v1_p10c_epoch800_production_epoch_80_haidian_embedding_v1_p10c_epoch800",
+      "bytes": 7309392235,
+      "sha256": "d9b9d1c838611be08bbcd69f340edc7d8bb17d609fcc2dcf5a32e0317e652e24"
     },
     "visualizations": {
       "modelscope_path": "artifacts/haidian-embedding-v1/visualizations/",
