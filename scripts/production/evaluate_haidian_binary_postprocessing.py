@@ -283,7 +283,7 @@ def save_sample_comparison(
             axes[row_idx, col_idx].imshow(red_binary(arr))
             axes[row_idx, col_idx].set_title(f"{patch_id} {title}", fontsize=10)
             axes[row_idx, col_idx].axis("off")
-    fig.suptitle(f"{task.zh_name} / {task.name}: sample patch comparison", fontsize=13)
+    fig.suptitle(f"{task.name}: sample patch comparison", fontsize=13)
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=180)
@@ -350,21 +350,21 @@ def evaluate_task(spec: TaskSpec, output_root: Path) -> dict[str, Any]:
         raw_dir,
         spec.label_root,
         vis_dir / f"{spec.name}_raw_eval_domain.png",
-        f"{spec.zh_name} raw prediction, threshold={spec.threshold:.3f}",
+        f"{spec.name} raw prediction, threshold={spec.threshold:.3f}",
         "pred",
     )
     save_canvas(
         best_dir,
         spec.label_root,
         vis_dir / f"{spec.name}_postprocessed_eval_domain.png",
-        f"{spec.zh_name} post-processed prediction ({best_name})",
+        f"{spec.name} post-processed prediction ({best_name})",
         "pred",
     )
     save_canvas(
         spec.label_root / "masks",
         spec.label_root,
         vis_dir / f"{spec.name}_gt_eval_domain.png",
-        f"{spec.zh_name} GT / weak label domain",
+        f"{spec.name} GT / weak label domain",
         "",
     )
     save_sample_comparison(spec, raw_dir, best_dir, vis_dir / f"{spec.name}_sample_patch_comparison.png")
@@ -379,14 +379,14 @@ def evaluate_task(spec: TaskSpec, output_root: Path) -> dict[str, Any]:
         full_raw_dir,
         full_layout_root,
         vis_dir / f"{spec.name}_raw_full_320patch_geo.png",
-        f"{spec.zh_name} raw prediction, 320 patches",
+        f"{spec.name} raw prediction, 320 patches",
         "pred",
     )
     save_canvas(
         full_best_dir,
         full_layout_root,
         vis_dir / f"{spec.name}_postprocessed_full_320patch_geo.png",
-        f"{spec.zh_name} post-processed prediction, 320 patches ({best_name})",
+        f"{spec.name} post-processed prediction, 320 patches ({best_name})",
         "pred",
     )
 
