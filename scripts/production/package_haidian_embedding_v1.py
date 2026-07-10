@@ -67,15 +67,49 @@ def make_tar(src_dir: Path, tar_path: Path) -> dict[str, object]:
 
 def write_readme(stage: Path, manifest: dict[str, object]) -> None:
     metrics = manifest["quick_eval_fold0_202604"]
-    text = f"""# 玄女海淀地理嵌入 V1
+    artifact_root = f"artifacts/{manifest['release']}"
+    embedding_sha = manifest["artifacts"]["monthly_embeddings"].get("sha256") or "pending"
+    embedding_bytes = manifest["artifacts"]["monthly_embeddings"].get("bytes") or 0
+    checkpoint_sha = manifest["artifacts"]["embedding_model"]["sha256"]
+    checkpoint_bytes = manifest["artifacts"]["embedding_model"]["bytes"]
+    text = f"""---
+license: apache-2.0
+tags:
+  - remote-sensing
+  - geospatial-embedding
+  - earth-observation
+  - haidian
+  - xuannv
+  - pytorch
+  - torch-npu
+task_categories:
+  - feature-extraction
+  - image-segmentation
+---
 
-这是 `haidian-embedding-v1` 的 ModelScope artifact 包。代码、配置和说明在 GitHub 分支
-`codex/haidian-embedding-v1-production`；大文件保存在本数据集。
+# 玄女海淀地理嵌入 V1
+
+`haidian-embedding-v1` 是面向北京市海淀区的月度地理 embedding 生产版。它把 Sentinel-2、Sentinel-1、Landsat、高分辨率光学、高分辨率 SAR 和 OSM 弱语义信息融合到统一的 64 维空间表征中，输出每个 1280m x 1280m patch 的 `64 x 128 x 128` dense embedding map。
+
+这个数据集用于发布生产 artifact：模型权重、2025-12 至 2026-05 的月度 embedding、下游轻量头、全域可视化和 manifest。代码、配置和评测脚本在 GitHub 分支 `codex/haidian-embedding-v1-production`。
+
+## 适用场景
+
+- 少量标注快速制图：建筑、道路、水体等类别只标少量样本后训练轻量头。
+- 多任务复用：同一份 embedding 支持多个下游任务，不需要每个任务重新处理多源遥感输入。
+- 区域语义检索：用一个局部区域的 embedding 检索海淀区内相似地物。
+- 月度地表表达：对 2025-12 至 2026-05 的海淀区 patch 生成统一表征。
+
+## 不适用场景
+
+- 该版本是海淀区专用生产版，不承诺跨城市、跨传感器域直接泛化。
+- 随包下游头是 fold-0 quick eval 结果，不等价于完整业务验收。
+- OSM 是弱标签，存在漏标、错标和时间滞后；下游结果应结合人工抽检。
 
 ## 目录
 
 ```text
-artifacts/haidian-embedding-v1/
+{artifact_root}/
   checkpoints/haidian_embedding_v1_p10c_epoch800.pt
   downstream_heads/
     building_mlp_fold0_best.pt
@@ -86,16 +120,29 @@ artifacts/haidian-embedding-v1/
   manifests/haidian_artifacts_manifest.json
 ```
 
-## 模型
+## 文件说明
+
+| 路径 | 内容 | 大小 | SHA256 |
+| --- | --- | ---: | --- |
+| `{artifact_root}/checkpoints/haidian_embedding_v1_p10c_epoch800.pt` | P10C epoch800 embedding 主模型权重 | {checkpoint_bytes:,} bytes | `{checkpoint_sha}` |
+| `{artifact_root}/embeddings/haidian_202512_202605_p10c_epoch800.tar.gz` | 六个月海淀区 320 patch embedding 压缩包 | {embedding_bytes:,} bytes | `{embedding_sha}` |
+| `{artifact_root}/downstream_heads/building_mlp_fold0_best.pt` | 建筑提取 MLP 下游头 | - | 见 manifest |
+| `{artifact_root}/downstream_heads/road_mlp_fold0_best.pt` | 道路提取 MLP 下游头 | - | 见 manifest |
+| `{artifact_root}/downstream_heads/water_mlp_fold0_best.pt` | 水体提取 MLP 下游头 | - | 见 manifest |
+| `{artifact_root}/visualizations/` | 320 patch 全域 PCA 和下游可视化 | - | - |
+| `{artifact_root}/manifests/haidian_artifacts_manifest.json` | 完整路径、大小、校验和、指标清单 | - | - |
+
+## 模型与数据
 
 - 生产权重：P10C epoch800
 - 区域：北京市海淀区 320 个 patch
 - 月份：2025-12 至 2026-05
-- 输出：每个 patch 每个月 `64 x 128 x 128` embedding map，以及 scene embedding
+- 输出：每个 patch 每个月 `64 x 128 x 128` embedding map，以及一个 scene-level embedding
+- 训练信号：多源重建、高分辨率重建、OSM 弱语义、困难重建
 
 ## 快速指标
 
-2026-04 fold-0 quick eval：
+2026-04 fold-0 quick eval，当前随包发布的是轻量 MLP pixel probe：
 
 | 任务 | F1_best |
 | --- | ---: |
@@ -104,7 +151,93 @@ artifacts/haidian-embedding-v1/
 | 水体 | {metrics['water_f1_best']:.4f} |
 | 平均 | {metrics['macro_f1_best']:.4f} |
 
-完整校验信息见 `artifacts/haidian-embedding-v1/manifests/haidian_artifacts_manifest.json`。
+说明：该指标用于生产包快速验收。更完整的 few-shot、raw image baseline 和强下游模型对比见 GitHub 分支中的 `docs/production/`。
+
+## 快速开始
+
+### 1. 下载 artifact
+
+可以直接在 ModelScope 页面下载，也可以使用 ModelScope SDK 下载数据集快照。
+
+```bash
+pip install modelscope
+
+python - <<'PY'
+from modelscope.hub.snapshot_download import snapshot_download
+
+snapshot_download(
+    repo_id="WeijieWu/xuannv_haidian_embdding",
+    repo_type="dataset",
+    local_dir="/data/xuannv_embedding/modelscope_download/xuannv_haidian_embdding",
+)
+PY
+```
+
+### 2. 解压月度 embedding
+
+```bash
+cd /data/xuannv_embedding/modelscope_download/xuannv_haidian_embdding
+tar -xzf {artifact_root}/embeddings/haidian_202512_202605_p10c_epoch800.tar.gz \\
+  -C /data/xuannv_embedding/embeddings/production
+```
+
+解压后每个 patch 的结构类似：
+
+```text
+haidian/patch_000000/
+  202512_embedding_map.pt
+  202512_scene_embedding.pt
+  ...
+  202605_embedding_map.pt
+  202605_scene_embedding.pt
+```
+
+### 3. 使用 GitHub 代码重新导出 embedding
+
+```bash
+git clone git@github.com:go-bananas-wwj/xuannv_embdding.git
+cd xuannv_embdding
+git checkout codex/haidian-embedding-v1-production
+
+bash scripts/production/export_haidian_v1_embeddings.sh
+```
+
+### 4. 训练或评估下游头
+
+```bash
+python scripts/production/run_haidian_downstream_probe.py \\
+  --embedding-root /data/xuannv_embedding/embeddings/production/<export_dir> \\
+  --output-root /data/xuannv_embedding/experiments/production/haidian_v1_downstream \\
+  --month 202604 \\
+  --tasks building road water \\
+  --device npu:0 \\
+  --head mlp \\
+  --save-predictions
+```
+
+## 可视化
+
+全域 320 patch 可视化保存在 `{artifact_root}/visualizations/`：
+
+- `p10_embedding_pca_202604_compare.png`：P10A/P10B/P10C embedding PCA 对比。
+- `P10C_embedding_pca_202604_geo.png`：P10C 海淀区全域 PCA。
+- `building/`、`road/`、`water/`：真实标签、概率图和预测图。
+
+## 复现与版本
+
+- GitHub 分支：`codex/haidian-embedding-v1-production`
+- 源实验：`v2_p10c_haidian_202512_202605_osm_semantic_hardneg_20260704`
+- 选定权重：`epoch_800.pt`
+- 生产包 manifest：`{artifact_root}/manifests/haidian_artifacts_manifest.json`
+
+## 引用
+
+如果在汇报或实验中使用该版本，请注明：
+
+```text
+Xuannv Haidian Embedding V1, P10C epoch800, 2025-12 to 2026-05 monthly geospatial embeddings.
+ModelScope dataset: WeijieWu/xuannv_haidian_embdding.
+```
 """
     (stage / "README.md").write_text(text, encoding="utf-8")
 
