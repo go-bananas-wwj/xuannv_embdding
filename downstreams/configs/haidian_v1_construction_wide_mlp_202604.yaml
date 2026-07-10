@@ -1,0 +1,30 @@
+experiment:
+  name: haidian_v1_construction_wide_mlp_202604
+  seed: 42
+  device: npu:1
+
+training:
+  epochs: 80
+  lr: 0.0003
+  weight_decay: 0.0001
+  batch_size: 16
+  num_workers: 4
+  prefetch_factor: 2
+  use_early_stopping: false
+  early_stop_patience: 0
+  eval_every: 5
+  save_predictions: true
+  head_type: binary_wide_mlp
+  loss: bce_dice_tversky
+  pos_weight: 1.0
+  tversky_beta: 0.7
+  label_fraction: 1.0
+  months:
+  - 202604
+  temporal_mode: single
+  early_stop_metric: f1_best
+  use_threshold_tuning: true
+
+data:
+  embed_dim: 64
+  num_classes: 1
