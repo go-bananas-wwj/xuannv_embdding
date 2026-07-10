@@ -450,7 +450,8 @@ def save_canvas(
 ) -> None:
     canvas = np.ones((ctx.rows * ctx.tile_h, ctx.cols * ctx.tile_w, 3), dtype=np.uint8) * 238
     for layout in ctx.layouts:
-        path = source_dir / f"{layout.patch_id}_{suffix}.tif"
+        filename = f"{layout.patch_id}.tif" if suffix == "" else f"{layout.patch_id}_{suffix}.tif"
+        path = source_dir / filename
         if not path.exists():
             continue
         with rasterio.open(path) as src:
