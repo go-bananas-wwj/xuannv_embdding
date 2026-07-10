@@ -120,6 +120,19 @@ class TrainingConfig:
     semantic_probe_hard_negative_ratio: float = 0.0
     semantic_probe_hard_negative_weight: float = 0.0
     semantic_probe_hard_negative_warmup_epochs: int = 0
+    prototype_contrast_weight: float = 0.0
+    prototype_contrast_warmup_epochs: int = 0
+    prototype_contrast_tasks: list[str] = field(default_factory=list)
+    prototype_contrast_task_weights: dict[str, float] = field(default_factory=dict)
+    prototype_contrast_negative_margin: float = 0.25
+    prototype_contrast_separation_margin: float = 0.35
+    prototype_contrast_max_pixels: int = 256
+    boundary_contrast_weight: float = 0.0
+    boundary_contrast_warmup_epochs: int = 0
+    boundary_contrast_tasks: list[str] = field(default_factory=list)
+    boundary_contrast_band_radius: int = 2
+    boundary_contrast_margin: float = 0.35
+    boundary_contrast_max_pixels: int = 256
     latent_reconstruction_weight: float = 0.0
     latent_reconstruction_warmup_epochs: int = 0
     latent_reconstruction_targets: list[str] = field(default_factory=list)
@@ -412,6 +425,45 @@ class Config:
                 ),
                 semantic_probe_hard_negative_warmup_epochs=training_cfg.get(
                     "semantic_probe_hard_negative_warmup_epochs", 0
+                ),
+                prototype_contrast_weight=training_cfg.get(
+                    "prototype_contrast_weight", 0.0
+                ),
+                prototype_contrast_warmup_epochs=training_cfg.get(
+                    "prototype_contrast_warmup_epochs", 0
+                ),
+                prototype_contrast_tasks=training_cfg.get(
+                    "prototype_contrast_tasks", []
+                ),
+                prototype_contrast_task_weights=training_cfg.get(
+                    "prototype_contrast_task_weights", {}
+                ),
+                prototype_contrast_negative_margin=training_cfg.get(
+                    "prototype_contrast_negative_margin", 0.25
+                ),
+                prototype_contrast_separation_margin=training_cfg.get(
+                    "prototype_contrast_separation_margin", 0.35
+                ),
+                prototype_contrast_max_pixels=training_cfg.get(
+                    "prototype_contrast_max_pixels", 256
+                ),
+                boundary_contrast_weight=training_cfg.get(
+                    "boundary_contrast_weight", 0.0
+                ),
+                boundary_contrast_warmup_epochs=training_cfg.get(
+                    "boundary_contrast_warmup_epochs", 0
+                ),
+                boundary_contrast_tasks=training_cfg.get(
+                    "boundary_contrast_tasks", []
+                ),
+                boundary_contrast_band_radius=training_cfg.get(
+                    "boundary_contrast_band_radius", 2
+                ),
+                boundary_contrast_margin=training_cfg.get(
+                    "boundary_contrast_margin", 0.35
+                ),
+                boundary_contrast_max_pixels=training_cfg.get(
+                    "boundary_contrast_max_pixels", 256
                 ),
                 latent_reconstruction_weight=training_cfg.get(
                     "latent_reconstruction_weight", 0.0

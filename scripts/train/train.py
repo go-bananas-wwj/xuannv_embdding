@@ -375,6 +375,26 @@ def main() -> None:
         semantic_probe_hard_negative_warmup_epochs=(
             cfg.training.semantic_probe_hard_negative_warmup_epochs
         ),
+        prototype_contrast_embed_dim=cfg.model.embed_dim,
+        prototype_contrast_weight=cfg.training.prototype_contrast_weight,
+        prototype_contrast_warmup_epochs=(
+            cfg.training.prototype_contrast_warmup_epochs
+        ),
+        prototype_contrast_tasks=cfg.training.prototype_contrast_tasks,
+        prototype_contrast_task_weights=cfg.training.prototype_contrast_task_weights,
+        prototype_contrast_negative_margin=(
+            cfg.training.prototype_contrast_negative_margin
+        ),
+        prototype_contrast_separation_margin=(
+            cfg.training.prototype_contrast_separation_margin
+        ),
+        prototype_contrast_max_pixels=cfg.training.prototype_contrast_max_pixels,
+        boundary_contrast_weight=cfg.training.boundary_contrast_weight,
+        boundary_contrast_warmup_epochs=cfg.training.boundary_contrast_warmup_epochs,
+        boundary_contrast_tasks=cfg.training.boundary_contrast_tasks,
+        boundary_contrast_band_radius=cfg.training.boundary_contrast_band_radius,
+        boundary_contrast_margin=cfg.training.boundary_contrast_margin,
+        boundary_contrast_max_pixels=cfg.training.boundary_contrast_max_pixels,
         latent_reconstruction_embed_dim=cfg.model.embed_dim,
         latent_reconstruction_weight=cfg.training.latent_reconstruction_weight,
         latent_reconstruction_warmup_epochs=(

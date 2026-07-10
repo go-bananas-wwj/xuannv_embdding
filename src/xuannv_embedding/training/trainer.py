@@ -390,6 +390,8 @@ class Trainer:
                         or name.startswith("covariance")
                         or name.startswith("patch_discrimination")
                         or name.startswith("semantic_probe")
+                        or name.startswith("prototype_contrast")
+                        or name.startswith("boundary_contrast")
                         or name.startswith("latent_reconstruction")
                     ):
                         step_metrics[f"train/{name}"] = value.item()
@@ -477,6 +479,8 @@ class Trainer:
                     or name.startswith("covariance")
                     or name.startswith("patch_discrimination")
                     or name.startswith("semantic_probe")
+                    or name.startswith("prototype_contrast")
+                    or name.startswith("boundary_contrast")
                     or name.startswith("latent_reconstruction")
                 ):
                     epoch_metrics[f"train/{name}"] = value
@@ -508,6 +512,8 @@ class Trainer:
         self.model.eval()
         metric_sums: dict[str, float] = {}
         num_batches = 0
+        rank_tokens: list[torch.Tensor] = []
+        rank_token_budget = 32768
 
         for batch in self.val_loader:
             batch = self._move_batch_to_device(batch)
@@ -519,9 +525,16 @@ class Trainer:
                 metric_sums.setdefault(name, 0.0)
                 metric_sums[name] += value.item()
             num_batches += 1
+            if sum(t.shape[0] for t in rank_tokens) < rank_token_budget:
+                rank_tokens.append(
+                    self._subsample_embedding_tokens(
+                        output.embedding_map, max_tokens=4096
+                    )
+                )
 
         metrics = self._average_metric_sums(metric_sums, num_batches)
         metrics["val_loss"] = metrics.get("total", 0.0)
+        metrics.update(self._embedding_rank_metrics(rank_tokens))
 
         if self._is_main_process():
             val_metrics: dict[str, float] = {
@@ -579,12 +592,60 @@ class Trainer:
                     or name.startswith("covariance")
                     or name.startswith("patch_discrimination")
                     or name.startswith("semantic_probe")
+                    or name.startswith("prototype_contrast")
+                    or name.startswith("boundary_contrast")
                     or name.startswith("latent_reconstruction")
+                    or name.startswith("embedding_")
                 ):
                     val_metrics[f"val/{name}"] = value
             self._log_to_wandb(val_metrics, step=self.global_step)
 
         return metrics
+
+    @staticmethod
+    def _subsample_embedding_tokens(
+        embedding_map: torch.Tensor, max_tokens: int = 4096
+    ) -> torch.Tensor:
+        """从 embedding_map（[B,T,D,H,W] 或 [B,D,H,W]）等间隔采样像素 token，返回 [N, D]（CPU float32）。"""
+        emb = embedding_map.detach()
+        if emb.dim() == 5:
+            emb = emb[:, -1]  # 取最后一个月 -> [B, D, H, W]
+        if emb.dim() != 4:
+            return torch.zeros((0, 1), dtype=torch.float32)
+        tokens = emb.permute(0, 2, 3, 1).reshape(-1, emb.shape[1])
+        if tokens.shape[0] > max_tokens:
+            positions = torch.linspace(
+                0, tokens.shape[0] - 1, steps=max_tokens, device=tokens.device
+            ).long()
+            tokens = tokens.index_select(0, positions)
+        return tokens.float().cpu()
+
+    @staticmethod
+    def _embedding_rank_metrics(
+        rank_tokens: list[torch.Tensor],
+    ) -> dict[str, float]:
+        """计算 embedding 有效秩（熵）与 Top-k 方差占比，用于例行监控维度利用率。"""
+        if not rank_tokens:
+            return {}
+        tokens = torch.cat(rank_tokens, dim=0)
+        if tokens.shape[0] < 16:
+            return {}
+        tokens = tokens - tokens.mean(dim=0, keepdim=True)
+        cov = (tokens.t() @ tokens) / max(tokens.shape[0] - 1, 1)
+        try:
+            eigvals = torch.linalg.eigvalsh(cov).clamp(min=0.0)
+        except Exception:
+            return {}
+        total_var = eigvals.sum()
+        if total_var <= 0:
+            return {}
+        ratios = (eigvals / total_var).flip(0)  # 降序
+        entropy = -(ratios.clamp(min=1e-12) * ratios.clamp(min=1e-12).log()).sum()
+        return {
+            "embedding_effective_rank": float(entropy.exp().item()),
+            "embedding_top5_var_ratio": float(ratios[:5].sum().item()),
+            "embedding_top10_var_ratio": float(ratios[:10].sum().item()),
+        }
 
     _EPOCH_FILE_RE = re.compile(r"^epoch_(\d+)\.pt$")
 

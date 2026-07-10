@@ -667,6 +667,237 @@ class SemanticProbeLoss(nn.Module):
         return loss, stats
 
 
+def _sample_masked_pixels(
+    emb: torch.Tensor,
+    pixel_mask: torch.Tensor,
+    max_pixels: int,
+) -> torch.Tensor:
+    """从 ``emb``（[B, D, H, W]）中按布尔掩码采样最多 ``max_pixels`` 个像素嵌入。
+
+    使用等间隔下采样保证分布式各 rank 行为一致，返回 ``[N, D]``。
+    """
+    flat_emb = emb.permute(0, 2, 3, 1).reshape(-1, emb.shape[1])
+    flat_mask = pixel_mask.reshape(-1)
+    indices = flat_mask.nonzero(as_tuple=False).squeeze(-1)
+    if indices.numel() == 0:
+        return flat_emb.new_zeros((0, emb.shape[1]))
+    if indices.numel() > max_pixels:
+        positions = torch.linspace(
+            0, indices.numel() - 1, steps=max_pixels, device=indices.device
+        ).long()
+        indices = indices.index_select(0, positions)
+    return flat_emb.index_select(0, indices)
+
+
+class SemanticPrototypeContrastLoss(nn.Module):
+    """OSM 弱语义类别原型对比损失（v3/P14 新增）。
+
+    为每个弱语义类别维护一个可学习的单位球面原型：正类像素被拉向本类
+    原型、以 margin 推离其他类原型；负类像素以 margin 推离本类原型；并
+    显式分离原型两两方向。目标是在不使用下游手工标注的前提下，让
+    embedding 空间形成按类聚拢、类间分离的方向结构，直接服务相似性检索
+    （centroid/kNN）与 few-shot 新类别。
+
+    OSM 类别之间存在空间重叠（如 building 与 residential），因此不使用
+    单标签 softmax，而使用多标签安全的 margin 公式。原型作为可学习参数
+    由 DDP 自动同步梯度，训练结束后与 probe 一样丢弃。
+    """
+
+    def __init__(
+        self,
+        embed_dim: int,
+        tasks: list[str] | tuple[str, ...],
+        task_weights: dict[str, float] | None = None,
+        negative_margin: float = 0.25,
+        separation_margin: float = 0.35,
+        max_pixels_per_task: int = 256,
+        month_index: int = -1,
+    ) -> None:
+        super().__init__()
+        self.tasks = tuple(tasks)
+        self.task_weights = dict(task_weights or {})
+        self.negative_margin = float(negative_margin)
+        self.separation_margin = float(separation_margin)
+        self.max_pixels_per_task = max(1, int(max_pixels_per_task))
+        self.month_index = int(month_index)
+        self.prototypes = nn.Parameter(
+            torch.randn(len(self.tasks), embed_dim) * 0.02
+        )
+
+    def forward(
+        self,
+        embedding_map: torch.Tensor,
+        labels: dict[str, torch.Tensor] | None,
+        label_masks: dict[str, torch.Tensor] | None,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        zero = embedding_map.sum() * 0.0
+        stats: dict[str, torch.Tensor] = {
+            "prototype_contrast_positive_pixels": zero.detach(),
+        }
+        if not self.tasks or labels is None:
+            return zero, stats
+
+        emb = embedding_map[:, self.month_index]  # [B, D, H, W]
+        protos = F.normalize(self.prototypes, p=2, dim=-1)  # [K, D]
+
+        total = zero
+        weight_sum = zero
+        total_positive = zero
+        for task_idx, task in enumerate(self.tasks):
+            if task not in labels:
+                continue
+            label = labels[task].to(device=emb.device, dtype=emb.dtype)
+            if label.dim() != 3:
+                raise ValueError(
+                    f"prototype label {task!r} 形状应为 [B,H,W]，实际为 {tuple(label.shape)}"
+                )
+            label = label[:, None]
+            if label.shape[-2:] != emb.shape[-2:]:
+                label = F.interpolate(label, size=emb.shape[-2:], mode="nearest")
+            binary = (label > 0.5).to(dtype=emb.dtype)
+
+            sample_mask = None
+            if label_masks is not None and task in label_masks:
+                sample_mask = label_masks[task].to(device=emb.device, dtype=emb.dtype)
+            if sample_mask is None:
+                sample_mask = torch.ones(
+                    (emb.shape[0],), device=emb.device, dtype=emb.dtype
+                )
+            valid = sample_mask[:, None, None, None].expand_as(binary)
+
+            pos_mask = (binary > 0.5) & (valid > 0.0)
+            neg_mask = (binary < 0.5) & (valid > 0.0)
+            pos_emb = _sample_masked_pixels(
+                emb, pos_mask[:, 0], self.max_pixels_per_task
+            )
+            if pos_emb.shape[0] == 0:
+                continue
+            pos_emb = F.normalize(pos_emb, p=2, dim=1)
+            pos_sim = pos_emb @ protos.t()  # [N, K]
+
+            pull = (1.0 - pos_sim[:, task_idx]).mean()
+            if len(self.tasks) > 1:
+                other_sim = torch.cat(
+                    [pos_sim[:, :task_idx], pos_sim[:, task_idx + 1 :]], dim=1
+                )
+                push_other = F.relu(other_sim - self.negative_margin).mean()
+            else:
+                push_other = zero
+
+            neg_emb = _sample_masked_pixels(
+                emb, neg_mask[:, 0], self.max_pixels_per_task
+            )
+            if neg_emb.shape[0] > 0:
+                neg_emb = F.normalize(neg_emb, p=2, dim=1)
+                neg_sim = neg_emb @ protos[task_idx]
+                push_neg = F.relu(neg_sim - self.negative_margin).mean()
+            else:
+                push_neg = zero
+
+            task_loss = pull + push_other + push_neg
+            weight = torch.tensor(
+                float(self.task_weights.get(task, 1.0)),
+                device=emb.device,
+                dtype=emb.dtype,
+            )
+            total = total + weight * task_loss
+            weight_sum = weight_sum + weight
+            total_positive = total_positive + pos_mask.sum()
+            stats[f"prototype_contrast_{task}_loss"] = task_loss.detach()
+
+        loss = total / weight_sum.clamp(min=1.0)
+        if len(self.tasks) > 1:
+            proto_sim = protos @ protos.t()
+            off_diag = proto_sim - torch.diag(torch.diag(proto_sim))
+            separation = F.relu(off_diag - self.separation_margin).sum() / (
+                len(self.tasks) * (len(self.tasks) - 1)
+            )
+            loss = loss + separation
+            stats["prototype_contrast_separation"] = separation.detach()
+        stats["prototype_contrast_positive_pixels"] = total_positive.detach()
+        return loss, stats
+
+
+def semantic_boundary_contrast_loss(
+    embedding_map: torch.Tensor,
+    labels: dict[str, torch.Tensor] | None,
+    label_masks: dict[str, torch.Tensor] | None,
+    tasks: list[str] | tuple[str, ...],
+    band_radius: int = 2,
+    margin: float = 0.35,
+    max_pixels_per_task: int = 256,
+    month_index: int = -1,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """OSM 边界带对比损失（v3/P14 新增）。
+
+    对每个弱语义类别，用形态学膨胀/腐蚀（max_pool2d 实现）在标签边界两侧
+    取窄带像素：边界内侧与外侧的 embedding 余弦相似度应低于 ``margin``。
+    该项直接针对"建筑假正例多、边界模糊"的问题，锐化类别边界处的
+    embedding 过渡，且不使用下游手工标注。
+    """
+    zero = embedding_map.sum() * 0.0
+    stats: dict[str, torch.Tensor] = {"boundary_contrast_pairs": zero.detach()}
+    if not tasks or labels is None:
+        return zero, stats
+
+    emb = embedding_map[:, month_index]  # [B, D, H, W]
+    kernel = 2 * max(1, int(band_radius)) + 1
+    pad = kernel // 2
+
+    total = zero
+    active_tasks = 0
+    total_pairs = zero
+    for task in tasks:
+        if task not in labels:
+            continue
+        label = labels[task].to(device=emb.device, dtype=emb.dtype)
+        if label.dim() != 3:
+            raise ValueError(
+                f"boundary label {task!r} 形状应为 [B,H,W]，实际为 {tuple(label.shape)}"
+            )
+        label = label[:, None]
+        if label.shape[-2:] != emb.shape[-2:]:
+            label = F.interpolate(label, size=emb.shape[-2:], mode="nearest")
+        binary = (label > 0.5).to(dtype=emb.dtype)
+
+        sample_mask = None
+        if label_masks is not None and task in label_masks:
+            sample_mask = label_masks[task].to(device=emb.device, dtype=emb.dtype)
+        if sample_mask is None:
+            sample_mask = torch.ones(
+                (emb.shape[0],), device=emb.device, dtype=emb.dtype
+            )
+        valid = sample_mask[:, None, None, None].expand_as(binary) > 0.0
+
+        dilated = F.max_pool2d(binary, kernel_size=kernel, stride=1, padding=pad)
+        eroded = 1.0 - F.max_pool2d(
+            1.0 - binary, kernel_size=kernel, stride=1, padding=pad
+        )
+        inner_band = (binary > 0.5) & (eroded < 0.5) & valid
+        outer_band = (dilated > 0.5) & (binary < 0.5) & valid
+
+        inner_emb = _sample_masked_pixels(emb, inner_band[:, 0], max_pixels_per_task)
+        outer_emb = _sample_masked_pixels(emb, outer_band[:, 0], max_pixels_per_task)
+        if inner_emb.shape[0] == 0 or outer_emb.shape[0] == 0:
+            continue
+        n = min(inner_emb.shape[0], outer_emb.shape[0])
+        inner_emb = F.normalize(inner_emb[:n], p=2, dim=1)
+        outer_emb = F.normalize(outer_emb[:n], p=2, dim=1)
+        cross_sim = (inner_emb * outer_emb).sum(dim=1)
+        task_loss = F.relu(cross_sim - margin).mean()
+        total = total + task_loss
+        active_tasks += 1
+        total_pairs = total_pairs + torch.tensor(
+            float(n), device=emb.device, dtype=emb.dtype
+        )
+        stats[f"boundary_contrast_{task}_loss"] = task_loss.detach()
+
+    if active_tasks == 0:
+        return zero, stats
+    stats["boundary_contrast_pairs"] = total_pairs.detach()
+    return total / active_tasks, stats
+
+
 class LatentReconstructionLoss(nn.Module):
     """Direct latent probes from embedding maps to stable source targets.
 
@@ -886,6 +1117,20 @@ class TotalLoss(nn.Module):
         semantic_probe_hard_negative_ratio: float = 0.0,
         semantic_probe_hard_negative_weight: float = 0.0,
         semantic_probe_hard_negative_warmup_epochs: int = 0,
+        prototype_contrast_embed_dim: int | None = None,
+        prototype_contrast_weight: float = 0.0,
+        prototype_contrast_warmup_epochs: int = 0,
+        prototype_contrast_tasks: list[str] | tuple[str, ...] = (),
+        prototype_contrast_task_weights: dict[str, float] | None = None,
+        prototype_contrast_negative_margin: float = 0.25,
+        prototype_contrast_separation_margin: float = 0.35,
+        prototype_contrast_max_pixels: int = 256,
+        boundary_contrast_weight: float = 0.0,
+        boundary_contrast_warmup_epochs: int = 0,
+        boundary_contrast_tasks: list[str] | tuple[str, ...] = (),
+        boundary_contrast_band_radius: int = 2,
+        boundary_contrast_margin: float = 0.35,
+        boundary_contrast_max_pixels: int = 256,
         latent_reconstruction_embed_dim: int | None = None,
         latent_reconstruction_weight: float = 0.0,
         latent_reconstruction_warmup_epochs: int = 0,
@@ -967,6 +1212,31 @@ class TotalLoss(nn.Module):
             if self.semantic_probe_tasks
             else None
         )
+        self.prototype_contrast_weight = float(prototype_contrast_weight)
+        self.prototype_contrast_warmup_epochs = int(prototype_contrast_warmup_epochs)
+        self.prototype_contrast_tasks = tuple(prototype_contrast_tasks)
+        if self.prototype_contrast_tasks and prototype_contrast_embed_dim is None:
+            raise ValueError(
+                "prototype_contrast_embed_dim is required when prototype_contrast_tasks is not empty"
+            )
+        self.prototype_contrast = (
+            SemanticPrototypeContrastLoss(
+                embed_dim=int(prototype_contrast_embed_dim or 1),
+                tasks=self.prototype_contrast_tasks,
+                task_weights=prototype_contrast_task_weights,
+                negative_margin=prototype_contrast_negative_margin,
+                separation_margin=prototype_contrast_separation_margin,
+                max_pixels_per_task=prototype_contrast_max_pixels,
+            )
+            if self.prototype_contrast_tasks
+            else None
+        )
+        self.boundary_contrast_weight = float(boundary_contrast_weight)
+        self.boundary_contrast_warmup_epochs = int(boundary_contrast_warmup_epochs)
+        self.boundary_contrast_tasks = tuple(boundary_contrast_tasks)
+        self.boundary_contrast_band_radius = int(boundary_contrast_band_radius)
+        self.boundary_contrast_margin = float(boundary_contrast_margin)
+        self.boundary_contrast_max_pixels = int(boundary_contrast_max_pixels)
         self.latent_reconstruction_weight = float(latent_reconstruction_weight)
         self.latent_reconstruction_warmup_epochs = int(
             latent_reconstruction_warmup_epochs
@@ -1068,6 +1338,16 @@ class TotalLoss(nn.Module):
             float(self.current_epoch + 1) / self.semantic_probe_warmup_epochs,
         )
         return self.semantic_probe_weight * progress
+
+    def _current_prototype_contrast_weight(self) -> float:
+        return self._warmup_weight(
+            self.prototype_contrast_weight, self.prototype_contrast_warmup_epochs
+        )
+
+    def _current_boundary_contrast_weight(self) -> float:
+        return self._warmup_weight(
+            self.boundary_contrast_weight, self.boundary_contrast_warmup_epochs
+        )
 
     def _current_latent_reconstruction_weight(self) -> float:
         return self._warmup_weight(
@@ -1198,6 +1478,36 @@ class TotalLoss(nn.Module):
             )
         semantic_probe_weight = self._current_semantic_probe_weight()
         weighted_semantic_probe = semantic_probe * semantic_probe_weight
+        if self.prototype_contrast is None:
+            prototype_contrast = embedding_map.sum() * 0.0
+            prototype_contrast_stats = {
+                "prototype_contrast_positive_pixels": prototype_contrast.detach()
+            }
+        else:
+            prototype_contrast, prototype_contrast_stats = self.prototype_contrast(
+                embedding_map,
+                supervised_labels,
+                supervised_label_masks,
+            )
+        prototype_contrast_weight = self._current_prototype_contrast_weight()
+        weighted_prototype_contrast = prototype_contrast * prototype_contrast_weight
+        boundary_contrast_weight = self._current_boundary_contrast_weight()
+        if boundary_contrast_weight == 0.0 or not self.boundary_contrast_tasks:
+            boundary_contrast = embedding_map.sum() * 0.0
+            boundary_contrast_stats = {
+                "boundary_contrast_pairs": boundary_contrast.detach()
+            }
+        else:
+            boundary_contrast, boundary_contrast_stats = semantic_boundary_contrast_loss(
+                embedding_map,
+                supervised_labels,
+                supervised_label_masks,
+                tasks=self.boundary_contrast_tasks,
+                band_radius=self.boundary_contrast_band_radius,
+                margin=self.boundary_contrast_margin,
+                max_pixels_per_task=self.boundary_contrast_max_pixels,
+            )
+        weighted_boundary_contrast = boundary_contrast * boundary_contrast_weight
         if self.latent_reconstruction is None:
             latent_reconstruction = embedding_map.sum() * 0.0
             latent_reconstruction_stats = {
@@ -1222,6 +1532,8 @@ class TotalLoss(nn.Module):
             + weighted_temporal_contrast
             + weighted_supervised_change
             + weighted_semantic_probe
+            + weighted_prototype_contrast
+            + weighted_boundary_contrast
             + weighted_latent_reconstruction
         )
 
@@ -1294,6 +1606,20 @@ class TotalLoss(nn.Module):
             ),
             "semantic_probe_positive_pixels": semantic_probe_stats["semantic_probe_positive_pixels"],
             "semantic_probe_valid_pixels": semantic_probe_stats["semantic_probe_valid_pixels"],
+            "prototype_contrast": prototype_contrast,
+            "prototype_contrast_weighted": weighted_prototype_contrast,
+            "prototype_contrast_weight": torch.tensor(
+                prototype_contrast_weight,
+                device=output.embedding.device,
+                dtype=output.embedding.dtype,
+            ),
+            "boundary_contrast": boundary_contrast,
+            "boundary_contrast_weighted": weighted_boundary_contrast,
+            "boundary_contrast_weight": torch.tensor(
+                boundary_contrast_weight,
+                device=output.embedding.device,
+                dtype=output.embedding.dtype,
+            ),
             "latent_reconstruction": latent_reconstruction,
             "latent_reconstruction_weighted": weighted_latent_reconstruction,
             "latent_reconstruction_weight": torch.tensor(
@@ -1310,6 +1636,12 @@ class TotalLoss(nn.Module):
                 result[name] = value
         for name, value in semantic_probe_stats.items():
             if name.startswith("semantic_probe_"):
+                result[name] = value
+        for name, value in prototype_contrast_stats.items():
+            if name.startswith("prototype_contrast_"):
+                result[name] = value
+        for name, value in boundary_contrast_stats.items():
+            if name.startswith("boundary_contrast_"):
                 result[name] = value
         for name, value in latent_reconstruction_stats.items():
             if name.startswith("latent_reconstruction_"):
