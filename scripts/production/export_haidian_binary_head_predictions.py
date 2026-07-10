@@ -45,6 +45,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="npu:0")
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument(
+        "--prediction-title",
+        default="Haidian construction-site prediction, labeled patches",
+    )
+    parser.add_argument(
+        "--gt-title",
+        default="Haidian construction-site GT, labeled patches",
+    )
     return parser.parse_args()
 
 
@@ -232,14 +240,14 @@ def main() -> None:
         args.output_root / "predictions",
         args.label_root,
         args.output_root / "visualizations" / "construction_prediction_labeled_patches_geo.png",
-        "Haidian construction-site prediction, labeled patches",
+        args.prediction_title,
         "pred",
     )
     save_canvas(
         args.label_root / "masks",
         args.label_root,
         args.output_root / "visualizations" / "construction_gt_labeled_patches_geo.png",
-        "Haidian construction-site GT, labeled patches",
+        args.gt_title,
         "",
         fallback_gt=True,
     )
