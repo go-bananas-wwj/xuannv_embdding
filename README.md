@@ -2,7 +2,7 @@
 
 生产版本：`haidian-embedding-v1`
 
-生产分支：`codex/haidian-embedding-v1-production`
+生产分支：`haidian-embedding-v1-production`
 
 ModelScope 数据集：[WeijieWu/xuannv_haidian_embdding](https://modelscope.cn/datasets/WeijieWu/xuannv_haidian_embdding)
 
