@@ -400,6 +400,7 @@ class Trainer:
                         or name.startswith("semantic_probe")
                         or name.startswith("prototype_contrast")
                         or name.startswith("boundary_contrast")
+                        or name.startswith("distill")
                         or name.startswith("latent_reconstruction")
                     ):
                         step_metrics[f"train/{name}"] = value.item()
@@ -489,6 +490,7 @@ class Trainer:
                     or name.startswith("semantic_probe")
                     or name.startswith("prototype_contrast")
                     or name.startswith("boundary_contrast")
+                    or name.startswith("distill")
                     or name.startswith("latent_reconstruction")
                 ):
                     epoch_metrics[f"train/{name}"] = value
@@ -602,6 +604,7 @@ class Trainer:
                     or name.startswith("semantic_probe")
                     or name.startswith("prototype_contrast")
                     or name.startswith("boundary_contrast")
+                    or name.startswith("distill")
                     or name.startswith("latent_reconstruction")
                     or name.startswith("embedding_")
                 ):
