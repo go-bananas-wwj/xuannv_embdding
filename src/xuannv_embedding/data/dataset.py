@@ -411,8 +411,9 @@ class MonthlyEmbeddingDataset(Dataset):
         }
 
         if self.teacher_feature_root is not None:
+            teacher_patch_id = entry.get("source_patch_id", patch_id)
             teacher_path = (
-                self.teacher_feature_root / (region or "haidian") / f"{patch_id}_teacher.pt"
+                self.teacher_feature_root / (region or "haidian") / f"{teacher_patch_id}_teacher.pt"
             )
             if teacher_path.exists():
                 payload = torch.load(teacher_path, map_location="cpu", weights_only=True)
