@@ -160,7 +160,7 @@ training:
   semantic_probe_hard_negative_ratio: 0.02
   semantic_probe_hard_negative_weight: 0.35
   semantic_probe_hard_negative_warmup_epochs: 120
-  loss_crop_size: 128
+  loss_crop_size: null
   input_masking:
     enabled: true
     drop_availability_masks: false
