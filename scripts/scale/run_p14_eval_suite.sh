@@ -80,6 +80,7 @@ run_export() {
       --device npu:0 \
       > "${LOG_ROOT}/${tag}_export_shard${shard_id}.log" 2>&1 &
     pids+=("$!")
+    sleep 90  # 错峰启动，避免 TBE/GE 并发初始化冲突
   done
   for pid in "${pids[@]}"; do
     wait "${pid}"
