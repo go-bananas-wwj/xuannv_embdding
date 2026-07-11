@@ -185,7 +185,13 @@ class Trainer:
         """Call the criterion with optional supervised labels when present."""
         supervised_labels = batch.get("supervised_labels")
         if supervised_labels is None:
-            losses = self.criterion(output, batch["targets"], batch["target_masks"])
+            losses = self.criterion(
+                output,
+                batch["targets"],
+                batch["target_masks"],
+                teacher_features=batch.get("teacher_feature"),
+                teacher_valid=batch.get("teacher_valid"),
+            )
         else:
             losses = self.criterion(
                 output,
@@ -193,6 +199,8 @@ class Trainer:
                 batch["target_masks"],
                 supervised_labels,
                 batch.get("supervised_label_masks"),
+                teacher_features=batch.get("teacher_feature"),
+                teacher_valid=batch.get("teacher_valid"),
             )
         for name, value in batch.get("masking_stats", {}).items():
             if isinstance(value, torch.Tensor):

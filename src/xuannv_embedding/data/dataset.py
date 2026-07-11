@@ -45,6 +45,7 @@ class MonthlyEmbeddingDataset(Dataset):
         region_filter: str | None = None,
         context_margin: int = 0,
         patch_grid_path: Path | None = None,
+        teacher_feature_root: Path | None = None,
     ) -> None:
         """初始化 Dataset。
 
@@ -67,6 +68,9 @@ class MonthlyEmbeddingDataset(Dataset):
         self.ref_year = ref_year
         self.ref_month = ref_month
         self.month_bins = self._generate_month_bins()
+        self.teacher_feature_root = (
+            Path(teacher_feature_root) if teacher_feature_root else None
+        )
         self.statistics_dirs_by_region = {
             region: Path(path)
             for region, path in (statistics_dirs_by_region or {}).items()
@@ -405,6 +409,18 @@ class MonthlyEmbeddingDataset(Dataset):
             "supervised_labels": {},
             "supervised_label_masks": {},
         }
+
+        if self.teacher_feature_root is not None:
+            teacher_path = (
+                self.teacher_feature_root / (region or "haidian") / f"{patch_id}_teacher.pt"
+            )
+            if teacher_path.exists():
+                payload = torch.load(teacher_path, map_location="cpu", weights_only=True)
+                sample["teacher_feature"] = payload["feature"].to(torch.float32)
+                sample["teacher_valid"] = torch.tensor(True)
+            else:
+                sample["teacher_feature"] = torch.zeros((32, 32, 1024), dtype=torch.float32)
+                sample["teacher_valid"] = torch.tensor(False)
 
         month_timestamps = torch.tensor(self.month_bins, dtype=torch.long)
 

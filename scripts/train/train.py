@@ -174,6 +174,7 @@ def _build_loader(
         ref_month=cfg.model.ref_month,
         statistics_dirs_by_region=cfg.data.statistics_dirs_by_region,
         supervised_label_roots=cfg.data.supervised_label_roots,
+        teacher_feature_root=cfg.data.teacher_feature_root,
     )
 
     sampler = None
@@ -375,6 +376,12 @@ def main() -> None:
         semantic_probe_hard_negative_warmup_epochs=(
             cfg.training.semantic_probe_hard_negative_warmup_epochs
         ),
+        distill_embed_dim=cfg.model.embed_dim,
+        distill_weight=cfg.training.distill_weight,
+        distill_gram_weight=cfg.training.distill_gram_weight,
+        distill_warmup_epochs=cfg.training.distill_warmup_epochs,
+        distill_teacher_dim=cfg.training.distill_teacher_dim,
+        distill_max_tokens=cfg.training.distill_max_tokens,
         prototype_contrast_embed_dim=cfg.model.embed_dim,
         prototype_contrast_weight=cfg.training.prototype_contrast_weight,
         prototype_contrast_warmup_epochs=(

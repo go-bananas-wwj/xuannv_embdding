@@ -1066,6 +1066,101 @@ class LatentReconstructionLoss(nn.Module):
         }
 
 
+class DinoDistillLoss(nn.Module):
+    """DINOv3 教师特征蒸馏：cosine 对齐 + Gram anchoring。
+
+    教师特征离线预计算（32x32xC_t dense tokens）。学生 embedding_map 池化到
+    教师网格后经 1x1 投影头对齐教师维度做 cosine 蒸馏；Gram anchoring 直接
+    对齐 token 间相似度结构（与维度无关），保持 dense feature 空间结构。
+    投影头仅训练期使用，发布时丢弃。
+    """
+
+    def __init__(
+        self,
+        embed_dim: int,
+        teacher_dim: int = 1024,
+        max_tokens: int = 256,
+    ) -> None:
+        super().__init__()
+        self.proj = nn.Conv2d(embed_dim, teacher_dim, kernel_size=1)
+        self.max_tokens = int(max_tokens)
+
+    def forward(
+        self,
+        embedding_map: torch.Tensor,
+        teacher_features: torch.Tensor,
+        teacher_valid: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
+        """计算蒸馏损失。
+
+        Args:
+            embedding_map: [B, T, C, H, W] 或 [B, C, H, W]。
+            teacher_features: [B, Gh, Gw, C_t]。
+            teacher_valid: [B] bool，样本是否有教师特征。
+        """
+        if embedding_map.dim() == 5:
+            student = embedding_map.mean(dim=1)
+        else:
+            student = embedding_map
+        batch, _, _, _ = student.shape
+        grid_h, grid_w = teacher_features.shape[1], teacher_features.shape[2]
+        teacher = teacher_features.permute(0, 3, 1, 2).to(student.dtype)
+
+        if teacher_valid is None:
+            teacher_valid = torch.ones(
+                batch, dtype=torch.bool, device=student.device
+            )
+        valid_count = int(teacher_valid.sum().item())
+
+        pooled = F.adaptive_avg_pool2d(student, (grid_h, grid_w))
+        pooled = F.normalize(pooled, p=2, dim=1)
+        projected = self.proj(pooled)
+
+        zero = embedding_map.sum() * 0.0 + sum(
+            p.sum() for p in self.proj.parameters()
+        ) * 0.0
+        if valid_count == 0:
+            stats = {
+                "distill_valid_samples": torch.tensor(
+                    0.0, device=student.device, dtype=student.dtype
+                )
+            }
+            return zero, zero.clone(), stats
+
+        proj_flat = projected.flatten(2).transpose(1, 2)  # [B, N, C_t]
+        teach_flat = teacher.flatten(2).transpose(1, 2)  # [B, N, C_t]
+        cos = F.cosine_similarity(proj_flat, teach_flat, dim=-1)  # [B, N]
+        valid_f = teacher_valid.to(student.dtype)
+        cos_loss = ((1.0 - cos).mean(dim=1) * valid_f).sum() / valid_f.sum()
+
+        num_tokens = grid_h * grid_w
+        if num_tokens > self.max_tokens:
+            step = max(1, num_tokens // self.max_tokens)
+            idx = torch.arange(0, num_tokens, step, device=student.device)[
+                : self.max_tokens
+            ]
+        else:
+            idx = torch.arange(num_tokens, device=student.device)
+        stud_tok = F.normalize(
+            pooled.flatten(2).transpose(1, 2)[:, idx, :], p=2, dim=-1
+        )
+        teach_tok = F.normalize(teach_flat[:, idx, :], p=2, dim=-1)
+        gram_s = stud_tok @ stud_tok.transpose(1, 2)
+        gram_t = teach_tok @ teach_tok.transpose(1, 2)
+        gram_diff = (gram_s - gram_t).pow(2).mean(dim=[1, 2])
+        gram_loss = (gram_diff * valid_f).sum() / valid_f.sum()
+
+        stats = {
+            "distill_valid_samples": torch.tensor(
+                float(valid_count), device=student.device, dtype=student.dtype
+            ),
+            "distill_cosine_mean": (
+                (cos.mean(dim=1) * valid_f).sum() / valid_f.sum()
+            ).detach(),
+        }
+        return cos_loss + zero, gram_loss, stats
+
+
 class TotalLoss(nn.Module):
     """AEF 训练总损失：加权重建损失 + 表征正则项。"""
 
@@ -1138,6 +1233,12 @@ class TotalLoss(nn.Module):
         latent_reconstruction_target_weights: dict[str, float] | None = None,
         latent_reconstruction_hidden_dim: int = 0,
         latent_reconstruction_loss_type: str = "smooth_l1",
+        distill_embed_dim: int | None = None,
+        distill_weight: float = 0.0,
+        distill_gram_weight: float = 0.0,
+        distill_warmup_epochs: int = 0,
+        distill_teacher_dim: int = 1024,
+        distill_max_tokens: int = 256,
         loss_crop_size: int | None = None,
     ) -> None:
         """初始化。
@@ -1210,6 +1311,20 @@ class TotalLoss(nn.Module):
                 ),
             )
             if self.semantic_probe_tasks
+            else None
+        )
+        self.distill_weight = float(distill_weight)
+        self.distill_gram_weight = float(distill_gram_weight)
+        self.distill_warmup_epochs = int(distill_warmup_epochs)
+        if self.distill_weight > 0.0 and distill_embed_dim is None:
+            raise ValueError("distill_embed_dim is required when distill_weight > 0")
+        self.distill = (
+            DinoDistillLoss(
+                embed_dim=int(distill_embed_dim or 1),
+                teacher_dim=int(distill_teacher_dim),
+                max_tokens=int(distill_max_tokens),
+            )
+            if self.distill_weight > 0.0
             else None
         )
         self.prototype_contrast_weight = float(prototype_contrast_weight)
@@ -1339,6 +1454,9 @@ class TotalLoss(nn.Module):
         )
         return self.semantic_probe_weight * progress
 
+    def _current_distill_weight(self) -> float:
+        return self._warmup_weight(self.distill_weight, self.distill_warmup_epochs)
+
     def _current_prototype_contrast_weight(self) -> float:
         return self._warmup_weight(
             self.prototype_contrast_weight, self.prototype_contrast_warmup_epochs
@@ -1362,6 +1480,8 @@ class TotalLoss(nn.Module):
         masks: dict[str, torch.Tensor],
         supervised_labels: dict[str, torch.Tensor] | None = None,
         supervised_label_masks: dict[str, torch.Tensor] | None = None,
+        teacher_features: torch.Tensor | None = None,
+        teacher_valid: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         """计算总损失。
 
@@ -1523,8 +1643,29 @@ class TotalLoss(nn.Module):
         weighted_latent_reconstruction = (
             latent_reconstruction * latent_reconstruction_weight
         )
+        if self.distill is None or teacher_features is None:
+            distill_cos = embedding_map.sum() * 0.0
+            distill_gram = embedding_map.sum() * 0.0
+            distill_stats = {}
+            if self.distill is not None:
+                distill_cos = distill_cos + sum(
+                    p.sum() for p in self.distill.proj.parameters()
+                ) * 0.0
+        else:
+            distill_cos, distill_gram, distill_stats = self.distill(
+                output.embedding_map,
+                teacher_features,
+                teacher_valid,
+            )
+        distill_weight = self._current_distill_weight()
+        weighted_distill = (
+            distill_cos * distill_weight + distill_gram * self.distill_gram_weight
+            if self.distill is not None
+            else distill_cos * 0.0
+        )
         total = (
             total_recon
+            + weighted_distill
             + weighted_uniformity
             + weighted_covariance
             + weighted_patch_discrimination
@@ -1631,6 +1772,16 @@ class TotalLoss(nn.Module):
                 "latent_reconstruction_valid_pixels"
             ],
         }
+        result["distill_cosine"] = distill_cos
+        result["distill_gram"] = distill_gram
+        result["distill_weighted"] = weighted_distill
+        result["distill_weight"] = torch.tensor(
+            distill_weight,
+            device=output.embedding.device,
+            dtype=output.embedding.dtype,
+        )
+        for name, value in distill_stats.items():
+            result[name] = value
         for name, value in supervised_change_stats.items():
             if name.startswith("supervised_change_"):
                 result[name] = value

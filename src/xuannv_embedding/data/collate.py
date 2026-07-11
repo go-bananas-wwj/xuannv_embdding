@@ -33,6 +33,13 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
         "source_pixel_masks": {},
         "timestamps": {},
     }
+    if "teacher_feature" in batch[0]:
+        collated["teacher_feature"] = torch.stack(
+            [item["teacher_feature"] for item in batch]
+        )
+        collated["teacher_valid"] = torch.stack(
+            [item["teacher_valid"] for item in batch]
+        )
     if "supervised_labels" in batch[0]:
         label_tasks = list(batch[0]["supervised_labels"].keys())
         collated["supervised_labels"] = {

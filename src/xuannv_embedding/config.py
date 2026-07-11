@@ -25,6 +25,7 @@ class DataConfig:
     statistics_dir: Path | None = None
     statistics_dirs_by_region: dict[str, Path] = field(default_factory=dict)
     supervised_label_roots: dict[str, Path] = field(default_factory=dict)
+    teacher_feature_root: Path | None = None
     max_patches: int | None = None
     batch_size: int = 4
     num_workers: int = 8
@@ -120,6 +121,11 @@ class TrainingConfig:
     semantic_probe_hard_negative_ratio: float = 0.0
     semantic_probe_hard_negative_weight: float = 0.0
     semantic_probe_hard_negative_warmup_epochs: int = 0
+    distill_weight: float = 0.0
+    distill_gram_weight: float = 0.0
+    distill_warmup_epochs: int = 0
+    distill_teacher_dim: int = 1024
+    distill_max_tokens: int = 256
     prototype_contrast_weight: float = 0.0
     prototype_contrast_warmup_epochs: int = 0
     prototype_contrast_tasks: list[str] = field(default_factory=list)
@@ -267,6 +273,11 @@ class Config:
             key: Path(value)
             for key, value in data_cfg.get("statistics_dirs_by_region", {}).items()
         }
+        teacher_feature_root = (
+            Path(data_cfg["teacher_feature_root"])
+            if data_cfg.get("teacher_feature_root")
+            else None
+        )
         supervised_label_roots = {
             key: Path(value) for key, value in data_cfg.get("supervised_label_roots", {}).items()
         }
@@ -290,6 +301,7 @@ class Config:
                 statistics_dir=statistics_dir,
                 statistics_dirs_by_region=statistics_dirs_by_region,
                 supervised_label_roots=supervised_label_roots,
+                teacher_feature_root=teacher_feature_root,
                 max_patches=data_cfg.get("max_patches"),
                 batch_size=data_cfg.get("batch_size", 4),
                 num_workers=data_cfg.get("num_workers", 8),
@@ -426,6 +438,11 @@ class Config:
                 semantic_probe_hard_negative_warmup_epochs=training_cfg.get(
                     "semantic_probe_hard_negative_warmup_epochs", 0
                 ),
+                distill_weight=training_cfg.get("distill_weight", 0.0),
+                distill_gram_weight=training_cfg.get("distill_gram_weight", 0.0),
+                distill_warmup_epochs=training_cfg.get("distill_warmup_epochs", 0),
+                distill_teacher_dim=training_cfg.get("distill_teacher_dim", 1024),
+                distill_max_tokens=training_cfg.get("distill_max_tokens", 256),
                 prototype_contrast_weight=training_cfg.get(
                     "prototype_contrast_weight", 0.0
                 ),
