@@ -430,6 +430,9 @@ def prepare_batch(
         "targets": targets,
         "target_masks": target_masks,
     }
+    if "teacher_feature" in batch:
+        prepared["teacher_feature"] = batch["teacher_feature"]
+        prepared["teacher_valid"] = batch["teacher_valid"]
     if "supervised_labels" in batch:
         prepared["supervised_labels"] = batch["supervised_labels"]
         prepared["supervised_label_masks"] = batch.get("supervised_label_masks", {})
