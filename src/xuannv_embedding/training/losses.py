@@ -1687,7 +1687,10 @@ class TotalLoss(nn.Module):
             )
         distill_weight = self._current_distill_weight()
         weighted_distill = (
-            distill_cos * distill_weight + distill_gram * self.distill_gram_weight
+            distill_cos * distill_weight
+            + distill_gram
+            * self.distill_gram_weight
+            * (distill_weight / self.distill_weight if self.distill_weight > 0 else 0.0)
             if self.distill is not None
             else distill_cos * 0.0
         )
