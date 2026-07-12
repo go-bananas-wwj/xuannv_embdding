@@ -29,10 +29,25 @@
 | `v1.1_distill_long_stage2_v2` | `/data/xuannv_embedding/outputs/v1.1_distill_long_stage2_v2/best.pt` | 1.8G | `2026-06-22 08:33 UTC` | v1.1 stage2 v2。 |
 | `v1.1_distill_long_stage2_rkd` | `/data/xuannv_embedding/outputs/v1.1_distill_long_stage2_rkd/best.pt` | 1.8G | `2026-06-22 12:54 UTC` | v1.1 stage2 RKD。 |
 
+## 生产版定版（2026-07-12）
+
+**海淀区生产版 = P10C epoch_800**（`v2_p10c_haidian_202512_202605_osm_semantic_hardneg_20260704/epoch_800.pt`）
+
+- 稳定别名：`/data/xuannv_embedding/outputs/production/haidian_production_v1.pt`
+- 配置：`configs/v2_p10c_haidian_202512_202605_osm_semantic_hardneg_20260704.yaml`
+- 选型依据（同协议横评 P10C / P11 / P12 / P13 / P14A / V4A）：
+  - few-shot 6 任务 × 3 shots 全面最优（P14A 0/18 胜、V4A 1/18 胜）；
+  - 向量检索三任务最优（building 0.3546 / road 0.4492 / water 0.5858）；
+  - conv3x3 building 0.4842 / road F1 0.5218 / water 0.6237 最优；
+  - 唯一短板 construction（0.5495/0.5435，V4A 0.5988/0.6105 更高），
+    但 V4A 其余指标全面退化，不适合生产。
+- 候选升级：V4B（蒸馏衰减 + 原型对比加强）训练中，若全面达标再升级生产版。
+
 ## 稳定别名
 
 | 别名 | 指向 | 用途 |
 |-------|--------|---------|
+| `/data/xuannv_embedding/outputs/production/haidian_production_v1.pt` | `v2_p10c_.../epoch_800.pt` | 海淀区生产版稳定路径。 |
 | `/data/xuannv_embedding/outputs/harbin_128_stage2_v1` | `harbin_128_stage2_v1_20260620_1628` | 供脚本和文档引用 Stage 2 哈尔滨模型的稳定路径。 |
 
 ## 2026-06-26 清理记录
