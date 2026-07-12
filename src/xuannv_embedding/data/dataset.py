@@ -339,6 +339,7 @@ class MonthlyEmbeddingDataset(Dataset):
         positive_boost: float = 4.0,
         max_weight: float = 8.0,
         task_weights: dict[str, float] | None = None,
+        region_weights: dict[str, float] | None = None,
     ) -> torch.Tensor:
         """Compute per-sample weights from sparse supervised label availability.
 
@@ -348,6 +349,7 @@ class MonthlyEmbeddingDataset(Dataset):
         sampled reliably.
         """
         task_weights = task_weights or {}
+        region_weights = region_weights or {}
         weights: list[float] = []
         stats: list[dict[str, Any]] = []
         for entry in self.manifest:
@@ -373,6 +375,8 @@ class MonthlyEmbeddingDataset(Dataset):
                     positive_score += float(task_weights.get(task, 1.0))
             weight = 1.0 + float(positive_boost) * positive_score
             weight = min(max(weight, 1.0), float(max_weight))
+            if region is not None and str(region) in region_weights:
+                weight *= float(region_weights[str(region)])
             weights.append(weight)
             stats.append(
                 {

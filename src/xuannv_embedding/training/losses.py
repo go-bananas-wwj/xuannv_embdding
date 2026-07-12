@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -1237,6 +1239,9 @@ class TotalLoss(nn.Module):
         distill_weight: float = 0.0,
         distill_gram_weight: float = 0.0,
         distill_warmup_epochs: int = 0,
+        distill_final_weight: float | None = None,
+        distill_decay_start_epoch: int = 0,
+        distill_decay_end_epoch: int = 0,
         distill_teacher_dim: int = 1024,
         distill_max_tokens: int = 256,
         loss_crop_size: int | None = None,
@@ -1316,6 +1321,13 @@ class TotalLoss(nn.Module):
         self.distill_weight = float(distill_weight)
         self.distill_gram_weight = float(distill_gram_weight)
         self.distill_warmup_epochs = int(distill_warmup_epochs)
+        self.distill_final_weight = (
+            float(distill_final_weight)
+            if distill_final_weight is not None
+            else self.distill_weight
+        )
+        self.distill_decay_start_epoch = int(distill_decay_start_epoch)
+        self.distill_decay_end_epoch = int(distill_decay_end_epoch)
         if self.distill_weight > 0.0 and distill_embed_dim is None:
             raise ValueError("distill_embed_dim is required when distill_weight > 0")
         self.distill = (
@@ -1455,7 +1467,23 @@ class TotalLoss(nn.Module):
         return self.semantic_probe_weight * progress
 
     def _current_distill_weight(self) -> float:
-        return self._warmup_weight(self.distill_weight, self.distill_warmup_epochs)
+        base = self._warmup_weight(self.distill_weight, self.distill_warmup_epochs)
+        if (
+            self.distill_decay_end_epoch <= self.distill_decay_start_epoch
+            or self.distill_final_weight >= self.distill_weight
+        ):
+            return base
+        epoch = self.current_epoch
+        if epoch < self.distill_decay_start_epoch:
+            return base
+        if epoch >= self.distill_decay_end_epoch:
+            return self.distill_final_weight
+        span = self.distill_decay_end_epoch - self.distill_decay_start_epoch
+        progress = (epoch - self.distill_decay_start_epoch) / span
+        cos_factor = 0.5 * (1.0 + math.cos(math.pi * progress))
+        return self.distill_final_weight + (
+            base - self.distill_final_weight
+        ) * cos_factor
 
     def _current_prototype_contrast_weight(self) -> float:
         return self._warmup_weight(

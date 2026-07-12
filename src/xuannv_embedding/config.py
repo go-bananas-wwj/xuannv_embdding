@@ -124,6 +124,9 @@ class TrainingConfig:
     distill_weight: float = 0.0
     distill_gram_weight: float = 0.0
     distill_warmup_epochs: int = 0
+    distill_final_weight: float | None = None
+    distill_decay_start_epoch: int = 0
+    distill_decay_end_epoch: int = 0
     distill_teacher_dim: int = 1024
     distill_max_tokens: int = 256
     prototype_contrast_weight: float = 0.0

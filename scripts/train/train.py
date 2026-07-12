@@ -185,6 +185,7 @@ def _build_loader(
             positive_boost=float(sampling_cfg.get("positive_boost", 4.0)),
             max_weight=float(sampling_cfg.get("max_weight", 8.0)),
             task_weights=sampling_cfg.get("task_weights", {}),
+            region_weights=sampling_cfg.get("region_weights", {}),
         )
         if is_distributed:
             sampler = DistributedWeightedSampler(weights, seed=cfg.experiment.seed)
@@ -380,6 +381,9 @@ def main() -> None:
         distill_weight=cfg.training.distill_weight,
         distill_gram_weight=cfg.training.distill_gram_weight,
         distill_warmup_epochs=cfg.training.distill_warmup_epochs,
+        distill_final_weight=cfg.training.distill_final_weight,
+        distill_decay_start_epoch=cfg.training.distill_decay_start_epoch,
+        distill_decay_end_epoch=cfg.training.distill_decay_end_epoch,
         distill_teacher_dim=cfg.training.distill_teacher_dim,
         distill_max_tokens=cfg.training.distill_max_tokens,
         prototype_contrast_embed_dim=cfg.model.embed_dim,
