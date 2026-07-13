@@ -35,6 +35,17 @@ DEFAULT_TASKS: dict[str, list[str]] = {
     "park_green": ["osm_park", "osm_green", "osm_grass", "osm_garden"],
     "education": ["osm_education", "osm_school", "osm_university"],
     "sports_pitch": ["osm_sports", "osm_pitch", "osm_playground"],
+    # 18 类地物评测新增（20260713）
+    "river": ["osm_river"],
+    "lake": ["osm_lake"],
+    "pond": ["osm_pond"],
+    "forest": ["osm_forest"],
+    "grass": ["osm_grass"],
+    "farmland": ["osm_agriculture"],
+    "bare": ["osm_bare"],
+    "parking": ["osm_parking"],
+    "train_station": ["osm_train_station"],
+    "stadium": ["osm_stadium"],
 }
 
 FEATURE_SETS = {
