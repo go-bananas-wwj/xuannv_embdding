@@ -4,7 +4,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 import rasterio
-from downstreams.data.split import _stratified_sample, create_stratified_folds
+from downstreams.data.split import (
+    _stratified_sample,
+    create_spatial_block_folds,
+    create_stratified_folds,
+)
 
 
 def _make_mask_dir(tmp_path: Path, n: int, ratio_fn) -> Path:
@@ -29,6 +33,24 @@ def _make_mask_dir(tmp_path: Path, n: int, ratio_fn) -> Path:
         ) as dst:
             dst.write(mask, 1)
     return mask_dir
+
+
+def _make_patch_metadata(tmp_path: Path, rows: int, cols: int) -> Path:
+    import json
+
+    items = []
+    for row in range(rows):
+        for col in range(cols):
+            idx = row * cols + col
+            items.append(
+                {
+                    "patch_id": f"patch_{idx:06d}",
+                    "bounds": [col * 1280, row * 1280, (col + 1) * 1280, (row + 1) * 1280],
+                }
+            )
+    path = tmp_path / "patches.json"
+    path.write_text(json.dumps(items), encoding="utf-8")
+    return path
 
 
 def test_create_folds(tmp_path: Path) -> None:
@@ -110,3 +132,35 @@ def test_kfold_fallback(tmp_path: Path) -> None:
         assert set(fold["train"]) & set(fold["test"]) == set()
         assert set(fold["train"]) & set(fold["val"]) == set()
         assert set(fold["val"]) & set(fold["test"]) == set()
+
+
+def test_spatial_block_folds_are_disjoint_and_buffered(tmp_path: Path) -> None:
+    mask_dir = _make_mask_dir(tmp_path, 100, lambda i: 0.0625 if i % 3 == 0 else 0.0)
+    metadata_path = _make_patch_metadata(tmp_path, rows=10, cols=10)
+    split = create_spatial_block_folds(
+        mask_dir,
+        metadata_path,
+        n_folds=5,
+        seed=42,
+        buffer_patch_widths=1.0,
+    )
+
+    assert split["strategy"] == "contiguous_dominant_axis_bands"
+    assert len(split["folds"]) == 5
+    for fold in split["folds"]:
+        train = set(fold["train"])
+        val = set(fold["val"])
+        test = set(fold["test"])
+        buffer = set(fold["buffer"])
+        assert train
+        assert buffer
+        assert not (train & val or train & test or train & buffer or val & test)
+        assert len(train | val | test | buffer) == 100
+
+
+def test_spatial_block_folds_are_reproducible(tmp_path: Path) -> None:
+    mask_dir = _make_mask_dir(tmp_path, 100, lambda i: 0.1 if i % 4 == 0 else 0.0)
+    metadata_path = _make_patch_metadata(tmp_path, rows=10, cols=10)
+    split1 = create_spatial_block_folds(mask_dir, metadata_path, seed=7)
+    split2 = create_spatial_block_folds(mask_dir, metadata_path, seed=7)
+    assert split1 == split2

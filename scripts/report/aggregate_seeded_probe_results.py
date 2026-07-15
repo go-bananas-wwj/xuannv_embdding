@@ -17,7 +17,7 @@ from statistics import mean, stdev
 from typing import Any
 
 
-METRICS = ("f1_best", "ap", "auc_roc", "miou", "precision", "recall")
+METRICS = ("f1_at_threshold", "ap", "auc_roc", "miou", "precision", "recall", "f1_best")
 
 
 def parse_args() -> argparse.Namespace:
@@ -123,20 +123,21 @@ def write_markdown(output: Path, report: dict[str, Any]) -> Path:
         "Primary values are mean +/- sample standard deviation across the three per-seed 5-fold means.",
         "The CSV/JSON also retain pooled fold-level values for diagnostics.",
         "",
-        "| Task | F1 best | AP | AUC-ROC | mIoU | Precision | Recall |",
-        "|---|---:|---:|---:|---:|---:|---:|",
+        "| Task | F1 @ validation threshold | AP | AUC-ROC | mIoU | Precision | Recall | Oracle F1 |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for task, task_report in report["tasks"].items():
         metrics = task_report["metrics"]
         lines.append(
-            "| {task} | {f1} | {ap} | {auc} | {miou} | {precision} | {recall} |".format(
+            "| {task} | {f1} | {ap} | {auc} | {miou} | {precision} | {recall} | {oracle} |".format(
                 task=task,
-                f1=fmt(metrics["f1_best"]),
+                f1=fmt(metrics["f1_at_threshold"]),
                 ap=fmt(metrics["ap"]),
                 auc=fmt(metrics["auc_roc"]),
                 miou=fmt(metrics["miou"]),
                 precision=fmt(metrics["precision"]),
                 recall=fmt(metrics["recall"]),
+                oracle=fmt(metrics["f1_best"]),
             )
         )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")

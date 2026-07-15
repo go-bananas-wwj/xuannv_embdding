@@ -94,6 +94,12 @@ def main() -> None:
     )
     p.add_argument("--output-root", type=Path, required=True)
     p.add_argument("--fold", type=int, default=None, help="只跑单个 fold 调试")
+    p.add_argument(
+        "--split-path",
+        type=Path,
+        default=None,
+        help="显式固定split JSON；论文评测应使用空间block split。",
+    )
     p.add_argument("--fraction", type=float, default=None)
     p.add_argument(
         "--skip-predictions",
@@ -130,7 +136,7 @@ def main() -> None:
     region = args.region if args.region else args.label_root.parent.name
     emb_region_root = args.embedding_root / region
     mask_dir = args.label_root / "masks"
-    split_path = args.label_root / "split_5fold.json"
+    split_path = args.split_path or (args.label_root / "split_5fold.json")
     if not split_path.exists():
         if not args.allow_create_split:
             raise FileNotFoundError(

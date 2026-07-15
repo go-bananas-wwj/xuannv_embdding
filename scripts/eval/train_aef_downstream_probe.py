@@ -85,6 +85,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--month", default="202512")
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--fold", type=int, default=None)
+    parser.add_argument(
+        "--split-path",
+        type=Path,
+        default=None,
+        help="Explicit fixed split JSON. Paper evaluation should use a spatial block split.",
+    )
     parser.add_argument("--device", default="npu:0")
     parser.add_argument("--head", choices=["linear", "mlp", "mlp_deep"], default="mlp")
     parser.add_argument("--embed-dim", type=int, default=64)
@@ -162,8 +168,8 @@ def make_device(device_name: str) -> torch.device:
     return device
 
 
-def load_split(label_root: Path) -> dict[str, Any]:
-    split_path = label_root / "split_5fold.json"
+def load_split(label_root: Path, split_path: Path | None = None) -> dict[str, Any]:
+    split_path = split_path or (label_root / "split_5fold.json")
     if not split_path.exists():
         raise FileNotFoundError(f"Missing fixed split: {split_path}")
     return json.loads(split_path.read_text(encoding="utf-8"))
@@ -746,7 +752,7 @@ def main() -> None:
     set_seed(args.seed)
     device = make_device(args.device)
     args.output_root.mkdir(parents=True, exist_ok=True)
-    split = load_split(args.label_root)
+    split = load_split(args.label_root, args.split_path)
     embedding_region_root = args.embedding_root / args.region
     fold_infos = split["folds"]
     if args.fold is not None:
