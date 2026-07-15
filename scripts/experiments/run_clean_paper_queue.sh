@@ -12,7 +12,7 @@ source /usr/local/Ascend/cann-9.0.0/set_env.sh
 export PYTHONPATH="$ROOT/src:${PYTHONPATH:-}"
 
 wait_for_e5() {
-  while pgrep -f '[p]aper_e5_p10c_recipe_harbin_scratch_20260714.yaml' >/dev/null; do
+  while tmux has-session -t paper_e5_harbin 2>/dev/null; do
     printf '%s\twaiting_for_e5\n' "$(date -Iseconds)" >> "$STATUS_FILE"
     sleep 300
   done
