@@ -714,6 +714,8 @@ def train_fold(
             l2_normalize=args.l2_normalize,
         )
     test_metrics = compute_metrics(test_logits, test_target, threshold=best_threshold)
+    test_metrics["oracle_test_f1"] = test_metrics.pop("f1_best")
+    test_metrics["oracle_test_threshold"] = test_metrics.pop("best_threshold")
     result: dict[str, Any] = {
         **test_metrics,
         "paper_eligible": False,

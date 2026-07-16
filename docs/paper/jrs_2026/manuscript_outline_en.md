@@ -21,11 +21,11 @@ This claim deliberately does **not** assert that XuannvEarth is a global foundat
 2. **Learning Monthly Multimodal Earth Observation Embedding Fields for Labeled-Patch-Efficient Urban Mapping**
 3. **Reusable Monthly Earth Observation Embeddings from Multisensor Reconstruction and Weak Geographic Semantics**
 
-Title 1 is preferred because it states the scientific object and evaluation design without presupposing superiority. “Labeled-patch-efficient” may move into the title only if the spatial five-fold Track B or C results support it. Broader “annotation-efficient” wording additionally requires matched annotation time, valid labeled pixels, positive pixels, and object counts.
+Title 1 is preferred because it states the scientific object and evaluation design without presupposing superiority. “Labeled-patch-efficient” may move into the title only if spatial five-fold held-out-category or no-OSM results with independent labels support it. Broader “annotation-efficient” wording additionally requires matched annotation time, valid labeled pixels, positive pixels, and object counts.
 
 ## Abstract Skeleton (One Unstructured Paragraph; Maximum 250 Words)
 
-Dense geospatial embeddings can amortize repeated urban mapping, but monthly city-scale representations must cope with clouds, missing observations, sensor noise, weak labels, and limited independent annotations. Existing annual or globally pretrained products provide strong transfer references, yet they do not by themselves establish whether a compact regional representation can preserve month-indexed spatial detail, reduce labeled-patch requirements, and remain useful on geographically held-out urban areas. We present XuannvEarth, which converts six months of Sentinel-2, Sentinel-1, and Landsat observations plus temporally aggregated finer-resolution optical and synthetic aperture radar context into six 10 m, 64-channel fields using valid-target reconstruction under structured input corruption, a hyperspherical bottleneck inspired by the von Mises-Fisher distribution, embedding regularization, and OpenStreetMap-derived auxiliary weak supervision. Under a preregistered spatial five-fold protocol, we compare frozen features through the same 64-channel shallow convolutional probe, validation-selected thresholds, and paired label budgets across crossed conditions for encoder OSM supervision, downstream OSM overlap, and OSM-derived versus independent labels; the verified benchmark, scaling, ablation, observation-quality, temporal-context, and cross-city results will populate [PRIMARY RESULTS]. The completed evidence will support only [VERIFIED, CLAIM-BOUNDED SIGNIFICANCE], conditional on regional training scale, upstream supervision asymmetry, one-encoder-seed uncertainty where applicable, and [PRIMARY LIMITATION].
+Dense geospatial embeddings can amortize repeated urban mapping, but monthly city-scale representations must cope with clouds, missing observations, sensor noise, weak labels, and limited independent annotations. Existing annual or globally pretrained products provide strong transfer references, yet they do not by themselves establish whether a compact regional representation can preserve month-indexed spatial detail, reduce labeled-patch requirements, and remain useful on geographically held-out urban areas. We present XuannvEarth, which converts six months of Sentinel-2, Sentinel-1, and Landsat observations plus temporally aggregated finer-resolution optical and synthetic aperture radar context into six 10 m, 64-channel fields using valid-target reconstruction under structured input corruption, a hyperspherical bottleneck inspired by the von Mises-Fisher distribution, embedding regularization, and OpenStreetMap-derived auxiliary weak supervision. Under a preregistered spatial five-fold protocol, we compare frozen features through the same 64-channel shallow convolutional probe, validation-selected thresholds, and paired labeled-patch budgets across crossed conditions for encoder OSM supervision, downstream OSM overlap, and OSM-derived versus independent labels; the verified benchmark, scaling, ablation, observation-quality, temporal-context, and cross-city results will populate [PRIMARY RESULTS]. The completed evidence will support only [VERIFIED, CLAIM-BOUNDED SIGNIFICANCE], conditional on regional training scale, upstream supervision asymmetry, one-encoder-seed uncertainty where applicable, and [PRIMARY LIMITATION].
 
 ## 1. Introduction
 
@@ -48,7 +48,7 @@ Dense geospatial embeddings can amortize repeated urban mapping, but monthly cit
 
 **RQ2. Labeled-patch efficiency.** At matched 5-, 10-, and feasible 50-shot budgets, how do the embeddings compare with raw multisensor features and external geospatial representations across encoder OSM supervision, downstream OSM overlap, and OSM-derived versus independent label sources?
 
-**RQ3. Training recipe.** What performance associations are observed for data scale, OSM auxiliary supervision, hard-negative sampling, the combined finer-resolution-source pathway, and structured input corruption; which associations remain stable across at least three independently initialized encoders; and can a 2 x 2 experiment separate finer-resolution input fusion from reconstruction supervision?
+**RQ3. Training recipe.** What performance associations are observed for data scale, OSM auxiliary supervision, the hardest-2%-negative loss term, the combined finer-resolution-source pathway, and structured input corruption; which associations remain stable across at least three independently initialized encoders; and can a 2 x 2 experiment separate finer-resolution input fusion from reconstruction supervision? The OSM-dependent patch sampler remains fixed in the hardest-negative-loss ablation.
 
 **RQ4. Robustness and transfer.** How does performance vary with cloud quality, missing modalities, temporal context, and a second city?
 
@@ -142,7 +142,7 @@ Document cloud screening, valid-pixel masks, geometric alignment checks, quality
 - Broad land-cover-style supervision is stored under a historical `worldcover` configuration alias but is derived from the cleaned OSM taxonomy; use the scientific name in the manuscript.
 - The fine semantic probe contains 13 OSM-derived categories in the production recipe.
 - Training patch sampling is also OSM-dependent: for each task, the sampler records whether a patch contains any positive pixel, sums the configured task weights, applies `1 + 2.5 x score`, and caps the with-replacement sampling weight at 5.0. This distribution shift must be disclosed separately from pixel-level hard-negative mining.
-- In the recorded P10C run, this weighting was nearly saturated (`min=4.5`, `max=5.0`, `mean=4.995`; all 320 patches received extra weight), so clipping made the realized sampling distribution close to uniform. Do not imply a strong rare-positive oversampling effect.
+- Before publication, register and checksum the P10C runtime sampling-weight audit (minimum, maximum, mean, clipped fraction, and number of weighted patches). Current log inspection suggests near-saturation, so no sampling-effect claim is allowed until that audit is traceable.
 - Explain incompleteness: unlabeled pixels are not automatically reliable negatives.
 - Specify which evaluation labels are independent, which are OSM-derived, and which results are therefore diagnostic rather than leakage-free evidence.
 
@@ -195,10 +195,10 @@ Clarify that the corruption is applied to inputs while supervision is evaluated 
 
 - 800 epochs with AdamW using the PyTorch default betas (0.9, 0.999).
 - Learning rate 2 x 10^-6; weight decay 0.05; 30 linear warm-up epochs followed by cosine decay.
-- The recorded production run used one node with two NPUs, batch size 3 per NPU, gradient accumulation of two, and effective global batch size 12, with mixed precision and gradient checkpointing.
+- The recorded production run used one node with two NPUs, batch size 3 per NPU, gradient accumulation of two, and nominal effective global batch size 12, with mixed precision and gradient checkpointing. Because `drop_last=true` leaves a final residual accumulation, also report the exact updates and processed instances per epoch from the audited training log.
 - Checkpoints evaluated every 20 epochs and saved every 200 epochs.
 - The recorded production lineage is at least `P7A best -> P8A best -> P9A epoch 400 -> P9B epoch 800 -> P10C epoch 800`. P10C loaded P9B model weights, then trained for 800 P10C epochs with a newly initialized optimizer and scheduler; it is not a from-scratch scientific replicate.
-- Under the old checkpoint implementation, `best.pt` was chosen only among the 200/400/600/800 save points and resolved to epoch 600. The full 20-epoch validation record instead reached its lowest weighted reconstruction value at epoch 120 (2.058667; epoch 600 was 2.066886). Report this legacy selection bug explicitly; the production artifact uses epoch 800, and clean paper models use the corrected validation-only selection implementation.
+- Under the old checkpoint implementation, `best.pt` compared the aggregate validation objective only at the 200/400/600/800 save points and resolved to epoch 600. Earlier 20-epoch validation records contain a lower aggregate objective, so epoch 600 is not the global validation minimum; reconstruction-only minima are not the checkpoint criterion. Report this legacy selection bug without inserting exact values until the source log and parsed audit table are checksummed. The production artifact uses epoch 800, and clean paper models use the corrected validation-only selection implementation.
 
 ### 3.9 Frozen-feature downstream protocol
 
@@ -227,7 +227,7 @@ Answer RQ1 with the main benchmark table and qualitative mapping Figure 3. Lead 
 
 ### 4.2 Labeled-patch-efficiency curves
 
-Answer RQ2 with Figure 4 and feasible 5-, 10-, and 50-shot curves. Compare identical heads and labeled-patch budgets. Report absolute difference and relative improvement with uncertainty. Call this “labeled-patch efficiency” unless annotation time, valid labeled pixels, positive pixels, and object counts have also been compared. A broader annotation-efficiency claim requires supporting Track B or C evidence plus those cost measures; Track A alone supports only labeled-patch efficiency conditional on OSM-overlap supervision.
+Answer RQ2 with Figure 4 using 5- and 10-shot curves as the confirmatory budgets. The feasible 50-shot result is secondary and appears only for exact-budget task-fold cells. Compare identical heads and labeled-patch budgets. Report absolute difference and relative improvement with uncertainty. Call this “labeled-patch efficiency” unless annotation time, valid labeled pixels, positive pixels, and object counts have also been compared. A broader annotation-efficiency claim requires held-out-category or no-OSM evidence with independent labels plus those cost measures; OSM-assisted overlap tasks alone support only conditional labeled-patch efficiency.
 
 **Required result placeholder:** `[E3/E6: labeled-patch-efficiency curves and spatially paired uncertainty]`.
 
@@ -388,7 +388,7 @@ Use one numbered reference list for the main text and Supplementary Materials. C
 | Figure 1 | Experimental and technical design overview |
 | Figure 2 | Study area, multisource observations, masks, OSM weak labels, and global PCA context |
 | Table 1 | Data sources, architecture, information budgets, and training specification |
-| Table 2 | Main spatial benchmark with independent-label and OSM-assisted tracks separated |
+| Table 2 | Main spatial benchmark with encoder supervision, task relation, and label source reported separately |
 | Figure 3 | Representative qualitative maps and failure cases |
 | Figure 4 | Labeled-patch-efficiency curves |
 | Figure 5 | Strict 40/80/150 scaling and registered ablations |

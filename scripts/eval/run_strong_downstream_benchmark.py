@@ -605,6 +605,8 @@ def run_one(
     best_threshold, best_score = select_registered_threshold(val_logits, val_target)
     test_logits, test_target = logits_for_items(model, test_items, device, args.batch_size)
     test_metrics = compute_metrics(test_logits, test_target, threshold=best_threshold)
+    test_metrics["oracle_test_f1"] = test_metrics.pop("f1_best")
+    test_metrics["oracle_test_threshold"] = test_metrics.pop("best_threshold")
     elapsed = time.perf_counter() - start_time
     params = sum(p.numel() for p in model.parameters())
     return {

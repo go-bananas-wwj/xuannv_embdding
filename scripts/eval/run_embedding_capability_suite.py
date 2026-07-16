@@ -256,8 +256,8 @@ def run_job(args: argparse.Namespace, job: EvalJob) -> dict[str, Any]:
         for key in ["ap", "auc_roc", "f1_0.5", "f1_at_threshold", "miou", "val_threshold"]:
             if key in metrics:
                 record[key] = metrics[key]
-        if "f1_best" in metrics:
-            record["oracle_test_f1"] = metrics["f1_best"]
+        if "oracle_test_f1" in metrics:
+            record["oracle_test_f1"] = metrics["oracle_test_f1"]
         record["metrics_path"] = str(metrics_path)
     if proc.returncode != 0:
         raise RuntimeError(f"Job failed: {' '.join(cmd)}. See {log_path}")
@@ -296,6 +296,8 @@ def write_summary(output_root: Path, records: list[dict[str, Any]]) -> None:
 
     lines = [
         "# Haidian Embedding Capability Suite",
+        "",
+        "> Diagnostic output only: `paper_eligible=false`. Do not cite these values in the JRS manuscript.",
         "",
         "| Task | Head | Shot | Fold | Model | AP | AUC | F1@val-thr | Oracle test F1 | mIoU |",
         "|---|---|---:|---:|---|---:|---:|---:|---:|---:|",

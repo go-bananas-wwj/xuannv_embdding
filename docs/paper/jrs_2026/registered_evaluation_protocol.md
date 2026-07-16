@@ -14,11 +14,13 @@ The paper reports three settings separately.
 
 XuannvEarth receives direct OSM-derived auxiliary weak supervision for 13 classes and OSM-dependent weighted patch sampling. Building, road, water, construction, green, and playground results therefore cannot by themselves establish task-agnostic labeled-patch efficiency against baselines that did not receive equivalent OSM supervision.
 
-These labels are claim strata, not four mutually exclusive experimental tracks. They form crossed factors:
+The evaluation has three crossed factors with explicit levels:
 
-- **A/B, downstream task relation:** **A** is OSM-overlap transfer, where tasks overlap the 13 auxiliary classes and claims are limited to labeled-patch efficiency conditional on prior OSM supervision. **B** is held-out-category transfer: the task taxonomy, ontology graph, synonyms, parent/child relations, label-generation code, and spatial-overlap audit are frozen and hashed before evaluation. A B category must be absent from both the 13 fine OSM tasks and the coarse OSM categorical target and must not be renamed, parent/child, or geometrically near-equivalent.
-- **C, encoder-supervision condition:** a clean no-OSM encoder is compared with raw and external representations. This condition can be crossed with task relation and label source and isolates multisensor reconstruction from OSM supervision.
-- **D, label-source audit:** labels are drawn without consulting OSM and test whether trends survive a different annotation source. D can be crossed with A, B, or C; independent labels do not erase upstream OSM supervision asymmetry, so A wording still applies to an overlapping task.
+1. **Encoder supervision:** `OSM-assisted` or `no-OSM`.
+2. **Downstream task relation:** `OSM-overlap` or `held-out-category`. For the held-out level, the task taxonomy, ontology graph, synonyms, parent/child relations, label-generation code, and spatial-overlap audit are frozen and hashed before evaluation. A held-out category must be absent from both the 13 fine OSM tasks and the coarse OSM categorical target and must not be renamed, parent/child, or geometrically near-equivalent.
+3. **Evaluation label source:** `OSM-derived` or `independent-manual`. Independent labels test whether trends survive a different label source but do not erase encoder-side OSM exposure.
+
+The primary general-representation cell is `no-OSM encoder x held-out-category x independent-manual labels`. The primary OSM-contribution contrast holds task relation and independent labels fixed while comparing `OSM-assisted` with `no-OSM` encoders. `OSM-assisted x OSM-overlap x OSM-derived` is an explicitly diagnostic/product-use cell. Other feasible cells are reported without collapsing these factors.
 
 ## 3. Spatial Split and Frozen Training Subsets
 
@@ -137,11 +139,11 @@ No main-paper number may be generated until all gates pass:
 | G6 | Validation-threshold algorithm and paired block bootstrap match this document | PENDING |
 | G7 | The full encoder initialization/checkpoint ancestry is hash-verified; every ancestor's training patches are disjoint from the fold's validation/test/buffer geography; validation-only selection is recorded | PENDING |
 | G8 | Independent annotation handbook, labels, provenance, and agreement are frozen | PENDING |
-| G9 | OSM-assisted, held-out-category, no-OSM, and manual-label tracks are not mixed | PENDING |
+| G9 | Encoder supervision, downstream task relation, and evaluation label source are recorded as separate factors and are not collapsed | PENDING |
 | G10 | A 2 x 2 finer-resolution fusion/reconstruction ablation is complete before making mechanism-specific claims | PENDING |
 | G11 | Test labels are sealed; preregistered config hashes and a test-access ledger prevent iterative test-driven model selection | PENDING |
 | G12 | A canonical result registry binds metrics to code, data, preprocessing, full checkpoint ancestry, predictions, and environment hashes, then anchors the registry outside rewriteable local history | PENDING |
-| G13 | Track B ontology and geometric-overlap audit is frozen and hash-checked | PENDING |
+| G13 | The held-out-category ontology and geometric-overlap audit is frozen and hash-checked | PENDING |
 
 Legacy fold-0, random-split, oracle-threshold, silently truncated, or task-selected-head results remain preliminary even if their scores are higher.
 

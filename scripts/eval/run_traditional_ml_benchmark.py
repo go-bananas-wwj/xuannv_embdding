@@ -673,6 +673,8 @@ def main() -> None:
                     threshold = float(val_metrics["best_threshold"])
                     test_prob = predict_prob(model, test_x)
                     test_metrics = compute_metrics(test_prob, test_y, threshold=threshold)
+                    test_metrics["oracle_test_f1"] = test_metrics.pop("f1_best")
+                    test_metrics["oracle_test_threshold"] = test_metrics.pop("best_threshold")
                     record = {
                         **test_metrics,
                         "task": task_name,
