@@ -1,4 +1,4 @@
-# Learning Monthly Multimodal Earth Observation Embedding Fields for Label-Efficient Urban Mapping
+# XuannvEarth: Monthly Multimodal Urban Embeddings with Weak Semantic Priors under Spatially Independent Evaluation
 
 > Target venue: *Journal of Remote Sensing*, Special Issue on Foundation Models based Multimodal Earth Observation Data Fusion and Applications  
 > Article type: Research Article  
@@ -7,17 +7,17 @@
 
 ## One-Sentence Paper Claim
 
-XuannvEarth learns reusable 10 m, 64-dimensional monthly embedding fields from multimodal Earth observation data and sparse high-resolution observations, enabling label-efficient urban mapping with frozen features and lightweight task heads under spatially independent evaluation.
+XuannvEarth learns reusable 10 m, 64-dimensional monthly-indexed embedding fields from multimodal Earth observation data and aggregated high-resolution observations, and we test their label efficiency with frozen features and lightweight task heads under spatially independent evaluation.
 
 This claim deliberately does **not** assert that XuannvEarth is a global foundation model, that it universally outperforms annual embeddings, or that monthly modeling improves change detection until the corresponding experiments are complete.
 
 ## Candidate Titles
 
-1. **Learning Monthly Multimodal Earth Observation Embedding Fields for Label-Efficient Urban Mapping**
-2. **XuannvEarth: City-Scale Monthly Multimodal Embeddings for Label-Efficient Urban Mapping**
+1. **XuannvEarth: Monthly Multimodal Urban Embeddings with Weak Semantic Priors under Spatially Independent Evaluation**
+2. **Learning Monthly Multimodal Earth Observation Embedding Fields for Label-Efficient Urban Mapping**
 3. **Reusable Monthly Earth Observation Embeddings from Multisensor Reconstruction and Weak Geographic Semantics**
 
-Title 1 is preferred because it states the scientific object and evaluation goal without overstating model scale.
+Title 1 is preferred before the final results are available because it states the scientific object and evaluation design without presupposing superiority. “Label-efficient” may move into the title only if the spatial five-fold results support it.
 
 ## Abstract Skeleton (Maximum 250 Words)
 
@@ -25,7 +25,7 @@ Title 1 is preferred because it states the scientific object and evaluation goal
 
 **Gap.** It remains unclear whether a compact monthly representation learned from heterogeneous observations can preserve local spatial detail and reduce downstream annotation requirements under spatially independent evaluation.
 
-**Method.** We present XuannvEarth, a multimodal encoder that converts six months of Sentinel-2, Sentinel-1, Landsat, and sparse high-resolution optical and SAR observations into a 64-channel embedding field at 10 m spacing. Training combines sensor reconstruction under structured input corruption, high-resolution detail reconstruction, embedding-distribution regularization, and cleaned OpenStreetMap-derived weak semantic objectives.
+**Method.** We present XuannvEarth, a multimodal encoder that converts six months of Sentinel-2, Sentinel-1, and Landsat observations together with temporally aggregated high-resolution optical and SAR context into six monthly-indexed 64-channel embedding fields at 10 m spacing. Training combines valid-target sensor reconstruction under structured input corruption, high-resolution detail reconstruction, a vMF-style hyperspherical bottleneck, embedding-distribution regularization, and cleaned OpenStreetMap-derived auxiliary weak supervision.
 
 **Results.** Across spatial five-fold evaluation and [three] random seeds, frozen XuannvEarth embeddings with identical lightweight heads achieve [RESULT: mean +/- standard deviation for the primary few-shot tasks] relative to raw multisensor features and annual embedding baselines. Scaling, ablation, cloud-quality, temporal-input, and cross-city experiments show [RESULT: only insert conclusions supported beyond uncertainty].
 
@@ -60,7 +60,7 @@ Title 1 is preferred because it states the scientific object and evaluation goal
 
 1. We formulate a city-scale monthly embedding field that retains a dense 128 x 128 grid of 64-dimensional features for every 1.28 km x 1.28 km patch.
 2. We develop a multimodal training recipe that combines reconstruction under structured input corruption, sparse high-resolution detail supervision, and cleaned OSM-derived weak semantic regularization without using the final manually annotated test labels.
-3. We introduce a leakage-aware evaluation protocol with spatial five-fold splits, a one-patch buffer, validation-only threshold selection, matched downstream heads, and repeated few-shot trials.
+3. We introduce a leakage-aware evaluation protocol with spatial five-fold splits, a one-patch buffer, validation-only threshold selection, a preregistered matched downstream head, and repeated few-shot trials.
 4. We provide controlled scaling, ablation, robustness, temporal, and cross-city analyses, including negative results that separate embedding diversity from downstream utility.
 
 ### 1.5 Introduction closing paragraph
@@ -84,7 +84,7 @@ End the Introduction with a concise roadmap and the one-sentence claim. Do not l
 
 - Masked autoencoding and modality/source dropout.
 - Cross-modal reconstruction and feature-distribution regularization.
-- State clearly that XuannvEarth corrupts model inputs and reconstructs valid targets; do not call the objective a masked-pixel-only loss unless verified.
+- State clearly that XuannvEarth corrupts model inputs and reconstructs all originally valid targets; this is not a masked-pixel-only loss.
 
 ### 2.4 Weak geographic supervision
 
@@ -105,10 +105,10 @@ This must be the first Methods subsection to match the journal guidance.
 Describe Figure 1 from left to right:
 
 1. Six monthly observations are assembled from Sentinel-2, Sentinel-1, and Landsat.
-2. Sparse high-resolution optical and SAR observations provide detail targets where available.
+2. Sparse high-resolution optical and SAR observations provide date-specific reconstruction targets; their input features are aggregated across available dates before fusion.
 3. Cloud/validity masks and source availability control valid supervision.
 4. Structured corruption drops selected modalities, months, and spatial blocks from the inputs.
-5. A multimodal spatiotemporal encoder produces one dense 64-dimensional field per month.
+5. A multimodal spatiotemporal encoder with full cross-month attention produces six monthly-indexed dense 64-dimensional fields. These are not causal, current-month-only encodings.
 6. Reconstruction, weak semantic, and distribution regularization objectives train the encoder.
 7. At evaluation time, the encoder is frozen and identical lightweight heads are fitted from matched labels.
 
@@ -131,8 +131,8 @@ Create a compact table covering source, channels, native resolution, temporal av
 - Sentinel-2: 12 channels.
 - Sentinel-1: 2 channels.
 - Landsat: 7 channels.
-- High-resolution optical: 3 channels, sparsely observed.
-- High-resolution SAR: 1 channel, sparsely observed.
+- High-resolution optical: 3 channels, sparsely observed; input features are temporally aggregated and reused across monthly slots.
+- High-resolution SAR: 1 channel, sparsely observed; input features are temporally aggregated and reused across monthly slots.
 - Period used by the current six-month configuration: December 2025 through May 2026.
 
 Document cloud screening, valid-pixel masks, geometric alignment checks, quality-based compositing, normalization statistics, and how the 30 April observation is assigned. Do not imply that every high-resolution source is independently observed in every month.
@@ -149,13 +149,14 @@ Document cloud screening, valid-pixel masks, geometric alignment checks, quality
 
 Use a notation table before equations.
 
-- Sensor-specific stems map each source to a shared feature space.
-- The spatiotemporal processor uses six blocks, eight attention heads, 512-dimensional spatial, 256-dimensional temporal, and 128-dimensional precision components in the registered P10C configuration.
+- Each temporal source uses an independent 3 x 3 convolution, GroupNorm, and ReLU stem to produce 32 channels; availability-aware gated summation combines the sources.
+- The spatiotemporal processor uses six blocks and eight attention heads. Its spatial path is 8 x 8 x 512, temporal path is 16 x 16 x 256, and precision path is 128 x 128 x 128 in the registered P10C implementation.
 - Temporal fusion uses a gated sum with full temporal attention.
-- The output is a 64 x 128 x 128 embedding tensor for each month.
-- High-resolution features are fused into the embedding path when available.
+- A 1 x 1 projection followed by L2 normalization gives a unit-norm 64 x 128 x 128 embedding tensor for each of six monthly slots.
+- During training, isotropic Gaussian noise with learned scale `1/exp(log_kappa)` is added before a second projection to the unit sphere. Describe this as a **vMF-style hyperspherical bottleneck**, not exact vMF likelihood training.
+- High-resolution features are fused before the bottleneck when available. The same temporally aggregated high-resolution feature is repeated across monthly slots.
 
-Insert a code-audited architecture diagram and parameter count. Do not describe the production model as a von Mises-Fisher bottleneck unless the selected paper checkpoint actually enables unit-sphere normalization.
+Insert a code-audited architecture diagram and parameter count. Explain that full temporal attention allows a monthly-indexed output to use observations from other months.
 
 ### 3.6 Training objectives
 
@@ -175,9 +176,9 @@ Define multimodal reconstruction as a weighted sum:
 \mathcal{L}_s(\hat{\mathbf{x}}_s,\mathbf{x}_s;\mathbf{m}_s),
 \]
 
-where validity mask \(\mathbf{m}_s\) excludes unavailable or invalid targets. The registered production weights are 0.80 (Sentinel-2), 0.25 (Sentinel-1), 0.45 (Landsat), 0.90 (high-resolution optical), 0.35 (high-resolution SAR), and 0.45 for the coarse OSM semantic target. Verify the exact per-source loss form in code before converting this outline to manuscript prose.
+where validity mask \(\mathbf{m}_s\) excludes unavailable or invalid targets. The registered production weights are 0.80 (Sentinel-2), 0.25 (Sentinel-1), 0.45 (Landsat), 0.90 (high-resolution optical), 0.35 (high-resolution SAR), and 0.45 for the coarse OSM semantic target. Continuous targets use channel-averaged L1 over valid pixels. The categorical target uses masked cross-entropy with class 0 ignored.
 
-The fine OSM semantic objective uses a weighted binary classification loss with task-specific positive weights and a 2% hard-negative subset weighted by 0.35 after warm-up. The embedding-distribution regularizer has weight 0.06 after warm-up. The final paper must provide the exact implemented formulas and sampling domains.
+The fine OSM semantic objective supervises only the final monthly slot (May 2026) through 13 independent 1 x 1 linear probes. Each task combines positive-weighted BCE, Dice loss, and an additional hardest-2%-negative BCE term. The hard-negative term is added on top of BCE that already contains all negative pixels. The task-averaged semantic weight ramps linearly to 0.14 over 80 epochs; the hard-negative multiplier ramps to 0.35 over 120 epochs. The within-rank uniformity term ramps to 0.06 over 60 epochs and operates on spatially pooled monthly vectors. Covariance, patch discrimination, temporal contrast, supervised change, distillation, prototype, boundary, and latent reconstruction terms are inactive in P10C and must not be listed as trained objectives.
 
 ### 3.7 Structured input corruption
 
@@ -191,15 +192,15 @@ Clarify that the corruption is applied to inputs while supervision is evaluated 
 
 ### 3.8 Optimization and checkpointing
 
-- 800 epochs; Adam-family optimizer [VERIFY exact implementation].
-- Learning rate 2 x 10^-6; weight decay 0.05; 30 warm-up epochs.
+- 800 epochs with AdamW using the PyTorch default betas (0.9, 0.999).
+- Learning rate 2 x 10^-6; weight decay 0.05; 30 linear warm-up epochs followed by cosine decay.
 - Mixed precision, gradient checkpointing, and gradient accumulation of two.
 - Checkpoints evaluated every 20 epochs and saved every 200 epochs.
-- Define the checkpoint selection metric using validation data only. Do not call epoch 800 “best” without downstream-independent evidence.
+- The production artifact uses epoch 800, while its recorded minimum reconstruction validation loss occurred around epoch 600. Report these separately and define a validation-only selection rule for clean paper models.
 
 ### 3.9 Frozen-feature downstream protocol
 
-- Primary heads: linear and shallow 3 x 3 convolutional probe; stronger heads are secondary capacity analyses.
+- Preregister one shallow 3 x 3 convolutional probe as the primary matched head. Linear, MLP, UNet, and DeepLab-style heads are secondary capacity analyses and cannot be selected by test performance.
 - 5-shot means five positive training patches plus a matched number of negative patches. Define 10- and 50-shot analogously.
 - Use identical labels, spatial split, shot samples, head architecture, optimizer, seed, and training budget for XuannvEarth, AEF, DINO-family, and raw-feature baselines.
 - Select decision thresholds on validation predictions only; report test F1 at that fixed threshold.
@@ -207,11 +208,11 @@ Clarify that the corruption is applied to inputs while supervision is evaluated 
 
 ### 3.10 Statistical analysis
 
-- Five spatial folds x three downstream seeds.
-- Report mean, standard deviation, and spatial-patch paired 95% confidence intervals.
+- Five spatial folds x three downstream seeds. If the embedding encoder itself is trained only once per fold, state this as “one encoder seed x three probe/few-shot seeds,” not three independent pretraining seeds.
+- Report mean, descriptive standard deviation, and paired 95% confidence intervals from a hierarchical spatial bootstrap. Pixels are not independent replicates.
 - Primary metrics: F1 at validation-selected threshold and average precision.
 - Secondary metrics: IoU and ROC-AUC; explain why ROC-AUC can be optimistic under severe class imbalance.
-- Report effect sizes and paired differences, not only independent aggregate means.
+- Report effect sizes and paired differences, not only independent aggregate means. Use Holm correction if multiple confirmatory p-values are presented.
 - Predefine handling of folds with no positive pixels and missing class coverage.
 
 ## 4. Results
@@ -230,7 +231,7 @@ Answer RQ2 with 5-, 10-, and 50-shot curves. Compare identical heads and annotat
 
 ### 4.3 Data scaling and recipe ablation
 
-Answer RQ3 using the strictly nested 40/80/160 training subsets and clean-from-scratch ablations:
+Answer RQ3 using strictly nested 40/80/150 training subsets within every fold and clean-from-scratch ablations:
 
 - no OSM supervision;
 - coarse OSM only;
@@ -239,7 +240,7 @@ Answer RQ3 using the strictly nested 40/80/160 training subsets and clean-from-s
 - no high-resolution detail injection;
 - no structured input corruption.
 
-Old overlapping or contaminated-initialization runs must not enter this causal table.
+The previous 160-patch pilot is valid only for fold 0 because other folds contain fewer than 160 eligible training patches. Old overlapping or contaminated-initialization runs must not enter this causal table.
 
 ### 4.4 Temporal context and observation quality
 
@@ -340,7 +341,7 @@ Disclose the APGARSS abstract and explain the additional methods, experiments, a
 | 3 | Table | Data sources, architecture, and training specification |
 | 4 | Table | Main spatial 5-fold x 3-seed benchmark |
 | 5 | Figure | Label-efficiency curves and representative qualitative maps |
-| 6 | Figure | Strict scaling and causal ablation results |
+| 6 | Figure | Strict 40/80/150 scaling and causal ablation results |
 | 7 | Figure | Temporal context, cloud quality, and missing-source robustness |
 | 8 | Figure | Cross-city reproducibility and zero-shot transfer |
 | 9 | Figure | Representation diagnostics, retrieval, and negative-result analysis |
@@ -358,4 +359,3 @@ All additional head comparisons, per-fold tables, extended OSM categories, hyper
 6. Never infer semantic quality from effective rank alone.
 7. Report unfavorable baselines and failed ablations when they answer a registered research question.
 8. Cite primary papers and official repositories; verify every DOI and numerical claim.
-

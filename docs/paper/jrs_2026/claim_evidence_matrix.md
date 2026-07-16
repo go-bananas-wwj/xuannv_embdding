@@ -22,6 +22,7 @@ This matrix is the gatekeeper for manuscript claims. A claim enters the abstract
 | C16 | P10C generalizes across Haidian | Embedding training excludes spatial test blocks | False for production P10C | Call it a transductive full-region case study |
 | C17 | XuannvEarth is a foundation model | Large-scale, broad geographic and task evidence | Not established | Use “regional embedding framework,” not “foundation model” |
 | C18 | XuannvEarth is more storage-efficient | Exact tensor precision, cadence, feature resolution, and baseline storage calculation | Not finalized | Report exact sizes only |
+| C19 | Each monthly output uses only that month’s observations | Causal/month-local encoder implementation | False for P10C: full temporal attention and aggregated high-resolution context cross months | Call it “monthly-indexed,” not “current-month-only” |
 
 ## Evidence Provenance Requirements
 
@@ -47,4 +48,3 @@ Use these labels in drafting notes:
 - `[INVALIDATED]`: overlap, contaminated initialization, test-driven threshold, or another protocol violation prevents inferential use.
 
 Only `[VERIFIED]` results may appear without qualification in the abstract, main result statements, and conclusion.
-
