@@ -3,6 +3,8 @@ from __future__ import annotations
 
 # DDP / 单卡训练入口。
 import argparse
+import hashlib
+import json
 import logging
 import os
 import random
@@ -126,6 +128,56 @@ def _set_seed(seed: int) -> None:
             torch_npu.npu.manual_seed_all(seed)
     except ImportError:
         pass
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def validate_registered_paper_manifests(cfg: Config) -> None:
+    """Fail closed when a registered paper config does not match its frozen subsets."""
+    registry_path = cfg.data.paper_subset_registry
+    if registry_path is None:
+        return
+    split_path = cfg.data.paper_spatial_split
+    fold_id = cfg.data.paper_fold
+    train_path = cfg.data.train_manifest_path
+    if split_path is None or fold_id is None or train_path is None:
+        raise ConfigError(
+            "注册论文配置必须同时提供 paper_spatial_split、paper_fold 和 train_manifest_path"
+        )
+
+    expected_hash = cfg.data.paper_subset_registry_sha256
+    actual_hash = _sha256(registry_path)
+    if expected_hash is None or actual_hash != expected_hash:
+        raise ConfigError(
+            f"论文 subset registry 哈希不匹配: {actual_hash} != {expected_hash}"
+        )
+
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    split_hash = _sha256(split_path)
+    if registry.get("source_split_sha256") != split_hash:
+        raise ConfigError("论文 subset registry 与 spatial split 不匹配")
+
+    records = json.loads(train_path.read_text(encoding="utf-8"))
+    actual_ids = [str(record["patch_id"]) for record in records]
+    budget = str(len(actual_ids))
+    expected_ids = registry.get("folds", {}).get(str(fold_id), {}).get(budget)
+    if expected_ids is None or actual_ids != expected_ids:
+        raise ConfigError(
+            f"训练 manifest 不等于注册子集: fold={fold_id}, budget={budget}"
+        )
+
+    if cfg.data.num_samples is not None and len(actual_ids) != cfg.data.num_samples:
+        raise ConfigError("训练 manifest 样本数与 data.num_samples 不一致")
+
+    if cfg.data.val_manifest_path is not None:
+        split = json.loads(split_path.read_text(encoding="utf-8"))
+        expected_val = split["folds"][fold_id]["val"]
+        val_records = json.loads(cfg.data.val_manifest_path.read_text(encoding="utf-8"))
+        actual_val = [str(record["patch_id"]) for record in val_records]
+        if actual_val != expected_val:
+            raise ConfigError(f"验证 manifest 不等于注册空间验证集: fold={fold_id}")
 
 
 def _resolve_device(args_device: str | None, is_distributed: bool) -> torch.device:
@@ -272,6 +324,7 @@ def main() -> None:
 
     reject_base_config(args.config)
     cfg = Config.from_yaml(args.config)
+    validate_registered_paper_manifests(cfg)
     _set_seed(cfg.experiment.seed)
 
     device = _resolve_device(args.device, is_distributed)

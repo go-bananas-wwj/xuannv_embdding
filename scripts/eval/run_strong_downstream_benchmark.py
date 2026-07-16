@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import random
@@ -244,6 +245,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--models", nargs="+", default=["pixel_conv", "unet", "deeplab_lite", "segformer_lite"])
     parser.add_argument("--shots", nargs="+", default=["50", "full"])
     parser.add_argument("--fold", type=int, default=0)
+    parser.add_argument(
+        "--spatial-split",
+        type=Path,
+        default=Path("configs/eval/haidian_spatial_5fold_buffer1_seed42.json"),
+    )
     parser.add_argument("--device", default="npu:0")
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--batch-size", type=int, default=8)
@@ -469,6 +475,21 @@ def compute_binary_f1(prob: np.ndarray, target: np.ndarray, threshold: float) ->
     return float(2 * precision * recall / (precision + recall)) if precision + recall > 0 else 0.0
 
 
+def select_registered_threshold(logits: np.ndarray, target: np.ndarray) -> tuple[float, float]:
+    target = (target == 1).astype(np.uint8)
+    if target.sum() == 0 or target.sum() == len(target):
+        raise RuntimeError("Validation pixels must contain both classes")
+    prob = 1.0 / (1.0 + np.exp(-np.clip(logits, -80.0, 80.0)))
+    best_threshold = 0.001
+    best_f1 = -1.0
+    for threshold in np.arange(0.001, 1.0, 0.001):
+        f1 = compute_binary_f1(prob, target, float(threshold))
+        if f1 >= best_f1:
+            best_f1 = f1
+            best_threshold = float(threshold)
+    return best_threshold, best_f1
+
+
 def compute_metrics(logits: np.ndarray, target: np.ndarray, threshold: float = 0.5) -> dict[str, float | int]:
     target = (target == 1).astype(np.uint8)
     prob = np.empty_like(logits, dtype=np.float32)
@@ -562,10 +583,6 @@ def run_one(
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
     loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight_for(train_items, device))
 
-    best_state: dict[str, torch.Tensor] | None = None
-    best_score = -math.inf
-    best_epoch = -1
-    best_threshold = 0.5
     start_time = time.perf_counter()
     history: list[dict[str, float | int]] = []
     for epoch in range(args.epochs):
@@ -583,15 +600,9 @@ def run_one(
                     "val_ap": float(val_metrics["ap"]),
                 }
             )
-            if val_score > best_score:
-                best_score = val_score
-                best_epoch = epoch + 1
-                best_threshold = float(val_metrics["best_threshold"])
-                best_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
-
-    if best_state is None:
-        raise RuntimeError("No best state selected")
-    model.load_state_dict(best_state)
+    final_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
+    val_logits, val_target = logits_for_items(model, val_items, device, args.batch_size)
+    best_threshold, best_score = select_registered_threshold(val_logits, val_target)
     test_logits, test_target = logits_for_items(model, test_items, device, args.batch_size)
     test_metrics = compute_metrics(test_logits, test_target, threshold=best_threshold)
     elapsed = time.perf_counter() - start_time
@@ -604,7 +615,8 @@ def run_one(
         "shot": shot,
         "fold": args.fold,
         "status": "ok",
-        "best_epoch": best_epoch,
+        "probe_checkpoint_rule": "fixed_final_epoch",
+        "selected_epoch": args.epochs,
         "best_val_score": best_score,
         "val_threshold": best_threshold,
         "train_patch_count": len(train_ids),
@@ -615,7 +627,9 @@ def run_one(
         "train_seconds": float(elapsed),
         "history": history,
         "selected_train_patch_ids": train_ids,
-        "_model_state": best_state,
+        "spatial_split": str(args.spatial_split),
+        "spatial_split_sha256": hashlib.sha256(args.spatial_split.read_bytes()).hexdigest(),
+        "_model_state": final_state,
     }
 
 
@@ -628,7 +642,7 @@ def main() -> None:
     all_metrics: list[dict[str, Any]] = []
     for task_name in args.tasks:
         task = task_spec(task_name, args.label_root)
-        split = load_split(task, args.fold)
+        split = load_split(task, args.fold, args.spatial_split)
         if args.smoke_patches is not None:
             for key in split:
                 split[key] = split[key][: args.smoke_patches]
@@ -640,7 +654,7 @@ def main() -> None:
                     try:
                         record = run_one(args, records, task, split, feature_set, model_name, shot, device)
                         model_state = record.pop("_model_state")
-                        torch.save(model_state, out_dir / "best.pt")
+                        torch.save(model_state, out_dir / "final.pt")
                         (out_dir / "metrics.json").write_text(
                             json.dumps(record, ensure_ascii=False, indent=2),
                             encoding="utf-8",

@@ -37,6 +37,10 @@ class DataConfig:
     sources: list[str] = field(default_factory=lambda: ["s2", "s1", "landsat"])
     source_dropout_probs: dict[str, float] = field(default_factory=dict)
     supervised_sampling: dict[str, Any] = field(default_factory=dict)
+    paper_spatial_split: Path | None = None
+    paper_subset_registry: Path | None = None
+    paper_subset_registry_sha256: str | None = None
+    paper_fold: int | None = None
 
 
 @dataclass
@@ -320,6 +324,20 @@ class Config:
                 sources=data_cfg.get("sources", ["s2", "s1", "landsat"]),
                 source_dropout_probs=data_cfg.get("source_dropout_probs", {}),
                 supervised_sampling=data_cfg.get("supervised_sampling", {}),
+                paper_spatial_split=(
+                    Path(data_cfg["paper_spatial_split"])
+                    if data_cfg.get("paper_spatial_split")
+                    else None
+                ),
+                paper_subset_registry=(
+                    Path(data_cfg["paper_subset_registry"])
+                    if data_cfg.get("paper_subset_registry")
+                    else None
+                ),
+                paper_subset_registry_sha256=data_cfg.get(
+                    "paper_subset_registry_sha256"
+                ),
+                paper_fold=data_cfg.get("paper_fold"),
             ),
             experiment=ExperimentConfig(
                 name=experiment_cfg["name"],

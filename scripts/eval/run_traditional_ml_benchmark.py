@@ -97,6 +97,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--models", nargs="+", default=["rf", "extratrees", "logistic", "knn"])
     parser.add_argument("--shots", nargs="+", default=["5", "10", "50", "full"])
     parser.add_argument("--fold", type=int, default=0)
+    parser.add_argument(
+        "--spatial-split",
+        type=Path,
+        default=Path("configs/eval/haidian_spatial_5fold_buffer1_seed42.json"),
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-pixels-per-patch", type=int, default=2048)
     parser.add_argument(
@@ -168,8 +173,12 @@ def load_binary_mask(task: TaskSpec, patch_id: str) -> np.ndarray:
     return mask.astype(np.int16)
 
 
-def load_split(task: TaskSpec, fold: int) -> dict[str, list[str]]:
-    split_path = task.split_root / "split_5fold.json"
+def load_split(
+    task: TaskSpec,
+    fold: int,
+    split_path: Path | None = None,
+) -> dict[str, list[str]]:
+    split_path = split_path or (task.split_root / "split_5fold.json")
     split = json.loads(split_path.read_text(encoding="utf-8"))
     fold_info = split["folds"][fold]
     return {
@@ -179,8 +188,8 @@ def load_split(task: TaskSpec, fold: int) -> dict[str, list[str]]:
     }
 
 
-def has_positive(task: TaskSpec, patch_id: str) -> bool:
-    return bool((load_binary_mask(task, patch_id) == 1).any())
+def positive_pixel_count(task: TaskSpec, patch_id: str) -> int:
+    return int((load_binary_mask(task, patch_id) == 1).sum())
 
 
 def select_train_patch_ids(
@@ -196,15 +205,21 @@ def select_train_patch_ids(
     positives: list[str] = []
     negatives: list[str] = []
     for patch_id in train_ids:
-        if has_positive(task, patch_id):
+        positive_pixels = positive_pixel_count(task, patch_id)
+        if positive_pixels >= 64:
             positives.append(patch_id)
-        else:
+        elif positive_pixels == 0:
             negatives.append(patch_id)
     rng = random.Random(seed + fold * 1009)
     rng.shuffle(positives)
     rng.shuffle(negatives)
-    selected_pos = positives[: min(budget, len(positives))]
-    selected_neg = negatives[: min(len(selected_pos), len(negatives))]
+    if len(positives) < budget or len(negatives) < budget:
+        raise RuntimeError(
+            f"Exact {budget}+{budget} shot budget infeasible for {task.name}: "
+            f"positive={len(positives)} negative={len(negatives)}"
+        )
+    selected_pos = positives[:budget]
+    selected_neg = negatives[:budget]
     selected = selected_pos + selected_neg
     rng.shuffle(selected)
     if not selected:
@@ -585,7 +600,7 @@ def main() -> None:
 
     for task_name in args.tasks:
         task = task_spec(task_name, args.label_root)
-        split = load_split(task, args.fold)
+        split = load_split(task, args.fold, args.spatial_split)
         if args.smoke_patches is not None:
             for key in split:
                 split[key] = split[key][: args.smoke_patches]

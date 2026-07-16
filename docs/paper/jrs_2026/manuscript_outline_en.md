@@ -11,7 +11,7 @@
 
 ## One-Sentence Paper Claim
 
-XuannvEarth learns reusable 10 m, 64-dimensional monthly-indexed embedding fields from multimodal Earth observation data and aggregated high-resolution observations, and we test their label efficiency with frozen features and lightweight task heads under spatially independent evaluation.
+XuannvEarth learns reusable 10 m, 64-dimensional monthly-indexed embedding fields from multimodal Earth observation data and aggregated finer-resolution observations, and we test spatial task transfer under separate OSM-overlap, held-out-category, and no-OSM evaluation tracks.
 
 This claim deliberately does **not** assert that XuannvEarth is a global foundation model, that it universally outperforms annual embeddings, or that monthly modeling improves change detection until the corresponding experiments are complete.
 
@@ -25,7 +25,7 @@ Title 1 is preferred before the final results are available because it states th
 
 ## Abstract Skeleton (One Unstructured Paragraph; Maximum 250 Words)
 
-Dense geospatial embeddings can amortize repeated urban mapping, but monthly city-scale representations must cope with clouds, missing observations, sensor noise, weak labels, and limited independent annotations. It remains unclear whether a compact monthly-indexed representation learned from heterogeneous observations can preserve local spatial detail and reduce downstream annotation requirements under spatial holdout. We present XuannvEarth, which converts six months of Sentinel-2, Sentinel-1, and Landsat observations plus temporally aggregated finer-resolution optical and SAR context into six 10 m, 64-channel fields using valid-target reconstruction under structured input corruption, a vMF-style hyperspherical bottleneck, embedding regularization, and OpenStreetMap-derived auxiliary weak supervision. Under a preregistered spatial five-fold protocol, frozen XuannvEarth features with a matched lightweight head achieve [VERIFIED RESULT], while scaling, ablation, observation-quality, temporal-input, and cross-city analyses show [VERIFIED RESULT]. The evidence therefore [VERIFIED, CLAIM-BOUNDED SIGNIFICANCE], while remaining conditional on [PRIMARY LIMITATION].
+Dense geospatial embeddings can amortize repeated urban mapping, but monthly city-scale representations must cope with clouds, missing observations, sensor noise, weak labels, and limited independent annotations. It remains unclear whether a compact monthly-indexed representation learned from heterogeneous observations can preserve local spatial detail and reduce downstream annotation requirements under spatial holdout. We present XuannvEarth, which converts six months of Sentinel-2, Sentinel-1, and Landsat observations plus temporally aggregated finer-resolution optical and synthetic aperture radar context into six 10 m, 64-channel fields using valid-target reconstruction under structured input corruption, a hyperspherical bottleneck inspired by the von Mises-Fisher distribution, embedding regularization, and OpenStreetMap-derived auxiliary weak supervision. Under a preregistered spatial five-fold protocol, frozen XuannvEarth features with a matched lightweight head achieve [VERIFIED RESULT], while scaling, ablation, observation-quality, temporal-input, and cross-city analyses show [VERIFIED RESULT]. The evidence therefore [VERIFIED, CLAIM-BOUNDED SIGNIFICANCE], while remaining conditional on [PRIMARY LIMITATION].
 
 ## 1. Introduction
 
@@ -46,9 +46,9 @@ Dense geospatial embeddings can amortize repeated urban mapping, but monthly cit
 
 **RQ1. Representation utility.** Do frozen monthly-indexed embeddings support diverse urban mapping tasks with a preregistered shallow convolutional head?
 
-**RQ2. Label efficiency.** At matched 5-, 10-, and 50-shot budgets, how do the embeddings compare with raw multisensor features and external geospatial representations?
+**RQ2. Annotation efficiency.** At matched 5-, 10-, and feasible 50-shot budgets, how do the embeddings compare with raw multisensor features and external geospatial representations, both conditional on OSM-overlap supervision and on held-out/no-OSM tracks?
 
-**RQ3. Training recipe.** What are the separate contributions of data scale, OSM weak semantics, hard-negative sampling, high-resolution reconstruction, and structured input corruption?
+**RQ3. Training recipe.** What are the contributions of data scale, OSM auxiliary supervision, hard-negative sampling, the combined finer-resolution-source pathway, and structured input corruption; and can a 2 x 2 experiment separate finer-resolution input fusion from reconstruction supervision?
 
 **RQ4. Robustness and transfer.** How does performance vary with cloud quality, missing modalities, temporal context, and a second city?
 
@@ -111,7 +111,7 @@ Describe Figure 1 from left to right:
 
 State two evaluation settings explicitly:
 
-- **Spatially independent scientific setting:** test and validation blocks never enter embedding training or checkpoint selection.
+- **Spatially independent scientific setting:** test and validation blocks never enter encoder fitting. The registered validation band alone selects the encoder checkpoint and downstream threshold; the test band remains untouched until final evaluation.
 - **Full-region transductive product setting:** the production P10C model uses all 320 Haidian patches and is reported only as a deployment-oriented case study.
 
 ### 3.2 Study areas and spatial units
@@ -139,7 +139,7 @@ Document cloud screening, valid-pixel masks, geometric alignment checks, quality
 - Explain tag extraction, removal of invalid geometry, rasterization, class merging, and positive-coverage audit.
 - Broad land-cover-style supervision is stored under a historical `worldcover` configuration alias but is derived from the cleaned OSM taxonomy; use the scientific name in the manuscript.
 - The fine semantic probe contains 13 OSM-derived categories in the production recipe.
-- Training patch sampling is also OSM-dependent: positive coverage from the 13 tasks defines with-replacement sampling weights with a 2.5 positive boost capped at 5.0. This distribution shift must be disclosed separately from pixel-level hard-negative mining.
+- Training patch sampling is also OSM-dependent: for each task, the sampler records whether a patch contains any positive pixel, sums the configured task weights, applies `1 + 2.5 x score`, and caps the with-replacement sampling weight at 5.0. This distribution shift must be disclosed separately from pixel-level hard-negative mining.
 - Explain incompleteness: unlabeled pixels are not automatically reliable negatives.
 - Specify which evaluation labels are independent, which are OSM-derived, and which results are therefore diagnostic rather than leakage-free evidence.
 
@@ -217,13 +217,13 @@ Clarify that the corruption is applied to inputs while supervision is evaluated 
 
 ### 4.1 Main spatially independent benchmark
 
-Answer RQ1 with the main benchmark table and qualitative mapping figure. Report frozen-feature performance for buildings, roads, and water first; extended OSM-derived tasks are secondary. Separate independent-label results from OSM-derived diagnostic results.
+Answer RQ1 with the main benchmark table and qualitative mapping figure. Lead with held-out-category, no-OSM, and independent-label evidence. Report buildings, roads, and water as the operational OSM-overlap track, with the upstream supervision asymmetry stated in the table header and caption.
 
 **Required result placeholder:** `[E3/E6: 5-fold x 3-seed mean +/- SD, paired CI, validation-threshold F1, AP, IoU, AUC]`.
 
 ### 4.2 Label-efficiency curves
 
-Answer RQ2 with Figure 3 and feasible 5-, 10-, and 50-shot curves. Compare identical heads and annotation budgets. Report absolute difference and relative improvement with uncertainty. These curves test label efficiency; they do not prove it until the registered confidence intervals support the claim.
+Answer RQ2 with Figure 3 and feasible 5-, 10-, and 50-shot curves. Compare identical heads and annotation budgets. Report absolute difference and relative improvement with uncertainty. A general annotation-efficiency claim requires supporting Track B or C evidence; Track A alone supports only annotation efficiency conditional on OSM-overlap supervision.
 
 **Required result placeholder:** `[E3/E6: label-efficiency curves and spatially paired significance]`.
 
@@ -330,6 +330,34 @@ Use CRediT roles. `[AUTHORS TO COMPLETE]`
 
 Before submission, determine whether the APGARSS abstract was merely submitted, accepted, posted online, assigned a DOI, or formally published. Provide the text and publication status to the JRS editor when required, cite it if public, and explain the substantial additions in this full paper. Obtain written editorial confirmation if the prior-publication status is ambiguous.
 
+### Informed Consent
+
+`Not applicable`, unless human-subject annotation procedures trigger institutional requirements.
+
+### Animal Care and Use
+
+`Not applicable.`
+
+### Personal Communications and Unpublished Data
+
+`None`, or list and document permission for every cited communication.
+
+### License Selection
+
+`[AUTHORS TO SELECT THE JOURNAL LICENSE]`
+
+### Materials Sharing
+
+State which code, configurations, model weights, embeddings, split manifests, and label artifacts are shared and identify restrictions on third-party imagery.
+
+### Third-Party Image Reuse
+
+Record the source, license, and permission status of every reused image, map, logo, and basemap; otherwise state that no third-party figure is reused.
+
+### Publication of Accepted Version
+
+`[AUTHORS TO CONFIRM THE JOURNAL POLICY OPTION]`
+
 ## References
 
 Use one numbered reference list for the main text and Supplementary Materials. Cite primary papers and official repositories, include verified DOIs where available, and never retain an uncited or machine-invented entry. `[REFERENCE LIBRARY PENDING]`
@@ -361,10 +389,10 @@ Use one numbered reference list for the main text and Supplementary Materials. C
 | Figure 4 | Representative qualitative maps and failure cases |
 | Figure 5 | Strict 40/80/150 scaling and registered ablations |
 | Figure 6 | Temporal context, cloud quality, and missing-source robustness |
-| Figure 7 | Cross-city, representation-diagnostic, and retrieval analysis |
-| Figure 8 | Full-region 320-patch transductive product case study |
+| Figure 7 | Cross-city recipe reproducibility and direct geographic transfer |
+| Figure 8 | Full-region 320-patch transductive product case study and retrieval use case |
 
-All additional head comparisons, per-fold tables, extended OSM categories, hyperparameters, and extra mosaics belong in Supplementary Materials.
+Representation-rank diagnostics, all additional head comparisons, per-fold tables, extended OSM categories, hyperparameters, and extra mosaics belong in Supplementary Materials.
 
 ## Manuscript Integrity Rules
 

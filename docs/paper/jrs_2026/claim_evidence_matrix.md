@@ -5,9 +5,9 @@ This matrix is the gatekeeper for manuscript claims. A claim enters the abstract
 | ID | Candidate claim | Required evidence | Current status | Allowed wording now |
 |---|---|---|---|---|
 | C1 | Frozen XuannvEarth embeddings support multiple urban mapping tasks | Spatial 5-fold x 3-seed results for at least building, road, and water with fixed lightweight heads | Pending final E3/E6 | “We evaluate whether...” |
-| C2 | XuannvEarth reduces annotation demand | Matched 5/10/50-shot curves against raw multisensor and external embeddings, with paired uncertainty | Preliminary fold-0 evidence only | “Preliminary results motivate...” |
+| C2 | XuannvEarth reduces annotation demand beyond prior OSM task supervision | Matched 5/10/feasible-50-shot curves on held-out categories or no-OSM encoders, with paired uncertainty | Preliminary fold-0 task-overlap evidence only | “We test annotation efficiency in separate supervision tracks...” |
 | C3 | The full recipe improves over reconstruction alone | Clean-from-scratch no-OSM, coarse-OSM, no-hard-negative, and full-recipe ablation | Running/pending E2 | No directional claim |
-| C4 | High-resolution supervision preserves boundaries | No-high-resolution ablation plus boundary-specific metric and qualitative audit | Running/pending E2-HR | State as design hypothesis |
+| C4 | Finer-resolution input fusion or reconstruction supervision preserves boundaries | A 2 x 2 fusion on/off by reconstruction-target on/off experiment, boundary metric, and qualitative audit | Combined-path ablation is insufficient; 2 x 2 pending | State each mechanism as a design hypothesis |
 | C5 | Structured input corruption improves robustness | No-corruption ablation and missing-source/cloud strata | Running/pending E2-Mask/E8 | State as design hypothesis |
 | C6 | More embedding dimensions are effectively used | Effective rank, per-channel variance, covariance spectrum, and downstream association | Existing diagnostics are inconclusive | Do not claim |
 | C7 | Higher effective rank improves downstream utility | Controlled experiments with uncertainty | Existing P14/V4 negative evidence contradicts simple claim | State that rank alone is insufficient |
