@@ -39,7 +39,7 @@ Dense geospatial embeddings can amortize repeated urban mapping, but monthly cit
 
 - Global and annual geospatial embeddings demonstrate broad transfer, but an annual representation can suppress month-scale state changes.
 - Monthly modeling has less temporal redundancy and is more exposed to clouds, haze, missing modalities, SAR speckle, and acquisition misalignment.
-- City-scale training offers dense local observations and high-resolution sources, but creates risks of geographic overfitting, weak-label leakage, and transductive evaluation.
+- City-scale training offers dense local observations and finer-resolution sources, but creates risks of geographic overfitting, weak-label leakage, and transductive evaluation.
 - Therefore, the key question is not whether a regional model is larger than a global model, but whether a compact monthly field can improve labeled-patch efficiency while preserving spatial detail and surviving strict spatial holdout.
 
 ### 1.3 Research questions
@@ -102,7 +102,7 @@ This must be the first Methods subsection to match the journal guidance.
 Describe Figure 1 from left to right:
 
 1. Six monthly observations are assembled from Sentinel-2, Sentinel-1, and Landsat.
-2. Sparse high-resolution optical and SAR observations provide date-specific reconstruction targets; their input features are aggregated across available dates before fusion.
+2. Sparse finer-resolution optical and SAR observations provide date-specific reconstruction targets; their input features are aggregated across available dates before fusion.
 3. Cloud/validity masks and source availability control valid supervision.
 4. Structured corruption drops selected modalities, months, and spatial blocks from the inputs.
 5. A multimodal spatiotemporal encoder with full cross-month attention produces six monthly-indexed dense 64-dimensional fields. These are not causal, current-month-only encodings.
@@ -134,7 +134,7 @@ Create a compact table covering source, channels, native resolution, temporal av
 - Finer-resolution SAR: 1 channel, sparsely observed; source pixels are resampled to the 10 m embedding grid, and input features are temporally aggregated and reused across monthly slots.
 - Period used by the current six-month configuration: December 2025 through May 2026.
 
-Document cloud screening, valid-pixel masks, geometric alignment checks, quality-based compositing, normalization statistics, and how the 30 April observation is assigned. Do not imply that every high-resolution source is independently observed in every month.
+Document cloud screening, valid-pixel masks, geometric alignment checks, quality-based compositing, normalization statistics, and how the 30 April observation is assigned. Do not imply that every finer-resolution source is independently observed in every month.
 
 ### 3.4 OSM-derived weak semantic data
 
@@ -156,7 +156,7 @@ Use a notation table before equations.
 - Temporal fusion uses a gated sum with full temporal attention.
 - A 1 x 1 projection followed by L2 normalization gives a unit-norm 64 x 128 x 128 embedding tensor for each of six monthly slots.
 - During training, isotropic Gaussian noise with learned scale `1/exp(log_kappa)` is added before a second projection to the unit sphere. Describe this as a **vMF-style hyperspherical bottleneck**, not exact vMF likelihood training.
-- High-resolution features are fused before the bottleneck when available. The same temporally aggregated high-resolution feature is repeated across monthly slots.
+- Finer-resolution features are fused before the bottleneck when available. The same temporally aggregated finer-resolution feature is repeated across monthly slots.
 
 Insert a code-audited architecture diagram and parameter count. Explain that full temporal attention allows a monthly-indexed output to use observations from other months.
 
@@ -224,7 +224,7 @@ Clarify that the corruption is applied to inputs while supervision is evaluated 
 
 Answer RQ1 with the main benchmark table and qualitative mapping Figure 3. Lead with held-out-category, no-OSM, and independent-label evidence. Report buildings, roads, and water as the operational OSM-overlap stratum, with the upstream supervision asymmetry stated in the table header and caption.
 
-**Required result placeholder:** `[E3/E6: 5-fold x 3-seed mean +/- SD, paired CI, validation-threshold F1, AP, IoU, AUC]`.
+**Required result placeholder:** `[E3/E6: five folds x one frozen encoder checkpoint per fold x three downstream shot/probe seeds; mean +/- SD, paired CI, validation-threshold F1, AP, IoU, AUC]`.
 
 ### 4.2 Labeled-patch-efficiency curves
 
@@ -247,11 +247,11 @@ The combined finer-resolution-pathway ablation cannot distinguish input-fusion e
 
 ### 4.4 Temporal context and observation quality
 
-Use Figure 6 to compare separately trained and information-matched 1-, 3-, and 6-month models, temporal pooling, and month-order controls. Test-time deletion or shuffling of a six-month model is only a distribution-shift robustness test, not causal evidence for temporal modeling. Stratify by clear-pixel rate and source availability. Only after this section may the paper claim an advantage from monthly temporal modeling.
+Answer the temporal and observation-quality part of RQ4 with Figure 6 by comparing separately trained and information-matched 1-, 3-, and 6-month models, temporal pooling, and month-order controls. Test-time deletion or shuffling of a six-month model is only a distribution-shift robustness test, not causal evidence for temporal modeling. Stratify by clear-pixel rate and source availability. Only after this section may the paper claim an advantage from monthly temporal modeling.
 
 ### 4.5 Cross-city reproducibility and transfer
 
-Use Figure 7 to separate two questions:
+Answer the cross-city part of RQ4 with Figure 7 by separating two questions:
 
 - Training the same recipe from scratch in Harbin tests recipe reproducibility.
 - Applying the Haidian encoder directly to Harbin tests geographic transfer.
@@ -286,7 +286,7 @@ Discuss cadence, training scale, geographic scope, and input differences. A matc
 
 - Primary development in one city and six months.
 - OSM incompleteness, label bias, and partial task overlap.
-- Sparse high-resolution observations and imperfect temporal correspondence.
+- Sparse finer-resolution observations and imperfect temporal correspondence.
 - Remaining cloud, registration, and patch-boundary artifacts.
 - Regional model scale and uncertain out-of-region transfer.
 - Computational cost and environmental footprint to be quantified.
