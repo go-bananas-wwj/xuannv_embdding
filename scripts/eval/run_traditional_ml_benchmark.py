@@ -712,7 +712,8 @@ def main() -> None:
                     all_metrics.append(record)
                     print(
                         f"{task_name} {feature_set} {model_name} shot={shot} "
-                        f"f1={record['f1_best']:.4f} ap={record['ap']:.4f} auc={record['auc_roc']:.4f}",
+                        f"f1@val-thr={record['f1_at_threshold']:.4f} "
+                        f"ap={record['ap']:.4f} auc={record['auc_roc']:.4f}",
                         flush=True,
                     )
 

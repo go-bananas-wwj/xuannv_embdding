@@ -69,6 +69,8 @@ def main() -> None:
     ranks = {pid: i + 1 for i, pid in enumerate(ranked)}
     gt_ranks = sorted(ranks[pid] for pid in gt)
     result = {
+        "paper_eligible": False,
+        "protocol_status": "diagnostic_until_all_registered_evaluation_gates_pass",
         "task": args.label_root.name,
         "query_patch": query_id,
         "query_positive_pixels": pos_counts[query_id],

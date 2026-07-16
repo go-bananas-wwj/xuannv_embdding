@@ -716,6 +716,8 @@ def train_fold(
     test_metrics = compute_metrics(test_logits, test_target, threshold=best_threshold)
     result: dict[str, Any] = {
         **test_metrics,
+        "paper_eligible": False,
+        "protocol_status": "diagnostic_until_all_registered_evaluation_gates_pass",
         "fold": fold_idx,
         "best_epoch": best_epoch,
         "best_val_score": best_score,
@@ -771,6 +773,8 @@ def main() -> None:
         encoding="utf-8",
     )
     meta = {
+        "paper_eligible": False,
+        "protocol_status": "diagnostic_until_all_registered_evaluation_gates_pass",
         "num_folds": len(summary),
         "requested_fold": args.fold,
         "is_full_5fold": len(summary) == 5 and args.fold is None,

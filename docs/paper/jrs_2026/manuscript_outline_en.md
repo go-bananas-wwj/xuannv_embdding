@@ -46,7 +46,7 @@ Dense geospatial embeddings can amortize repeated urban mapping, but monthly cit
 
 **RQ1. Representation utility.** Do frozen monthly-indexed embeddings support diverse urban mapping tasks with a preregistered shallow convolutional head?
 
-**RQ2. Labeled-patch efficiency.** At matched 5-, 10-, and feasible 50-shot budgets, how do the embeddings compare with raw multisensor features and external geospatial representations, both conditional on OSM-overlap supervision and on held-out/no-OSM tracks?
+**RQ2. Labeled-patch efficiency.** At matched 5-, 10-, and feasible 50-shot budgets, how do the embeddings compare with raw multisensor features and external geospatial representations across encoder OSM supervision, downstream OSM overlap, and OSM-derived versus independent label sources?
 
 **RQ3. Training recipe.** What performance associations are observed for data scale, OSM auxiliary supervision, hard-negative sampling, the combined finer-resolution-source pathway, and structured input corruption; which associations remain stable across at least three independently initialized encoders; and can a 2 x 2 experiment separate finer-resolution input fusion from reconstruction supervision?
 
@@ -142,6 +142,7 @@ Document cloud screening, valid-pixel masks, geometric alignment checks, quality
 - Broad land-cover-style supervision is stored under a historical `worldcover` configuration alias but is derived from the cleaned OSM taxonomy; use the scientific name in the manuscript.
 - The fine semantic probe contains 13 OSM-derived categories in the production recipe.
 - Training patch sampling is also OSM-dependent: for each task, the sampler records whether a patch contains any positive pixel, sums the configured task weights, applies `1 + 2.5 x score`, and caps the with-replacement sampling weight at 5.0. This distribution shift must be disclosed separately from pixel-level hard-negative mining.
+- In the recorded P10C run, this weighting was nearly saturated (`min=4.5`, `max=5.0`, `mean=4.995`; all 320 patches received extra weight), so clipping made the realized sampling distribution close to uniform. Do not imply a strong rare-positive oversampling effect.
 - Explain incompleteness: unlabeled pixels are not automatically reliable negatives.
 - Specify which evaluation labels are independent, which are OSM-derived, and which results are therefore diagnostic rather than leakage-free evidence.
 
@@ -176,7 +177,7 @@ Define multimodal reconstruction as a weighted sum:
 \mathcal{L}_s(\hat{\mathbf{x}}_s,\mathbf{x}_s;\mathbf{m}_s),
 \]
 
-where validity mask \(\mathbf{m}_s\) excludes unavailable or invalid targets. The registered production weights are 0.80 (Sentinel-2), 0.25 (Sentinel-1), 0.45 (Landsat), 0.90 (finer-resolution-source optical resampled to 10 m), 0.35 (finer-resolution-source SAR resampled to 10 m), and 0.45 for the coarse OSM semantic target. Continuous targets use channel-averaged L1 over valid pixels. The categorical target uses masked cross-entropy with class 0 ignored.
+where validity mask \(\mathbf{m}_s\) excludes unavailable or invalid targets. The registered production weights are 0.80 (Sentinel-2), 0.25 (Sentinel-1), 0.45 (Landsat), 0.90 (finer-resolution-source optical resampled to 10 m), 0.35 (finer-resolution-source SAR resampled to 10 m), and 0.45 for the coarse OSM semantic target. Continuous targets use channel-averaged L1 over valid pixels. The categorical target uses masked cross-entropy with class 0 ignored; this static coarse OSM target is copied to all six monthly slots.
 
 The fine OSM semantic objective supervises only the final monthly slot (May 2026) through 13 independent 1 x 1 linear probes. Each task combines positive-weighted BCE, Dice loss, and an additional hardest-2%-negative BCE term. The hard-negative term is added on top of BCE that already contains all negative pixels. The task-averaged semantic weight ramps linearly to 0.14 over 80 epochs; the hard-negative multiplier ramps to 0.35 over 120 epochs. The within-rank uniformity term ramps to 0.06 over 60 epochs and operates on spatially pooled monthly vectors. Covariance, patch discrimination, temporal contrast, supervised change, distillation, prototype, boundary, and latent reconstruction terms are inactive in P10C and must not be listed as trained objectives.
 
@@ -194,10 +195,10 @@ Clarify that the corruption is applied to inputs while supervision is evaluated 
 
 - 800 epochs with AdamW using the PyTorch default betas (0.9, 0.999).
 - Learning rate 2 x 10^-6; weight decay 0.05; 30 linear warm-up epochs followed by cosine decay.
-- Mixed precision, gradient checkpointing, and gradient accumulation of two.
+- The recorded production run used one node with two NPUs, batch size 3 per NPU, gradient accumulation of two, and effective global batch size 12, with mixed precision and gradient checkpointing.
 - Checkpoints evaluated every 20 epochs and saved every 200 epochs.
-- The production P10C run was warm-started from the P9B epoch-800 checkpoint, then trained for 800 P10C epochs with a newly initialized optimizer and scheduler. Disclose this lineage explicitly; P10C is not a from-scratch scientific replicate.
-- The production artifact uses epoch 800, while its recorded minimum reconstruction validation loss occurred around epoch 600. Report these separately and define a validation-only selection rule for clean paper models.
+- The recorded production lineage is at least `P7A best -> P8A best -> P9A epoch 400 -> P9B epoch 800 -> P10C epoch 800`. P10C loaded P9B model weights, then trained for 800 P10C epochs with a newly initialized optimizer and scheduler; it is not a from-scratch scientific replicate.
+- Under the old checkpoint implementation, `best.pt` was chosen only among the 200/400/600/800 save points and resolved to epoch 600. The full 20-epoch validation record instead reached its lowest weighted reconstruction value at epoch 120 (2.058667; epoch 600 was 2.066886). Report this legacy selection bug explicitly; the production artifact uses epoch 800, and clean paper models use the corrected validation-only selection implementation.
 
 ### 3.9 Frozen-feature downstream protocol
 
@@ -232,7 +233,7 @@ Answer RQ2 with Figure 4 and feasible 5-, 10-, and 50-shot curves. Compare ident
 
 ### 4.3 Data scaling and recipe ablation
 
-Answer RQ3 using strictly nested 40/80/150 training subsets within every fold and clean-from-scratch ablations. Treat one-encoder-seed results as exploratory associations; reserve causal or stable-recipe language for comparisons repeated with at least three independently initialized encoders:
+Answer RQ3 with Figure 5 using strictly nested 40/80/150 training subsets within every fold and clean-from-scratch ablations. Treat one-encoder-seed results as exploratory associations; reserve causal or stable-recipe language for comparisons repeated with at least three independently initialized encoders:
 
 - no OSM supervision;
 - coarse OSM only;
@@ -245,11 +246,11 @@ The combined finer-resolution-pathway ablation cannot distinguish input-fusion e
 
 ### 4.4 Temporal context and observation quality
 
-Compare separately trained and information-matched 1-, 3-, and 6-month models, temporal pooling, and month-order controls. Test-time deletion or shuffling of a six-month model is only a distribution-shift robustness test, not causal evidence for temporal modeling. Stratify by clear-pixel rate and source availability. Only after this section may the paper claim an advantage from monthly temporal modeling.
+Use Figure 6 to compare separately trained and information-matched 1-, 3-, and 6-month models, temporal pooling, and month-order controls. Test-time deletion or shuffling of a six-month model is only a distribution-shift robustness test, not causal evidence for temporal modeling. Stratify by clear-pixel rate and source availability. Only after this section may the paper claim an advantage from monthly temporal modeling.
 
 ### 4.5 Cross-city reproducibility and transfer
 
-Separate two questions:
+Use Figure 7 to separate two questions:
 
 - Training the same recipe from scratch in Harbin tests recipe reproducibility.
 - Applying the Haidian encoder directly to Harbin tests geographic transfer.
@@ -264,7 +265,7 @@ Do not call the first setting zero-shot transfer.
 
 ### 4.7 Full-region product case study
 
-Show the P10C embedding mosaic and downstream maps over all 320 patches. Label this section explicitly as a transductive deployment case study; do not merge its numbers with spatially independent evidence.
+Use Figure 8 to show the P10C embedding mosaic, downstream maps over all 320 patches, and retrieval use case. Label this section explicitly as a transductive deployment case study; do not merge its numbers with spatially independent evidence.
 
 ## 5. Discussion
 

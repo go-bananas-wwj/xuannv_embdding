@@ -215,6 +215,8 @@ def run_job(args: argparse.Namespace, job: EvalJob) -> dict[str, Any]:
     if args.dry_run:
         log_path.write_text(" ".join(cmd) + "\n", encoding="utf-8")
         return {
+            "paper_eligible": False,
+            "protocol_status": "diagnostic_until_all_registered_evaluation_gates_pass",
             "model": job.model_name,
             "task": job.task,
             "head": job.head,
@@ -235,6 +237,8 @@ def run_job(args: argparse.Namespace, job: EvalJob) -> dict[str, Any]:
         )
     status = "ok" if proc.returncode == 0 else "failed"
     record: dict[str, Any] = {
+        "paper_eligible": False,
+        "protocol_status": "diagnostic_until_all_registered_evaluation_gates_pass",
         "model": job.model_name,
         "task": job.task,
         "head": job.head,
@@ -249,9 +253,11 @@ def run_job(args: argparse.Namespace, job: EvalJob) -> dict[str, Any]:
     metrics_path = job.output_root / f"fold_{job.fold}" / "metrics.json"
     if metrics_path.exists():
         metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
-        for key in ["ap", "auc_roc", "f1_0.5", "f1_at_threshold", "f1_best", "miou", "val_threshold"]:
+        for key in ["ap", "auc_roc", "f1_0.5", "f1_at_threshold", "miou", "val_threshold"]:
             if key in metrics:
                 record[key] = metrics[key]
+        if "f1_best" in metrics:
+            record["oracle_test_f1"] = metrics["f1_best"]
         record["metrics_path"] = str(metrics_path)
     if proc.returncode != 0:
         raise RuntimeError(f"Job failed: {' '.join(cmd)}. See {log_path}")
@@ -266,6 +272,8 @@ def write_summary(output_root: Path, records: list[dict[str, Any]]) -> None:
         encoding="utf-8",
     )
     fieldnames = [
+        "paper_eligible",
+        "protocol_status",
         "model",
         "task",
         "head",
@@ -276,7 +284,7 @@ def write_summary(output_root: Path, records: list[dict[str, Any]]) -> None:
         "auc_roc",
         "f1_0.5",
         "f1_at_threshold",
-        "f1_best",
+        "oracle_test_f1",
         "miou",
         "val_threshold",
         "output_root",
@@ -289,7 +297,7 @@ def write_summary(output_root: Path, records: list[dict[str, Any]]) -> None:
     lines = [
         "# Haidian Embedding Capability Suite",
         "",
-        "| Task | Head | Shot | Fold | Model | AP | AUC | F1@val-thr | F1-best | mIoU |",
+        "| Task | Head | Shot | Fold | Model | AP | AUC | F1@val-thr | Oracle test F1 | mIoU |",
         "|---|---|---:|---:|---|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
@@ -304,7 +312,7 @@ def write_summary(output_root: Path, records: list[dict[str, Any]]) -> None:
                 ap=float(row.get("ap", 0.0)),
                 auc_roc=float(row.get("auc_roc", 0.0)),
                 f1_at_threshold=float(row.get("f1_at_threshold", 0.0)),
-                f1_best=float(row.get("f1_best", 0.0)),
+                f1_best=float(row.get("oracle_test_f1", 0.0)),
                 miou=float(row.get("miou", 0.0)),
             )
         )
@@ -326,10 +334,12 @@ def main() -> None:
     args.output_root.mkdir(parents=True, exist_ok=True)
     jobs = build_jobs(args)
     manifest = {
+        "paper_eligible": False,
+        "protocol_status": "diagnostic_until_all_registered_evaluation_gates_pass",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "fairness_contract": {
             "same_probe_script": "scripts/eval/train_aef_downstream_probe.py",
-            "same_splits": True,
+            "same_splits": "diagnostic_claim_only_not_hash_verified",
             "same_heads": args.heads,
             "same_epochs": args.epochs,
             "same_optimizer": "AdamW",
