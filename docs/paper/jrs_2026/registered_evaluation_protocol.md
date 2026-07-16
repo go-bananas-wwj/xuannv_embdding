@@ -10,16 +10,15 @@ The paper reports three settings separately.
 2. **External product-use comparison.** Frozen XuannvEarth, AEF, and DINO-family products are used as delivered, then evaluated with the same downstream labels and protocol. Different upstream information budgets are disclosed; this setting measures downstream usability, not causal superiority of the upstream recipe.
 3. **Full-region transductive case study.** P10C has seen all 320 Haidian patches and OSM-derived supervision. It is excluded from the main benchmark, paired confidence intervals, and spatial-generalization claims.
 
-## 2. OSM Supervision and Claim Tracks
+## 2. OSM Supervision and Crossed Evaluation Factors
 
 XuannvEarth receives direct OSM-derived auxiliary weak supervision for 13 classes and OSM-dependent weighted patch sampling. Building, road, water, construction, green, and playground results therefore cannot by themselves establish task-agnostic labeled-patch efficiency against baselines that did not receive equivalent OSM supervision.
 
-Results are divided into:
+These labels are claim strata, not four mutually exclusive experimental tracks. They form crossed factors:
 
-- **Track A: OSM-assisted task-overlap transfer.** Tasks overlap the 13 auxiliary classes. Claims are limited to labeled-patch efficiency conditional on prior OSM supervision.
-- **Track B: held-out-category transfer.** The task taxonomy, ontology graph, synonyms, parent/child relations, label-generation code, and a spatial-overlap audit are frozen and hashed before evaluation. A category must be absent from both the 13 fine OSM tasks and the coarse OSM categorical target and must not be a renamed, parent/child, or geometrically near-equivalent target. This track supports broader representation claims only after the ontology audit passes.
-- **Track C: no-OSM representation.** A clean no-OSM encoder is compared with raw and external representations. This isolates multisensor reconstruction from OSM supervision.
-- **Track D: independent manual labels.** Labels are drawn without consulting OSM and are used to test whether observed trends survive a different annotation source. Independence of labels does not erase the upstream supervision asymmetry, so Track A wording still applies to overlapping classes.
+- **A/B, downstream task relation:** **A** is OSM-overlap transfer, where tasks overlap the 13 auxiliary classes and claims are limited to labeled-patch efficiency conditional on prior OSM supervision. **B** is held-out-category transfer: the task taxonomy, ontology graph, synonyms, parent/child relations, label-generation code, and spatial-overlap audit are frozen and hashed before evaluation. A B category must be absent from both the 13 fine OSM tasks and the coarse OSM categorical target and must not be renamed, parent/child, or geometrically near-equivalent.
+- **C, encoder-supervision condition:** a clean no-OSM encoder is compared with raw and external representations. This condition can be crossed with task relation and label source and isolates multisensor reconstruction from OSM supervision.
+- **D, label-source audit:** labels are drawn without consulting OSM and test whether trends survive a different annotation source. D can be crossed with A, B, or C; independent labels do not erase upstream OSM supervision asymmetry, so A wording still applies to an overlapping task.
 
 ## 3. Spatial Split and Frozen Training Subsets
 

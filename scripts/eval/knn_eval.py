@@ -62,7 +62,15 @@ def _main(argv: list[str] | None = None) -> None:
     logger.info("f1_macro: %.4f", f1)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    np.savez(args.output, accuracy=acc, f1_macro=f1, predictions=pred, labels=test_labels)
+    np.savez(
+        args.output,
+        accuracy=acc,
+        f1_macro=f1,
+        predictions=pred,
+        labels=test_labels,
+        paper_eligible=np.asarray(False),
+        protocol_status=np.asarray("diagnostic_until_all_registered_evaluation_gates_pass"),
+    )
     logger.info("saved metrics to %s", args.output)
 
 

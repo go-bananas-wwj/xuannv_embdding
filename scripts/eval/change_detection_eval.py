@@ -57,7 +57,14 @@ def _main(argv: list[str] | None = None) -> None:
     logger.info("AUC: %.4f", auc)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    np.savez(args.output, auc=auc, diff=diff, labels=label)
+    np.savez(
+        args.output,
+        auc=auc,
+        diff=diff,
+        labels=label,
+        paper_eligible=np.asarray(False),
+        protocol_status=np.asarray("diagnostic_until_all_registered_evaluation_gates_pass"),
+    )
     logger.info("saved metrics to %s", args.output)
 
 

@@ -11,7 +11,7 @@
 
 ## One-Sentence Paper Claim
 
-XuannvEarth produces candidate reusable 10 m, 64-dimensional monthly-indexed embedding fields from multimodal Earth observation data and aggregated finer-resolution observations, and we test spatial task transfer under separate OSM-overlap, held-out-category, no-OSM, and independent-label evaluation tracks.
+XuannvEarth produces candidate reusable 10 m, 64-dimensional monthly-indexed embedding fields from multimodal Earth observation data and aggregated finer-resolution observations, and we test spatial task transfer across crossed encoder-supervision, downstream-task-relation, and label-source conditions.
 
 This claim deliberately does **not** assert that XuannvEarth is a global foundation model, that it universally outperforms annual embeddings, or that monthly modeling improves change detection until the corresponding experiments are complete.
 
@@ -25,7 +25,7 @@ Title 1 is preferred because it states the scientific object and evaluation desi
 
 ## Abstract Skeleton (One Unstructured Paragraph; Maximum 250 Words)
 
-Dense geospatial embeddings can amortize repeated urban mapping, but monthly city-scale representations must cope with clouds, missing observations, sensor noise, weak labels, and limited independent annotations. Existing annual or globally pretrained products provide strong transfer references, yet they do not by themselves establish whether a compact regional representation can preserve month-indexed spatial detail, reduce labeled-patch requirements, and remain useful on geographically held-out urban areas. We present XuannvEarth, which converts six months of Sentinel-2, Sentinel-1, and Landsat observations plus temporally aggregated finer-resolution optical and synthetic aperture radar context into six 10 m, 64-channel fields using valid-target reconstruction under structured input corruption, a hyperspherical bottleneck inspired by the von Mises-Fisher distribution, embedding regularization, and OpenStreetMap-derived auxiliary weak supervision. Under a preregistered spatial five-fold protocol, we compare frozen features through the same 64-channel shallow convolutional probe, validation-selected thresholds, paired label budgets, and separate OpenStreetMap-overlap, held-out-category, no-OpenStreetMap, and independent-label tracks; the verified benchmark, scaling, ablation, observation-quality, temporal-context, and cross-city results will populate [PRIMARY RESULTS]. The completed evidence will support only [VERIFIED, CLAIM-BOUNDED SIGNIFICANCE], conditional on regional training scale, upstream supervision asymmetry, one-encoder-seed uncertainty where applicable, and [PRIMARY LIMITATION].
+Dense geospatial embeddings can amortize repeated urban mapping, but monthly city-scale representations must cope with clouds, missing observations, sensor noise, weak labels, and limited independent annotations. Existing annual or globally pretrained products provide strong transfer references, yet they do not by themselves establish whether a compact regional representation can preserve month-indexed spatial detail, reduce labeled-patch requirements, and remain useful on geographically held-out urban areas. We present XuannvEarth, which converts six months of Sentinel-2, Sentinel-1, and Landsat observations plus temporally aggregated finer-resolution optical and synthetic aperture radar context into six 10 m, 64-channel fields using valid-target reconstruction under structured input corruption, a hyperspherical bottleneck inspired by the von Mises-Fisher distribution, embedding regularization, and OpenStreetMap-derived auxiliary weak supervision. Under a preregistered spatial five-fold protocol, we compare frozen features through the same 64-channel shallow convolutional probe, validation-selected thresholds, and paired label budgets across crossed conditions for encoder OSM supervision, downstream OSM overlap, and OSM-derived versus independent labels; the verified benchmark, scaling, ablation, observation-quality, temporal-context, and cross-city results will populate [PRIMARY RESULTS]. The completed evidence will support only [VERIFIED, CLAIM-BOUNDED SIGNIFICANCE], conditional on regional training scale, upstream supervision asymmetry, one-encoder-seed uncertainty where applicable, and [PRIMARY LIMITATION].
 
 ## 1. Introduction
 
@@ -123,6 +123,8 @@ State two evaluation settings explicitly:
 
 ### 3.3 Multisource observations and quality control
 
+Use Figure 2 to introduce the study grid, representative multisource observations, validity/cloud masks, OSM weak labels, and the full-region PCA context before any result figure is cited.
+
 Create a compact table covering source, channels, native resolution, temporal availability, preprocessing, quality masks, and training role.
 
 - Sentinel-2: 12 channels.
@@ -218,7 +220,7 @@ Clarify that the corruption is applied to inputs while supervision is evaluated 
 
 ### 4.1 Main spatially independent benchmark
 
-Answer RQ1 with the main benchmark table and qualitative mapping Figure 3. Lead with held-out-category, no-OSM, and independent-label evidence. Report buildings, roads, and water as the operational OSM-overlap track, with the upstream supervision asymmetry stated in the table header and caption.
+Answer RQ1 with the main benchmark table and qualitative mapping Figure 3. Lead with held-out-category, no-OSM, and independent-label evidence. Report buildings, roads, and water as the operational OSM-overlap stratum, with the upstream supervision asymmetry stated in the table header and caption.
 
 **Required result placeholder:** `[E3/E6: 5-fold x 3-seed mean +/- SD, paired CI, validation-threshold F1, AP, IoU, AUC]`.
 
