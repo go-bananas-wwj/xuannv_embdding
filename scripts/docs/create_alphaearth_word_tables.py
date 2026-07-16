@@ -51,8 +51,8 @@ AUDIT_ROWS = [
     [
         "海淀生产工作集小计",
         "约 174 GiB",
-        "建议至少 0.5 PB 可用存储，1 PB 原始容量",
-        "小计 = 原始数据 + 处理数据 + 当前生产 embedding + P10C 训练产物；不含重复发布包。",
+        "建议至少 0.5 PB 可用存储，1 PB 原始容量\n完整镜像当前密度原始多源数据时约需 1.5 PB 级归档",
+        "0.5/1 PB 面向筛选训练数据和产物；完整原始影像归档需独立扩容。小计 = 原始数据 + 处理数据 + 当前生产 embedding + P10C 训练产物；不含重复发布包。",
     ],
     [
         "历史/上传重复物理占用",
@@ -65,6 +65,28 @@ AUDIT_ROWS = [
         "未生成全国产品",
         "约 177 TB / 1.11 PB",
         "分别约为 10 m 的 4 倍 / 25 倍；还未计全国高分输入数据、索引、金字塔和副本。",
+    ],
+]
+
+SAMPLE_HEADERS = ["阶段", "抽样规则与 patch 数", "当前 P10C 密度线性估算（6 个月）", "用途与决策门槛"]
+SAMPLE_ROWS = [
+    [
+        "阶段 A：数据审查与吞吐试点",
+        "二维 10×10 系统抽样，1%\n约 17,578 patch",
+        "筛选训练包约 0.71 TiB\n原始素材粗略参照约 7.0 TiB\n处理数据约 2.1 TiB\nFP32 embedding 约 0.44 TiB",
+        "检查配准、云/缺测、授权、标签和分片 I/O；完成 1,000-step 基准与数据质量报告后再扩展。",
+    ],
+    [
+        "阶段 B：正式全国试训",
+        "10 个随机相位或等价分层 10%\n约 175,781 patch",
+        "筛选训练包约 7.1 TiB\n原始素材粗略参照约 70 TiB\n处理数据约 20.8 TiB\nFP32 embedding 约 4.4 TiB",
+        "仅在阶段 A 合格后启动；用于模型配方、扩展效率和下游泛化验证。",
+    ],
+    [
+        "阶段 C：目标覆盖",
+        "30%\n约 1,757,812 patch",
+        "筛选训练包约 71 TiB\n原始素材粗略参照约 698 TiB\n处理数据约 208 TiB\nFP32 embedding 约 44 TiB",
+        "采用固定优化步数而非 800 epoch；完整原始镜像、缓存、版本和副本需 PB 级物理容量。",
     ],
 ]
 
@@ -142,7 +164,8 @@ def main() -> None:
     note = document.add_paragraph("统计日期：2026-07-16。AEF 未公开的数据容量均明确标注为“未公开”；推算值已在单元格中写明公式与前提。")
     note.runs[0].font.size = Pt(9)
     add_table(document, "表 1  海淀区数据量审计与全国 30% 容量估算", AUDIT_HEADERS, AUDIT_ROWS)
-    add_table(document, "表 2  AlphaEarth Foundations 与玄女海淀 P10C 的公开规模参考", AEF_HEADERS, AEF_ROWS)
+    add_table(document, "表 2  全国数据审查的二维 10×10 系统抽样与容量估算", SAMPLE_HEADERS, SAMPLE_ROWS)
+    add_table(document, "表 3  AlphaEarth Foundations 与玄女海淀 P10C 的公开规模参考", AEF_HEADERS, AEF_ROWS)
     refs = document.add_paragraph("来源：AEF 论文 https://arxiv.org/abs/2507.22291；Google DeepMind 介绍 https://deepmind.google/blog/alphaearth-foundations-helps-map-our-planet-in-unprecedented-detail/；Google GCS 数据格式说明 https://developers.google.com/earth-engine/guides/aef_on_gcs_readme")
     refs.runs[0].font.size = Pt(8)
     document.save(DOCX_OUT)
@@ -157,7 +180,7 @@ tr:nth-child(even) td { background: #f7fbff; }
 .note { font-size: 12px; } </style></head><body>
 <h1>中国版 AlphaEarth 方案：可直接复制到 Word 的数据与规模参考表</h1>
 <p class=\"note\">统计日期：2026-07-16。AEF 未公开的数据容量均明确标注为“未公开”；推算值已在单元格中写明公式与前提。</p>
-""" + html_table("表 1  海淀区数据量审计与全国 30% 容量估算", AUDIT_HEADERS, AUDIT_ROWS) + html_table("表 2  AlphaEarth Foundations 与玄女海淀 P10C 的公开规模参考", AEF_HEADERS, AEF_ROWS) + """<p class=\"note\">来源：AEF 论文 https://arxiv.org/abs/2507.22291；Google DeepMind 介绍 https://deepmind.google/blog/alphaearth-foundations-helps-map-our-planet-in-unprecedented-detail/；Google GCS 数据格式说明 https://developers.google.com/earth-engine/guides/aef_on_gcs_readme</p></body></html>"""
+""" + html_table("表 1  海淀区数据量审计与全国 30% 容量估算", AUDIT_HEADERS, AUDIT_ROWS) + html_table("表 2  全国数据审查的二维 10×10 系统抽样与容量估算", SAMPLE_HEADERS, SAMPLE_ROWS) + html_table("表 3  AlphaEarth Foundations 与玄女海淀 P10C 的公开规模参考", AEF_HEADERS, AEF_ROWS) + """<p class=\"note\">来源：AEF 论文 https://arxiv.org/abs/2507.22291；Google DeepMind 介绍 https://deepmind.google/blog/alphaearth-foundations-helps-map-our-planet-in-unprecedented-detail/；Google GCS 数据格式说明 https://developers.google.com/earth-engine/guides/aef_on_gcs_readme</p></body></html>"""
     HTML_OUT.write_text(html, encoding="utf-8")
     print(DOCX_OUT)
     print(HTML_OUT)
