@@ -13,7 +13,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 BASE = ROOT / "configs/v2_p10c_haidian_202512_202605_osm_semantic_hardneg_20260704.yaml"
 CONFIG_DIR = ROOT / "configs/paper_20260715"
-DATA_DIR = Path("/data/xuannv_embedding/processed/haidian/paper_20260715")
+DATA_DIR = Path("/data/xuannv_embedding/processed/haidian")
 OUTPUT_ROOT = Path("/data/xuannv_embedding/outputs/paper_20260715")
 
 
@@ -31,9 +31,9 @@ def base_config(name: str, train_size: int) -> dict[str, Any]:
     )
     cfg["training"]["gradient_accumulation_steps"] = 6
     cfg["data"].update(
-        manifest_path=str(DATA_DIR / f"train_{train_size}_fold0_seed42.json"),
-        train_manifest_path=str(DATA_DIR / f"train_{train_size}_fold0_seed42.json"),
-        val_manifest_path=str(DATA_DIR / "val_fold0.json"),
+        manifest_path=str(DATA_DIR / f"paper_20260715_train_{train_size}_fold0_seed42.json"),
+        train_manifest_path=str(DATA_DIR / f"paper_20260715_train_{train_size}_fold0_seed42.json"),
+        val_manifest_path=str(DATA_DIR / "paper_20260715_val_fold0.json"),
         num_samples=train_size,
     )
     return cfg

@@ -157,9 +157,9 @@ training:
 data:
   root: /data/xuannv_embedding/processed/haidian
   region: haidian
-  manifest_path: /data/xuannv_embedding/processed/haidian/paper_20260715/train_160_fold0_seed42.json
-  train_manifest_path: /data/xuannv_embedding/processed/haidian/paper_20260715/train_160_fold0_seed42.json
-  val_manifest_path: /data/xuannv_embedding/processed/haidian/paper_20260715/val_fold0.json
+  manifest_path: /data/xuannv_embedding/processed/haidian/paper_20260715_train_160_fold0_seed42.json
+  train_manifest_path: /data/xuannv_embedding/processed/haidian/paper_20260715_train_160_fold0_seed42.json
+  val_manifest_path: /data/xuannv_embedding/processed/haidian/paper_20260715_val_fold0.json
   statistics_dir: /data/xuannv_embedding/statistics/haidian
   statistics_dirs_by_region: {}
   supervised_label_roots:

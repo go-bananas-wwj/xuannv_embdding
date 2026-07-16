@@ -18,6 +18,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fold", type=int, default=0)
     parser.add_argument("--sizes", nargs="+", type=int, default=(40, 80, 160))
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--prefix", default="paper_20260715")
     return parser.parse_args()
 
 
@@ -61,13 +62,13 @@ def main() -> None:
     for size in sizes:
         selected = nested_order[:size]
         selected_sets[size] = set(selected)
-        path = args.output_dir / f"train_{size}_fold{args.fold}_seed{args.seed}.json"
+        path = args.output_dir / f"{args.prefix}_train_{size}_fold{args.fold}_seed{args.seed}.json"
         write_manifest(path, [by_id[patch_id] for patch_id in selected])
         manifests[f"train_{size}"] = str(path)
 
-    val_path = args.output_dir / f"val_fold{args.fold}.json"
-    test_path = args.output_dir / f"test_fold{args.fold}.json"
-    buffer_path = args.output_dir / f"buffer_fold{args.fold}.json"
+    val_path = args.output_dir / f"{args.prefix}_val_fold{args.fold}.json"
+    test_path = args.output_dir / f"{args.prefix}_test_fold{args.fold}.json"
+    buffer_path = args.output_dir / f"{args.prefix}_buffer_fold{args.fold}.json"
     write_manifest(val_path, [by_id[patch_id] for patch_id in val_ids])
     write_manifest(test_path, [by_id[patch_id] for patch_id in test_ids])
     write_manifest(buffer_path, [by_id[patch_id] for patch_id in buffer_ids])
@@ -95,7 +96,7 @@ def main() -> None:
             for left, right in zip(sizes, sizes[1:])
         ),
     }
-    audit_path = args.output_dir / "audit.json"
+    audit_path = args.output_dir / f"{args.prefix}_audit.json"
     audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(audit, ensure_ascii=False, indent=2))
 
