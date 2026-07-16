@@ -11,7 +11,7 @@
 
 ## One-Sentence Paper Claim
 
-XuannvEarth produces candidate reusable 10 m, 64-dimensional monthly-indexed embedding fields from multimodal Earth observation data and aggregated finer-resolution observations, and we test spatial task transfer under separate OSM-overlap, held-out-category, and no-OSM evaluation tracks.
+XuannvEarth produces candidate reusable 10 m, 64-dimensional monthly-indexed embedding fields from multimodal Earth observation data and aggregated finer-resolution observations, and we test spatial task transfer under separate OSM-overlap, held-out-category, no-OSM, and independent-label evaluation tracks.
 
 This claim deliberately does **not** assert that XuannvEarth is a global foundation model, that it universally outperforms annual embeddings, or that monthly modeling improves change detection until the corresponding experiments are complete.
 
@@ -194,6 +194,7 @@ Clarify that the corruption is applied to inputs while supervision is evaluated 
 - Learning rate 2 x 10^-6; weight decay 0.05; 30 linear warm-up epochs followed by cosine decay.
 - Mixed precision, gradient checkpointing, and gradient accumulation of two.
 - Checkpoints evaluated every 20 epochs and saved every 200 epochs.
+- The production P10C run was warm-started from the P9B epoch-800 checkpoint, then trained for 800 P10C epochs with a newly initialized optimizer and scheduler. Disclose this lineage explicitly; P10C is not a from-scratch scientific replicate.
 - The production artifact uses epoch 800, while its recorded minimum reconstruction validation loss occurred around epoch 600. Report these separately and define a validation-only selection rule for clean paper models.
 
 ### 3.9 Frozen-feature downstream protocol
@@ -217,13 +218,13 @@ Clarify that the corruption is applied to inputs while supervision is evaluated 
 
 ### 4.1 Main spatially independent benchmark
 
-Answer RQ1 with the main benchmark table and qualitative mapping figure. Lead with held-out-category, no-OSM, and independent-label evidence. Report buildings, roads, and water as the operational OSM-overlap track, with the upstream supervision asymmetry stated in the table header and caption.
+Answer RQ1 with the main benchmark table and qualitative mapping Figure 3. Lead with held-out-category, no-OSM, and independent-label evidence. Report buildings, roads, and water as the operational OSM-overlap track, with the upstream supervision asymmetry stated in the table header and caption.
 
 **Required result placeholder:** `[E3/E6: 5-fold x 3-seed mean +/- SD, paired CI, validation-threshold F1, AP, IoU, AUC]`.
 
 ### 4.2 Labeled-patch-efficiency curves
 
-Answer RQ2 with Figure 3 and feasible 5-, 10-, and 50-shot curves. Compare identical heads and labeled-patch budgets. Report absolute difference and relative improvement with uncertainty. Call this “labeled-patch efficiency” unless annotation time, valid labeled pixels, positive pixels, and object counts have also been compared. A broader annotation-efficiency claim requires supporting Track B or C evidence plus those cost measures; Track A alone supports only labeled-patch efficiency conditional on OSM-overlap supervision.
+Answer RQ2 with Figure 4 and feasible 5-, 10-, and 50-shot curves. Compare identical heads and labeled-patch budgets. Report absolute difference and relative improvement with uncertainty. Call this “labeled-patch efficiency” unless annotation time, valid labeled pixels, positive pixels, and object counts have also been compared. A broader annotation-efficiency claim requires supporting Track B or C evidence plus those cost measures; Track A alone supports only labeled-patch efficiency conditional on OSM-overlap supervision.
 
 **Required result placeholder:** `[E3/E6: labeled-patch-efficiency curves and spatially paired uncertainty]`.
 
@@ -385,8 +386,8 @@ Use one numbered reference list for the main text and Supplementary Materials. C
 | Figure 2 | Study area, multisource observations, masks, OSM weak labels, and global PCA context |
 | Table 1 | Data sources, architecture, information budgets, and training specification |
 | Table 2 | Main spatial benchmark with independent-label and OSM-assisted tracks separated |
-| Figure 3 | Labeled-patch-efficiency curves |
-| Figure 4 | Representative qualitative maps and failure cases |
+| Figure 3 | Representative qualitative maps and failure cases |
+| Figure 4 | Labeled-patch-efficiency curves |
 | Figure 5 | Strict 40/80/150 scaling and registered ablations |
 | Figure 6 | Temporal context, cloud quality, and missing-source robustness |
 | Figure 7 | Cross-city recipe reproducibility and direct geographic transfer |

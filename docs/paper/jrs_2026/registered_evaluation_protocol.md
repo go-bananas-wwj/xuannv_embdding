@@ -136,12 +136,12 @@ No main-paper number may be generated until all gates pass:
 | G4 | Train-only normalization/PCA artifacts are fitted, saved, and hash-checked | PENDING |
 | G5 | Six-month raw information-matched baseline is implemented | PENDING |
 | G6 | Validation-threshold algorithm and paired block bootstrap match this document | PENDING |
-| G7 | Encoder checkpoint provenance and validation-only selection are recorded | PENDING |
+| G7 | The full encoder initialization/checkpoint ancestry is hash-verified; every ancestor's training patches are disjoint from the fold's validation/test/buffer geography; validation-only selection is recorded | PENDING |
 | G8 | Independent annotation handbook, labels, provenance, and agreement are frozen | PENDING |
 | G9 | OSM-assisted, held-out-category, no-OSM, and manual-label tracks are not mixed | PENDING |
 | G10 | A 2 x 2 finer-resolution fusion/reconstruction ablation is complete before making mechanism-specific claims | PENDING |
 | G11 | Test labels are sealed; preregistered config hashes and a test-access ledger prevent iterative test-driven model selection | PENDING |
-| G12 | A canonical result registry binds metrics to code, data, preprocessing, checkpoint, predictions, and environment hashes | PENDING |
+| G12 | A canonical result registry binds metrics to code, data, preprocessing, full checkpoint ancestry, predictions, and environment hashes, then anchors the registry outside rewriteable local history | PENDING |
 | G13 | Track B ontology and geometric-overlap audit is frozen and hash-checked | PENDING |
 
 Legacy fold-0, random-split, oracle-threshold, silently truncated, or task-selected-head results remain preliminary even if their scores are higher.
@@ -151,12 +151,14 @@ Legacy fold-0, random-split, oracle-threshold, silently truncated, or task-selec
 - Every evaluation output and aggregate must carry a machine-readable `paper_eligible` field. Missing values are interpreted as `false`; the field alone is never sufficient for admission.
 - Existing diagnostic benchmark entrypoints explicitly emit `paper_eligible=false`; their outputs may inform debugging and experiment planning but may not populate manuscript claims, figures, or tables.
 - A future registered evaluation entrypoint may emit `paper_eligible=true` only after it verifies all gates relevant to that result, records immutable artifact hashes, and writes a gate-by-gate provenance record into a canonical append-only result registry committed to Git.
-- Each registry entry binds the metric payload and per-patch predictions to the Git commit, dirty-tree state, complete self-contained configuration, split and shot manifests, raw/processed data manifests and checksums, preprocessing artifacts, label/ontology versions, checkpoint and feature checksums, dependency lock or container digest, Python/PyTorch/torch_npu versions, device model, random seeds, and aggregation code. The registry entry itself receives a content hash; hand-edited or hash-mismatched entries are rejected.
+- Each registry entry binds the metric payload and per-patch predictions to the Git commit, dirty-tree state, complete self-contained configuration, split and shot manifests, raw/processed data manifests and checksums, preprocessing artifacts, label/ontology versions, the complete initialization/checkpoint ancestry and every ancestor's training-patch manifest, feature checksums, dependency lock or container digest, Python/PyTorch/torch_npu versions, device model, random seeds, and aggregation code. The registry entry itself receives a content hash; hand-edited or hash-mismatched entries are rejected.
+- A fold-independent scientific encoder must start from random initialization unless an external generic checkpoint is preregistered and its upstream exposure is explicitly treated as external pretraining. A checkpoint descended from P10C, P9B, or any ancestor trained on that fold's validation/test/buffer patches is ineligible, even after additional clean-fold training.
+- Preregistration and canonical result-registry snapshots use signed Git commits and signed annotated tags pushed to a protected remote, and their digests are deposited in an independent timestamped archive such as Zenodo or OSF. Later history rewrites or regenerated hash-consistent registries cannot replace the externally timestamped snapshot.
 - Aggregation and figure scripts for the paper must accept only entries present in the canonical registry whose content hashes verify and whose `paper_eligible` value is exactly `true`.
 
 ### 12.2 Test-Set Sealing and Experiment Disclosure
 
-- Before any confirmatory test run, freeze the research questions, task ontology, primary metrics, model/config hashes, baseline set, ablations, and figure/table plan in a dated Git commit and tag.
+- Before any confirmatory test run, freeze the research questions, task ontology, primary metrics, model/config hashes, baseline set, ablations, and figure/table plan in a signed, externally timestamped Git commit and tag.
 - Test labels remain outside routine training/evaluation paths. A designated release command records every access in an append-only ledger containing user, time, commit, config hashes, and purpose.
 - Validation may be used for the preregistered choices. Once confirmatory test results are released, no encoder, task definition, head, threshold rule, or primary analysis may be changed and re-labeled confirmatory without registering a new holdout or clearly marking the follow-up exploratory.
 - The supplement reports all registered confirmatory runs, failures, exclusions, and deviations; selective retention of the best test run is forbidden.
