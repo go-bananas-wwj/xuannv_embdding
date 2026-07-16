@@ -12,7 +12,7 @@ The framework applies the following checked requirements:
 - The working manuscript target is below 15,000 words.
 - The main-text budget is no more than 10 figures and tables combined.
 - The first Methods subsection is `Experimental and Technical Design` and is paired with a workflow diagram.
-- Figures are prepared as editable vector files where possible; raster remote-sensing panels are retained at publication resolution.
+- At revision, each figure is delivered as a separate editable file. Diagrams use PDF/EPS; raster remote-sensing panels use an accepted raster/PDF format at a minimum of 300 dpi. PowerPoint/Word figures and converted PowerPoint/Word artwork are not accepted.
 - Data, code, material availability, prior publication, and image permissions are treated as submission requirements rather than afterthoughts.
 
 ## Research-Writing Skills Consulted

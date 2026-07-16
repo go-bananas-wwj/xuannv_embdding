@@ -1,9 +1,13 @@
-# XuannvEarth: Monthly Multimodal Urban Embeddings with Weak Semantic Priors under Spatially Independent Evaluation
+# XuannvEarth: Spatial Evaluation of Monthly-Indexed Multimodal Urban Embeddings
 
 > Target venue: *Journal of Remote Sensing*, Special Issue on Foundation Models based Multimodal Earth Observation Data Fusion and Applications  
 > Article type: Research Article  
 > Status: evidence-aware manuscript framework; bracketed fields must be replaced only after the corresponding registered experiment is complete  
 > Target length: 8,000-10,000 words; abstract <=250 words; main-text figures and tables combined <=10
+
+## Authors and Affiliations
+
+`[AUTHOR NAMES, ORCIDS, AFFILIATIONS, CORRESPONDING AUTHOR, AND EMAIL TO COMPLETE]`
 
 ## One-Sentence Paper Claim
 
@@ -13,23 +17,15 @@ This claim deliberately does **not** assert that XuannvEarth is a global foundat
 
 ## Candidate Titles
 
-1. **XuannvEarth: Monthly Multimodal Urban Embeddings with Weak Semantic Priors under Spatially Independent Evaluation**
+1. **XuannvEarth: Spatial Evaluation of Monthly-Indexed Multimodal Urban Embeddings**
 2. **Learning Monthly Multimodal Earth Observation Embedding Fields for Label-Efficient Urban Mapping**
 3. **Reusable Monthly Earth Observation Embeddings from Multisensor Reconstruction and Weak Geographic Semantics**
 
 Title 1 is preferred before the final results are available because it states the scientific object and evaluation design without presupposing superiority. “Label-efficient” may move into the title only if the spatial five-fold results support it.
 
-## Abstract Skeleton (Maximum 250 Words)
+## Abstract Skeleton (One Unstructured Paragraph; Maximum 250 Words)
 
-**Background.** Dense geospatial embeddings can amortize the cost of repeated urban mapping, but existing products are commonly optimized at annual cadence or global scale, while monthly city-scale mapping must cope with clouds, missing observations, sensor noise, and limited labels.
-
-**Gap.** It remains unclear whether a compact monthly representation learned from heterogeneous observations can preserve local spatial detail and reduce downstream annotation requirements under spatially independent evaluation.
-
-**Method.** We present XuannvEarth, a multimodal encoder that converts six months of Sentinel-2, Sentinel-1, and Landsat observations together with temporally aggregated high-resolution optical and SAR context into six monthly-indexed 64-channel embedding fields at 10 m spacing. Training combines valid-target sensor reconstruction under structured input corruption, high-resolution detail reconstruction, a vMF-style hyperspherical bottleneck, embedding-distribution regularization, and cleaned OpenStreetMap-derived auxiliary weak supervision.
-
-**Results.** Across spatial five-fold evaluation and [three] random seeds, frozen XuannvEarth embeddings with identical lightweight heads achieve [RESULT: mean +/- standard deviation for the primary few-shot tasks] relative to raw multisensor features and annual embedding baselines. Scaling, ablation, cloud-quality, temporal-input, and cross-city experiments show [RESULT: only insert conclusions supported beyond uncertainty].
-
-**Significance.** These results establish [CLAIM PENDING] and clarify the conditions under which regional monthly embedding fields provide practical label efficiency for repeated urban mapping.
+Dense geospatial embeddings can amortize repeated urban mapping, but monthly city-scale representations must cope with clouds, missing observations, sensor noise, weak labels, and limited independent annotations. It remains unclear whether a compact monthly-indexed representation learned from heterogeneous observations can preserve local spatial detail and reduce downstream annotation requirements under spatial holdout. We present XuannvEarth, which converts six months of Sentinel-2, Sentinel-1, and Landsat observations plus temporally aggregated finer-resolution optical and SAR context into six 10 m, 64-channel fields using valid-target reconstruction under structured input corruption, a vMF-style hyperspherical bottleneck, embedding regularization, and OpenStreetMap-derived auxiliary weak supervision. Under a preregistered spatial five-fold protocol, frozen XuannvEarth features with a matched lightweight head achieve [VERIFIED RESULT], while scaling, ablation, observation-quality, temporal-input, and cross-city analyses show [VERIFIED RESULT]. The evidence therefore [VERIFIED, CLAIM-BOUNDED SIGNIFICANCE], while remaining conditional on [PRIMARY LIMITATION].
 
 ## 1. Introduction
 
@@ -48,7 +44,7 @@ Title 1 is preferred before the final results are available because it states th
 
 ### 1.3 Research questions
 
-**RQ1. Representation utility.** Do frozen monthly embeddings support diverse urban mapping tasks with linear or shallow convolutional heads?
+**RQ1. Representation utility.** Do frozen monthly-indexed embeddings support diverse urban mapping tasks with a preregistered shallow convolutional head?
 
 **RQ2. Label efficiency.** At matched 5-, 10-, and 50-shot budgets, how do the embeddings compare with raw multisensor features and external geospatial representations?
 
@@ -58,8 +54,8 @@ Title 1 is preferred before the final results are available because it states th
 
 ### 1.4 Contributions
 
-1. We formulate a city-scale monthly embedding field that retains a dense 128 x 128 grid of 64-dimensional features for every 1.28 km x 1.28 km patch.
-2. We develop a multimodal training recipe that combines reconstruction under structured input corruption, sparse high-resolution detail supervision, and cleaned OSM-derived weak semantic regularization without using the final manually annotated test labels.
+1. We formulate a city-scale monthly-indexed embedding field that retains a dense 128 x 128 grid of 64-dimensional features for every 1.28 km x 1.28 km patch.
+2. We develop a multimodal training recipe that combines reconstruction under structured input corruption, 10 m-grid supervision derived from finer-resolution sources, and cleaned OSM-derived auxiliary weak supervision without using the final manually annotated test labels.
 3. We introduce a leakage-aware evaluation protocol with spatial five-fold splits, a one-patch buffer, validation-only threshold selection, a preregistered matched downstream head, and repeated few-shot trials.
 4. We provide controlled scaling, ablation, robustness, temporal, and cross-city analyses, including negative results that separate embedding diversity from downstream utility.
 
@@ -86,10 +82,11 @@ End the Introduction with a concise roadmap and the one-sentence claim. Do not l
 - Cross-modal reconstruction and feature-distribution regularization.
 - State clearly that XuannvEarth corrupts model inputs and reconstructs all originally valid targets; this is not a masked-pixel-only loss.
 
-### 2.4 Weak geographic supervision
+### 2.4 OSM-derived auxiliary weak supervision
 
 - OSM-derived labels as noisy, incomplete semantic priors.
 - Risks of label incompleteness, spatial bias, and benchmark leakage.
+- Use **OSM-derived auxiliary weak supervision** for the data and training paradigm, and **OSM auxiliary loss** for its implemented loss term. Do not call this direct supervision a mere prior.
 - Position the work as weakly supervised multimodal representation learning, not purely self-supervised learning.
 
 ### 2.5 Positioning statement
@@ -131,8 +128,8 @@ Create a compact table covering source, channels, native resolution, temporal av
 - Sentinel-2: 12 channels.
 - Sentinel-1: 2 channels.
 - Landsat: 7 channels.
-- High-resolution optical: 3 channels, sparsely observed; input features are temporally aggregated and reused across monthly slots.
-- High-resolution SAR: 1 channel, sparsely observed; input features are temporally aggregated and reused across monthly slots.
+- Finer-resolution optical: 3 channels, sparsely observed; approximately 3 m source pixels are resampled to the 10 m embedding grid, and input features are temporally aggregated and reused across monthly slots.
+- Finer-resolution SAR: 1 channel, sparsely observed; source pixels are resampled to the 10 m embedding grid, and input features are temporally aggregated and reused across monthly slots.
 - Period used by the current six-month configuration: December 2025 through May 2026.
 
 Document cloud screening, valid-pixel masks, geometric alignment checks, quality-based compositing, normalization statistics, and how the 30 April observation is assigned. Do not imply that every high-resolution source is independently observed in every month.
@@ -142,6 +139,7 @@ Document cloud screening, valid-pixel masks, geometric alignment checks, quality
 - Explain tag extraction, removal of invalid geometry, rasterization, class merging, and positive-coverage audit.
 - Broad land-cover-style supervision is stored under a historical `worldcover` configuration alias but is derived from the cleaned OSM taxonomy; use the scientific name in the manuscript.
 - The fine semantic probe contains 13 OSM-derived categories in the production recipe.
+- Training patch sampling is also OSM-dependent: positive coverage from the 13 tasks defines with-replacement sampling weights with a 2.5 positive boost capped at 5.0. This distribution shift must be disclosed separately from pixel-level hard-negative mining.
 - Explain incompleteness: unlabeled pixels are not automatically reliable negatives.
 - Specify which evaluation labels are independent, which are OSM-derived, and which results are therefore diagnostic rather than leakage-free evidence.
 
@@ -176,7 +174,7 @@ Define multimodal reconstruction as a weighted sum:
 \mathcal{L}_s(\hat{\mathbf{x}}_s,\mathbf{x}_s;\mathbf{m}_s),
 \]
 
-where validity mask \(\mathbf{m}_s\) excludes unavailable or invalid targets. The registered production weights are 0.80 (Sentinel-2), 0.25 (Sentinel-1), 0.45 (Landsat), 0.90 (high-resolution optical), 0.35 (high-resolution SAR), and 0.45 for the coarse OSM semantic target. Continuous targets use channel-averaged L1 over valid pixels. The categorical target uses masked cross-entropy with class 0 ignored.
+where validity mask \(\mathbf{m}_s\) excludes unavailable or invalid targets. The registered production weights are 0.80 (Sentinel-2), 0.25 (Sentinel-1), 0.45 (Landsat), 0.90 (finer-resolution-source optical resampled to 10 m), 0.35 (finer-resolution-source SAR resampled to 10 m), and 0.45 for the coarse OSM semantic target. Continuous targets use channel-averaged L1 over valid pixels. The categorical target uses masked cross-entropy with class 0 ignored.
 
 The fine OSM semantic objective supervises only the final monthly slot (May 2026) through 13 independent 1 x 1 linear probes. Each task combines positive-weighted BCE, Dice loss, and an additional hardest-2%-negative BCE term. The hard-negative term is added on top of BCE that already contains all negative pixels. The task-averaged semantic weight ramps linearly to 0.14 over 80 epochs; the hard-negative multiplier ramps to 0.35 over 120 epochs. The within-rank uniformity term ramps to 0.06 over 60 epochs and operates on spatially pooled monthly vectors. Covariance, patch discrimination, temporal contrast, supervised change, distillation, prototype, boundary, and latent reconstruction terms are inactive in P10C and must not be listed as trained objectives.
 
@@ -201,7 +199,7 @@ Clarify that the corruption is applied to inputs while supervision is evaluated 
 ### 3.9 Frozen-feature downstream protocol
 
 - Preregister one shallow 3 x 3 convolutional probe as the primary matched head. Linear, MLP, UNet, and DeepLab-style heads are secondary capacity analyses and cannot be selected by test performance.
-- 5-shot means five positive training patches plus a matched number of negative patches. Define 10- and 50-shot analogously.
+- The exact few-shot sampling unit, feasibility rule, normalization, temporal information budget, threshold grid, and confidence-interval estimator are fixed in `registered_evaluation_protocol.md` before any main-paper result is computed.
 - Use identical labels, spatial split, shot samples, head architecture, optimizer, seed, and training budget for XuannvEarth, AEF, DINO-family, and raw-feature baselines.
 - Select decision thresholds on validation predictions only; report test F1 at that fixed threshold.
 - Keep per-image min-max visualization out of quantitative evaluation because it destroys calibration.
@@ -219,13 +217,13 @@ Clarify that the corruption is applied to inputs while supervision is evaluated 
 
 ### 4.1 Main spatially independent benchmark
 
-Answer RQ1 with Table 2 and Figure 3. Report frozen-feature performance for buildings, roads, and water first; extended OSM-derived tasks are secondary. Separate independent-label results from OSM-derived diagnostic results.
+Answer RQ1 with the main benchmark table and qualitative mapping figure. Report frozen-feature performance for buildings, roads, and water first; extended OSM-derived tasks are secondary. Separate independent-label results from OSM-derived diagnostic results.
 
 **Required result placeholder:** `[E3/E6: 5-fold x 3-seed mean +/- SD, paired CI, validation-threshold F1, AP, IoU, AUC]`.
 
 ### 4.2 Label-efficiency curves
 
-Answer RQ2 with 5-, 10-, and 50-shot curves. Compare identical heads and annotation budgets. Report absolute difference and relative improvement with uncertainty.
+Answer RQ2 with Figure 3 and feasible 5-, 10-, and 50-shot curves. Compare identical heads and annotation budgets. Report absolute difference and relative improvement with uncertainty. These curves test label efficiency; they do not prove it until the registered confidence intervals support the claim.
 
 **Required result placeholder:** `[E3/E6: label-efficiency curves and spatially paired significance]`.
 
@@ -237,14 +235,14 @@ Answer RQ3 using strictly nested 40/80/150 training subsets within every fold an
 - coarse OSM only;
 - fine semantic probe without hard negatives;
 - full recipe;
-- no high-resolution detail injection;
+- no finer-resolution-source pathway (combined input and reconstruction removal);
 - no structured input corruption.
 
-The previous 160-patch pilot is valid only for fold 0 because other folds contain fewer than 160 eligible training patches. Old overlapping or contaminated-initialization runs must not enter this causal table.
+The combined finer-resolution-pathway ablation cannot distinguish input-fusion effects from reconstruction-supervision effects. A two-factor ablation is required before making either narrower causal claim. The previous 160-patch pilot is valid only for fold 0 because other folds contain fewer than 160 eligible training patches. Old overlapping or contaminated-initialization runs must not enter this causal table.
 
 ### 4.4 Temporal context and observation quality
 
-Compare 1-, 3-, and 6-month input, temporal pooling, and month-order shuffling. Stratify by clear-pixel rate and source availability. Only after this section may the paper claim an advantage from monthly temporal modeling.
+Compare separately trained and information-matched 1-, 3-, and 6-month models, temporal pooling, and month-order controls. Test-time deletion or shuffling of a six-month model is only a distribution-shift robustness test, not causal evidence for temporal modeling. Stratify by clear-pixel rate and source availability. Only after this section may the paper claim an advantage from monthly temporal modeling.
 
 ### 4.5 Cross-city reproducibility and transfer
 
@@ -306,7 +304,7 @@ One paragraph only:
 
 ### Acknowledgments
 
-`[AUTHORS TO COMPLETE]`
+`[AUTHORS TO COMPLETE]` Include a factual disclosure of generative-AI assistance used for manuscript organization, language editing, or figure preparation, and repeat the required disclosure in the cover letter. AI tools are not authors and all scientific claims remain the authors’ responsibility.
 
 ### Funding
 
@@ -330,22 +328,41 @@ Use CRediT roles. `[AUTHORS TO COMPLETE]`
 
 ### Prior Publication and Related Papers
 
-Disclose the APGARSS abstract and explain the additional methods, experiments, and analysis in this full paper.
+Before submission, determine whether the APGARSS abstract was merely submitted, accepted, posted online, assigned a DOI, or formally published. Provide the text and publication status to the JRS editor when required, cite it if public, and explain the substantial additions in this full paper. Obtain written editorial confirmation if the prior-publication status is ambiguous.
+
+## References
+
+Use one numbered reference list for the main text and Supplementary Materials. Cite primary papers and official repositories, include verified DOIs where available, and never retain an uncited or machine-invented entry. `[REFERENCE LIBRARY PENDING]`
+
+## Supplementary Materials
+
+- Supplementary Methods: preprocessing, architecture, objective details, compute, and full hyperparameters.
+- Supplementary Tables: per-fold/per-seed results, all metrics, threshold distributions, and extended categories.
+- Supplementary Figures: all qualitative cases, calibration, additional months, and representation diagnostics.
+- Supplementary Data: immutable split/subset/shot manifests, label provenance, checksums, and artifact registry.
+
+## Cover Letter Checklist
+
+- State explicitly that the manuscript is intended for the special issue “Foundation Models based Multimodal Earth Observation Data Fusion and Applications.”
+- Describe the manuscript’s fit to multimodal EO representation learning and urban applications without calling XuannvEarth a global foundation model.
+- Disclose AI assistance consistently with the manuscript Acknowledgments.
+- Disclose the APGARSS abstract and attach or cite the related text when required.
+- Confirm that the work is original, is not under review elsewhere, and satisfies all data and image permissions.
 
 ## Main-Text Figure and Table Budget
 
-| No. | Type | Purpose |
-|---|---|---|
-| 1 | Figure | Experimental and technical design overview |
-| 2 | Figure | Study area, monthly multisource observations, masks, and OSM weak labels |
-| 3 | Table | Data sources, architecture, and training specification |
-| 4 | Table | Main spatial 5-fold x 3-seed benchmark |
-| 5 | Figure | Label-efficiency curves and representative qualitative maps |
-| 6 | Figure | Strict 40/80/150 scaling and causal ablation results |
-| 7 | Figure | Temporal context, cloud quality, and missing-source robustness |
-| 8 | Figure | Cross-city reproducibility and zero-shot transfer |
-| 9 | Figure | Representation diagnostics, retrieval, and negative-result analysis |
-| 10 | Figure | Full-region 320-patch product case study and comparison mosaic |
+| Label | Purpose |
+|---|---|
+| Figure 1 | Experimental and technical design overview |
+| Figure 2 | Study area, multisource observations, masks, OSM weak labels, and global PCA context |
+| Table 1 | Data sources, architecture, information budgets, and training specification |
+| Table 2 | Main spatial benchmark with independent-label and OSM-assisted tracks separated |
+| Figure 3 | Label-efficiency curves |
+| Figure 4 | Representative qualitative maps and failure cases |
+| Figure 5 | Strict 40/80/150 scaling and registered ablations |
+| Figure 6 | Temporal context, cloud quality, and missing-source robustness |
+| Figure 7 | Cross-city, representation-diagnostic, and retrieval analysis |
+| Figure 8 | Full-region 320-patch transductive product case study |
 
 All additional head comparisons, per-fold tables, extended OSM categories, hyperparameters, and extra mosaics belong in Supplementary Materials.
 
@@ -359,3 +376,5 @@ All additional head comparisons, per-fold tables, extended OSM categories, hyper
 6. Never infer semantic quality from effective rank alone.
 7. Report unfavorable baselines and failed ablations when they answer a registered research question.
 8. Cite primary papers and official repositories; verify every DOI and numerical claim.
+9. Do not generate a main-paper number with a script that cannot consume the registered spatial split and shot manifests.
+10. Do not silently reduce a shot budget; report the setting as infeasible and omit it from paired aggregation.
