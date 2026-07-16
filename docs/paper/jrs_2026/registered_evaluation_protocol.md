@@ -144,12 +144,15 @@ No main-paper number may be generated until all gates pass:
 | G11 | Test labels are sealed; preregistered config hashes and a test-access ledger prevent iterative test-driven model selection | PENDING |
 | G12 | A canonical result registry binds metrics to code, data, preprocessing, full checkpoint ancestry, predictions, and environment hashes, then anchors the registry outside rewriteable local history | PENDING |
 | G13 | The held-out-category ontology and geometric-overlap audit is frozen and hash-checked | PENDING |
+| G14 | OSM snapshot time, provider/version, source checksum, processing lineage, and relation to the imagery window are verified; causal claims enforce an appropriate cutoff | PENDING |
+| G15 | Every run using OSM-weighted sampling persists and hash-checks per-patch weights, rank seeds, clipping statistics, and sampled-ID histograms | PENDING |
 
 Legacy fold-0, random-split, oracle-threshold, silently truncated, or task-selected-head results remain preliminary even if their scores are higher.
 
 ### 12.1 Fail-Closed Result Admission
 
-- Every evaluation output and aggregate must carry a machine-readable `paper_eligible` field. Missing values are interpreted as `false`; the field alone is never sufficient for admission.
+- Every metric-bearing evaluation output and aggregate must carry a machine-readable `paper_eligible` field. Missing values are interpreted as `false`; the field alone is never sufficient for admission.
+- Feature tensors, checkpoints, prediction rasters, and selection manifests need not embed the field inside their native binary format. They inherit eligibility only through a mandatory sibling `artifact_manifest.json` that records `paper_eligible`, content hashes, producing metric/registry entry, and complete provenance. A missing or unverifiable sidecar makes the artifact ineligible by default.
 - Existing diagnostic benchmark entrypoints explicitly emit `paper_eligible=false`; their outputs may inform debugging and experiment planning but may not populate manuscript claims, figures, or tables.
 - A future registered evaluation entrypoint may emit `paper_eligible=true` only after it verifies all gates relevant to that result, records immutable artifact hashes, and writes a gate-by-gate provenance record into a canonical append-only result registry committed to Git.
 - Each registry entry binds the metric payload and per-patch predictions to the Git commit, dirty-tree state, complete self-contained configuration, split and shot manifests, raw/processed data manifests and checksums, preprocessing artifacts, label/ontology versions, the complete initialization/checkpoint ancestry and every ancestor's training-patch manifest, feature checksums, dependency lock or container digest, Python/PyTorch/torch_npu versions, device model, random seeds, and aggregation code. The registry entry itself receives a content hash; hand-edited or hash-mismatched entries are rejected.

@@ -139,10 +139,11 @@ Document cloud screening, valid-pixel masks, geometric alignment checks, quality
 ### 3.4 OSM-derived weak semantic data
 
 - Explain tag extraction, removal of invalid geometry, rasterization, class merging, and positive-coverage audit.
+- Record the authoritative OSM snapshot/extract timestamp, provider/version, download URL or replication sequence, raw checksum, processing commit, and its relationship to the December 2025-May 2026 imagery window. If the snapshot contains later edits, describe it as noncausal spatial weak supervision and forbid prospective or “available at image date” claims; a causal mapping experiment requires an OSM cutoff available by the claimed date.
 - Broad land-cover-style supervision is stored under a historical `worldcover` configuration alias but is derived from the cleaned OSM taxonomy; use the scientific name in the manuscript.
 - The fine semantic probe contains 13 OSM-derived categories in the production recipe.
 - Training patch sampling is also OSM-dependent: for each task, the sampler records whether a patch contains any positive pixel, sums the configured task weights, applies `1 + 2.5 x score`, and caps the with-replacement sampling weight at 5.0. This distribution shift must be disclosed separately from pixel-level hard-negative mining.
-- Before publication, register and checksum the P10C runtime sampling-weight audit (minimum, maximum, mean, clipped fraction, and number of weighted patches). Current log inspection suggests near-saturation, so no sampling-effect claim is allowed until that audit is traceable.
+- For P10C and every scientific fold, scaling run, and ablation with OSM-weighted sampling enabled, persist and checksum the per-patch weights plus minimum, maximum, mean, clipped fraction, weighted-patch count, rank sampler seeds, and sampled-ID histogram. Current P10C log inspection suggests near-saturation, so no sampling-effect claim is allowed until that audit is traceable and the same gate passes for every compared run.
 - Explain incompleteness: unlabeled pixels are not automatically reliable negatives.
 - Specify which evaluation labels are independent, which are OSM-derived, and which results are therefore diagnostic rather than leakage-free evidence.
 

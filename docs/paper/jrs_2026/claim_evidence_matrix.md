@@ -32,6 +32,8 @@ Every quantitative manuscript entry must record:
 - code commit, dirty-tree state, dependency lock/container digest, and hardware/software versions;
 - experiment ID and immutable configuration path;
 - raw and processed data manifests, preprocessing chain, and checksums;
+- OSM snapshot/extract timestamp, provider/version, source checksum, processing lineage, and cutoff classification;
+- persisted OSM sampling-weight audit and sampled-ID histogram when weighted sampling is enabled;
 - checkpoint path and checksum;
 - feature artifact version;
 - split, shot, label, and ontology manifests with checksums;
