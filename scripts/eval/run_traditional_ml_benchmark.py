@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import random
@@ -660,6 +661,8 @@ def main() -> None:
                             "shot": shot,
                             "fold": args.fold,
                             "status": "failed",
+                            "paper_eligible": False,
+                            "protocol_status": "diagnostic_until_all_registered_evaluation_gates_pass",
                             "error": repr(exc),
                         }
                         (out_dir / "metrics.json").write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -678,6 +681,8 @@ def main() -> None:
                         "shot": shot,
                         "fold": args.fold,
                         "status": "ok",
+                        "paper_eligible": False,
+                        "protocol_status": "diagnostic_until_all_registered_evaluation_gates_pass",
                         "val_f1_best": val_metrics["f1_best"],
                         "val_ap": val_metrics["ap"],
                         "val_auc_roc": val_metrics["auc_roc"],
@@ -726,6 +731,8 @@ def main() -> None:
                 values.append(str(value).replace(",", ";"))
             f.write(",".join(values) + "\n")
     meta = {
+        "paper_eligible": False,
+        "protocol_status": "diagnostic_until_all_registered_evaluation_gates_pass",
         "manifest": str(args.manifest),
         "embedding_root": str(args.embedding_root),
         "month": args.month,
@@ -734,6 +741,8 @@ def main() -> None:
         "models": args.models,
         "shots": args.shots,
         "fold": args.fold,
+        "spatial_split": str(args.spatial_split),
+        "spatial_split_sha256": hashlib.sha256(args.spatial_split.read_bytes()).hexdigest(),
         "max_pixels_per_patch": args.max_pixels_per_patch,
         "max_eval_pixels_per_patch": args.max_eval_pixels_per_patch,
         "eval_sampling_mode": args.eval_sampling_mode,

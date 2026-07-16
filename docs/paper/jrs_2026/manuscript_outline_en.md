@@ -11,7 +11,7 @@
 
 ## One-Sentence Paper Claim
 
-XuannvEarth learns reusable 10 m, 64-dimensional monthly-indexed embedding fields from multimodal Earth observation data and aggregated finer-resolution observations, and we test spatial task transfer under separate OSM-overlap, held-out-category, and no-OSM evaluation tracks.
+XuannvEarth produces candidate reusable 10 m, 64-dimensional monthly-indexed embedding fields from multimodal Earth observation data and aggregated finer-resolution observations, and we test spatial task transfer under separate OSM-overlap, held-out-category, and no-OSM evaluation tracks.
 
 This claim deliberately does **not** assert that XuannvEarth is a global foundation model, that it universally outperforms annual embeddings, or that monthly modeling improves change detection until the corresponding experiments are complete.
 
@@ -25,7 +25,7 @@ Title 1 is preferred before the final results are available because it states th
 
 ## Abstract Skeleton (One Unstructured Paragraph; Maximum 250 Words)
 
-Dense geospatial embeddings can amortize repeated urban mapping, but monthly city-scale representations must cope with clouds, missing observations, sensor noise, weak labels, and limited independent annotations. It remains unclear whether a compact monthly-indexed representation learned from heterogeneous observations can preserve local spatial detail and reduce downstream annotation requirements under spatial holdout. We present XuannvEarth, which converts six months of Sentinel-2, Sentinel-1, and Landsat observations plus temporally aggregated finer-resolution optical and synthetic aperture radar context into six 10 m, 64-channel fields using valid-target reconstruction under structured input corruption, a hyperspherical bottleneck inspired by the von Mises-Fisher distribution, embedding regularization, and OpenStreetMap-derived auxiliary weak supervision. Under a preregistered spatial five-fold protocol, frozen XuannvEarth features with a matched lightweight head achieve [VERIFIED RESULT], while scaling, ablation, observation-quality, temporal-input, and cross-city analyses show [VERIFIED RESULT]. The evidence therefore [VERIFIED, CLAIM-BOUNDED SIGNIFICANCE], while remaining conditional on [PRIMARY LIMITATION].
+Dense geospatial embeddings can amortize repeated urban mapping, but monthly city-scale representations must cope with clouds, missing observations, sensor noise, weak labels, and limited independent annotations. Existing annual or globally pretrained products provide strong transfer references, yet they do not by themselves establish whether a compact regional representation can preserve month-indexed spatial detail, reduce labeled-patch requirements, and remain useful on geographically held-out urban areas. We present XuannvEarth, which converts six months of Sentinel-2, Sentinel-1, and Landsat observations plus temporally aggregated finer-resolution optical and synthetic aperture radar context into six 10 m, 64-channel fields using valid-target reconstruction under structured input corruption, a hyperspherical bottleneck inspired by the von Mises-Fisher distribution, embedding regularization, and OpenStreetMap-derived auxiliary weak supervision. Under a preregistered spatial five-fold protocol, we compare frozen features through the same 64-channel shallow convolutional probe, validation-selected thresholds, paired label budgets, and separate OpenStreetMap-overlap, held-out-category, no-OpenStreetMap, and independent-label tracks; the verified benchmark, scaling, ablation, observation-quality, temporal-context, and cross-city results will populate [PRIMARY RESULTS]. The completed evidence will support only [VERIFIED, CLAIM-BOUNDED SIGNIFICANCE], conditional on regional training scale, upstream supervision asymmetry, one-encoder-seed uncertainty where applicable, and [PRIMARY LIMITATION].
 
 ## 1. Introduction
 
@@ -40,15 +40,15 @@ Dense geospatial embeddings can amortize repeated urban mapping, but monthly cit
 - Global and annual geospatial embeddings demonstrate broad transfer, but an annual representation can suppress month-scale state changes.
 - Monthly modeling has less temporal redundancy and is more exposed to clouds, haze, missing modalities, SAR speckle, and acquisition misalignment.
 - City-scale training offers dense local observations and high-resolution sources, but creates risks of geographic overfitting, weak-label leakage, and transductive evaluation.
-- Therefore, the key question is not whether a regional model is larger than a global model, but whether a compact monthly field can improve label efficiency while preserving spatial detail and surviving strict spatial holdout.
+- Therefore, the key question is not whether a regional model is larger than a global model, but whether a compact monthly field can improve labeled-patch efficiency while preserving spatial detail and surviving strict spatial holdout.
 
 ### 1.3 Research questions
 
 **RQ1. Representation utility.** Do frozen monthly-indexed embeddings support diverse urban mapping tasks with a preregistered shallow convolutional head?
 
-**RQ2. Annotation efficiency.** At matched 5-, 10-, and feasible 50-shot budgets, how do the embeddings compare with raw multisensor features and external geospatial representations, both conditional on OSM-overlap supervision and on held-out/no-OSM tracks?
+**RQ2. Labeled-patch efficiency.** At matched 5-, 10-, and feasible 50-shot budgets, how do the embeddings compare with raw multisensor features and external geospatial representations, both conditional on OSM-overlap supervision and on held-out/no-OSM tracks?
 
-**RQ3. Training recipe.** What are the contributions of data scale, OSM auxiliary supervision, hard-negative sampling, the combined finer-resolution-source pathway, and structured input corruption; and can a 2 x 2 experiment separate finer-resolution input fusion from reconstruction supervision?
+**RQ3. Training recipe.** What performance associations are observed for data scale, OSM auxiliary supervision, hard-negative sampling, the combined finer-resolution-source pathway, and structured input corruption; which associations remain stable across at least three independently initialized encoders; and can a 2 x 2 experiment separate finer-resolution input fusion from reconstruction supervision?
 
 **RQ4. Robustness and transfer.** How does performance vary with cloud quality, missing modalities, temporal context, and a second city?
 
@@ -221,15 +221,15 @@ Answer RQ1 with the main benchmark table and qualitative mapping figure. Lead wi
 
 **Required result placeholder:** `[E3/E6: 5-fold x 3-seed mean +/- SD, paired CI, validation-threshold F1, AP, IoU, AUC]`.
 
-### 4.2 Label-efficiency curves
+### 4.2 Labeled-patch-efficiency curves
 
-Answer RQ2 with Figure 3 and feasible 5-, 10-, and 50-shot curves. Compare identical heads and annotation budgets. Report absolute difference and relative improvement with uncertainty. A general annotation-efficiency claim requires supporting Track B or C evidence; Track A alone supports only annotation efficiency conditional on OSM-overlap supervision.
+Answer RQ2 with Figure 3 and feasible 5-, 10-, and 50-shot curves. Compare identical heads and labeled-patch budgets. Report absolute difference and relative improvement with uncertainty. Call this “labeled-patch efficiency” unless annotation time, valid labeled pixels, positive pixels, and object counts have also been compared. A broader annotation-efficiency claim requires supporting Track B or C evidence plus those cost measures; Track A alone supports only labeled-patch efficiency conditional on OSM-overlap supervision.
 
 **Required result placeholder:** `[E3/E6: label-efficiency curves and spatially paired significance]`.
 
 ### 4.3 Data scaling and recipe ablation
 
-Answer RQ3 using strictly nested 40/80/150 training subsets within every fold and clean-from-scratch ablations:
+Answer RQ3 using strictly nested 40/80/150 training subsets within every fold and clean-from-scratch ablations. Treat one-encoder-seed results as exploratory associations; reserve causal or stable-recipe language for comparisons repeated with at least three independently initialized encoders:
 
 - no OSM supervision;
 - coarse OSM only;
@@ -328,7 +328,7 @@ Use CRediT roles. `[AUTHORS TO COMPLETE]`
 
 ### Prior Publication and Related Papers
 
-Before submission, determine whether the APGARSS abstract was merely submitted, accepted, posted online, assigned a DOI, or formally published. Provide the text and publication status to the JRS editor when required, cite it if public, and explain the substantial additions in this full paper. Obtain written editorial confirmation if the prior-publication status is ambiguous.
+Before submission, resolve every item in `prior_publication_audit.md`. Determine whether the APGARSS abstract was merely submitted, accepted, posted online, assigned a DOI, or formally published. Provide the text and publication status to the JRS editor when required, cite it if public, and explain the substantial additions in this full paper. Obtain written editorial confirmation if the prior-publication status is ambiguous.
 
 ### Informed Consent
 

@@ -129,9 +129,9 @@ No main-paper number may be generated until all gates pass:
 
 | Gate | Required condition | Current status |
 |---|---|---|
-| G1 | Evaluation CLI accepts and records the registered spatial split path/hash | PASS in registered strong/traditional entrypoints; legacy outputs remain ineligible |
-| G2 | Exact shot selections are recorded, nested by seed, and insufficient budgets raise an error | PASS in registered strong/traditional entrypoints; legacy outputs remain ineligible |
-| G3 | Exact 40/80/150 registry is consumed and hash-checked by manifest/config/training entrypoints | PASS: registered manifests/configs generated; training preflight fails on hash or ID mismatch |
+| G1 | A fail-closed evaluation CLI verifies the registered split hash and records complete provenance | PENDING: current diagnostic entrypoints are explicitly `paper_eligible=false` |
+| G2 | Immutable shot manifests include split/label/rule hashes, nested seeds, and exact-budget failure | PENDING: current diagnostic entrypoints are explicitly `paper_eligible=false` |
+| G3 | Exact 40/80/150 registry is consumed and hash-checked by manifest/config/training entrypoints | PASS: registered manifests/configs generated; encoder-training preflight fails on hash or ID mismatch |
 | G4 | Train-only normalization/PCA artifacts are fitted, saved, and hash-checked | PENDING |
 | G5 | Six-month raw information-matched baseline is implemented | PENDING |
 | G6 | Validation-threshold algorithm and paired block bootstrap match this document | PENDING |
@@ -141,3 +141,10 @@ No main-paper number may be generated until all gates pass:
 | G10 | A 2 x 2 finer-resolution fusion/reconstruction ablation is complete before making mechanism-specific claims | PENDING |
 
 Legacy fold-0, random-split, oracle-threshold, silently truncated, or task-selected-head results remain preliminary even if their scores are higher.
+
+### 12.1 Fail-Closed Result Admission
+
+- Every evaluation output and aggregate must carry a machine-readable `paper_eligible` field. Missing values are interpreted as `false`.
+- Existing diagnostic benchmark entrypoints explicitly emit `paper_eligible=false`; their outputs may inform debugging and experiment planning but may not populate manuscript claims, figures, or tables.
+- A future registered evaluation entrypoint may emit `paper_eligible=true` only after it verifies all gates relevant to that result, records immutable artifact hashes, and writes a gate-by-gate provenance record.
+- Aggregation and figure scripts for the paper must reject any input whose `paper_eligible` value is not exactly `true`.

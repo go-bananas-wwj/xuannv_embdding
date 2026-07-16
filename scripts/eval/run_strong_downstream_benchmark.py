@@ -609,6 +609,8 @@ def run_one(
     params = sum(p.numel() for p in model.parameters())
     return {
         **test_metrics,
+        "paper_eligible": False,
+        "protocol_status": "diagnostic_until_all_registered_evaluation_gates_pass",
         "task": task.name,
         "feature_set": feature_set,
         "model": model_name,
@@ -696,6 +698,8 @@ def main() -> None:
                             "shot": shot,
                             "fold": args.fold,
                             "status": "failed",
+                            "paper_eligible": False,
+                            "protocol_status": "diagnostic_until_all_registered_evaluation_gates_pass",
                             "error": repr(exc),
                         }
                         (out_dir / "metrics.json").write_text(
@@ -720,7 +724,13 @@ def main() -> None:
         for row in clean_metrics:
             f.write(",".join(str(row.get(key, "")).replace(",", ";") for key in keys) + "\n")
     meta = vars(args).copy()
-    meta.update({"device": str(device)})
+    meta.update(
+        {
+            "device": str(device),
+            "paper_eligible": False,
+            "protocol_status": "diagnostic_until_all_registered_evaluation_gates_pass",
+        }
+    )
     (args.output_root / "run_meta.json").write_text(json.dumps(meta, default=str, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
