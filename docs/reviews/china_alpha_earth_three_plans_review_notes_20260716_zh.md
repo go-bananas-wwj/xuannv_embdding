@@ -8,6 +8,8 @@
 
 这不是保守，而是把真正的瓶颈放回正确的位置。以 Sentinel-2、Sentinel-1、Landsat 为主的数据并不能仅通过增加卡数变成全国 5 m/2 m 的真实观测；后两者首先受高分影像覆盖、许可、同月时相、配准、存储与 I/O 限制。官方 AlphaEarth 的公开 embedding 也是年度 10 m、64 维，而不是全国 2 m 产品。[Google DeepMind 对 AlphaEarth 的介绍](https://deepmind.google/blog/alphaearth-foundations-helps-map-our-planet-in-unprecedented-detail/) 明确说明其融合多源观测，在 10×10 m 网格生成 64 维表示。
 
+全国数据准备的独立执行方案见：[全国 1% 基础采样与重点地区补采样方案](china_alphaearth_national_1pct_targeted_sampling_plan_20260716_zh.md)。该方案采用全国二维 `10×10` 分层系统抽样作为基础池，并以独立配额补足重点城市、困难气候与复杂地貌区域；补采样不替代全国覆盖，也不进入最终空间独立测试区。
+
 ## 当前真实底座
 
 | 项目 | 当前已验证值 | 对全国方案的含义 |
