@@ -18,10 +18,10 @@ This claim deliberately does **not** assert that XuannvEarth is a global foundat
 ## Candidate Titles
 
 1. **XuannvEarth: Spatial Evaluation of Monthly-Indexed Multimodal Urban Embeddings**
-2. **Learning Monthly Multimodal Earth Observation Embedding Fields for Label-Efficient Urban Mapping**
+2. **Learning Monthly Multimodal Earth Observation Embedding Fields for Labeled-Patch-Efficient Urban Mapping**
 3. **Reusable Monthly Earth Observation Embeddings from Multisensor Reconstruction and Weak Geographic Semantics**
 
-Title 1 is preferred before the final results are available because it states the scientific object and evaluation design without presupposing superiority. “Label-efficient” may move into the title only if the spatial five-fold results support it.
+Title 1 is preferred because it states the scientific object and evaluation design without presupposing superiority. “Labeled-patch-efficient” may move into the title only if the spatial five-fold Track B or C results support it. Broader “annotation-efficient” wording additionally requires matched annotation time, valid labeled pixels, positive pixels, and object counts.
 
 ## Abstract Skeleton (One Unstructured Paragraph; Maximum 250 Words)
 
@@ -225,7 +225,7 @@ Answer RQ1 with the main benchmark table and qualitative mapping figure. Lead wi
 
 Answer RQ2 with Figure 3 and feasible 5-, 10-, and 50-shot curves. Compare identical heads and labeled-patch budgets. Report absolute difference and relative improvement with uncertainty. Call this “labeled-patch efficiency” unless annotation time, valid labeled pixels, positive pixels, and object counts have also been compared. A broader annotation-efficiency claim requires supporting Track B or C evidence plus those cost measures; Track A alone supports only labeled-patch efficiency conditional on OSM-overlap supervision.
 
-**Required result placeholder:** `[E3/E6: label-efficiency curves and spatially paired significance]`.
+**Required result placeholder:** `[E3/E6: labeled-patch-efficiency curves and spatially paired uncertainty]`.
 
 ### 4.3 Data scaling and recipe ablation
 
@@ -267,7 +267,7 @@ Show the P10C embedding mosaic and downstream maps over all 320 patches. Label t
 
 ### 5.1 What the representation learns
 
-Interpret the relationship between boundary detail, weak semantics, temporal context, and downstream label efficiency. Tie each interpretation to an ablation or diagnostic.
+Interpret the relationship between boundary detail, weak semantics, temporal context, and downstream labeled-patch efficiency. Tie each interpretation to an ablation or diagnostic.
 
 ### 5.2 Why monthly regional embeddings can be useful
 
@@ -385,7 +385,7 @@ Use one numbered reference list for the main text and Supplementary Materials. C
 | Figure 2 | Study area, multisource observations, masks, OSM weak labels, and global PCA context |
 | Table 1 | Data sources, architecture, information budgets, and training specification |
 | Table 2 | Main spatial benchmark with independent-label and OSM-assisted tracks separated |
-| Figure 3 | Label-efficiency curves |
+| Figure 3 | Labeled-patch-efficiency curves |
 | Figure 4 | Representative qualitative maps and failure cases |
 | Figure 5 | Strict 40/80/150 scaling and registered ablations |
 | Figure 6 | Temporal context, cloud quality, and missing-source robustness |

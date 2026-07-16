@@ -21,15 +21,18 @@ Record all of the following:
 | Word/page count and shared figures/tables | `[TO COMPLETE]` |
 | Shared data, methods, and results | `[TO COMPLETE]` |
 | Substantial additions in the JRS manuscript | `[TO COMPLETE]` |
-| Written response from the JRS editor if ambiguous | `[ATTACH OR N/A]` |
+| Archived prior full text, checksum, and evidence path | `[TO COMPLETE]` |
+| Side-by-side text/figure/table overlap report and checksum | `[TO COMPLETE]` |
+| Written response from the JRS editor if submitted, accepted, public, published, or otherwise ambiguous | `[ATTACH OR N/A ONLY IF VERIFIED DRAFT-ONLY]` |
 
 ## Decision Rule
 
-1. If the material is public, cite it and disclose it in the cover letter and manuscript.
-2. If accepted or formally published, provide the full text to the JRS editor and explain the substantial new contribution before submission.
-3. If copyright has transferred, verify reuse permission for text and figures.
-4. If status remains ambiguous, obtain written editorial confirmation; do not infer eligibility from repository contents.
-5. Only after these checks may this gate be marked `RESOLVED` with the corresponding author's name and date.
+1. Archive the exact prior full text and authoritative status evidence, record their checksums, and generate a side-by-side overlap report covering text, figures, tables, data, methods, and results.
+2. If the material is public, cite it and disclose it in the cover letter and manuscript.
+3. If it was submitted, accepted, posted, or formally published, provide the full text and overlap report to the JRS editor and obtain written eligibility confirmation before submission.
+4. If copyright has transferred, verify reuse permission for text and figures.
+5. If status remains ambiguous, obtain written editorial confirmation; do not infer eligibility from repository contents.
+6. This gate may be marked `RESOLVED` only when every field has an evidence path and checksum, the overlap report is archived, any required editor confirmation is attached, and the corresponding author signs and dates the record.
 
 **Final status:** `UNRESOLVED`  
 **Verified by:** `[NAME]`  

@@ -12,12 +12,12 @@ The paper reports three settings separately.
 
 ## 2. OSM Supervision and Claim Tracks
 
-XuannvEarth receives direct OSM-derived auxiliary weak supervision for 13 classes and OSM-dependent weighted patch sampling. Building, road, water, construction, green, and playground results therefore cannot by themselves prove task-agnostic label efficiency against baselines that did not receive equivalent OSM supervision.
+XuannvEarth receives direct OSM-derived auxiliary weak supervision for 13 classes and OSM-dependent weighted patch sampling. Building, road, water, construction, green, and playground results therefore cannot by themselves establish task-agnostic labeled-patch efficiency against baselines that did not receive equivalent OSM supervision.
 
 Results are divided into:
 
-- **Track A: OSM-assisted task-overlap transfer.** Tasks overlap the 13 auxiliary classes. Claims are limited to annotation efficiency conditional on prior OSM supervision.
-- **Track B: held-out-category transfer.** The task taxonomy is frozen before evaluation and must be absent from both the 13 fine OSM tasks and the coarse OSM categorical target. This track supports broader representation claims.
+- **Track A: OSM-assisted task-overlap transfer.** Tasks overlap the 13 auxiliary classes. Claims are limited to labeled-patch efficiency conditional on prior OSM supervision.
+- **Track B: held-out-category transfer.** The task taxonomy, ontology graph, synonyms, parent/child relations, label-generation code, and a spatial-overlap audit are frozen and hashed before evaluation. A category must be absent from both the 13 fine OSM tasks and the coarse OSM categorical target and must not be a renamed, parent/child, or geometrically near-equivalent target. This track supports broader representation claims only after the ontology audit passes.
 - **Track C: no-OSM representation.** A clean no-OSM encoder is compared with raw and external representations. This isolates multisensor reconstruction from OSM supervision.
 - **Track D: independent manual labels.** Labels are drawn without consulting OSM and are used to test whether observed trends survive a different annotation source. Independence of labels does not erase the upstream supervision asymmetry, so Track A wording still applies to overlapping classes.
 
@@ -29,6 +29,7 @@ Results are divided into:
 - Scaling uses exact, deterministic, label-free, spatially balanced `40 subset 80 subset 150` lists from `configs/eval/haidian_paper_subsets_40_80_150_seed42.json`.
 - Every scaling and ablation model for a fold uses the same registered subset list. Lists may not be changed after viewing downstream results.
 - The existing 160-patch fold-0 run is a pilot and cannot enter the five-fold scaling estimate.
+- Encoder-side normalization, quality thresholds, compositing choices, source-selection rules, and other data-driven preprocessing are fitted or chosen using the encoder-training geography only. Globally fixed physical conversions and externally published algorithms may be reused, but their versions and parameters must be frozen before test access. Validation/test imagery may be transformed only by those frozen operations.
 
 ## 4. Independent Manual Annotation
 
@@ -139,12 +140,23 @@ No main-paper number may be generated until all gates pass:
 | G8 | Independent annotation handbook, labels, provenance, and agreement are frozen | PENDING |
 | G9 | OSM-assisted, held-out-category, no-OSM, and manual-label tracks are not mixed | PENDING |
 | G10 | A 2 x 2 finer-resolution fusion/reconstruction ablation is complete before making mechanism-specific claims | PENDING |
+| G11 | Test labels are sealed; preregistered config hashes and a test-access ledger prevent iterative test-driven model selection | PENDING |
+| G12 | A canonical result registry binds metrics to code, data, preprocessing, checkpoint, predictions, and environment hashes | PENDING |
+| G13 | Track B ontology and geometric-overlap audit is frozen and hash-checked | PENDING |
 
 Legacy fold-0, random-split, oracle-threshold, silently truncated, or task-selected-head results remain preliminary even if their scores are higher.
 
 ### 12.1 Fail-Closed Result Admission
 
-- Every evaluation output and aggregate must carry a machine-readable `paper_eligible` field. Missing values are interpreted as `false`.
+- Every evaluation output and aggregate must carry a machine-readable `paper_eligible` field. Missing values are interpreted as `false`; the field alone is never sufficient for admission.
 - Existing diagnostic benchmark entrypoints explicitly emit `paper_eligible=false`; their outputs may inform debugging and experiment planning but may not populate manuscript claims, figures, or tables.
-- A future registered evaluation entrypoint may emit `paper_eligible=true` only after it verifies all gates relevant to that result, records immutable artifact hashes, and writes a gate-by-gate provenance record.
-- Aggregation and figure scripts for the paper must reject any input whose `paper_eligible` value is not exactly `true`.
+- A future registered evaluation entrypoint may emit `paper_eligible=true` only after it verifies all gates relevant to that result, records immutable artifact hashes, and writes a gate-by-gate provenance record into a canonical append-only result registry committed to Git.
+- Each registry entry binds the metric payload and per-patch predictions to the Git commit, dirty-tree state, complete self-contained configuration, split and shot manifests, raw/processed data manifests and checksums, preprocessing artifacts, label/ontology versions, checkpoint and feature checksums, dependency lock or container digest, Python/PyTorch/torch_npu versions, device model, random seeds, and aggregation code. The registry entry itself receives a content hash; hand-edited or hash-mismatched entries are rejected.
+- Aggregation and figure scripts for the paper must accept only entries present in the canonical registry whose content hashes verify and whose `paper_eligible` value is exactly `true`.
+
+### 12.2 Test-Set Sealing and Experiment Disclosure
+
+- Before any confirmatory test run, freeze the research questions, task ontology, primary metrics, model/config hashes, baseline set, ablations, and figure/table plan in a dated Git commit and tag.
+- Test labels remain outside routine training/evaluation paths. A designated release command records every access in an append-only ledger containing user, time, commit, config hashes, and purpose.
+- Validation may be used for the preregistered choices. Once confirmatory test results are released, no encoder, task definition, head, threshold rule, or primary analysis may be changed and re-labeled confirmatory without registering a new holdout or clearly marking the follow-up exploratory.
+- The supplement reports all registered confirmatory runs, failures, exclusions, and deviations; selective retention of the best test run is forbidden.

@@ -28,14 +28,18 @@ This matrix is the gatekeeper for manuscript claims. A claim enters the abstract
 
 Every quantitative manuscript entry must record:
 
+- preregistration commit/tag and test-access-ledger entry;
+- code commit, dirty-tree state, dependency lock/container digest, and hardware/software versions;
 - experiment ID and immutable configuration path;
+- raw and processed data manifests, preprocessing chain, and checksums;
 - checkpoint path and checksum;
 - feature artifact version;
-- split manifest and shot manifest;
+- split, shot, label, and ontology manifests with checksums;
 - downstream head configuration and seed;
 - validation-selected threshold;
 - raw per-patch predictions or sufficient statistics;
 - aggregation script and output JSON/CSV;
+- canonical result-registry entry and content hash;
 - figure-generation script and source data.
 
 ## Result Labels
