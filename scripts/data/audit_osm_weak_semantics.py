@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Audit broad OSM weak-semantic tags before rasterizing national labels.
 
-The result is a tag-frequency audit, not a negative-label map.  In particular,
-the absence of an OSM feature is unknown and is never counted as background.
+The result is a tag-frequency audit over rasterizable ways and relations, not a
+negative-label map. In particular, the absence of an OSM feature is unknown and
+is never counted as background. Untagged point nodes are intentionally skipped:
+they cannot form polygon/line weak labels and make a nationwide PBF scan far
+slower without improving the training target.
 """
 
 from __future__ import annotations
@@ -62,9 +65,6 @@ def _scan(path: Path) -> dict[str, object]:
             for key in TRACKED_KEYS:
                 if key in tag_map:
                     self.tag_counts[key][tag_map[key]] += 1
-
-        def node(self, node: object) -> None:
-            self._record("node", node.tags)
 
         def way(self, way: object) -> None:
             self._record("way", way.tags)
