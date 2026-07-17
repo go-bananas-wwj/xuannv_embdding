@@ -137,7 +137,7 @@ def test_remote_href_routes_signed_asset_through_optional_gateway(monkeypatch) -
     monkeypatch.setattr(MODULE.planetary_computer, "sign", lambda href: f"https://blob.test/a.tif?token={href}")
     monkeypatch.setenv("CHINA_V1_COG_GATEWAY", "http://127.0.0.1:8787/cog")
     routed = MODULE._remote_href("raw")
-    assert routed.startswith("http://127.0.0.1:8787/cog?url=https%3A%2F%2Fblob.test%2Fa.tif")
+    assert routed.startswith("http://127.0.0.1:8787/cog/aHR0cHM6Ly9ibG9iLnRlc3QvYS50aWY")
 
 
 def test_scene_centric_reads_each_asset_once_for_multiple_patches(monkeypatch) -> None:

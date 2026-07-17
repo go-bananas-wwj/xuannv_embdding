@@ -10,6 +10,7 @@ metadata, per-patch quality records, and array shapes have been verified.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import logging
@@ -23,7 +24,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
-from urllib.parse import urlencode
 
 # A failed range request from the other side of the world must not stall an
 # entire shard for ten minutes.  Python-level retries below reopen the COG
@@ -214,7 +214,8 @@ def _remote_href(href: str) -> str:
     gateway = os.environ.get("CHINA_V1_COG_GATEWAY")
     if not gateway:
         return signed
-    return f"{gateway}?{urlencode({'url': signed})}"
+    encoded = base64.urlsafe_b64encode(signed.encode("utf-8")).decode("ascii").rstrip("=")
+    return f"{gateway.rstrip('/')}/{encoded}"
 
 
 def _read_asset_to_patch(

@@ -10,10 +10,10 @@ bounded retries.  It never downloads a full COG unless the client asks for it.
 from __future__ import annotations
 
 import argparse
+import base64
 import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
 
 import requests
 
@@ -37,10 +37,15 @@ class RangeGateway(BaseHTTPRequestHandler):
         return
 
     def _target(self) -> str:
-        values = parse_qs(urlparse(self.path).query).get("url", [])
-        if len(values) != 1 or not values[0].startswith("https://"):
-            raise ValueError("expected exactly one HTTPS url query parameter")
-        return values[0]
+        prefix = "/cog/"
+        if not self.path.startswith(prefix):
+            raise ValueError("expected a /cog/<base64-url> path")
+        encoded = self.path[len(prefix):].split("?", 1)[0]
+        padding = "=" * (-len(encoded) % 4)
+        target = base64.urlsafe_b64decode(encoded + padding).decode("utf-8")
+        if not target.startswith("https://"):
+            raise ValueError("gateway target must be HTTPS")
+        return target
 
     def _fetch(self, target: str, range_header: str | None) -> requests.Response:
         headers = {"Range": range_header} if range_header else {}
