@@ -354,6 +354,7 @@ def _read_asset_for_patches(
     href: str,
     patches: list[tuple[int, Patch]],
     categorical: bool,
+    attempts: int = 3,
 ) -> tuple[dict[int, np.ndarray], dict[int, str]]:
     """Open one COG once and crop it for every spatially nearby patch.
 
@@ -363,16 +364,28 @@ def _read_asset_for_patches(
     """
     values: dict[int, np.ndarray] = {}
     errors: dict[int, str] = {}
-    try:
-        with rasterio.open(planetary_computer.sign(href)) as src:
-            for patch_index, patch in patches:
-                try:
-                    values[patch_index] = _reproject_open_asset(src, href, patch, categorical)
-                except Exception as exc:
-                    errors[patch_index] = f"{type(exc).__name__}: {exc}"
-    except Exception as exc:
-        error = f"{type(exc).__name__}: {exc}"
-        errors = {patch_index: error for patch_index, _ in patches}
+    pending = list(patches)
+    for attempt in range(attempts):
+        if not pending:
+            break
+        retry: list[tuple[int, Patch]] = []
+        try:
+            with rasterio.open(planetary_computer.sign(href)) as src:
+                for patch_index, patch in pending:
+                    try:
+                        values[patch_index] = _reproject_open_asset(src, href, patch, categorical)
+                        errors.pop(patch_index, None)
+                    except Exception as exc:
+                        errors[patch_index] = f"{type(exc).__name__}: {exc}"
+                        retry.append((patch_index, patch))
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            for patch_index, _ in pending:
+                errors[patch_index] = error
+            retry = pending
+        pending = retry
+        if pending and attempt + 1 < attempts:
+            time.sleep(2 ** attempt)
     return values, errors
 
 
