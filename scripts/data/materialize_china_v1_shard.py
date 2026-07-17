@@ -17,7 +17,7 @@ import os
 import shutil
 import time
 import warnings
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -63,6 +63,31 @@ class Patch:
     epsg: int
     bounds: tuple[float, float, float, float]
     wgs84_bounds: tuple[float, float, float, float]
+
+
+class AssetReaderCache:
+    """Bounded per-worker COG reader cache for spatially adjacent patch jobs."""
+
+    def __init__(self, max_entries: int) -> None:
+        if max_entries <= 0:
+            raise ValueError("asset cache size must be positive")
+        self.max_entries = max_entries
+        self._readers: OrderedDict[str, rasterio.io.DatasetReader] = OrderedDict()
+
+    def get(self, href: str) -> rasterio.io.DatasetReader:
+        reader = self._readers.pop(href, None)
+        if reader is None:
+            reader = rasterio.open(planetary_computer.sign(href))
+        self._readers[href] = reader
+        while len(self._readers) > self.max_entries:
+            _, stale = self._readers.popitem(last=False)
+            stale.close()
+        return reader
+
+    def close(self) -> None:
+        while self._readers:
+            _, reader = self._readers.popitem(last=False)
+            reader.close()
 
 
 class CatalogIndex:
@@ -136,30 +161,36 @@ def _select_items(catalog: CatalogIndex, patch: Patch, source: str, candidate_li
     return candidates[:candidate_limit]
 
 
-def _read_asset_to_patch(href: str, patch: Patch, categorical: bool) -> np.ndarray:
-    """Read and reproject one remote COG band without fetching a whole scene."""
-    with rasterio.open(planetary_computer.sign(href)) as src:
-        if src.crs is None:
-            raise ValueError(f"asset without CRS: {href}")
-        source_bounds = transform_bounds(CRS.from_epsg(patch.epsg), src.crs, *patch.bounds, densify_pts=21)
-        requested = window_from_bounds(*source_bounds, transform=src.transform).round_offsets().round_lengths()
-        overlap = requested.intersection(Window(0, 0, src.width, src.height))
-        if overlap.width <= 0 or overlap.height <= 0:
-            raise ValueError("patch does not overlap selected raster")
-        source = src.read(1, window=overlap)
-        output = np.full((CHIP_PIXELS, CHIP_PIXELS), np.nan, dtype=np.float32)
-        reproject(
-            source=source,
-            destination=output,
-            src_transform=src.window_transform(overlap),
-            src_crs=src.crs,
-            src_nodata=src.nodata,
-            dst_transform=from_bounds(*patch.bounds, CHIP_PIXELS, CHIP_PIXELS),
-            dst_crs=CRS.from_epsg(patch.epsg),
-            dst_nodata=np.nan,
-            resampling=Resampling.nearest if categorical else Resampling.bilinear,
-        )
+def _reproject_open_asset(src: rasterio.io.DatasetReader, href: str, patch: Patch, categorical: bool) -> np.ndarray:
+    if src.crs is None:
+        raise ValueError(f"asset without CRS: {href}")
+    source_bounds = transform_bounds(CRS.from_epsg(patch.epsg), src.crs, *patch.bounds, densify_pts=21)
+    requested = window_from_bounds(*source_bounds, transform=src.transform).round_offsets().round_lengths()
+    overlap = requested.intersection(Window(0, 0, src.width, src.height))
+    if overlap.width <= 0 or overlap.height <= 0:
+        raise ValueError("patch does not overlap selected raster")
+    source = src.read(1, window=overlap)
+    output = np.full((CHIP_PIXELS, CHIP_PIXELS), np.nan, dtype=np.float32)
+    reproject(
+        source=source,
+        destination=output,
+        src_transform=src.window_transform(overlap),
+        src_crs=src.crs,
+        src_nodata=src.nodata,
+        dst_transform=from_bounds(*patch.bounds, CHIP_PIXELS, CHIP_PIXELS),
+        dst_crs=CRS.from_epsg(patch.epsg),
+        dst_nodata=np.nan,
+        resampling=Resampling.nearest if categorical else Resampling.bilinear,
+    )
     return output
+
+
+def _read_asset_to_patch(href: str, patch: Patch, categorical: bool, reader_cache: AssetReaderCache | None = None) -> np.ndarray:
+    """Read and reproject one remote COG band without fetching a whole scene."""
+    if reader_cache is not None:
+        return _reproject_open_asset(reader_cache.get(href), href, patch, categorical)
+    with rasterio.open(planetary_computer.sign(href)) as src:
+        return _reproject_open_asset(src, href, patch, categorical)
 
 
 def _scene_valid_mask(source: str, stack: np.ndarray) -> np.ndarray:
@@ -197,10 +228,16 @@ def _composite(source: str, scenes: list[np.ndarray]) -> tuple[np.ndarray, np.nd
     return output, valid.astype(np.uint8), fractions
 
 
-def _load_scene(source: str, item: dict[str, Any], patch: Patch, asset_workers: int = 1) -> np.ndarray:
+def _load_scene(
+    source: str,
+    item: dict[str, Any],
+    patch: Patch,
+    asset_workers: int = 1,
+    reader_cache: AssetReaderCache | None = None,
+) -> np.ndarray:
     config = SOURCES[source]
     def read(asset: str) -> np.ndarray:
-        return _read_asset_to_patch(item["assets"][asset]["href"], patch, asset in config["categorical"])
+        return _read_asset_to_patch(item["assets"][asset]["href"], patch, asset in config["categorical"], reader_cache)
     if asset_workers == 1:
         arrays = [read(asset) for asset in config["assets"]]
     else:
@@ -220,6 +257,7 @@ def _load_available_scenes(
     patch: Patch,
     top_k: int,
     asset_workers: int,
+    reader_cache: AssetReaderCache | None,
 ) -> tuple[list[dict[str, Any]], list[np.ndarray], list[dict[str, str]]]:
     """Keep reading alternatives when a STAC bbox overstates raster coverage."""
     accepted: list[dict[str, Any]] = []
@@ -227,7 +265,7 @@ def _load_available_scenes(
     rejected: list[dict[str, str]] = []
     for item in candidates:
         try:
-            scene = _load_scene(source, item, patch, asset_workers)
+            scene = _load_scene(source, item, patch, asset_workers, reader_cache)
         except Exception as exc:
             rejected.append({"item_id": str(item.get("id", "unknown")), "error": f"{type(exc).__name__}: {exc}"})
             continue
@@ -290,6 +328,7 @@ def materialize(
     top_k: int,
     catalogs: dict[tuple[str, str], CatalogIndex] | None = None,
     asset_workers: int = 1,
+    reader_cache: AssetReaderCache | None = None,
 ) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(f"refusing to overwrite completed shard: {output}")
@@ -332,7 +371,7 @@ def materialize(
                     record: dict[str, Any] = {"patch_id": patch.patch_id, "month": month, "source": source, "selected_items": [], "valid_fraction": 0.0, "status": "missing"}
                     try:
                         candidates = _select_items(catalogs[(source, month)], patch, source, top_k * 4)
-                        selected, scenes, rejected = _load_available_scenes(source, candidates, patch, top_k, asset_workers)
+                        selected, scenes, rejected = _load_available_scenes(source, candidates, patch, top_k, asset_workers, reader_cache)
                         record["selected_items"] = [item["id"] for item in selected]
                         if rejected:
                             record["rejected_items"] = rejected
@@ -382,9 +421,10 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--top-k", type=int, default=2)
     parser.add_argument("--asset-workers", type=int, default=2, help="Concurrent COG assets per process; bound the global total across workers.")
+    parser.add_argument("--asset-cache-size", type=int, default=256)
     args = parser.parse_args()
-    if args.limit <= 0 or args.top_k <= 0 or args.asset_workers <= 0:
-        raise ValueError("--limit, --top-k and --asset-workers must be positive")
+    if args.limit <= 0 or args.top_k <= 0 or args.asset_workers <= 0 or args.asset_cache_size <= 0:
+        raise ValueError("--limit, --top-k, --asset-workers and --asset-cache-size must be positive")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     points = [_patch_from_record(record) for _, record in zip(range(args.limit), _read_jsonl(args.points))]
     required_catalogs = [args.catalog_root / source / month / "items.jsonl" for source in SOURCES for month in args.months]
@@ -392,7 +432,11 @@ def main() -> None:
     if missing:
         raise FileNotFoundError(f"catalog cache incomplete; missing {missing[:3]}")
     started = time.monotonic()
-    report = materialize(points, args.catalog_root, args.output, args.months, args.top_k, asset_workers=args.asset_workers)
+    cache = AssetReaderCache(args.asset_cache_size)
+    try:
+        report = materialize(points, args.catalog_root, args.output, args.months, args.top_k, asset_workers= args.asset_workers, reader_cache=cache)
+    finally:
+        cache.close()
     report["elapsed_seconds"] = round(time.monotonic() - started, 3)
     print(json.dumps(report, ensure_ascii=False, indent=2))
 

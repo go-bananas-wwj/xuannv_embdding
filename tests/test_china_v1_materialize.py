@@ -44,12 +44,12 @@ def test_s1_composite_excludes_invalid_scene_values() -> None:
 
 def test_load_available_scenes_skips_bad_candidate(monkeypatch) -> None:
     candidates = [{"id": "bad"}, {"id": "first-good"}, {"id": "second-good"}]
-    def fake_load(_source, item, _patch, _asset_workers=1):
+    def fake_load(_source, item, _patch, _asset_workers=1, _reader_cache=None):
         if item["id"] == "bad":
             raise ValueError("bbox edge")
         return np.ones((2, 128, 128), dtype=np.float32)
     monkeypatch.setattr(MODULE, "_load_scene", fake_load)
-    selected, scenes, rejected = MODULE._load_available_scenes("s1", candidates, object(), 2, 1)
+    selected, scenes, rejected = MODULE._load_available_scenes("s1", candidates, object(), 2, 1, None)
     assert [item["id"] for item in selected] == ["first-good", "second-good"]
     assert len(scenes) == 2
     assert rejected[0]["item_id"] == "bad"
@@ -89,7 +89,20 @@ def test_load_catalogs_builds_requested_source_month_pairs(tmp_path) -> None:
 
 def test_load_scene_can_read_assets_with_bounded_threads(monkeypatch) -> None:
     item = {"assets": {"vv": {"href": "vv"}, "vh": {"href": "vh"}}}
-    monkeypatch.setattr(MODULE, "_read_asset_to_patch", lambda href, _patch, _categorical: np.full((128, 128), 1 if href == "vv" else 2, dtype=np.float32))
+    monkeypatch.setattr(MODULE, "_read_asset_to_patch", lambda href, _patch, _categorical, _cache=None: np.full((128, 128), 1 if href == "vv" else 2, dtype=np.float32))
     result = MODULE._load_scene("s1", item, object(), asset_workers=2)
     assert result.shape == (2, 128, 128)
     assert result[0, 0, 0] == 1 and result[1, 0, 0] == 2
+
+
+def test_asset_reader_cache_opens_each_href_once(monkeypatch) -> None:
+    opened = []
+    class FakeReader:
+        def close(self):
+            return None
+    monkeypatch.setattr(MODULE.planetary_computer, "sign", lambda href: href)
+    monkeypatch.setattr(MODULE.rasterio, "open", lambda href: opened.append(href) or FakeReader())
+    cache = MODULE.AssetReaderCache(2)
+    assert cache.get("a") is cache.get("a")
+    assert opened == ["a"]
+    cache.close()
