@@ -15,6 +15,7 @@ import logging
 import os
 import shutil
 import time
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -58,6 +59,35 @@ class Patch:
     wgs84_bounds: tuple[float, float, float, float]
 
 
+class CatalogIndex:
+    """In-memory one-degree bbox index for one source/month STAC catalogue."""
+
+    def __init__(self, items_path: Path) -> None:
+        self.items = list(_read_jsonl(items_path))
+        self.cells: dict[tuple[int, int], list[int]] = defaultdict(list)
+        for index, item in enumerate(self.items):
+            bbox = item.get("bbox")
+            if not bbox or len(bbox) != 4:
+                continue
+            for lon in range(int(np.floor(bbox[0])), int(np.ceil(bbox[2])) + 1):
+                for lat in range(int(np.floor(bbox[1])), int(np.ceil(bbox[3])) + 1):
+                    self.cells[(lon, lat)].append(index)
+
+    def query(self, bounds: tuple[float, float, float, float]) -> list[dict[str, Any]]:
+        seen: set[int] = set()
+        matches: list[dict[str, Any]] = []
+        for lon in range(int(np.floor(bounds[0])), int(np.ceil(bounds[2])) + 1):
+            for lat in range(int(np.floor(bounds[1])), int(np.ceil(bounds[3])) + 1):
+                for index in self.cells.get((lon, lat), []):
+                    if index in seen:
+                        continue
+                    seen.add(index)
+                    item = self.items[index]
+                    if item.get("bbox") and _intersects(bounds, item["bbox"]):
+                        matches.append(item)
+        return matches
+
+
 def _read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
     with path.open(encoding="utf-8") as handle:
         for line in handle:
@@ -90,12 +120,11 @@ def _datetime_sort_key(item: dict[str, Any]) -> tuple[float, str]:
     return (float(cloud) if isinstance(cloud, (int, float)) else 1000.0, str(properties.get("datetime", "")))
 
 
-def _select_items(items_path: Path, patch: Patch, source: str, candidate_limit: int) -> list[dict[str, Any]]:
+def _select_items(catalog: CatalogIndex, patch: Patch, source: str, candidate_limit: int) -> list[dict[str, Any]]:
     config = SOURCES[source]
     candidates = [
-        item for item in _read_jsonl(items_path)
-        if item.get("bbox") and _intersects(patch.wgs84_bounds, item["bbox"])
-        and all(asset in item.get("assets", {}) for asset in config["assets"])
+        item for item in catalog.query(patch.wgs84_bounds)
+        if all(asset in item.get("assets", {}) for asset in config["assets"])
     ]
     candidates.sort(key=_datetime_sort_key)
     return candidates[:candidate_limit]
@@ -221,6 +250,10 @@ def materialize(points: list[Patch], catalog_root: Path, output: Path, months: l
         "patch_ids": [patch.patch_id for patch in points], "months": months, "chip_pixels": CHIP_PIXELS,
         "chip_side_meters": CHIP_SIDE_METERS,
     })
+    catalogs = {
+        (source, month): CatalogIndex(catalog_root / source / month / "items.jsonl")
+        for source in SOURCES for month in months
+    }
     arrays = {source: _create_arrays(group.create_group(source), source, len(points), months) for source in SOURCES}
     quality_path = temporary / "quality.jsonl"
     failures = 0
@@ -230,7 +263,7 @@ def materialize(points: list[Patch], catalog_root: Path, output: Path, months: l
                 for source in SOURCES:
                     record: dict[str, Any] = {"patch_id": patch.patch_id, "month": month, "source": source, "selected_items": [], "valid_fraction": 0.0, "status": "missing"}
                     try:
-                        candidates = _select_items(catalog_root / source / month / "items.jsonl", patch, source, top_k * 4)
+                        candidates = _select_items(catalogs[(source, month)], patch, source, top_k * 4)
                         selected, scenes, rejected = _load_available_scenes(source, candidates, patch, top_k)
                         record["selected_items"] = [item["id"] for item in selected]
                         if rejected:

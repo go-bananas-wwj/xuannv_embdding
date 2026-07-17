@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -43,3 +44,26 @@ def test_load_available_scenes_skips_bad_candidate(monkeypatch) -> None:
     assert [item["id"] for item in selected] == ["first-good", "second-good"]
     assert len(scenes) == 2
     assert rejected[0]["item_id"] == "bad"
+
+
+def test_catalog_index_returns_only_intersecting_items(tmp_path) -> None:
+    path = tmp_path / "items.jsonl"
+    rows = [
+        {"id": "near", "bbox": [100.0, 30.0, 101.0, 31.0], "assets": {}},
+        {"id": "far", "bbox": [110.0, 30.0, 111.0, 31.0], "assets": {}},
+    ]
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    index = MODULE.CatalogIndex(path)
+    assert [item["id"] for item in index.query((100.4, 30.4, 100.6, 30.6))] == ["near"]
+
+
+def test_select_items_filters_missing_assets(tmp_path) -> None:
+    path = tmp_path / "items.jsonl"
+    required = {name: {"href": "https://example.test/x.tif"} for name in MODULE.SOURCES["s1"]["assets"]}
+    rows = [
+        {"id": "usable", "bbox": [100.0, 30.0, 101.0, 31.0], "assets": required, "properties": {}},
+        {"id": "incomplete", "bbox": [100.0, 30.0, 101.0, 31.0], "assets": {"vv": {}}, "properties": {}},
+    ]
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    patch = MODULE.Patch("p", 32647, (0, 0, 1, 1), (100.4, 30.4, 100.6, 30.6))
+    assert [item["id"] for item in MODULE._select_items(MODULE.CatalogIndex(path), patch, "s1", 4)] == ["usable"]
