@@ -6,7 +6,8 @@ describes one 1280 m candidate chip and the quality/semantic summaries used to
 select it.  Raster acquisition happens only after this registry is frozen.
 
 Required atlas fields:
-  patch_id, grid_id, grid_row, grid_col, eligible
+  patch_id, grid_id, grid_row, grid_col, grid_epsg, wgs84_bounds,
+  geometry_hash, macro_candidate_count, eligible, eligible_reasons
 
 Recommended fields:
   admin1, ecoregion, strata (list or comma-separated string), and
@@ -63,7 +64,11 @@ def _read_atlas(path: Path) -> Iterator[dict[str, Any]]:
 
 
 def _validate_record(record: dict[str, Any]) -> None:
-    required = ("patch_id", "grid_id", "grid_row", "grid_col", "eligible")
+    required = (
+        "patch_id", "grid_id", "grid_row", "grid_col", "grid_epsg",
+        "wgs84_bounds", "geometry_hash", "macro_candidate_count", "eligible",
+        "eligible_reasons",
+    )
     missing = [key for key in required if key not in record]
     if missing:
         raise ValueError(f"atlas record {record.get('patch_id', '<unknown>')} missing {missing}")
@@ -73,6 +78,19 @@ def _validate_record(record: dict[str, Any]) -> None:
         raise ValueError(f"{record['patch_id']}: grid_id must be a non-empty string")
     if not isinstance(record["grid_row"], int) or not isinstance(record["grid_col"], int):
         raise ValueError(f"{record['patch_id']}: grid_row and grid_col must be integers")
+    if not isinstance(record["grid_epsg"], int) or record["grid_epsg"] <= 0:
+        raise ValueError(f"{record['patch_id']}: grid_epsg must be a positive integer")
+    bounds = record["wgs84_bounds"]
+    if not isinstance(bounds, list) or len(bounds) != 4 or not all(isinstance(v, (int, float)) for v in bounds):
+        raise ValueError(f"{record['patch_id']}: wgs84_bounds must contain four numbers")
+    if not isinstance(record["geometry_hash"], str) or not record["geometry_hash"]:
+        raise ValueError(f"{record['patch_id']}: geometry_hash must be a non-empty string")
+    if not isinstance(record["macro_candidate_count"], int) or not 1 <= record["macro_candidate_count"] <= 100:
+        raise ValueError(f"{record['patch_id']}: macro_candidate_count must be in [1, 100]")
+    if not isinstance(record["eligible"], bool):
+        raise ValueError(f"{record['patch_id']}: eligible must be boolean")
+    if not isinstance(record["eligible_reasons"], list) or not all(isinstance(item, str) for item in record["eligible_reasons"]):
+        raise ValueError(f"{record['patch_id']}: eligible_reasons must be a string list")
     _parse_strata(record.get("strata"))
 
 
@@ -153,7 +171,21 @@ def build_registry(
     if reservoir_multiplier < 2:
         raise ValueError("supplement_reservoir_multiplier must be at least 2")
 
+    target_total = int(sampling.get("target_total", 0))
+    max_total = int(sampling.get("max_total", 0))
+    if target_total <= 0 or max_total < target_total:
+        raise ValueError("sampling.target_total must be positive and <= sampling.max_total")
+    inclusion_probability = float(sampling.get("base_inclusion_probability", 0.01))
+    if not 0 < inclusion_probability <= 1:
+        raise ValueError("sampling.base_inclusion_probability must be in (0, 1]")
+    supplement_max_per_macrocell = int(sampling.get("supplement_max_per_macrocell", 1))
+    if supplement_max_per_macrocell < 0:
+        raise ValueError("sampling.supplement_max_per_macrocell must be non-negative")
+
     base_winners: dict[tuple[str, int, int], tuple[float, dict[str, Any]]] = {}
+    macro_eligible_counts: Counter[tuple[str, int, int]] = Counter()
+    macro_record_counts: Counter[tuple[str, int, int]] = Counter()
+    macro_declared_counts: dict[tuple[str, int, int], int] = {}
     reservoirs: dict[str, list[tuple[tuple[float, float], int, dict[str, Any]]]] = {
         name: [] for name in quotas
     }
@@ -169,11 +201,17 @@ def build_registry(
         if patch_id in seen_patch_ids:
             raise ValueError(f"duplicate patch_id in atlas: {patch_id}")
         seen_patch_ids.add(patch_id)
+        key = _macrocell(record, macro_side)
+        macro_record_counts[key] += 1
+        declared = record["macro_candidate_count"]
+        if key in macro_declared_counts and macro_declared_counts[key] != declared:
+            raise ValueError(f"{patch_id}: inconsistent macro_candidate_count in macrocell {key}")
+        macro_declared_counts[key] = declared
         if not record["eligible"]:
             continue
         eligible_records += 1
         counter += 1
-        key = _macrocell(record, macro_side)
+        macro_eligible_counts[key] += 1
         base_rank = _stable_unit_hash(seed, patch_id)
         incumbent = base_winners.get(key)
         if incumbent is None or base_rank < incumbent[0]:
@@ -191,30 +229,52 @@ def build_registry(
                 limit=quota * reservoir_multiplier,
             )
 
+    for key, observed in macro_record_counts.items():
+        if observed != macro_declared_counts[key]:
+            raise ValueError(
+                f"macrocell {key} has {observed} atlas records but declares "
+                f"macro_candidate_count={macro_declared_counts[key]}; atlas must include all candidates"
+            )
+
     selected: dict[str, dict[str, Any]] = {}
     reasons: dict[str, set[str]] = defaultdict(set)
-    for _, record in base_winners.values():
+    accepted_base_macrocells = 0
+    for key, (_, record) in base_winners.items():
+        eligible_count = macro_eligible_counts[key]
+        accept_probability = min(1.0, eligible_count * inclusion_probability)
+        if _stable_unit_hash(seed, f"base-macrocell:{key}") >= accept_probability:
+            continue
+        accepted_base_macrocells += 1
         patch_id = record["patch_id"]
         selected[patch_id] = record
-        reasons[patch_id].add("base:systematic_10x10")
+        reasons[patch_id].add("base:expected_1pct")
 
     supplemental_summary: dict[str, dict[str, int]] = {}
+    supplemental_per_macrocell: Counter[tuple[str, int, int]] = Counter()
     for stratum, quota in quotas.items():
         ranked = sorted(reservoirs[stratum], key=lambda item: item[0], reverse=True)
-        matched = 0
+        base_coverage = sum(stratum in set(_parse_strata(record.get("strata"))) for record in selected.values())
+        final_coverage = base_coverage
         newly_added = 0
         for _, _, record in ranked:
-            if matched >= quota:
+            if final_coverage >= quota or len(selected) >= max_total:
                 break
             patch_id = record["patch_id"]
-            matched += 1
-            if patch_id not in selected:
-                selected[patch_id] = record
-                newly_added += 1
+            if patch_id in selected:
+                continue
+            key = _macrocell(record, macro_side)
+            if supplemental_per_macrocell[key] >= supplement_max_per_macrocell:
+                continue
+            selected[patch_id] = record
+            supplemental_per_macrocell[key] += 1
+            newly_added += 1
+            final_coverage += 1
             reasons[patch_id].add(f"supplement:{stratum}")
         supplemental_summary[stratum] = {
             "requested": quota,
-            "matched": matched,
+            "base_coverage": base_coverage,
+            "final_coverage": final_coverage,
+            "unmet": max(0, quota - final_coverage),
             "newly_added": newly_added,
             "reservoir_size": len(reservoirs[stratum]),
         }
@@ -241,8 +301,13 @@ def build_registry(
         "policy_sha256": _sha256(policy_path),
         "total_atlas_records": total_records,
         "eligible_records": eligible_records,
-        "base_selected": len(base_winners),
+        "eligible_macrocells": len(base_winners),
+        "base_selected": accepted_base_macrocells,
+        "base_expected": eligible_records * inclusion_probability,
+        "base_inclusion_probability": inclusion_probability,
         "total_selected": len(registry),
+        "target_total": target_total,
+        "max_total": max_total,
         "supplemental": supplemental_summary,
         "selected_by_admin1": dict(sorted(by_admin.items())),
         "selected_by_ecoregion": dict(sorted(by_ecoregion.items())),

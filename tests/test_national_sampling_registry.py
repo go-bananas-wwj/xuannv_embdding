@@ -17,7 +17,11 @@ def test_one_chip_per_macrocell_and_supplement_reasons(tmp_path: Path) -> None:
         "sampling": {
             "macro_side_patches": 10,
             "sampling_seed": 7,
+            "base_inclusion_probability": 1.0,
+            "target_total": 2,
+            "max_total": 10,
             "supplement_reservoir_multiplier": 3,
+            "supplement_max_per_macrocell": 2,
             "supplement_quotas": {"worldcover:wetland": 2},
         }
     }
@@ -33,7 +37,12 @@ def test_one_chip_per_macrocell_and_supplement_reasons(tmp_path: Path) -> None:
                     "grid_id": "A",
                     "grid_row": row,
                     "grid_col": col,
+                    "grid_epsg": 32650,
+                    "wgs84_bounds": [116.0, 39.0, 116.1, 39.1],
+                    "geometry_hash": f"hash-{row}-{col}",
+                    "macro_candidate_count": 100,
                     "eligible": True,
+                    "eligible_reasons": ["test"],
                     "admin1": "province-a",
                     "strata": ["worldcover:wetland"] if col < 2 else [],
                     "stratum_scores": {"worldcover:wetland": float(col + 1)},
@@ -46,7 +55,12 @@ def test_one_chip_per_macrocell_and_supplement_reasons(tmp_path: Path) -> None:
                 "grid_id": "A",
                 "grid_row": 10,
                 "grid_col": 0,
+                "grid_epsg": 32650,
+                "wgs84_bounds": [116.0, 39.0, 116.1, 39.1],
+                "geometry_hash": "hash-10-0",
+                "macro_candidate_count": 2,
                 "eligible": True,
+                "eligible_reasons": ["test"],
                 "admin1": "province-a",
                 "strata": [],
             },
@@ -55,7 +69,12 @@ def test_one_chip_per_macrocell_and_supplement_reasons(tmp_path: Path) -> None:
                 "grid_id": "A",
                 "grid_row": 10,
                 "grid_col": 1,
+                "grid_epsg": 32650,
+                "wgs84_bounds": [116.0, 39.0, 116.1, 39.1],
+                "geometry_hash": "hash-10-1",
+                "macro_candidate_count": 2,
                 "eligible": False,
+                "eligible_reasons": ["excluded"],
                 "strata": ["worldcover:wetland"],
             },
         ]
@@ -76,9 +95,54 @@ def test_one_chip_per_macrocell_and_supplement_reasons(tmp_path: Path) -> None:
 
     selected = {record["patch_id"]: record for record in registry}
     assert report["base_selected"] == 2
-    assert report["supplemental"]["worldcover:wetland"]["matched"] == 2
+    assert report["supplemental"]["worldcover:wetland"]["final_coverage"] == 2
     assert "excluded" not in selected
     assert any(
         "supplement:worldcover:wetland" in record["sampling_reasons"]
         for record in registry
     )
+
+
+def test_sparse_macrocell_has_expected_one_percent_probability(tmp_path: Path) -> None:
+    policy = {
+        "sampling": {
+            "macro_side_patches": 10,
+            "sampling_seed": 11,
+            "base_inclusion_probability": 0.01,
+            "target_total": 1,
+            "max_total": 1,
+            "supplement_reservoir_multiplier": 2,
+            "supplement_quotas": {},
+        }
+    }
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text(json.dumps(policy), encoding="utf-8")
+    record = {
+        "patch_id": "only_chip", "grid_id": "A", "grid_row": 0, "grid_col": 0,
+        "grid_epsg": 32650, "wgs84_bounds": [116.0, 39.0, 116.1, 39.1],
+        "geometry_hash": "only", "macro_candidate_count": 1, "eligible": True,
+        "eligible_reasons": ["test"], "strata": [],
+    }
+    atlas_path = tmp_path / "atlas.jsonl"
+    atlas_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    registry, report = MODULE.build_registry(atlas_path, policy_path, None, None, {})
+    expected = MODULE._stable_unit_hash(11, "base-macrocell:('A', 0, 0)") < 0.01
+    assert bool(registry) is expected
+    assert report["base_expected"] == 0.01
+
+
+def test_rejects_incomplete_macrocell_atlas(tmp_path: Path) -> None:
+    policy = {"sampling": {"macro_side_patches": 10, "sampling_seed": 1, "target_total": 1, "max_total": 1, "supplement_quotas": {}}}
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text(json.dumps(policy), encoding="utf-8")
+    record = {
+        "patch_id": "missing_neighbor", "grid_id": "A", "grid_row": 0, "grid_col": 0,
+        "grid_epsg": 32650, "wgs84_bounds": [116.0, 39.0, 116.1, 39.1],
+        "geometry_hash": "missing", "macro_candidate_count": 2, "eligible": True,
+        "eligible_reasons": ["test"], "strata": [],
+    }
+    atlas_path = tmp_path / "atlas.jsonl"
+    atlas_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    import pytest
+    with pytest.raises(ValueError, match="atlas records"):
+        MODULE.build_registry(atlas_path, policy_path, None, None, {})

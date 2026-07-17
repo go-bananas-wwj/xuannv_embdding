@@ -2,7 +2,18 @@
   "name": "xuannv_china_v1_p10c_inspired_sampling",
   "version": "2026-07-17",
   "support_period": {
-    "months": ["2025-12", "2026-01", "2026-02", "2026-03", "2026-04", "2026-05"],
+    "archive_months": ["2025-04", "2025-05", "2025-06", "2025-07", "2025-08", "2025-09", "2025-10", "2025-11", "2025-12", "2026-01", "2026-02", "2026-03", "2026-04"],
+    "training_window_months": 6,
+    "training_windows": [
+      ["2025-04", "2025-05", "2025-06", "2025-07", "2025-08", "2025-09"],
+      ["2025-05", "2025-06", "2025-07", "2025-08", "2025-09", "2025-10"],
+      ["2025-06", "2025-07", "2025-08", "2025-09", "2025-10", "2025-11"],
+      ["2025-07", "2025-08", "2025-09", "2025-10", "2025-11", "2025-12"],
+      ["2025-08", "2025-09", "2025-10", "2025-11", "2025-12", "2026-01"],
+      ["2025-09", "2025-10", "2025-11", "2025-12", "2026-01", "2026-02"],
+      ["2025-10", "2025-11", "2025-12", "2026-01", "2026-02", "2026-03"],
+      ["2025-11", "2025-12", "2026-01", "2026-02", "2026-03", "2026-04"]
+    ],
     "reference_month": "2026-04"
   },
   "chip": {
@@ -12,10 +23,20 @@
     "grid": "MGRS tile-local UTM 10 m grid"
   },
   "sampling": {
-    "base_rule": "Choose one quality-eligible chip from every 10 x 10 chip macrocell using a deterministic hash seeded by sampling_seed. This is one percent coverage without a fixed checkerboard phase.",
+    "base_rule": "For each 10 x 10 macrocell with n quality-eligible chips, accept its deterministic winner with probability n / 100. Conditional on acceptance choose the seeded-hash winner. Every eligible chip therefore has expected inclusion probability 1%, without a fixed checkerboard phase or quality-dependent oversampling.",
     "macro_side_patches": 10,
     "sampling_seed": 20260717,
+    "base_inclusion_probability": 0.01,
+    "target_total": 85000,
+    "max_total": 90000,
+    "quota_basis": "final_coverage_in_unique_selected_chips",
     "supplement_reservoir_multiplier": 5,
+    "supplement_max_per_macrocell": 1,
+    "regional_balance": {
+      "group_field": "regional_group",
+      "max_fraction_per_group_per_stratum": 0.4,
+      "require_known_group_for_supplement": true
+    },
     "supplement_quotas": {
       "worldcover:built_up": 6000,
       "worldcover:cropland": 4500,
@@ -41,6 +62,9 @@
     "minimum_total_source_months": 14,
     "s2_landsat_top_k_observations_per_month": 2,
     "s2_landsat_minimum_quality_score": 1.35,
+    "evaluate_per_training_window": true,
+    "fail_closed_on_missing_mask": true,
+    "allow_low_quality_fallback": false,
     "loss_uses_per_pixel_valid_masks": true
   },
   "sources": {
@@ -49,8 +73,9 @@
     "high_resolution": "optional_only_after_a_nationwide_licensed_source_and_its_temporal_coverage_are_frozen"
   },
   "osm": {
-    "snapshot": "https://download.geofabrik.de/asia/china-260601.osm.pbf",
-    "snapshot_label": "Geofabrik China extract dated 2026-06-01; retained as a support-period cutoff snapshot",
-    "use": "broad masked auxiliary semantics and sampling strata, never an assumed-negative label where mapping coverage is weak"
+    "snapshot": null,
+    "required_snapshot_not_later_than": "2025-04-01",
+    "rejected_local_artifact": "/data2/xuannv_embedding/china_v1/source_snapshots/osm/china-20260601.osm.pbf.partial",
+    "use": "broad masked auxiliary semantics and sampling strata only after a checksum-verified snapshot at or before the support period; blank OSM is unknown, never a negative label"
   }
 }

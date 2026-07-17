@@ -9,11 +9,14 @@ modality/month/spatial masking, and broad OSM semantics rather than downstream
 manual labels. It will not copy the Haidian-only high-resolution sources until a
 legally usable nationwide source is frozen.
 
-The first dataset is a six-month field for December 2025 through May 2026. The
-base sample is exactly one eligible chip within each 10 x 10 macrocell of the
-MGRS tile-local 1280 m grid. The choice within each macrocell is a seeded hash,
-not always the same corner: it preserves one-percent geographic coverage while
-avoiding a fixed checkerboard aliasing pattern.
+The first archive covers **April 2025 through April 2026 inclusive (13 monthly
+bins)**. Training samples are six-month contiguous windows drawn from that
+archive; archiving a longer period must not be confused with sending thirteen
+months into the P10C architecture at once. The base sample gives every
+quality-eligible chip an expected one-percent inclusion probability. For a
+10 x 10 macrocell with `n` eligible chips, the seeded-hash winner is accepted
+with probability `n / 100`. This avoids treating a macrocell with only a few
+cloud-free candidates as if it deserved the same sample count as a full one.
 
 China has roughly 9.6 million km2 of land. At 1.6384 km2 per chip, one-percent
 coverage is approximately 58,600 chips before coastline and eligibility filters.
@@ -47,9 +50,9 @@ Sources:
 | Sentinel-2 L2A | Main 10 m optical time series | Keep the best two quality-qualified observations per patch-month; use SCL and pixel masks in loss. |
 | Sentinel-1 RTC | Cloud-robust SAR time series | Composite valid observations per month; retain availability masks; lower reconstruction weight than optical. |
 | Landsat C2 L2 | Independent optical observation source | Keep quality-qualified observations and reconstruct with a lower weight than S2. |
-| ESA WorldCover | Coarse static semantic balance | Use chip-level fractions for sampling; retain only broad categorical supervision. |
+| ESA WorldCover | Coarse static semantic balance | Use chip-level fractions for sampling and audit only in the first national pilot. |
 | Copernicus DEM GLO-30 | Static terrain diversity / optional input | Use elevation, slope and aspect summaries for strata; do not confuse it with a monthly target. |
-| OSM | Broad weak semantics and rare-feature sampling | Rasterize only where mapping coverage is adequate; unknown is not background. |
+| OSM | Broad weak semantics and rare-feature sampling | Rasterize only from a checksum-verified snapshot no later than 2025-04-01; unknown is not background. |
 | High-resolution optical/SAR | Fine-boundary target | Deliberately deferred until a nationwide licensed source, dates and coverage are documented. |
 
 The public Planetary Computer STAC endpoint exposes Sentinel-2 L2A and Landsat
@@ -57,10 +60,12 @@ collections, but anonymous access can be throttled. It is suitable for atlas and
 pilot creation, not an unbounded country-scale downloader. The implementation
 should use signed STAC assets, bounded workers and resumable 5,000-chip shards.
 
-For OSM, pin `china-260601.osm.pbf` rather than `latest`: the Geofabrik archive
-lists this 1.5 GB country snapshot and it is aligned with the end of the support
-period. Store its SHA-256 and all rasterization rules. Do not let a later OSM
-edit become a label for an earlier image.
+The already interrupted `china-20260601` partial download is deliberately
+quarantined and cannot enter training: an OSM edit from after the image period
+would leak future information. The preparation pipeline will first verify an
+archived China extract dated no later than 2025-04-01, then record its checksum,
+coverage statistics and rasterization rules. OSM blanks remain unknown rather
+than background.
 
 ## Sampling Policy
 
@@ -73,8 +78,10 @@ appearing only once in the registry.
 
 Every candidate atlas record must carry:
 
-- a stable `patch_id`, MGRS `grid_id`, and integer `grid_row` / `grid_col`;
-- bounds and CRS needed to acquire the same pixels again;
+- a stable `patch_id`, MGRS `grid_id`, tile-local EPSG, integer `grid_row` /
+  `grid_col`, WGS84 bounds and a geometry hash;
+- the declared number of physical candidates in its 10 x 10 macrocell, so an
+  incomplete atlas cannot silently alter sampling probabilities;
 - per-source/month availability and quality summary;
 - WorldCover fractions, terrain / ecoregion / province summaries;
 - OSM coverage quality plus broad OSM strata; and
@@ -89,10 +96,10 @@ Example:
 
 ```bash
 python scripts/data/build_national_sampling_registry.py \
-  --atlas /data/xuannv_embedding/processed/china_v1/atlas/candidate_atlas.jsonl \
+  --atlas /data2/xuannv_embedding/china_v1/atlas/candidate_atlas.jsonl \
   --policy configs/national/china_v1_sampling_policy_20260717.json \
-  --output /data/xuannv_embedding/processed/china_v1/registry/train_registry.jsonl \
-  --report /data/xuannv_embedding/processed/china_v1/registry/train_registry_report.json
+  --output /data2/xuannv_embedding/china_v1/registry/train_registry.jsonl \
+  --report /data2/xuannv_embedding/china_v1/registry/train_registry_report.json
 ```
 
 ## Materialization Order
@@ -102,7 +109,9 @@ python scripts/data/build_national_sampling_registry.py \
 2. Build the metadata-only candidate atlas from WorldCover, DEM, province /
    ecoregion overlays, OSM snapshot and STAC scene metadata.
 3. Run the registry builder, inspect coverage tables and maps, then freeze its
-   input/policy hashes.
+   input/policy hashes. Supplemental quotas are measured as final coverage in
+   unique selected chips, capped at 90,000 total chips, and cannot concentrate
+   unboundedly in one macrocell or regional group.
 4. Materialize in resumable 5,000-chip shards directly from COG windows. Do
    not first download full-country NetCDF mosaics.
 5. For every shard, run the existing S2/Landsat quality scorer, select the best
@@ -114,25 +123,25 @@ python scripts/data/build_national_sampling_registry.py \
 ## Storage and Safety Gate
 
 The quality-filtered Haidian P10C core sources occupy about 8.2 MB per patch
-(S2 + S1 + Landsat), excluding high-resolution sources. At 100,000 patches,
-the core chips alone are roughly 0.8 TB before static labels, masks, indexes and
-working files. The current data volume has about 1.6 TB free, so the national
-run must use compressed, shard-by-shard materialization and must not retain a
-second raw full-country copy. A nationwide high-resolution copy would exceed
-the available local budget and remains blocked pending source licensing and
-storage approval.
+for six months (S2 + S1 + Landsat), excluding high-resolution sources. A
+thirteen-month archive is estimated at about 17.7 MB per patch: 80,000 chips
+need about 1.4 TB for core outputs before masks, indexes and working files.
+China V1 is therefore rooted at `/data2/xuannv_embedding/china_v1/`, which has
+about 3.3 TB free, and uses compressed 5,000-chip shards without a duplicated
+national raw cache. A nationwide high-resolution copy remains blocked pending
+source licensing and storage approval.
 
 ## Gates Before Full Download
 
 1. Freeze the national AOI boundary and treatment of offshore islands.
 2. Verify the MGRS atlas has approximately uniform one-percent coverage per
    macrocell and no province/biome is accidentally absent.
-3. Verify the OSM snapshot checksum and compute mapping-coverage diagnostics;
-   blank OSM areas are ignored for weak supervision.
+3. Verify the pre-period OSM snapshot checksum and compute mapping-coverage
+   diagnostics; blank OSM areas are ignored for weak supervision.
 4. Verify imagery source licenses, rate limits and a resumable acquisition
    budget.
-5. Run visual alignment and cloud-mask QA on a 2,000-chip pilot covering all
-   supplement strata.
+5. Run visual alignment, per-window cloud-mask QA and source-CRS audits on a
+   2,000-chip pilot covering all supplement strata.
 6. Decide whether a nationwide high-resolution source is legally available.
    If not, China V1 must be explicitly described as a core-sensor model rather
    than a direct like-for-like P10C high-resolution replica.
