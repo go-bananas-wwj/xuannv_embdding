@@ -233,6 +233,16 @@ def _compute_valid_mask(
     return valid.astype(np.uint8)
 
 
+def _scale_landsat_reflectance_preserving_qa(arr: np.ndarray, nodata: float) -> np.ndarray:
+    """Scale Landsat reflectance bands while preserving final QA_PIXEL bit values."""
+    if arr.ndim != 3 or arr.shape[0] < 2:
+        raise ValueError("Landsat array must contain reflectance bands plus QA_PIXEL")
+    reflectance = arr[:-1]
+    valid = reflectance != nodata
+    reflectance[valid] = reflectance[valid] * 0.0000275 - 0.2
+    return arr
+
+
 def _slice_with_padding(
     arr: np.ndarray,
     row_off: int,
@@ -272,6 +282,7 @@ def _extract_patch_bounded(
     master_crs: CRS,
     window: rasterio.windows.Window,
     nodata: float,
+    source: str,
 ) -> np.ndarray:
     """按 master 网格窗口提取一个 patch，不分配完整 AOI 数组。
 
@@ -311,16 +322,28 @@ def _extract_patch_bounded(
     )
 
     dst = np.full((bands, patch_h, patch_w), nodata, dtype=arr.dtype)
-    reproject(
-        source=slice_arr,
-        destination=dst,
-        src_transform=slice_transform,
-        src_crs=src_crs,
-        dst_transform=patch_transform,
-        dst_crs=master_crs,
-        resampling=Resampling.bilinear,
-        dst_nodata=nodata,
-    )
+    # SCL and QA_PIXEL are categorical/bitmask bands.  Bilinear interpolation
+    # invents class values and corrupts the Landsat QA bits used below.
+    if source in {"s2", "landsat"} and bands >= 2:
+        reproject(
+            source=slice_arr[:-1], destination=dst[:-1],
+            src_transform=slice_transform, src_crs=src_crs,
+            dst_transform=patch_transform, dst_crs=master_crs,
+            resampling=Resampling.bilinear, dst_nodata=nodata,
+        )
+        reproject(
+            source=slice_arr[-1], destination=dst[-1],
+            src_transform=slice_transform, src_crs=src_crs,
+            dst_transform=patch_transform, dst_crs=master_crs,
+            resampling=Resampling.nearest, dst_nodata=nodata,
+        )
+    else:
+        reproject(
+            source=slice_arr, destination=dst,
+            src_transform=slice_transform, src_crs=src_crs,
+            dst_transform=patch_transform, dst_crs=master_crs,
+            resampling=Resampling.bilinear, dst_nodata=nodata,
+        )
     return dst
 
 
@@ -335,9 +358,10 @@ def _init_patch_accumulator(
         "count": np.zeros_like(slice_arr, dtype=np.uint16),
         "valid_count": np.zeros(slice_arr.shape[1:], dtype=np.uint8),
     }
-    if source == "s2":
-        # SCL 是分类波段，不能取平均；单独保存第一个有效值。
-        acc["scl"] = np.full(slice_arr.shape[1:], nodata, dtype=np.float32)
+    if source in {"s2", "landsat"}:
+        # SCL / QA_PIXEL are categorical bit fields, never arithmetic targets.
+        key = "scl" if source == "s2" else "qa"
+        acc[key] = np.full(slice_arr.shape[1:], nodata, dtype=np.float32)
     return acc
 
 
@@ -379,10 +403,10 @@ def process_one_date(args: tuple[Path, str, list[int], dict[str, Any]]) -> int:
             for time_idx in time_idxs:
                 arr = ds[data_var].isel(time=time_idx).values.astype(np.float32)
 
-                # Landsat Collection 2 Level-2 DN -> 表面反射率
+                # Landsat Collection 2 Level-2 DN -> surface reflectance.
+                # QA_PIXEL is the final band and must remain an unscaled bitmask.
                 if source == "landsat":
-                    valid = arr != nodata
-                    arr[valid] = arr[valid] * 0.0000275 - 0.2
+                    arr = _scale_landsat_reflectance_preserving_qa(arr, nodata)
 
                 if needs_vertical_flip:
                     arr = arr[:, ::-1, :]
@@ -396,6 +420,7 @@ def process_one_date(args: tuple[Path, str, list[int], dict[str, Any]]) -> int:
                         master_crs=master_crs,
                         window=pacc["window"],
                         nodata=nodata,
+                        source=source,
                     )
                     valid_mask = _compute_valid_mask(
                         slice_arr, source, nodata, num_bands=slice_arr.shape[0]
@@ -406,14 +431,14 @@ def process_one_date(args: tuple[Path, str, list[int], dict[str, Any]]) -> int:
                     acc = pacc["acc"]
 
                     vm = valid_mask[None, :, :]
-                    if source == "s2":
+                    if source in {"s2", "landsat"}:
                         ref = slice_arr[:-1]
-                        scl = slice_arr[-1]
+                        categorical = slice_arr[-1]
                         acc["sum"][:-1] += np.where(vm, ref, 0.0)
                         acc["count"][:-1] += vm.astype(np.uint16)
-                        # SCL：仅当该像素尚无有效值时才写入
-                        scl_empty = (acc["scl"] == nodata) & valid_mask
-                        acc["scl"][scl_empty] = scl[scl_empty]
+                        key = "scl" if source == "s2" else "qa"
+                        empty = (acc[key] == nodata) & valid_mask
+                        acc[key][empty] = categorical[empty]
                         acc["valid_count"] += valid_mask.astype(np.uint8)
                     else:
                         acc["sum"] += np.where(vm, slice_arr, 0.0)
@@ -455,6 +480,8 @@ def process_one_date(args: tuple[Path, str, list[int], dict[str, Any]]) -> int:
             ).astype(np.float32)
             if source == "s2":
                 avg[-1] = acc["scl"]
+            elif source == "landsat":
+                avg[-1] = acc["qa"]
 
             patch_transform = rasterio.windows.transform(pacc["window"], master_transform)
             profile = {

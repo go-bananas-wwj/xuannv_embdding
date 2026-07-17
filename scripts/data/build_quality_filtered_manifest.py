@@ -31,19 +31,21 @@ def _reflectance(arr: np.ndarray) -> np.ndarray:
     return arr
 
 
-def _read_mask(path: Path, shape: tuple[int, int]) -> np.ndarray:
+def _read_mask(path: Path, shape: tuple[int, int], require_mask: bool) -> np.ndarray:
     mask_path = path.with_name(f"{path.stem}_mask.tif")
     if not mask_path.exists():
+        if require_mask:
+            raise FileNotFoundError(f"required validity mask is missing: {mask_path}")
         return np.ones(shape, dtype=bool)
     with rasterio.open(mask_path) as src:
         return src.read(1) > 0
 
 
-def score_observation(root: Path, rel_path: str, source: str) -> dict[str, Any]:
+def score_observation(root: Path, rel_path: str, source: str, require_mask: bool = False) -> dict[str, Any]:
     path = root / rel_path
     with rasterio.open(path) as src:
         arr = src.read().astype(np.float32)
-    mask = _read_mask(path, arr.shape[-2:])
+    mask = _read_mask(path, arr.shape[-2:], require_mask=require_mask)
     finite = np.all(np.isfinite(arr), axis=0)
     valid = mask & finite
     valid_ratio = float(valid.mean())
@@ -120,6 +122,8 @@ def _filter_source_paths(
     source: str,
     top_k: int,
     min_score: float,
+    require_mask: bool,
+    allow_low_quality_fallback: bool,
 ) -> tuple[list[str] | None, list[dict[str, Any]]]:
     if not paths:
         return None, []
@@ -133,10 +137,10 @@ def _filter_source_paths(
     selected: list[str] = []
     records: list[dict[str, Any]] = []
     for month, month_paths in sorted(grouped.items()):
-        scored = [score_observation(root, path, source) for path in month_paths]
+        scored = [score_observation(root, path, source, require_mask=require_mask) for path in month_paths]
         scored = sorted(scored, key=lambda item: item["score"], reverse=True)
         kept = [item for item in scored if item["score"] >= min_score][:top_k]
-        if not kept and scored:
+        if not kept and scored and allow_low_quality_fallback:
             kept = scored[:1]
         kept_paths = {item["path"] for item in kept}
         selected.extend(path for path in month_paths if path in kept_paths)
@@ -161,6 +165,8 @@ def build_filtered_manifest(
     sources: list[str],
     top_k: int,
     min_score: float,
+    require_mask: bool = False,
+    allow_low_quality_fallback: bool = True,
 ) -> dict[str, Any]:
     manifest = json.loads(input_manifest.read_text(encoding="utf-8"))
     all_records: list[dict[str, Any]] = []
@@ -174,6 +180,8 @@ def build_filtered_manifest(
                 source,
                 top_k=top_k,
                 min_score=min_score,
+                require_mask=require_mask,
+                allow_low_quality_fallback=allow_low_quality_fallback,
             )
             item[source] = filtered
             for record in records:
@@ -188,6 +196,8 @@ def build_filtered_manifest(
         "sources": sources,
         "top_k": top_k,
         "min_score": min_score,
+        "require_mask": require_mask,
+        "allow_low_quality_fallback": allow_low_quality_fallback,
         "num_entries": len(out),
         "num_scored_observations": len(all_records),
         "num_kept_observations": int(sum(1 for item in all_records if item["kept"])),
@@ -207,6 +217,12 @@ def main() -> None:
     parser.add_argument("--sources", nargs="+", default=["s2", "landsat"])
     parser.add_argument("--top-k", type=int, default=2)
     parser.add_argument("--min-score", type=float, default=1.35)
+    parser.add_argument("--require-mask", action="store_true", help="Fail if a source validity mask is absent.")
+    parser.add_argument(
+        "--no-low-quality-fallback",
+        action="store_true",
+        help="Keep an empty month instead of silently retaining its worst scene.",
+    )
     args = parser.parse_args()
     meta = build_filtered_manifest(
         root=args.root,
@@ -215,6 +231,8 @@ def main() -> None:
         sources=args.sources,
         top_k=args.top_k,
         min_score=args.min_score,
+        require_mask=args.require_mask,
+        allow_low_quality_fallback=not args.no_low_quality_fallback,
     )
     print(json.dumps(meta, ensure_ascii=False, indent=2))
 

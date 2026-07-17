@@ -127,15 +127,21 @@ class MonthlyEmbeddingDataset(Dataset):
         with self.manifest_path.open("r", encoding="utf-8") as f:
             manifest: list[dict[str, Any]] = json.load(f)
 
-        metadata_keys = {"patch_id", "region", "source_patch_id"}
+        metadata_keys = {
+            "patch_id", "region", "source_patch_id", "metadata", "quality",
+            "provenance", "geometry", "grid", "sampling_reasons", "strata",
+        }
         for entry in manifest:
             for key, value in entry.items():
                 if key in metadata_keys:
                     continue
                 if isinstance(value, list):
-                    entry[key] = [Path(p) for p in value]
+                    entry[key] = [Path(p) if isinstance(p, str) else p for p in value]
                 elif value is None:
                     entry[key] = None
+                elif isinstance(value, (dict, int, float, bool)):
+                    # National manifests carry auditable non-path metadata.
+                    continue
                 else:
                     entry[key] = Path(value)
         return manifest

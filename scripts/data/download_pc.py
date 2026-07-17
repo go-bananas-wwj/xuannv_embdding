@@ -184,7 +184,10 @@ def _reproject_asset_to_grid(
     """用 rasterio 将单个 asset 的 AOI 窗口重投影到目标网格，返回 (1, H, W) 数组。"""
     with rasterio.open(href) as src:
         # 先读取 AOI 在源坐标系下的窗口，避免 reproject 拉取整景大文件。
-        win = window_from_bounds(*aoi_bounds, transform=src.transform)
+        # aoi_bounds are expressed in the destination (tile-local UTM) CRS.
+        # Convert them before calculating a source-raster window.
+        src_bounds = transform_bounds(dst_crs, src.crs, *aoi_bounds, densify_pts=21)
+        win = window_from_bounds(*src_bounds, transform=src.transform)
         src_array = src.read(1, window=win)
         src_transform = window_transform(win, src.transform)
         src_crs = src.crs
