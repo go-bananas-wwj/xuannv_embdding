@@ -73,7 +73,7 @@
     "high_resolution": "optional_only_after_a_nationwide_licensed_source_and_its_temporal_coverage_are_frozen"
   },
   "osm": {
-    "snapshot": null,
+    "snapshot": "https://download.geofabrik.de/asia/china-250101.osm.pbf",
     "required_snapshot_not_later_than": "2025-04-01",
     "rejected_local_artifact": "/data2/xuannv_embedding/china_v1/source_snapshots/osm/china-20260601.osm.pbf.partial",
     "use": "broad masked auxiliary semantics and sampling strata only after a checksum-verified snapshot at or before the support period; blank OSM is unknown, never a negative label"

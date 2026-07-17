@@ -67,24 +67,46 @@ def _validate_policy(policy: dict[str, Any]) -> list[str]:
         failures.append("quality_gate.allow_low_quality_fallback must be false")
 
     osm = policy.get("osm", {})
-    if osm.get("snapshot") is not None:
-        failures.append("osm.snapshot must remain null until a pre-period checksum is verified")
+    if not isinstance(osm.get("snapshot"), str) or not osm["snapshot"].startswith("https://"):
+        failures.append("osm.snapshot must be a pinned HTTPS historical extract")
     if osm.get("required_snapshot_not_later_than") != "2025-04-01":
         failures.append("osm.required_snapshot_not_later_than must be 2025-04-01")
     return failures
 
 
+def _verify_osm_lock(lock_path: Path, snapshot: str | None) -> tuple[bool, str]:
+    if not lock_path.exists():
+        return False, "Checksum lock has not been created."
+    try:
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        artifact = Path(lock["artifact_path"])
+        digest = lock["sha256"]
+    except (OSError, KeyError, TypeError, json.JSONDecodeError):
+        return False, "Checksum lock is malformed."
+    if lock.get("url") != snapshot or not artifact.is_file() or len(digest) != 64:
+        return False, "Checksum lock does not match the pinned OSM artifact."
+    if _sha256(artifact) != digest:
+        return False, "Pinned OSM artifact hash does not match its lock."
+    return True, "Pinned historical OSM artifact and SHA-256 verified."
+
+
 def build_report(policy_path: Path, data_root: Path) -> dict[str, Any]:
     policy = json.loads(policy_path.read_text(encoding="utf-8"))
-    partials = sorted(str(path) for path in data_root.rglob("*.partial")) if data_root.exists() else []
+    partials = sorted(
+        str(path) for path in data_root.rglob("*.partial")
+        if "quarantine" not in path.parts
+    ) if data_root.exists() else []
     usage = shutil.disk_usage(data_root if data_root.exists() else data_root.parent)
     policy_failures = _validate_policy(policy)
     snapshot = policy.get("osm", {}).get("snapshot")
+    osm_lock = data_root / "source_snapshots" / "osm" / "osm_snapshot.lock.json"
+    osm_verified, osm_reason = _verify_osm_lock(osm_lock, snapshot)
     gates = {
         "policy_contract": {"passed": not policy_failures, "failures": policy_failures},
         "osm_training_snapshot": {
-            "passed": isinstance(snapshot, str) and bool(snapshot),
-            "reason": "A pre-period OSM URL and checksum must be registered before OSM weak supervision.",
+            "passed": osm_verified,
+            "lock_path": str(osm_lock),
+            "reason": osm_reason,
         },
         "no_incomplete_artifacts": {
             "passed": not partials,

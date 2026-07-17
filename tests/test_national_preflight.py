@@ -24,7 +24,10 @@ def test_preflight_rejects_partial_artifact_and_missing_osm_snapshot(tmp_path: P
             "fail_closed_on_missing_mask": True,
             "allow_low_quality_fallback": False,
         },
-        "osm": {"snapshot": None, "required_snapshot_not_later_than": "2025-04-01"},
+        "osm": {
+            "snapshot": "https://example.test/china-250101.osm.pbf",
+            "required_snapshot_not_later_than": "2025-04-01",
+        },
     }
     policy_path = tmp_path / "policy.json"
     policy_path.write_text(json.dumps(policy), encoding="utf-8")
