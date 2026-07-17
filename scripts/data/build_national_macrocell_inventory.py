@@ -37,11 +37,17 @@ def _utm_zones(min_lon: float, max_lon: float) -> range:
     return range(max(1, math.floor((min_lon + 180) / 6) + 1), min(60, math.floor((max_lon + 180) / 6) + 1) + 1)
 
 
-def _admin_name(point: Any, admin_geometries: list[tuple[str, Any]]) -> str:
+def _admin_name(macro: Any, admin_geometries: list[tuple[str, Any]]) -> str:
+    best_name = "unknown"
+    best_area = 0.0
     for name, geometry in admin_geometries:
-        if geometry.covers(point):
-            return name
-    return "unknown"
+        if not geometry.intersects(macro):
+            continue
+        overlap_area = macro.intersection(geometry).area
+        if overlap_area > best_area:
+            best_name = name
+            best_area = overlap_area
+    return best_name
 
 
 def build_inventory(adm0_path: Path, adm1_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -88,7 +94,6 @@ def build_inventory(adm0_path: Path, adm1_path: Path) -> tuple[list[dict[str, An
                     continue
                 west, south = to_wgs84.transform(bounds[0], bounds[1])
                 east, north = to_wgs84.transform(bounds[2], bounds[3])
-                center = macro.centroid
                 grid_id = f"utm{zone:02d}n"
                 records.append({
                     "schema_version": "china_v1_macrocell_inventory_v1",
@@ -103,7 +108,7 @@ def build_inventory(adm0_path: Path, adm1_path: Path) -> tuple[list[dict[str, An
                     "land_fraction": round(land_fraction, 6),
                     "estimated_patch_count": round(land_fraction * MACRO_SIDE_PATCHES**2, 3),
                     "candidate_count_status": "estimate_only_requires_exact_quality_atlas",
-                    "admin1": _admin_name(center, admin_geometries),
+                    "admin1": _admin_name(macro, admin_geometries),
                 })
         print(f"UTM zone {zone:02d}: {sum(record['grid_epsg'] == epsg for record in records)} macrocells", file=sys.stderr, flush=True)
 
