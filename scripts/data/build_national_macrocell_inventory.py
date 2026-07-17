@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 import math
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -52,9 +53,17 @@ def build_inventory(adm0_path: Path, adm1_path: Path) -> tuple[list[dict[str, An
 
     for zone in _utm_zones(min_lon, max_lon):
         epsg = 32600 + zone
-        country_zone = country.to_crs(epsg).geometry.union_all()
+        zone_west = -180 + (zone - 1) * 6
+        zone_east = zone_west + 6
+        # Never project all of China into every UTM zone: far-away geometry
+        # explodes its projected bounds and can create millions of empty cells.
+        zone_strip = box(zone_west, min_lat - 0.01, zone_east, max_lat + 0.01)
+        zone_country_wgs84 = geometry_wgs84.intersection(zone_strip)
+        if zone_country_wgs84.is_empty:
+            continue
+        country_zone = gpd.GeoSeries([zone_country_wgs84], crs="EPSG:4326").to_crs(epsg).iloc[0]
         prepared_country = prep(country_zone)
-        admin_zone = admin1.to_crs(epsg)
+        admin_zone = admin1[admin1.geometry.intersects(zone_strip)].to_crs(epsg)
         admin_geometries = [(str(row.shapeName), row.geometry) for row in admin_zone.itertuples()]
         left, bottom, right, top = country_zone.bounds
         col_start = math.floor(left / MACRO_SIDE_METERS)
@@ -96,6 +105,7 @@ def build_inventory(adm0_path: Path, adm1_path: Path) -> tuple[list[dict[str, An
                     "candidate_count_status": "estimate_only_requires_exact_quality_atlas",
                     "admin1": _admin_name(center, admin_geometries),
                 })
+        print(f"UTM zone {zone:02d}: {sum(record['grid_epsg'] == epsg for record in records)} macrocells", file=sys.stderr, flush=True)
 
     records.sort(key=lambda item: item["macro_id"])
     by_zone = Counter(record["grid_id"] for record in records)
