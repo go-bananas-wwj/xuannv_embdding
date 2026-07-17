@@ -34,6 +34,8 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 def _allocate(total: int, groups: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
     """Allocate by sqrt(area) to preserve coverage while lifting small UTM zones."""
     weights = {name: math.sqrt(len(records)) for name, records in groups.items() if records}
+    if not weights:
+        return {}
     denominator = sum(weights.values())
     raw = {name: total * weight / denominator for name, weight in weights.items()}
     allocated = {name: min(len(groups[name]), int(math.floor(value))) for name, value in raw.items()}
@@ -50,8 +52,6 @@ def _allocate(total: int, groups: dict[str, list[dict[str, Any]]]) -> dict[str, 
                 changed = True
         if not changed:
             break
-    if residual:
-        raise ValueError("not enough unselected macrocells to reach requested target")
     return allocated
 
 
@@ -73,6 +73,7 @@ def build_supplement(
     allocations = _allocate(need, groups)
     selected: list[dict[str, Any]] = []
     selected_macros: set[str] = set()
+    used_patch_ids = {str(point["patch_id"]) for point in base_points if "patch_id" in point}
     selected_by_group: Counter[str] = Counter()
     for group, quota in sorted(allocations.items()):
         candidates = sorted(
@@ -93,27 +94,37 @@ def build_supplement(
             record["sampling_tier"] = "spatial_stratified_supplement"
             selected.append(record)
             selected_macros.add(str(macro["macro_id"]))
+            used_patch_ids.add(str(record["patch_id"]))
             selected_by_group[group] += 1
     # Sliver/coastal macrocells can intersect the boundary while containing no
     # complete patch center. Fill their quota from valid candidates elsewhere.
     if len(selected) < need:
         fallback = sorted(
-            (macro for records in groups.values() for macro in records if str(macro["macro_id"]) not in selected_macros),
+            inventory,
             key=lambda macro: PREVIEW._unit_hash(seed, f"spatial-supplement-fallback:{macro['macro_id']}"),
         )
         for macro in fallback:
             if len(selected) == need:
                 break
-            point = PREVIEW.select_static_preview(
-                [{**macro, "estimated_patch_count": 100.0}], country_geometry, seed
-            )
-            if not point:
+            record = None
+            # Offset candidate ranking to obtain a different patch when this
+            # macro is already represented by the base spatial sample.
+            for offset in range(1, 21):
+                point = PREVIEW.select_static_preview(
+                    [{**macro, "estimated_patch_count": 100.0}], country_geometry, seed + offset
+                )
+                if point and point[0]["patch_id"] not in used_patch_ids:
+                    record = point[0]
+                    record["sampling_seed"] = seed
+                    record["candidate_rank_seed_offset"] = offset
+                    break
+            if record is None:
                 continue
-            record = point[0]
             record["status"] = "provisional_spatial_stratified_supplement_not_quality_eligible"
             record["sampling_tier"] = "spatial_stratified_supplement_fallback"
             selected.append(record)
             selected_macros.add(str(macro["macro_id"]))
+            used_patch_ids.add(str(record["patch_id"]))
             selected_by_group[str(macro["grid_id"])] += 1
     if len(selected) != need:
         raise RuntimeError(f"selected {len(selected)} supplements, expected {need}")
