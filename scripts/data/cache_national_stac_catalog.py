@@ -80,6 +80,33 @@ def _next_request(payload: dict[str, Any], page: dict[str, Any]) -> tuple[str, s
     return None
 
 
+def _request_with_retry(
+    session: requests.Session,
+    method: str,
+    url: str,
+    body: dict[str, Any] | None,
+    *,
+    attempts: int = 6,
+) -> requests.Response:
+    """Fetch one STAC page with bounded backoff for transient catalogue errors."""
+    for attempt in range(attempts):
+        try:
+            response = session.request(method, url, json=body, timeout=(15, 120))
+            if response.status_code not in {429, 500, 502, 503, 504}:
+                response.raise_for_status()
+                return response
+            retry_after = response.headers.get("Retry-After")
+            delay = float(retry_after) if retry_after and retry_after.isdigit() else min(60.0, 2.0**attempt)
+        except requests.RequestException:
+            if attempt == attempts - 1:
+                raise
+            delay = min(60.0, 2.0**attempt)
+        if attempt == attempts - 1:
+            response.raise_for_status()
+        time.sleep(delay)
+    raise RuntimeError("unreachable retry loop")
+
+
 def cache_month(session: requests.Session, source: str, month: str, bbox: list[float], output_root: Path, limit: int) -> dict[str, Any]:
     config = SOURCE_CONFIG[source]
     output_dir = output_root / source / month
@@ -105,8 +132,7 @@ def cache_month(session: requests.Session, source: str, month: str, bbox: list[f
     with temporary.open("w", encoding="utf-8") as handle:
         while request is not None:
             method, url, body = request
-            response = session.request(method, url, json=body, timeout=(15, 120))
-            response.raise_for_status()
+            response = _request_with_retry(session, method, url, body)
             page = response.json()
             for feature in page.get("features", []):
                 handle.write(json.dumps(_compact_feature(feature, config["assets"]), ensure_ascii=False) + "\n")
@@ -130,12 +156,17 @@ def main() -> None:
     parser.add_argument("--country", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--limit", type=int, default=500)
+    parser.add_argument("--months", nargs="+", default=None, help="Optional YYYY-MM subset; separate workers may own disjoint months.")
     args = parser.parse_args()
     country = gpd.read_file(args.country).to_crs("EPSG:4326")
     bbox = [float(value) for value in country.total_bounds]
     session = requests.Session()
     session.trust_env = False  # No proxy / tunnel for China V1 transfer.
-    results = [cache_month(session, args.source, month, bbox, args.output_root, args.limit) for month in _months()]
+    months = args.months or _months()
+    invalid = sorted(set(months) - set(_months()))
+    if invalid:
+        raise ValueError(f"unsupported months outside the frozen archive: {invalid}")
+    results = [cache_month(session, args.source, month, bbox, args.output_root, args.limit) for month in months]
     print(json.dumps({"source": args.source, "months": len(results), "items": sum(item["item_count"] for item in results), "results": results}, ensure_ascii=False, indent=2))
 
 

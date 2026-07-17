@@ -17,7 +17,6 @@ def test_months_cover_requested_thirteen_month_archive() -> None:
         "2025-11", "2025-12", "2026-01", "2026-02", "2026-03", "2026-04",
     ]
 
-
 def test_compact_feature_keeps_only_requested_assets() -> None:
     feature = {
         "id": "item", "collection": "demo", "bbox": [1, 2, 3, 4], "geometry": None,
