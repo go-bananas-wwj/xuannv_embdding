@@ -156,7 +156,7 @@ def render_map(country_path: Path, adm1_path: Path, base: list[dict[str, Any]], 
     axis.set_aspect("equal")
     axis.set_axis_off()
     axis.set_title("Xuannv China V1: 60,000-point provisional sampling plan", fontsize=15, pad=12)
-    axis.legend(loc="lower left", fontsize=9, frameon=True, markerscale=8)
+    axis.legend(loc="upper left", fontsize=9, frameon=True, markerscale=8)
     axis.text(
         0.01, 0.015,
         "Static boundary-valid preview only; monthly source-quality and semantic-strata gates are pending.",
