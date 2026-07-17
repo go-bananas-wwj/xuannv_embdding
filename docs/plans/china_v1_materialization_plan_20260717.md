@@ -28,16 +28,17 @@ proxy variables. Direct connectivity was tested from this host.
 | Data | Primary source | Backup | Role | Planned local form |
 | --- | --- | --- | --- | --- |
 | Sentinel-2 L2A | Microsoft Planetary Computer `sentinel-2-l2a` STAC + signed COG assets | Copernicus Data Space `sentinel-2-l2a` STAC | Main 10 m optical source; SCL masks clouds | Monthly quality-selected composites plus pixel masks |
-| Sentinel-1 RTC | Planetary Computer `sentinel-1-rtc` | CDSE Sentinel-1 GRD only after an explicitly documented RTC-equivalent preprocessing path | Cloud-robust radar source | Monthly composites plus availability masks |
+| Sentinel-1 RTC | Planetary Computer `sentinel-1-rtc`, only with an approved Planetary Computer account | CDSE Sentinel-1 GRD only after an explicitly documented RTC-equivalent preprocessing path | Cloud-robust radar source | Monthly composites plus availability masks |
 | Landsat C2 L2 | Planetary Computer `landsat-c2-l2` | USGS Landsat STAC | Independent optical source and temporal redundancy | Monthly quality-selected composites plus QA_PIXEL masks |
 | WorldCover / DEM | Official or Planetary Computer static layers | None during pilot | Sampling/audit strata only; not fine downstream labels | Per-patch summaries, not full duplicated country mosaics |
 | OSM | Geofabrik China `2025-01-01` PBF, SHA-256 locked | None | Broad masked weak semantics and rare-class strata | Raster labels only where coverage/confidence is valid |
 | Ocean polygons | Natural Earth 10m Ocean, SHA-256 checked | None | Coastal supplement only | Static vector metadata |
 
 Planetary Computer STAC is publicly available but anonymous asset requests can
-be throttled. The pipeline therefore uses bounded concurrency, signed-asset
-renewal and resumable shards. CDSE is a metadata/access fallback, not an
-unreviewed mixing of source products.
+be throttled. Its Sentinel-1 RTC collection additionally requires an account.
+The pipeline therefore uses bounded concurrency, signed-asset renewal and
+resumable shards. CDSE is a metadata/access fallback, not an unreviewed mixing
+of source products.
 
 References: [Planetary Computer data access](https://planetarycomputer.microsoft.com/docs),
 [Planetary Computer STAC filtering](https://planetarycomputer.microsoft.com/docs/quickstarts/reading-stac/),
