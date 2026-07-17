@@ -66,12 +66,16 @@ def main() -> None:
                 else:
                     reports.append({"job": job.name, "pass": pass_number, "status": "complete", **report})
             if not retry:
+                pending = []
                 break
             pending = retry
             time.sleep(min(60, 2 ** (pass_number - 1)))
     finally:
         cache.close()
-    print(json.dumps({"worker_index": args.worker_index, "assigned": len(assigned), "remaining_partial": [job.name for job in pending], "reports": reports}, ensure_ascii=False, indent=2))
+    summary = {"worker_index": args.worker_index, "assigned": len(assigned), "remaining_partial": [job.name for job in pending], "reports": reports}
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    if pending:
+        raise RuntimeError(f"worker {args.worker_index} left {len(pending)} incomplete shard(s)")
 
 
 if __name__ == "__main__":
