@@ -90,7 +90,7 @@ def _datetime_sort_key(item: dict[str, Any]) -> tuple[float, str]:
     return (float(cloud) if isinstance(cloud, (int, float)) else 1000.0, str(properties.get("datetime", "")))
 
 
-def _select_items(items_path: Path, patch: Patch, source: str, top_k: int) -> list[dict[str, Any]]:
+def _select_items(items_path: Path, patch: Patch, source: str, candidate_limit: int) -> list[dict[str, Any]]:
     config = SOURCES[source]
     candidates = [
         item for item in _read_jsonl(items_path)
@@ -98,7 +98,7 @@ def _select_items(items_path: Path, patch: Patch, source: str, top_k: int) -> li
         and all(asset in item.get("assets", {}) for asset in config["assets"])
     ]
     candidates.sort(key=_datetime_sort_key)
-    return candidates[:top_k]
+    return candidates[:candidate_limit]
 
 
 def _read_asset_to_patch(href: str, patch: Patch, categorical: bool) -> np.ndarray:
@@ -171,6 +171,29 @@ def _load_scene(source: str, item: dict[str, Any], patch: Patch) -> np.ndarray:
     return scene
 
 
+def _load_available_scenes(
+    source: str,
+    candidates: list[dict[str, Any]],
+    patch: Patch,
+    top_k: int,
+) -> tuple[list[dict[str, Any]], list[np.ndarray], list[dict[str, str]]]:
+    """Keep reading alternatives when a STAC bbox overstates raster coverage."""
+    accepted: list[dict[str, Any]] = []
+    scenes: list[np.ndarray] = []
+    rejected: list[dict[str, str]] = []
+    for item in candidates:
+        try:
+            scene = _load_scene(source, item, patch)
+        except Exception as exc:
+            rejected.append({"item_id": str(item.get("id", "unknown")), "error": f"{type(exc).__name__}: {exc}"})
+            continue
+        accepted.append(item)
+        scenes.append(scene)
+        if len(scenes) >= top_k:
+            break
+    return accepted, scenes, rejected
+
+
 def _create_arrays(group: zarr.Group, source: str, patch_count: int, months: list[str]) -> tuple[Any, Any]:
     band_count = len(SOURCES[source]["assets"])
     image = group.create_dataset(
@@ -207,9 +230,11 @@ def materialize(points: list[Patch], catalog_root: Path, output: Path, months: l
                 for source in SOURCES:
                     record: dict[str, Any] = {"patch_id": patch.patch_id, "month": month, "source": source, "selected_items": [], "valid_fraction": 0.0, "status": "missing"}
                     try:
-                        selected = _select_items(catalog_root / source / month / "items.jsonl", patch, source, top_k)
+                        candidates = _select_items(catalog_root / source / month / "items.jsonl", patch, source, top_k * 4)
+                        selected, scenes, rejected = _load_available_scenes(source, candidates, patch, top_k)
                         record["selected_items"] = [item["id"] for item in selected]
-                        scenes = [_load_scene(source, item, patch) for item in selected]
+                        if rejected:
+                            record["rejected_items"] = rejected
                         image, mask, scene_fractions = _composite(source, scenes)
                         arrays[source][0][patch_index, month_index] = image
                         arrays[source][1][patch_index, month_index] = mask

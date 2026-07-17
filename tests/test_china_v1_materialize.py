@@ -30,3 +30,16 @@ def test_landsat_qa_mask_uses_bits_without_rescaling() -> None:
     stack = np.ones((7, 2, 2), dtype=np.float32)
     stack[-1] = np.array([[0, 1], [16, 32]], dtype=np.float32)
     assert MODULE._scene_valid_mask("landsat", stack).tolist() == [[True, False], [False, True]]
+
+
+def test_load_available_scenes_skips_bad_candidate(monkeypatch) -> None:
+    candidates = [{"id": "bad"}, {"id": "first-good"}, {"id": "second-good"}]
+    def fake_load(_source, item, _patch):
+        if item["id"] == "bad":
+            raise ValueError("bbox edge")
+        return np.ones((2, 128, 128), dtype=np.float32)
+    monkeypatch.setattr(MODULE, "_load_scene", fake_load)
+    selected, scenes, rejected = MODULE._load_available_scenes("s1", candidates, object(), 2)
+    assert [item["id"] for item in selected] == ["first-good", "second-good"]
+    assert len(scenes) == 2
+    assert rejected[0]["item_id"] == "bad"
