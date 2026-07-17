@@ -1,0 +1,56 @@
+{
+  "name": "xuannv_china_v1_p10c_inspired_sampling",
+  "version": "2026-07-17",
+  "support_period": {
+    "months": ["2025-12", "2026-01", "2026-02", "2026-03", "2026-04", "2026-05"],
+    "reference_month": "2026-04"
+  },
+  "chip": {
+    "side_meters": 1280,
+    "pixels": 128,
+    "resolution_meters": 10,
+    "grid": "MGRS tile-local UTM 10 m grid"
+  },
+  "sampling": {
+    "base_rule": "Choose one quality-eligible chip from every 10 x 10 chip macrocell using a deterministic hash seeded by sampling_seed. This is one percent coverage without a fixed checkerboard phase.",
+    "macro_side_patches": 10,
+    "sampling_seed": 20260717,
+    "supplement_reservoir_multiplier": 5,
+    "supplement_quotas": {
+      "worldcover:built_up": 6000,
+      "worldcover:cropland": 4500,
+      "worldcover:tree_cover": 3500,
+      "worldcover:grassland": 3000,
+      "worldcover:shrubland": 2500,
+      "worldcover:bare_sparse": 3000,
+      "worldcover:snow_ice": 1500,
+      "worldcover:permanent_water": 3500,
+      "worldcover:herbaceous_wetland": 2500,
+      "osm:rail": 1500,
+      "osm:airport_port": 1000,
+      "osm:industrial": 1500,
+      "osm:construction_quarry_landfill": 1500,
+      "osm:education_sports": 1000,
+      "priority:regional_diversity": 4000,
+      "quality:persistent_cloud_or_missingness": 3000
+    }
+  },
+  "quality_gate": {
+    "required_sources": ["s2", "s1", "landsat"],
+    "minimum_complete_months_per_source": 4,
+    "minimum_total_source_months": 14,
+    "s2_landsat_top_k_observations_per_month": 2,
+    "s2_landsat_minimum_quality_score": 1.35,
+    "loss_uses_per_pixel_valid_masks": true
+  },
+  "sources": {
+    "core": ["s2", "s1", "landsat", "worldcover", "copernicus_dem"],
+    "weak_semantics": ["osm"],
+    "high_resolution": "optional_only_after_a_nationwide_licensed_source_and_its_temporal_coverage_are_frozen"
+  },
+  "osm": {
+    "snapshot": "https://download.geofabrik.de/asia/china-260601.osm.pbf",
+    "snapshot_label": "Geofabrik China extract dated 2026-06-01; retained as a support-period cutoff snapshot",
+    "use": "broad masked auxiliary semantics and sampling strata, never an assumed-negative label where mapping coverage is weak"
+  }
+}
