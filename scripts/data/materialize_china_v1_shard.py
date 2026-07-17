@@ -74,6 +74,28 @@ SOURCES: dict[str, dict[str, Any]] = {
 }
 
 
+def _heartbeat(stage: str, **details: object) -> None:
+    """Publish bounded progress for an external restart watchdog."""
+    location = os.environ.get("CHINA_V1_HEARTBEAT_PATH")
+    if not location:
+        return
+    path = Path(location)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"at": datetime.now(timezone.utc).isoformat(), "stage": stage, **details}
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def _refresh_signing_cache() -> None:
+    """Force a fresh SAS token after a 403 or a broken remote range request."""
+    try:
+        import planetary_computer.sas as sas
+        sas.TOKEN_CACHE.clear()
+    except Exception:
+        LOGGER.exception("could not clear Planetary Computer signing cache")
+
+
 @dataclass(frozen=True)
 class Patch:
     patch_id: str
@@ -243,6 +265,7 @@ def _read_asset_to_patch(
             if reader_cache is not None:
                 reader_cache.invalidate(href)
             if attempt + 1 < attempts:
+                _refresh_signing_cache()
                 time.sleep(2 ** attempt)
     assert last_error is not None
     raise last_error
@@ -381,6 +404,7 @@ def _read_asset_for_patches(
             break
         retry: list[tuple[int, Patch]] = []
         try:
+            _heartbeat("read_asset_batch", asset=href.rsplit("/", 1)[-1], attempt=attempt + 1, patches=len(pending))
             with rasterio.open(_remote_href(href)) as src:
                 for patch_index, patch in pending:
                     try:
@@ -396,6 +420,7 @@ def _read_asset_for_patches(
             retry = pending
         pending = retry
         if pending and attempt + 1 < attempts:
+            _refresh_signing_cache()
             time.sleep(2 ** attempt)
     return values, errors
 
@@ -446,6 +471,7 @@ def _scene_centric_source_month(
     accepted_by_item: dict[str, list[tuple[int, np.ndarray, float]]] = {}
     min_clear_fraction = float(config["min_clear_fraction"])
     for item_id, (item, patch_indexes) in item_patches.items():
+        _heartbeat("quality_scene", source=source, item_id=item_id, patches=len(patch_indexes))
         patch_pairs = [(index, points[index]) for index in patch_indexes]
         quality_values, quality_errors = _read_asset_for_patches(
             item["assets"][quality_asset]["href"], patch_pairs, quality_asset in config["categorical"],
@@ -468,6 +494,7 @@ def _scene_centric_source_month(
 
     for item_id, accepted in accepted_by_item.items():
         item = item_patches[item_id][0]
+        _heartbeat("full_scene", source=source, item_id=item_id, patches=len(accepted))
         # A user-requested zero means all local-clear scenes.  The cap is only
         # applied after QA screening and therefore never admits cloudy scenes.
         active = accepted if max_clean_scenes == 0 else accepted[:max_clean_scenes]

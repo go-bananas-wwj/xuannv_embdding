@@ -9,7 +9,7 @@ import logging
 import time
 from pathlib import Path
 
-from materialize_china_v1_shard import AssetReaderCache, _patch_from_record, _read_jsonl, load_catalogs, materialize, materialize_scene_centric
+from materialize_china_v1_shard import AssetReaderCache, _heartbeat, _patch_from_record, _read_jsonl, load_catalogs, materialize, materialize_scene_centric
 
 
 def main() -> None:
@@ -38,7 +38,9 @@ def main() -> None:
     assigned = jobs[start:start + per_worker]
     if not assigned:
         raise ValueError("worker received no jobs")
+    _heartbeat("load_catalogs", worker_index=args.worker_index, assigned=len(assigned))
     catalogs = load_catalogs(args.catalog_root, args.months)
+    _heartbeat("catalogs_ready", worker_index=args.worker_index, assigned=len(assigned))
     cache = AssetReaderCache(args.asset_cache_size)
     pending = list(assigned)
     reports: list[dict[str, object]] = []
@@ -46,6 +48,7 @@ def main() -> None:
         for pass_number in range(1, args.passes + 1):
             retry: list[Path] = []
             for job in pending:
+                _heartbeat("start_shard", worker_index=args.worker_index, shard=job.name, pass_number=pass_number)
                 output = args.output_root / f"{job.stem}.zarr"
                 if output.exists():
                     logging.info("already complete: %s", output)
