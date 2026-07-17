@@ -76,3 +76,12 @@ def test_select_items_filters_missing_assets(tmp_path) -> None:
     path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
     patch = MODULE.Patch("p", 32647, (0, 0, 1, 1), (100.4, 30.4, 100.6, 30.6))
     assert [item["id"] for item in MODULE._select_items(MODULE.CatalogIndex(path), patch, "s1", 4)] == ["usable"]
+
+
+def test_load_catalogs_builds_requested_source_month_pairs(tmp_path) -> None:
+    for source in MODULE.SOURCES:
+        path = tmp_path / source / "2025-04"
+        path.mkdir(parents=True)
+        (path / "items.jsonl").write_text("", encoding="utf-8")
+    catalogs = MODULE.load_catalogs(tmp_path, ["2025-04"])
+    assert set(catalogs) == {(source, "2025-04") for source in MODULE.SOURCES}

@@ -269,7 +269,22 @@ def _load_records(path: Path) -> dict[tuple[str, str, str], dict[str, Any]]:
     return {_record_key(record): record for record in _read_jsonl(path)} if path.exists() else {}
 
 
-def materialize(points: list[Patch], catalog_root: Path, output: Path, months: list[str], top_k: int) -> dict[str, Any]:
+def load_catalogs(catalog_root: Path, months: list[str]) -> dict[tuple[str, str], CatalogIndex]:
+    """Load every requested source/month index once per long-lived worker."""
+    return {
+        (source, month): CatalogIndex(catalog_root / source / month / "items.jsonl")
+        for source in SOURCES for month in months
+    }
+
+
+def materialize(
+    points: list[Patch],
+    catalog_root: Path,
+    output: Path,
+    months: list[str],
+    top_k: int,
+    catalogs: dict[tuple[str, str], CatalogIndex] | None = None,
+) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(f"refusing to overwrite completed shard: {output}")
     temporary = output.with_name(output.name + ".partial")
@@ -291,10 +306,7 @@ def materialize(points: list[Patch], catalog_root: Path, output: Path, months: l
             })
         elif group.attrs.get("input_fingerprint") != fingerprint:
             raise ValueError("partial shard fingerprint differs from requested inputs")
-        catalogs = {
-            (source, month): CatalogIndex(catalog_root / source / month / "items.jsonl")
-            for source in SOURCES for month in months
-        }
+        catalogs = catalogs or load_catalogs(catalog_root, months)
         arrays = {
             source: (group[source]["image"], group[source]["valid_mask"])
             if source in group else _create_arrays(group.create_group(source), source, len(points), months)
