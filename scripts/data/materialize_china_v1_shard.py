@@ -24,9 +24,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-os.environ.setdefault("GDAL_HTTP_MAX_RETRY", "5")
-os.environ.setdefault("GDAL_HTTP_RETRY_DELAY", "10")
-os.environ.setdefault("GDAL_HTTP_TIMEOUT", "120")
+# A failed range request from the other side of the world must not stall an
+# entire shard for ten minutes.  Python-level retries below reopen the COG
+# between attempts, which is more reliable than a long-lived GDAL retry loop.
+os.environ.setdefault("GDAL_HTTP_MAX_RETRY", "2")
+os.environ.setdefault("GDAL_HTTP_RETRY_DELAY", "2")
+os.environ.setdefault("GDAL_HTTP_TIMEOUT", "30")
 os.environ.setdefault("GDAL_HTTP_MULTIPLEX", "YES")
 os.environ.setdefault("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
 os.environ.setdefault("CPL_VSIL_CURL_USE_HEAD", "NO")
@@ -51,9 +54,15 @@ CHIP_SIDE_METERS = 1280.0
 CHIP_PIXELS = 128
 S2_VALID_SCL = {4, 5, 6, 7, 11}
 SOURCES: dict[str, dict[str, Any]] = {
-    "s2": {"assets": ["B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B09", "B11", "B12", "SCL"], "categorical": {"SCL"}},
-    "s1": {"assets": ["vv", "vh"], "categorical": set()},
-    "landsat": {"assets": ["blue", "green", "red", "nir08", "swir16", "swir22", "qa_pixel"], "categorical": {"qa_pixel"}},
+    "s2": {
+        "assets": ["B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B09", "B11", "B12", "SCL"],
+        "categorical": {"SCL"}, "quality_asset": "SCL", "min_clear_fraction": 0.90,
+    },
+    "s1": {"assets": ["vv", "vh"], "categorical": set(), "quality_asset": "vv", "min_clear_fraction": 0.95},
+    "landsat": {
+        "assets": ["blue", "green", "red", "nir08", "swir16", "swir22", "qa_pixel"],
+        "categorical": {"qa_pixel"}, "quality_asset": "qa_pixel", "min_clear_fraction": 0.90,
+    },
 }
 
 
@@ -87,6 +96,12 @@ class AssetReaderCache:
     def close(self) -> None:
         while self._readers:
             _, reader = self._readers.popitem(last=False)
+            reader.close()
+
+    def invalidate(self, href: str) -> None:
+        """Close a reader after a truncated HTTP range response."""
+        reader = self._readers.pop(href, None)
+        if reader is not None:
             reader.close()
 
 
@@ -158,7 +173,7 @@ def _select_items(catalog: CatalogIndex, patch: Patch, source: str, candidate_li
         if all(asset in item.get("assets", {}) for asset in config["assets"])
     ]
     candidates.sort(key=_datetime_sort_key)
-    return candidates[:candidate_limit]
+    return candidates if candidate_limit <= 0 else candidates[:candidate_limit]
 
 
 def _reproject_open_asset(src: rasterio.io.DatasetReader, href: str, patch: Patch, categorical: bool) -> np.ndarray:
@@ -185,12 +200,34 @@ def _reproject_open_asset(src: rasterio.io.DatasetReader, href: str, patch: Patc
     return output
 
 
-def _read_asset_to_patch(href: str, patch: Patch, categorical: bool, reader_cache: AssetReaderCache | None = None) -> np.ndarray:
-    """Read and reproject one remote COG band without fetching a whole scene."""
-    if reader_cache is not None:
-        return _reproject_open_asset(reader_cache.get(href), href, patch, categorical)
-    with rasterio.open(planetary_computer.sign(href)) as src:
-        return _reproject_open_asset(src, href, patch, categorical)
+def _read_asset_to_patch(
+    href: str,
+    patch: Patch,
+    categorical: bool,
+    reader_cache: AssetReaderCache | None = None,
+    attempts: int = 3,
+) -> np.ndarray:
+    """Read one remote COG band with bounded reconnect retries.
+
+    Cached GDAL readers are deliberately used only by sequential asset reads.
+    GDAL DatasetReader objects are not safe to share between concurrent
+    threads, and doing so produced truncated COG tiles in the first full run.
+    """
+    last_error: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            if reader_cache is not None:
+                return _reproject_open_asset(reader_cache.get(href), href, patch, categorical)
+            with rasterio.open(planetary_computer.sign(href)) as src:
+                return _reproject_open_asset(src, href, patch, categorical)
+        except Exception as exc:
+            last_error = exc
+            if reader_cache is not None:
+                reader_cache.invalidate(href)
+            if attempt + 1 < attempts:
+                time.sleep(2 ** attempt)
+    assert last_error is not None
+    raise last_error
 
 
 def _scene_valid_mask(source: str, stack: np.ndarray) -> np.ndarray:
@@ -234,16 +271,22 @@ def _load_scene(
     patch: Patch,
     asset_workers: int = 1,
     reader_cache: AssetReaderCache | None = None,
+    quality_array: np.ndarray | None = None,
 ) -> np.ndarray:
     config = SOURCES[source]
+    quality_asset = str(config["quality_asset"])
+    assets = [asset for asset in config["assets"] if quality_array is None or asset != quality_asset]
+
     def read(asset: str) -> np.ndarray:
         return _read_asset_to_patch(item["assets"][asset]["href"], patch, asset in config["categorical"], reader_cache)
-    if asset_workers == 1:
-        arrays = [read(asset) for asset in config["assets"]]
+    if asset_workers == 1 or reader_cache is not None:
+        arrays_by_asset = {asset: read(asset) for asset in assets}
     else:
         with ThreadPoolExecutor(max_workers=asset_workers, thread_name_prefix="cog-read") as executor:
-            arrays = list(executor.map(read, config["assets"]))
-    scene = np.stack(arrays).astype(np.float32)
+            arrays_by_asset = dict(zip(assets, executor.map(read, assets)))
+    if quality_array is not None:
+        arrays_by_asset[quality_asset] = quality_array
+    scene = np.stack([arrays_by_asset[asset] for asset in config["assets"]]).astype(np.float32)
     if source == "landsat":
         reflectance = scene[:-1]
         usable = np.isfinite(reflectance) & (reflectance != 0)
@@ -251,27 +294,51 @@ def _load_scene(
     return scene
 
 
+def _quality_mask(source: str, quality_array: np.ndarray) -> np.ndarray:
+    if source == "s2":
+        return np.isin(np.nan_to_num(quality_array, nan=0.0).astype(np.uint8), list(S2_VALID_SCL))
+    if source == "landsat":
+        qa = np.nan_to_num(quality_array, nan=0.0).astype(np.uint16)
+        return (qa & 0b11111) == 0
+    return np.isfinite(quality_array) & (quality_array != 0)
+
+
 def _load_available_scenes(
     source: str,
     candidates: list[dict[str, Any]],
     patch: Patch,
-    top_k: int,
+    max_clean_scenes: int,
     asset_workers: int,
     reader_cache: AssetReaderCache | None,
-) -> tuple[list[dict[str, Any]], list[np.ndarray], list[dict[str, str]]]:
-    """Keep reading alternatives when a STAC bbox overstates raster coverage."""
+) -> tuple[list[dict[str, Any]], list[np.ndarray], list[dict[str, Any]]]:
+    """Read every locally clean scene; reject cloud/haze-contaminated windows first."""
     accepted: list[dict[str, Any]] = []
     scenes: list[np.ndarray] = []
-    rejected: list[dict[str, str]] = []
+    rejected: list[dict[str, Any]] = []
+    config = SOURCES[source]
+    quality_asset = str(config["quality_asset"])
+    min_clear_fraction = float(config["min_clear_fraction"])
     for item in candidates:
         try:
-            scene = _load_scene(source, item, patch, asset_workers, reader_cache)
+            quality_array = _read_asset_to_patch(
+                item["assets"][quality_asset]["href"], patch,
+                quality_asset in config["categorical"], reader_cache,
+            )
+            clear_fraction = float(_quality_mask(source, quality_array).mean())
+        except Exception as exc:
+            rejected.append({"item_id": str(item.get("id", "unknown")), "error": f"{type(exc).__name__}: {exc}"})
+            continue
+        if clear_fraction < min_clear_fraction:
+            rejected.append({"item_id": str(item.get("id", "unknown")), "reason": "quality_rejected", "clear_fraction": round(clear_fraction, 6)})
+            continue
+        try:
+            scene = _load_scene(source, item, patch, asset_workers, reader_cache, quality_array)
         except Exception as exc:
             rejected.append({"item_id": str(item.get("id", "unknown")), "error": f"{type(exc).__name__}: {exc}"})
             continue
         accepted.append(item)
         scenes.append(scene)
-        if len(scenes) >= top_k:
+        if max_clean_scenes > 0 and len(scenes) >= max_clean_scenes:
             break
     return accepted, scenes, rejected
 
@@ -292,8 +359,12 @@ def _create_arrays(group: zarr.Group, source: str, patch_count: int, months: lis
     return image, mask
 
 
-def _fingerprint(points: list[Patch], months: list[str], top_k: int) -> str:
-    payload = {"patch_ids": [patch.patch_id for patch in points], "months": months, "top_k": top_k}
+def _fingerprint(points: list[Patch], months: list[str], max_clean_scenes: int) -> str:
+    payload = {
+        "patch_ids": [patch.patch_id for patch in points], "months": months,
+        "max_clean_scenes": max_clean_scenes,
+        "quality_thresholds": {source: SOURCES[source]["min_clear_fraction"] for source in SOURCES},
+    }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
 
@@ -325,7 +396,7 @@ def materialize(
     catalog_root: Path,
     output: Path,
     months: list[str],
-    top_k: int,
+    max_clean_scenes: int,
     catalogs: dict[tuple[str, str], CatalogIndex] | None = None,
     asset_workers: int = 1,
     reader_cache: AssetReaderCache | None = None,
@@ -339,15 +410,17 @@ def materialize(
         lock_path.mkdir()
     except FileExistsError as exc:
         raise RuntimeError(f"shard is already owned by another worker: {lock_path}") from exc
-    fingerprint = _fingerprint(points, months, top_k)
+    fingerprint = _fingerprint(points, months, max_clean_scenes)
     try:
         creating = not temporary.exists()
         group = zarr.open_group(str(temporary), mode="w" if creating else "a")
         if creating:
             group.attrs.update({
-                "schema_version": "china_v1_zarr_shard_v2", "created_at": datetime.now(timezone.utc).isoformat(),
+                "schema_version": "china_v1_zarr_shard_v3", "created_at": datetime.now(timezone.utc).isoformat(),
                 "patch_ids": [patch.patch_id for patch in points], "months": months, "chip_pixels": CHIP_PIXELS,
                 "chip_side_meters": CHIP_SIDE_METERS, "input_fingerprint": fingerprint,
+                "max_clean_scenes": max_clean_scenes,
+                "quality_thresholds": {source: SOURCES[source]["min_clear_fraction"] for source in SOURCES},
             })
         elif group.attrs.get("input_fingerprint") != fingerprint:
             raise ValueError("partial shard fingerprint differs from requested inputs")
@@ -370,9 +443,12 @@ def materialize(
                         continue
                     record: dict[str, Any] = {"patch_id": patch.patch_id, "month": month, "source": source, "selected_items": [], "valid_fraction": 0.0, "status": "missing"}
                     try:
-                        candidates = _select_items(catalogs[(source, month)], patch, source, top_k * 4)
-                        selected, scenes, rejected = _load_available_scenes(source, candidates, patch, top_k, asset_workers, reader_cache)
+                        candidates = _select_items(catalogs[(source, month)], patch, source, candidate_limit=0)
+                        selected, scenes, rejected = _load_available_scenes(
+                            source, candidates, patch, max_clean_scenes, asset_workers, reader_cache,
+                        )
                         record["selected_items"] = [item["id"] for item in selected]
+                        record["candidate_count"] = len(candidates)
                         if rejected:
                             record["rejected_items"] = rejected
                         image, mask, scene_fractions = _composite(source, scenes)
@@ -419,12 +495,12 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--months", nargs="+", required=True)
     parser.add_argument("--limit", type=int, default=20)
-    parser.add_argument("--top-k", type=int, default=2)
+    parser.add_argument("--max-clean-scenes", type=int, default=0, help="Maximum locally clean scenes per source/month; 0 keeps all of them.")
     parser.add_argument("--asset-workers", type=int, default=2, help="Concurrent COG assets per process; bound the global total across workers.")
     parser.add_argument("--asset-cache-size", type=int, default=256)
     args = parser.parse_args()
-    if args.limit <= 0 or args.top_k <= 0 or args.asset_workers <= 0 or args.asset_cache_size <= 0:
-        raise ValueError("--limit, --top-k, --asset-workers and --asset-cache-size must be positive")
+    if args.limit <= 0 or args.max_clean_scenes < 0 or args.asset_workers <= 0 or args.asset_cache_size <= 0:
+        raise ValueError("--limit, --max-clean-scenes, --asset-workers and --asset-cache-size must be valid")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     points = [_patch_from_record(record) for _, record in zip(range(args.limit), _read_jsonl(args.points))]
     required_catalogs = [args.catalog_root / source / month / "items.jsonl" for source in SOURCES for month in args.months]
@@ -434,7 +510,7 @@ def main() -> None:
     started = time.monotonic()
     cache = AssetReaderCache(args.asset_cache_size)
     try:
-        report = materialize(points, args.catalog_root, args.output, args.months, args.top_k, asset_workers= args.asset_workers, reader_cache=cache)
+        report = materialize(points, args.catalog_root, args.output, args.months, args.max_clean_scenes, asset_workers=args.asset_workers, reader_cache=cache)
     finally:
         cache.close()
     report["elapsed_seconds"] = round(time.monotonic() - started, 3)

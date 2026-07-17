@@ -43,16 +43,41 @@ def test_s1_composite_excludes_invalid_scene_values() -> None:
 
 
 def test_load_available_scenes_skips_bad_candidate(monkeypatch) -> None:
-    candidates = [{"id": "bad"}, {"id": "first-good"}, {"id": "second-good"}]
-    def fake_load(_source, item, _patch, _asset_workers=1, _reader_cache=None):
+    candidates = [
+        {"id": "bad", "assets": {"vv": {"href": "bad"}, "vh": {"href": "bad-vh"}}},
+        {"id": "first-good", "assets": {"vv": {"href": "first-good"}, "vh": {"href": "first-good-vh"}}},
+        {"id": "second-good", "assets": {"vv": {"href": "second-good"}, "vh": {"href": "second-good-vh"}}},
+    ]
+    def fake_quality(href, _patch, _categorical, _cache=None, attempts=3):
+        if href == "bad":
+            raise ValueError("bbox edge")
+        return np.ones((128, 128), dtype=np.float32)
+    def fake_load(_source, item, _patch, _asset_workers=1, _reader_cache=None, _quality_array=None):
         if item["id"] == "bad":
             raise ValueError("bbox edge")
         return np.ones((2, 128, 128), dtype=np.float32)
+    monkeypatch.setattr(MODULE, "_read_asset_to_patch", fake_quality)
     monkeypatch.setattr(MODULE, "_load_scene", fake_load)
     selected, scenes, rejected = MODULE._load_available_scenes("s1", candidates, object(), 2, 1, None)
     assert [item["id"] for item in selected] == ["first-good", "second-good"]
     assert len(scenes) == 2
     assert rejected[0]["item_id"] == "bad"
+
+
+def test_cloudy_scene_is_rejected_before_full_band_read(monkeypatch) -> None:
+    item = {"id": "cloudy", "assets": {"B02": {"href": "B02"}, "B03": {"href": "B03"}, "B04": {"href": "B04"}, "B05": {"href": "B05"}, "B06": {"href": "B06"}, "B07": {"href": "B07"}, "B08": {"href": "B08"}, "B8A": {"href": "B8A"}, "B09": {"href": "B09"}, "B11": {"href": "B11"}, "B12": {"href": "B12"}, "SCL": {"href": "SCL"}}}
+    full_reads = []
+    def fake_quality(href, _patch, _categorical, _cache=None, attempts=3):
+        assert href == "SCL"
+        return np.full((128, 128), 8, dtype=np.float32)
+    def fake_load(*args, **kwargs):
+        full_reads.append(args[1]["id"])
+        raise AssertionError("cloudy image must not load full bands")
+    monkeypatch.setattr(MODULE, "_read_asset_to_patch", fake_quality)
+    monkeypatch.setattr(MODULE, "_load_scene", fake_load)
+    selected, scenes, rejected = MODULE._load_available_scenes("s2", [item], object(), 0, 1, None)
+    assert selected == [] and scenes == [] and full_reads == []
+    assert rejected == [{"item_id": "cloudy", "reason": "quality_rejected", "clear_fraction": 0.0}]
 
 
 def test_catalog_index_returns_only_intersecting_items(tmp_path) -> None:
