@@ -1,0 +1,23 @@
+"""Unit tests for CDSE STAC asset normalization."""
+
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+
+
+MODULE_PATH = Path(__file__).parents[1] / "scripts/data/cache_national_cdse_stac_catalog.py"
+SPEC = spec_from_file_location("china_v1_cdse_catalog", MODULE_PATH)
+assert SPEC and SPEC.loader
+MODULE = module_from_spec(SPEC)
+SPEC.loader.exec_module(MODULE)
+
+
+def test_s2_assets_are_normalized_to_materializer_names() -> None:
+    assets = {name: {"href": f"s3://eodata/example/{name}.jp2"} for name in MODULE.SOURCE_CONFIG["s2"]["asset_map"].values()}
+    result = MODULE._compact_feature({"id": "s2", "assets": assets, "properties": {}}, "s2")
+    assert result is not None
+    assert set(result["assets"]) == set(MODULE.SOURCE_CONFIG["s2"]["asset_map"])
+    assert result["assets"]["SCL"]["href"].endswith("SCL_20m.jp2")
+
+
+def test_feature_without_a_required_s3_asset_is_skipped() -> None:
+    assert MODULE._compact_feature({"id": "s2", "assets": {}, "properties": {}}, "s2") is None

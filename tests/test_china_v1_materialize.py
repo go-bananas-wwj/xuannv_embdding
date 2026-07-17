@@ -33,6 +33,11 @@ def test_landsat_qa_mask_uses_bits_without_rescaling() -> None:
     assert MODULE._scene_valid_mask("landsat", stack).tolist() == [[True, False], [False, True]]
 
 
+def test_cdse_s3_href_uses_gdal_s3_transport() -> None:
+    href = "s3://eodata/Sentinel-2/example.jp2"
+    assert MODULE._remote_href(href) == "/vsis3/eodata/Sentinel-2/example.jp2"
+
+
 def test_s1_composite_excludes_invalid_scene_values() -> None:
     invalid = np.zeros((2, 2, 2), dtype=np.float32)
     valid = np.full((2, 2, 2), 2.0, dtype=np.float32)

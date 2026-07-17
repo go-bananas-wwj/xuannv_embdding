@@ -231,7 +231,15 @@ def _reproject_open_asset(src: rasterio.io.DatasetReader, href: str, patch: Patc
 
 
 def _remote_href(href: str) -> str:
-    """Sign an asset and optionally route its byte ranges through localhost."""
+    """Return a GDAL-readable remote asset location.
+
+    CDSE STAC assets are native ``s3://eodata/...`` URLs.  They must remain on
+    the S3 transport rather than being passed through Planetary Computer's SAS
+    signer.  Credentials are supplied only through the worker environment.
+    """
+    if href.startswith("s3://"):
+        bucket_and_key = href.removeprefix("s3://")
+        return f"/vsis3/{bucket_and_key}"
     signed = planetary_computer.sign(href)
     gateway = os.environ.get("CHINA_V1_COG_GATEWAY")
     if not gateway:
