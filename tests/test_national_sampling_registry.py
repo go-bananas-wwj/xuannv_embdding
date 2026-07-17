@@ -146,3 +146,34 @@ def test_rejects_incomplete_macrocell_atlas(tmp_path: Path) -> None:
     import pytest
     with pytest.raises(ValueError, match="atlas records"):
         MODULE.build_registry(atlas_path, policy_path, None, None, {})
+
+
+def test_supplements_respect_regional_group_cap(tmp_path: Path) -> None:
+    policy = {
+        "sampling": {
+            "macro_side_patches": 10, "sampling_seed": 2,
+            "base_inclusion_probability": 0.000001, "target_total": 3, "max_total": 4,
+            "supplement_reservoir_multiplier": 3, "supplement_max_per_macrocell": 3,
+            "regional_balance": {
+                "group_field": "regional_group", "max_fraction_per_group_per_stratum": 0.5,
+                "require_known_group_for_supplement": True,
+            },
+            "supplement_quotas": {"worldcover:wetland": 2},
+        }
+    }
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text(json.dumps(policy), encoding="utf-8")
+    records = []
+    for col, group in enumerate(("north", "north", "south")):
+        records.append({
+            "patch_id": f"p{col}", "grid_id": "A", "grid_row": 0, "grid_col": col,
+            "grid_epsg": 32650, "wgs84_bounds": [116.0, 39.0, 116.1, 39.1],
+            "geometry_hash": f"p{col}", "macro_candidate_count": 3, "eligible": True,
+            "eligible_reasons": ["test"], "strata": ["worldcover:wetland"],
+            "regional_group": group,
+        })
+    atlas_path = tmp_path / "atlas.jsonl"
+    atlas_path.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+    _, report = MODULE.build_registry(atlas_path, policy_path, None, None, {})
+    counts = report["supplemental"]["worldcover:wetland"]["coverage_by_regional_group"]
+    assert counts == {"north": 1, "south": 1}

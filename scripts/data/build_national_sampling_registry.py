@@ -20,6 +20,7 @@ import argparse
 import hashlib
 import heapq
 import json
+import math
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Iterator
@@ -181,6 +182,16 @@ def build_registry(
     supplement_max_per_macrocell = int(sampling.get("supplement_max_per_macrocell", 1))
     if supplement_max_per_macrocell < 0:
         raise ValueError("sampling.supplement_max_per_macrocell must be non-negative")
+    regional_balance = sampling.get("regional_balance", {})
+    if regional_balance is None:
+        regional_balance = {}
+    if not isinstance(regional_balance, dict):
+        raise ValueError("sampling.regional_balance must be an object")
+    regional_group_field = str(regional_balance.get("group_field", "regional_group"))
+    regional_max_fraction = float(regional_balance.get("max_fraction_per_group_per_stratum", 1.0))
+    if not 0 < regional_max_fraction <= 1:
+        raise ValueError("regional_balance.max_fraction_per_group_per_stratum must be in (0, 1]")
+    require_known_regional_group = bool(regional_balance.get("require_known_group_for_supplement", False))
 
     base_winners: dict[tuple[str, int, int], tuple[float, dict[str, Any]]] = {}
     macro_eligible_counts: Counter[tuple[str, int, int]] = Counter()
@@ -255,6 +266,12 @@ def build_registry(
         ranked = sorted(reservoirs[stratum], key=lambda item: item[0], reverse=True)
         base_coverage = sum(stratum in set(_parse_strata(record.get("strata"))) for record in selected.values())
         final_coverage = base_coverage
+        regional_cap = math.ceil(quota * regional_max_fraction)
+        coverage_by_group = Counter(
+            str(record.get(regional_group_field, "unknown"))
+            for record in selected.values()
+            if stratum in set(_parse_strata(record.get("strata")))
+        )
         newly_added = 0
         for _, _, record in ranked:
             if final_coverage >= quota or len(selected) >= max_total:
@@ -265,10 +282,16 @@ def build_registry(
             key = _macrocell(record, macro_side)
             if supplemental_per_macrocell[key] >= supplement_max_per_macrocell:
                 continue
+            group = str(record.get(regional_group_field, "unknown"))
+            if require_known_regional_group and group == "unknown":
+                continue
+            if coverage_by_group[group] >= regional_cap:
+                continue
             selected[patch_id] = record
             supplemental_per_macrocell[key] += 1
             newly_added += 1
             final_coverage += 1
+            coverage_by_group[group] += 1
             reasons[patch_id].add(f"supplement:{stratum}")
         supplemental_summary[stratum] = {
             "requested": quota,
@@ -277,6 +300,7 @@ def build_registry(
             "unmet": max(0, quota - final_coverage),
             "newly_added": newly_added,
             "reservoir_size": len(reservoirs[stratum]),
+            "coverage_by_regional_group": dict(sorted(coverage_by_group.items())),
         }
 
     registry: list[dict[str, Any]] = []
