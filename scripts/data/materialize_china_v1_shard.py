@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import urlencode
 
 # A failed range request from the other side of the world must not stall an
 # entire shard for ten minutes.  Python-level retries below reopen the COG
@@ -93,7 +94,7 @@ class AssetReaderCache:
     def get(self, href: str) -> rasterio.io.DatasetReader:
         reader = self._readers.pop(href, None)
         if reader is None:
-            reader = rasterio.open(planetary_computer.sign(href))
+            reader = rasterio.open(_remote_href(href))
         self._readers[href] = reader
         while len(self._readers) > self.max_entries:
             _, stale = self._readers.popitem(last=False)
@@ -207,6 +208,15 @@ def _reproject_open_asset(src: rasterio.io.DatasetReader, href: str, patch: Patc
     return output
 
 
+def _remote_href(href: str) -> str:
+    """Sign an asset and optionally route its byte ranges through localhost."""
+    signed = planetary_computer.sign(href)
+    gateway = os.environ.get("CHINA_V1_COG_GATEWAY")
+    if not gateway:
+        return signed
+    return f"{gateway}?{urlencode({'url': signed})}"
+
+
 def _read_asset_to_patch(
     href: str,
     patch: Patch,
@@ -225,7 +235,7 @@ def _read_asset_to_patch(
         try:
             if reader_cache is not None:
                 return _reproject_open_asset(reader_cache.get(href), href, patch, categorical)
-            with rasterio.open(planetary_computer.sign(href)) as src:
+            with rasterio.open(_remote_href(href)) as src:
                 return _reproject_open_asset(src, href, patch, categorical)
         except Exception as exc:
             last_error = exc
@@ -370,7 +380,7 @@ def _read_asset_for_patches(
             break
         retry: list[tuple[int, Patch]] = []
         try:
-            with rasterio.open(planetary_computer.sign(href)) as src:
+            with rasterio.open(_remote_href(href)) as src:
                 for patch_index, patch in pending:
                     try:
                         values[patch_index] = _reproject_open_asset(src, href, patch, categorical)
