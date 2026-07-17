@@ -20,7 +20,7 @@
     "side_meters": 1280,
     "pixels": 128,
     "resolution_meters": 10,
-    "grid": "MGRS tile-local UTM 10 m grid"
+    "grid": "UTM-zone-local 10 m grid, aligned to each zone origin"
   },
   "sampling": {
     "base_rule": "For each 10 x 10 macrocell with n quality-eligible chips, accept its deterministic winner with probability n / 100. Conditional on acceptance choose the seeded-hash winner. Every eligible chip therefore has expected inclusion probability 1%, without a fixed checkerboard phase or quality-dependent oversampling.",

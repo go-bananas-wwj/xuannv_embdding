@@ -78,7 +78,7 @@ appearing only once in the registry.
 
 Every candidate atlas record must carry:
 
-- a stable `patch_id`, MGRS `grid_id`, tile-local EPSG, integer `grid_row` /
+- a stable `patch_id`, UTM-zone `grid_id`, tile-local EPSG, integer `grid_row` /
   `grid_col`, WGS84 bounds and a geometry hash;
 - the declared number of physical candidates in its 10 x 10 macrocell, so an
   incomplete atlas cannot silently alter sampling probabilities;
@@ -104,7 +104,7 @@ python scripts/data/build_national_sampling_registry.py \
 
 ## Materialization Order
 
-1. Freeze the China land AOI and MGRS tile inventory. Use MGRS tile-local UTM
+1. Freeze the China land AOI and UTM-zone tile inventory. Use zone-local UTM
    grids; a single national UTM CRS would distort or misalign chips across zones.
 2. Build the metadata-only candidate atlas from WorldCover, DEM, province /
    ecoregion overlays, OSM snapshot and STAC scene metadata.
