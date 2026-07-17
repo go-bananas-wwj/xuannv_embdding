@@ -22,9 +22,10 @@ def main() -> None:
     parser.add_argument("--worker-index", type=int, required=True)
     parser.add_argument("--worker-count", type=int, required=True)
     parser.add_argument("--top-k", type=int, default=2)
+    parser.add_argument("--asset-workers", type=int, default=2)
     parser.add_argument("--passes", type=int, default=3)
     args = parser.parse_args()
-    if not 0 <= args.worker_index < args.worker_count or args.passes <= 0:
+    if not 0 <= args.worker_index < args.worker_count or args.passes <= 0 or args.asset_workers <= 0:
         raise ValueError("invalid worker assignment or pass count")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     jobs = sorted(args.points_dir.glob(f"{args.prefix}_[0-9][0-9][0-9].jsonl"))
@@ -43,7 +44,7 @@ def main() -> None:
                 continue
             points = [_patch_from_record(record) for record in _read_jsonl(job)]
             try:
-                report = materialize(points, args.catalog_root, output, args.months, args.top_k, catalogs)
+                report = materialize(points, args.catalog_root, output, args.months, args.top_k, catalogs, args.asset_workers)
             except Exception as exc:
                 logging.exception("pass %s failed: %s", pass_number, job.name)
                 retry.append(job)

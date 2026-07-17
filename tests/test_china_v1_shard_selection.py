@@ -19,3 +19,8 @@ def test_selection_is_reproducible_and_unique(tmp_path) -> None:
     second = MODULE.select_points(input_path, 4, 7)
     assert first == second
     assert len({point["patch_id"] for point in first}) == 4
+
+
+def test_spatial_order_groups_nearby_grid_cells() -> None:
+    points = [{"patch_id": "b", "grid_id": "utm48n", "grid_row": 3, "grid_col": 1}, {"patch_id": "a", "grid_id": "utm47n", "grid_row": 9, "grid_col": 1}]
+    assert [point["patch_id"] for point in MODULE._spatial_order(points)] == ["a", "b"]

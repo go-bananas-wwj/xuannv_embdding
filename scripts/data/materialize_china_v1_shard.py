@@ -18,6 +18,7 @@ import shutil
 import time
 import warnings
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -196,12 +197,15 @@ def _composite(source: str, scenes: list[np.ndarray]) -> tuple[np.ndarray, np.nd
     return output, valid.astype(np.uint8), fractions
 
 
-def _load_scene(source: str, item: dict[str, Any], patch: Patch) -> np.ndarray:
+def _load_scene(source: str, item: dict[str, Any], patch: Patch, asset_workers: int = 1) -> np.ndarray:
     config = SOURCES[source]
-    arrays = [
-        _read_asset_to_patch(item["assets"][asset]["href"], patch, asset in config["categorical"])
-        for asset in config["assets"]
-    ]
+    def read(asset: str) -> np.ndarray:
+        return _read_asset_to_patch(item["assets"][asset]["href"], patch, asset in config["categorical"])
+    if asset_workers == 1:
+        arrays = [read(asset) for asset in config["assets"]]
+    else:
+        with ThreadPoolExecutor(max_workers=asset_workers, thread_name_prefix="cog-read") as executor:
+            arrays = list(executor.map(read, config["assets"]))
     scene = np.stack(arrays).astype(np.float32)
     if source == "landsat":
         reflectance = scene[:-1]
@@ -215,6 +219,7 @@ def _load_available_scenes(
     candidates: list[dict[str, Any]],
     patch: Patch,
     top_k: int,
+    asset_workers: int,
 ) -> tuple[list[dict[str, Any]], list[np.ndarray], list[dict[str, str]]]:
     """Keep reading alternatives when a STAC bbox overstates raster coverage."""
     accepted: list[dict[str, Any]] = []
@@ -222,7 +227,7 @@ def _load_available_scenes(
     rejected: list[dict[str, str]] = []
     for item in candidates:
         try:
-            scene = _load_scene(source, item, patch)
+            scene = _load_scene(source, item, patch, asset_workers)
         except Exception as exc:
             rejected.append({"item_id": str(item.get("id", "unknown")), "error": f"{type(exc).__name__}: {exc}"})
             continue
@@ -284,6 +289,7 @@ def materialize(
     months: list[str],
     top_k: int,
     catalogs: dict[tuple[str, str], CatalogIndex] | None = None,
+    asset_workers: int = 1,
 ) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(f"refusing to overwrite completed shard: {output}")
@@ -326,7 +332,7 @@ def materialize(
                     record: dict[str, Any] = {"patch_id": patch.patch_id, "month": month, "source": source, "selected_items": [], "valid_fraction": 0.0, "status": "missing"}
                     try:
                         candidates = _select_items(catalogs[(source, month)], patch, source, top_k * 4)
-                        selected, scenes, rejected = _load_available_scenes(source, candidates, patch, top_k)
+                        selected, scenes, rejected = _load_available_scenes(source, candidates, patch, top_k, asset_workers)
                         record["selected_items"] = [item["id"] for item in selected]
                         if rejected:
                             record["rejected_items"] = rejected
@@ -375,9 +381,10 @@ def main() -> None:
     parser.add_argument("--months", nargs="+", required=True)
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--top-k", type=int, default=2)
+    parser.add_argument("--asset-workers", type=int, default=2, help="Concurrent COG assets per process; bound the global total across workers.")
     args = parser.parse_args()
-    if args.limit <= 0 or args.top_k <= 0:
-        raise ValueError("--limit and --top-k must be positive")
+    if args.limit <= 0 or args.top_k <= 0 or args.asset_workers <= 0:
+        raise ValueError("--limit, --top-k and --asset-workers must be positive")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     points = [_patch_from_record(record) for _, record in zip(range(args.limit), _read_jsonl(args.points))]
     required_catalogs = [args.catalog_root / source / month / "items.jsonl" for source in SOURCES for month in args.months]
@@ -385,7 +392,7 @@ def main() -> None:
     if missing:
         raise FileNotFoundError(f"catalog cache incomplete; missing {missing[:3]}")
     started = time.monotonic()
-    report = materialize(points, args.catalog_root, args.output, args.months, args.top_k)
+    report = materialize(points, args.catalog_root, args.output, args.months, args.top_k, asset_workers=args.asset_workers)
     report["elapsed_seconds"] = round(time.monotonic() - started, 3)
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
