@@ -478,7 +478,8 @@ def _scene_centric_source_month(
             before = counts[patch_index] == 0
             sums[patch_index] += np.where(valid[None, :, :], scene, 0.0)
             counts[patch_index] += valid.astype(np.uint16)
-            first_quality[patch_index][before & valid] = scene[quality_index][before & valid]
+            if quality_asset in config["categorical"]:
+                first_quality[patch_index][before & valid] = scene[quality_index][before & valid]
             states[patch_index]["selected_items"].append(item_id)
             states[patch_index]["scene_valid_fractions"].append(round(clear_fraction, 6))
 
@@ -492,7 +493,8 @@ def _scene_centric_source_month(
             denominator = np.where(valid, counts[patch_index], 1).astype(np.float32)
             image = sums[patch_index] / denominator[None, :, :]
             image[:, ~valid] = np.nan
-            image[quality_index] = first_quality[patch_index]
+            if quality_asset in config["categorical"]:
+                image[quality_index] = first_quality[patch_index]
         state = states[patch_index]
         has_transport_error = any("error" in rejected for rejected in state["rejected_items"])
         status = (
