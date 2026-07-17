@@ -33,3 +33,16 @@ def test_allocate_distributes_more_than_one_residual_round() -> None:
     groups = {"a": [{}, {}, {}, {}], "b": [{}, {}, {}, {}]}
     allocation = MODULE._allocate(5, groups)
     assert sum(allocation.values()) == 5
+
+
+def test_supplement_can_use_a_second_distinct_patch_in_a_base_macro() -> None:
+    macro = {
+        "macro_id": "utm50n_c0_r0", "grid_id": "utm50n", "grid_epsg": 32650,
+        "macro_col": 32, "macro_row": 330,
+        "utm_bounds": [409600.0, 4224000.0, 422400.0, 4236800.0],
+        "estimated_patch_count": 100.0, "admin1": "test",
+    }
+    base = MODULE.PREVIEW.select_static_preview([macro], box(115.0, 38.0, 117.0, 40.0), seed=7)
+    supplement, _ = MODULE.build_supplement([macro], base, box(115.0, 38.0, 117.0, 40.0), 7, 2)
+    assert len(supplement) == 1
+    assert supplement[0]["patch_id"] != base[0]["patch_id"]
