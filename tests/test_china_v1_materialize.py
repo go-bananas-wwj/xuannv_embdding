@@ -33,6 +33,15 @@ def test_landsat_qa_mask_uses_bits_without_rescaling() -> None:
     assert MODULE._scene_valid_mask("landsat", stack).tolist() == [[True, False], [False, True]]
 
 
+def test_s1_composite_excludes_invalid_scene_values() -> None:
+    invalid = np.zeros((2, 2, 2), dtype=np.float32)
+    valid = np.full((2, 2, 2), 2.0, dtype=np.float32)
+    image, mask, fractions = MODULE._composite("s1", [invalid, valid])
+    assert fractions == [0.0, 1.0]
+    assert mask.tolist() == [[1, 1], [1, 1]]
+    assert np.all(image == 2.0)
+
+
 def test_load_available_scenes_skips_bad_candidate(monkeypatch) -> None:
     candidates = [{"id": "bad"}, {"id": "first-good"}, {"id": "second-good"}]
     def fake_load(_source, item, _patch):

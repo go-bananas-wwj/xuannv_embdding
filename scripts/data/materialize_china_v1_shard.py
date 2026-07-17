@@ -10,11 +10,13 @@ metadata, per-patch quality records, and array shapes have been verified.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
 import shutil
 import time
+import warnings
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -25,7 +27,10 @@ os.environ.setdefault("GDAL_HTTP_MAX_RETRY", "5")
 os.environ.setdefault("GDAL_HTTP_RETRY_DELAY", "10")
 os.environ.setdefault("GDAL_HTTP_TIMEOUT", "120")
 os.environ.setdefault("GDAL_HTTP_MULTIPLEX", "YES")
-os.environ.setdefault("GDAL_HTTP_CONCURRENCY", "4")
+os.environ.setdefault("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
+os.environ.setdefault("CPL_VSIL_CURL_USE_HEAD", "NO")
+os.environ.setdefault("GDAL_HTTP_MULTIRANGE", "YES")
+os.environ.setdefault("GDAL_HTTP_MERGE_CONSECUTIVE_RANGES", "YES")
 os.environ.setdefault("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ".tif,.tiff,.TIF,.jp2")
 
 import numpy as np
@@ -172,16 +177,21 @@ def _composite(source: str, scenes: list[np.ndarray]) -> tuple[np.ndarray, np.nd
         return np.full((bands, CHIP_PIXELS, CHIP_PIXELS), np.nan, dtype=np.float32), np.zeros((CHIP_PIXELS, CHIP_PIXELS), dtype=np.uint8), []
     validity = [_scene_valid_mask(source, scene) for scene in scenes]
     fractions = [round(float(mask.mean()), 6) for mask in validity]
-    best_index = int(np.argmax(fractions))
-    valid = np.logical_or.reduce(validity)
-    if source == "s1":
-        output = np.nanmean(np.stack(scenes, axis=0), axis=0).astype(np.float32)
-    else:
-        continuous = []
-        for scene, scene_mask in zip(scenes, validity):
-            continuous.append(np.where(scene_mask[None, :, :], scene, np.nan))
-        output = np.nanmedian(np.stack(continuous, axis=0), axis=0).astype(np.float32)
-        output[-1] = scenes[best_index][-1]
+    valid_stack = np.stack(validity, axis=0)
+    valid = np.logical_or.reduce(valid_stack)
+    stacked = np.stack(scenes, axis=0)
+    # Invalid pixels must never contribute finite values to any source composite.
+    masked = np.where(valid_stack[:, None, :, :], stacked, np.nan)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        output = (
+            np.nanmean(masked, axis=0) if source == "s1" else np.nanmedian(masked, axis=0)
+        ).astype(np.float32)
+    if SOURCES[source]["categorical"]:
+        # The categorical QA/SCL value comes from the first valid scene at each
+        # pixel, rather than from a globally selected scene with different cloud.
+        first_valid = np.argmax(valid_stack, axis=0)
+        output[-1] = np.take_along_axis(stacked[:, -1], first_valid[None, :, :], axis=0)[0]
     output[:, ~valid] = np.nan
     return output, valid.astype(np.uint8), fractions
 
@@ -227,40 +237,80 @@ def _create_arrays(group: zarr.Group, source: str, patch_count: int, months: lis
     band_count = len(SOURCES[source]["assets"])
     image = group.create_dataset(
         "image", shape=(patch_count, len(months), band_count, CHIP_PIXELS, CHIP_PIXELS),
-        chunks=(1, 1, band_count, CHIP_PIXELS, CHIP_PIXELS), dtype="f4", fill_value=np.nan,
+        chunks=(min(8, patch_count), 1, band_count, CHIP_PIXELS, CHIP_PIXELS), dtype="f4", fill_value=np.nan,
         compressor=zarr.Blosc(cname="zstd", clevel=3, shuffle=zarr.Blosc.BITSHUFFLE),
     )
     mask = group.create_dataset(
         "valid_mask", shape=(patch_count, len(months), CHIP_PIXELS, CHIP_PIXELS),
-        chunks=(1, 1, CHIP_PIXELS, CHIP_PIXELS), dtype="u1", fill_value=0,
+        chunks=(min(8, patch_count), 1, CHIP_PIXELS, CHIP_PIXELS), dtype="u1", fill_value=0,
         compressor=zarr.Blosc(cname="zstd", clevel=3, shuffle=zarr.Blosc.BITSHUFFLE),
     )
     group.attrs.update({"assets": SOURCES[source]["assets"], "source": source})
     return image, mask
 
 
+def _fingerprint(points: list[Patch], months: list[str], top_k: int) -> str:
+    payload = {"patch_ids": [patch.patch_id for patch in points], "months": months, "top_k": top_k}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _record_key(record: dict[str, Any]) -> tuple[str, str, str]:
+    return str(record["patch_id"]), str(record["month"]), str(record["source"])
+
+
+def _append_record(path: Path, record: dict[str, Any]) -> None:
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _load_records(path: Path) -> dict[tuple[str, str, str], dict[str, Any]]:
+    return {_record_key(record): record for record in _read_jsonl(path)} if path.exists() else {}
+
+
 def materialize(points: list[Patch], catalog_root: Path, output: Path, months: list[str], top_k: int) -> dict[str, Any]:
+    if output.exists():
+        raise FileExistsError(f"refusing to overwrite completed shard: {output}")
     temporary = output.with_name(output.name + ".partial")
-    if temporary.exists():
-        shutil.rmtree(temporary)
     temporary.parent.mkdir(parents=True, exist_ok=True)
-    group = zarr.open_group(str(temporary), mode="w")
-    group.attrs.update({
-        "schema_version": "china_v1_zarr_shard_v1", "created_at": datetime.now(timezone.utc).isoformat(),
-        "patch_ids": [patch.patch_id for patch in points], "months": months, "chip_pixels": CHIP_PIXELS,
-        "chip_side_meters": CHIP_SIDE_METERS,
-    })
-    catalogs = {
-        (source, month): CatalogIndex(catalog_root / source / month / "items.jsonl")
-        for source in SOURCES for month in months
-    }
-    arrays = {source: _create_arrays(group.create_group(source), source, len(points), months) for source in SOURCES}
-    quality_path = temporary / "quality.jsonl"
-    failures = 0
-    with quality_path.open("w", encoding="utf-8") as quality_handle:
+    lock_path = temporary.with_name(temporary.name + ".lock")
+    try:
+        lock_path.mkdir()
+    except FileExistsError as exc:
+        raise RuntimeError(f"shard is already owned by another worker: {lock_path}") from exc
+    fingerprint = _fingerprint(points, months, top_k)
+    try:
+        creating = not temporary.exists()
+        group = zarr.open_group(str(temporary), mode="w" if creating else "a")
+        if creating:
+            group.attrs.update({
+                "schema_version": "china_v1_zarr_shard_v2", "created_at": datetime.now(timezone.utc).isoformat(),
+                "patch_ids": [patch.patch_id for patch in points], "months": months, "chip_pixels": CHIP_PIXELS,
+                "chip_side_meters": CHIP_SIDE_METERS, "input_fingerprint": fingerprint,
+            })
+        elif group.attrs.get("input_fingerprint") != fingerprint:
+            raise ValueError("partial shard fingerprint differs from requested inputs")
+        catalogs = {
+            (source, month): CatalogIndex(catalog_root / source / month / "items.jsonl")
+            for source in SOURCES for month in months
+        }
+        arrays = {
+            source: (group[source]["image"], group[source]["valid_mask"])
+            if source in group else _create_arrays(group.create_group(source), source, len(points), months)
+            for source in SOURCES
+        }
+        done = group["done"] if "done" in group else group.create_dataset(
+            "done", shape=(len(points), len(months), len(SOURCES)), chunks=(min(8, len(points)), 1, len(SOURCES)), dtype="u1", fill_value=0,
+        )
+        quality_path = temporary / "quality.jsonl"
+        records = _load_records(quality_path)
+        failures = 0
         for patch_index, patch in enumerate(points):
             for month_index, month in enumerate(months):
-                for source in SOURCES:
+                for source_index, source in enumerate(SOURCES):
+                    if done[patch_index, month_index, source_index]:
+                        continue
                     record: dict[str, Any] = {"patch_id": patch.patch_id, "month": month, "source": source, "selected_items": [], "valid_fraction": 0.0, "status": "missing"}
                     try:
                         candidates = _select_items(catalogs[(source, month)], patch, source, top_k * 4)
@@ -271,23 +321,38 @@ def materialize(points: list[Patch], catalog_root: Path, output: Path, months: l
                         image, mask, scene_fractions = _composite(source, scenes)
                         arrays[source][0][patch_index, month_index] = image
                         arrays[source][1][patch_index, month_index] = mask
-                        record.update({"status": "ok" if selected else "missing", "valid_fraction": round(float(mask.mean()), 6), "scene_valid_fractions": scene_fractions})
-                    except Exception as exc:  # Keep independent sources/patches running and record retryable cause.
+                        valid_fraction = round(float(mask.mean()), 6)
+                        record.update({
+                            "status": "ok" if valid_fraction > 0 else ("no_valid_pixels" if selected else "no_candidate"),
+                            "valid_fraction": valid_fraction, "scene_valid_fractions": scene_fractions,
+                        })
+                    except Exception as exc:
                         failures += 1
-                        record.update({"status": "error", "error": f"{type(exc).__name__}: {exc}"})
+                        record.update({"status": "retryable_error", "error": f"{type(exc).__name__}: {exc}"})
                         LOGGER.exception("failed %s %s %s", patch.patch_id, month, source)
-                    quality_handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-                    quality_handle.flush()
-    zarr.consolidate_metadata(str(temporary))
-    reopened = zarr.open_consolidated(str(temporary), mode="r")
-    for source in SOURCES:
-        expected = (len(points), len(months), len(SOURCES[source]["assets"]), CHIP_PIXELS, CHIP_PIXELS)
-        if reopened[source]["image"].shape != expected:
-            raise ValueError(f"Zarr shape check failed for {source}: {reopened[source]['image'].shape} != {expected}")
-    if output.exists():
-        raise FileExistsError(f"refusing to overwrite completed shard: {output}")
-    temporary.replace(output)
-    return {"output": str(output), "patches": len(points), "months": len(months), "failures": failures}
+                        records[_record_key(record)] = record
+                        _append_record(quality_path, record)
+                        continue
+                    records[_record_key(record)] = record
+                    _append_record(quality_path, record)
+                    done[patch_index, month_index, source_index] = 1
+        if np.count_nonzero(done[:]) != done.size:
+            raise RuntimeError("shard has retryable errors; retain partial output for a later resume")
+        expected_records = len(points) * len(months) * len(SOURCES)
+        if len(records) != expected_records:
+            raise RuntimeError(f"quality record check failed: {len(records)} != {expected_records}")
+        zarr.consolidate_metadata(str(temporary))
+        reopened = zarr.open_consolidated(str(temporary), mode="r")
+        for source in SOURCES:
+            expected = (len(points), len(months), len(SOURCES[source]["assets"]), CHIP_PIXELS, CHIP_PIXELS)
+            if reopened[source]["image"].shape != expected:
+                raise ValueError(f"Zarr shape check failed for {source}: {reopened[source]['image'].shape} != {expected}")
+        report = {"output": str(output), "patches": len(points), "months": len(months), "failures": failures, "records": expected_records, "input_fingerprint": fingerprint}
+        (temporary / "shard_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(output)
+        return report
+    finally:
+        lock_path.rmdir()
 
 
 def main() -> None:
