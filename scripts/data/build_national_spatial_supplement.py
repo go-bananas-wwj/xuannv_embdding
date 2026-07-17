@@ -13,7 +13,7 @@ import argparse
 import importlib.util
 import json
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -72,13 +72,15 @@ def build_supplement(
             groups[str(macro["grid_id"])].append(macro)
     allocations = _allocate(need, groups)
     selected: list[dict[str, Any]] = []
+    selected_macros: set[str] = set()
+    selected_by_group: Counter[str] = Counter()
     for group, quota in sorted(allocations.items()):
         candidates = sorted(
             groups[group],
             key=lambda macro: PREVIEW._unit_hash(seed, f"spatial-supplement:{macro['macro_id']}"),
         )
         for macro in candidates:
-            if sum(point["grid_id"] == group for point in selected) >= quota:
+            if selected_by_group[group] >= quota:
                 break
             # Reuse the boundary-safe deterministic candidate order from the base sampler.
             point = PREVIEW.select_static_preview(
@@ -90,9 +92,32 @@ def build_supplement(
             record["status"] = "provisional_spatial_stratified_supplement_not_quality_eligible"
             record["sampling_tier"] = "spatial_stratified_supplement"
             selected.append(record)
+            selected_macros.add(str(macro["macro_id"]))
+            selected_by_group[group] += 1
+    # Sliver/coastal macrocells can intersect the boundary while containing no
+    # complete patch center. Fill their quota from valid candidates elsewhere.
+    if len(selected) < need:
+        fallback = sorted(
+            (macro for records in groups.values() for macro in records if str(macro["macro_id"]) not in selected_macros),
+            key=lambda macro: PREVIEW._unit_hash(seed, f"spatial-supplement-fallback:{macro['macro_id']}"),
+        )
+        for macro in fallback:
+            if len(selected) == need:
+                break
+            point = PREVIEW.select_static_preview(
+                [{**macro, "estimated_patch_count": 100.0}], country_geometry, seed
+            )
+            if not point:
+                continue
+            record = point[0]
+            record["status"] = "provisional_spatial_stratified_supplement_not_quality_eligible"
+            record["sampling_tier"] = "spatial_stratified_supplement_fallback"
+            selected.append(record)
+            selected_macros.add(str(macro["macro_id"]))
+            selected_by_group[str(macro["grid_id"])] += 1
     if len(selected) != need:
         raise RuntimeError(f"selected {len(selected)} supplements, expected {need}")
-    return selected, allocations
+    return selected, dict(sorted(selected_by_group.items()))
 
 
 def render_map(country_path: Path, adm1_path: Path, base: list[dict[str, Any]], supplement: list[dict[str, Any]], output: Path) -> None:
