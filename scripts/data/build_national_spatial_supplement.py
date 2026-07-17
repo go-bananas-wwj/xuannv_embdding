@@ -38,12 +38,18 @@ def _allocate(total: int, groups: dict[str, list[dict[str, Any]]]) -> dict[str, 
     raw = {name: total * weight / denominator for name, weight in weights.items()}
     allocated = {name: min(len(groups[name]), int(math.floor(value))) for name, value in raw.items()}
     residual = total - sum(allocated.values())
-    for name in sorted(weights, key=lambda item: (raw[item] - allocated[item], item), reverse=True):
-        if residual == 0:
+    ranked = sorted(weights, key=lambda item: (raw[item] - allocated[item], item), reverse=True)
+    while residual:
+        changed = False
+        for name in ranked:
+            if residual == 0:
+                break
+            if allocated[name] < len(groups[name]):
+                allocated[name] += 1
+                residual -= 1
+                changed = True
+        if not changed:
             break
-        if allocated[name] < len(groups[name]):
-            allocated[name] += 1
-            residual -= 1
     if residual:
         raise ValueError("not enough unselected macrocells to reach requested target")
     return allocated

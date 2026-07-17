@@ -27,3 +27,9 @@ def test_spatial_supplement_reaches_target_without_reusing_base_macro() -> None:
     assert len(supplement) == 2
     assert allocation == {"utm50n": 2}
     assert {item["macro_id"] for item in supplement}.isdisjoint({"utm50n_c0_r0"})
+
+
+def test_allocate_distributes_more_than_one_residual_round() -> None:
+    groups = {"a": [{}, {}, {}, {}], "b": [{}, {}, {}, {}]}
+    allocation = MODULE._allocate(5, groups)
+    assert sum(allocation.values()) == 5
