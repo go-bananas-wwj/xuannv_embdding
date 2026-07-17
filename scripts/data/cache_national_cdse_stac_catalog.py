@@ -28,7 +28,7 @@ SOURCE_CONFIG: dict[str, dict[str, Any]] = {
         "asset_map": {
             "B02": "B02_10m", "B03": "B03_10m", "B04": "B04_10m",
             "B05": "B05_20m", "B06": "B06_20m", "B07": "B07_20m",
-            "B08": "B08_10m", "B8A": "B8A_20m", "B09": "B09_20m",
+            "B08": "B08_10m", "B8A": "B8A_20m", "B09": "B09_60m",
             "B11": "B11_20m", "B12": "B12_20m", "SCL": "SCL_20m",
         },
         "query": {"eo:cloud_cover": {"lt": 90}},
@@ -107,6 +107,17 @@ def cache_month(session: requests.Session, source: str, month: str, bbox: list[f
     payload = {
         "collections": [config["collection"]], "bbox": bbox, "datetime": _interval(month),
         "query": config["query"], "limit": limit,
+        # CDSE caps the heavy Sentinel-2 collection at 200 items unless a
+        # projection is used.  Requesting only the geometry, date/cloud
+        # metadata and bands consumed by the materializer keeps every page
+        # compact and makes the pagination limit explicit.
+        "fields": {"include": [
+            "id", "bbox", "geometry", "properties.datetime", "properties.start_datetime",
+            "properties.end_datetime", "properties.eo:cloud_cover", "properties.proj:code",
+            "properties.proj:epsg", "properties.sat:orbit_state",
+            "properties.s1:instrument_configuration_ID",
+            *[f"assets.{name}" for name in config["asset_map"].values()],
+        ]},
     }
     query_hash = _sha256({"catalog": CATALOG_URL, **payload, "asset_map": config["asset_map"]})
     status_path, items_path = output_dir / "status.json", output_dir / "items.jsonl"
@@ -146,10 +157,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", choices=sorted(SOURCE_CONFIG), required=True)
     parser.add_argument("--country", type=Path, required=True)
+    parser.add_argument("--bbox", nargs=4, type=float, metavar=("WEST", "SOUTH", "EAST", "NORTH"), help="Optional small-area smoke-test extent in EPSG:4326.")
     parser.add_argument("--output-root", type=Path, required=True)
-    parser.add_argument("--limit", type=int, default=500)
+    parser.add_argument("--limit", type=int, default=200)
     parser.add_argument("--months", nargs="+", default=None)
     args = parser.parse_args()
+    if args.limit <= 0 or args.limit > 200:
+        raise ValueError("CDSE STAC page limit must be in 1..200")
     country = gpd.read_file(args.country).to_crs("EPSG:4326")
     months = args.months or _months()
     invalid = sorted(set(months) - set(_months()))
@@ -157,7 +171,10 @@ def main() -> None:
         raise ValueError(f"unsupported months outside the frozen archive: {invalid}")
     session = requests.Session()
     session.trust_env = False
-    results = [cache_month(session, args.source, month, [float(x) for x in country.total_bounds], args.output_root, args.limit) for month in months]
+    bbox = list(args.bbox) if args.bbox else [float(x) for x in country.total_bounds]
+    if bbox[0] >= bbox[2] or bbox[1] >= bbox[3]:
+        raise ValueError("bbox must be west < east and south < north")
+    results = [cache_month(session, args.source, month, bbox, args.output_root, args.limit) for month in months]
     print(json.dumps({"source": args.source, "months": len(results), "items": sum(row["item_count"] for row in results), "results": results}, ensure_ascii=False, indent=2))
 
 
