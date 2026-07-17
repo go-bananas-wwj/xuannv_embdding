@@ -33,8 +33,11 @@ os.environ.setdefault("GDAL_HTTP_TIMEOUT", "30")
 os.environ.setdefault("GDAL_HTTP_MULTIPLEX", "YES")
 os.environ.setdefault("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
 os.environ.setdefault("CPL_VSIL_CURL_USE_HEAD", "NO")
-os.environ.setdefault("GDAL_HTTP_MULTIRANGE", "YES")
-os.environ.setdefault("GDAL_HTTP_MERGE_CONSECUTIVE_RANGES", "YES")
+# Azure Blob occasionally returns a valid 206 response that GDAL's multi-range
+# combiner misparses on this cross-border route.  Single range reads were
+# verified against real Sentinel-2 COG windows and complete reliably.
+os.environ.setdefault("GDAL_HTTP_MULTIRANGE", "NO")
+os.environ.setdefault("GDAL_HTTP_MERGE_CONSECUTIVE_RANGES", "NO")
 os.environ.setdefault("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ".tif,.tiff,.TIF,.jp2")
 
 import numpy as np
