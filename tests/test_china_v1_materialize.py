@@ -131,3 +131,25 @@ def test_asset_reader_cache_opens_each_href_once(monkeypatch) -> None:
     assert cache.get("a") is cache.get("a")
     assert opened == ["a"]
     cache.close()
+
+
+def test_scene_centric_reads_each_asset_once_for_multiple_patches(monkeypatch) -> None:
+    item = {"id": "same-scene", "assets": {"vv": {"href": "vv"}, "vh": {"href": "vh"}}}
+    calls = []
+    def fake_select(_catalog, _patch, _source, candidate_limit):
+        assert candidate_limit == 0
+        return [item]
+    def fake_read(href, patch_pairs, _categorical):
+        calls.append((href, [index for index, _ in patch_pairs]))
+        value = 1.0 if href == "vv" else 2.0
+        return ({index: np.full((128, 128), value, dtype=np.float32) for index, _ in patch_pairs}, {})
+    monkeypatch.setattr(MODULE, "_select_items", fake_select)
+    monkeypatch.setattr(MODULE, "_read_asset_for_patches", fake_read)
+    points = [MODULE.Patch("p0", 32643, (0, 0, 1, 1), (0, 0, 1, 1)), MODULE.Patch("p1", 32643, (1, 0, 2, 1), (1, 0, 2, 1))]
+    images, masks, records = MODULE._scene_centric_source_month(
+        source="s1", catalog=object(), points=points, max_clean_scenes=0,
+    )
+    assert calls == [("vv", [0, 1]), ("vh", [0, 1])]
+    assert all(mask.all() for mask in masks)
+    assert all(record["selected_items"] == ["same-scene"] for record in records)
+    assert all(np.all(image[0] == 1.0) and np.all(image[1] == 2.0) for image in images)

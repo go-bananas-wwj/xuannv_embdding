@@ -350,6 +350,167 @@ def _load_available_scenes(
     return accepted, scenes, rejected
 
 
+def _read_asset_for_patches(
+    href: str,
+    patches: list[tuple[int, Patch]],
+    categorical: bool,
+) -> tuple[dict[int, np.ndarray], dict[int, str]]:
+    """Open one COG once and crop it for every spatially nearby patch.
+
+    Scene-centric materialization is deliberately sequential inside a COG. It
+    avoids sharing GDAL readers across threads and eliminates repeated remote
+    opens of the same asset for neighbouring patches.
+    """
+    values: dict[int, np.ndarray] = {}
+    errors: dict[int, str] = {}
+    try:
+        with rasterio.open(planetary_computer.sign(href)) as src:
+            for patch_index, patch in patches:
+                try:
+                    values[patch_index] = _reproject_open_asset(src, href, patch, categorical)
+                except Exception as exc:
+                    errors[patch_index] = f"{type(exc).__name__}: {exc}"
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        errors = {patch_index: error for patch_index, _ in patches}
+    return values, errors
+
+
+def _scale_landsat(scene: np.ndarray) -> None:
+    reflectance = scene[:-1]
+    usable = np.isfinite(reflectance) & (reflectance != 0)
+    reflectance[usable] = reflectance[usable] * 0.0000275 - 0.2
+
+
+def _scene_centric_source_month(
+    *,
+    source: str,
+    catalog: CatalogIndex,
+    points: list[Patch],
+    max_clean_scenes: int,
+) -> tuple[list[np.ndarray], list[np.ndarray], list[dict[str, Any]]]:
+    """Composite one source/month while opening each remote asset once.
+
+    The spatial shards are ordered, so a STAC item usually serves many points.
+    We first read only its QA/SCL (or S1 VV) over those points.  Full bands are
+    opened only when at least one point passes the local quality threshold.
+    Running sums retain every accepted clear scene without materializing an
+    enormous scene-by-patch intermediate tensor.
+    """
+    config = SOURCES[source]
+    assets = list(config["assets"])
+    quality_asset = str(config["quality_asset"])
+    quality_index = assets.index(quality_asset)
+    band_count = len(assets)
+    sums = np.zeros((len(points), band_count, CHIP_PIXELS, CHIP_PIXELS), dtype=np.float32)
+    counts = np.zeros((len(points), CHIP_PIXELS, CHIP_PIXELS), dtype=np.uint16)
+    first_quality = np.full((len(points), CHIP_PIXELS, CHIP_PIXELS), np.nan, dtype=np.float32)
+    states: list[dict[str, Any]] = [
+        {"selected_items": [], "rejected_items": [], "candidate_count": 0, "scene_valid_fractions": []}
+        for _ in points
+    ]
+    item_patches: dict[str, tuple[dict[str, Any], list[int]]] = {}
+    for patch_index, patch in enumerate(points):
+        candidates = _select_items(catalog, patch, source, candidate_limit=0)
+        states[patch_index]["candidate_count"] = len(candidates)
+        for item in candidates:
+            item_id = str(item["id"])
+            if item_id not in item_patches:
+                item_patches[item_id] = (item, [])
+            item_patches[item_id][1].append(patch_index)
+
+    accepted_by_item: dict[str, list[tuple[int, np.ndarray, float]]] = {}
+    min_clear_fraction = float(config["min_clear_fraction"])
+    for item_id, (item, patch_indexes) in item_patches.items():
+        patch_pairs = [(index, points[index]) for index in patch_indexes]
+        quality_values, quality_errors = _read_asset_for_patches(
+            item["assets"][quality_asset]["href"], patch_pairs, quality_asset in config["categorical"],
+        )
+        accepted: list[tuple[int, np.ndarray, float]] = []
+        for patch_index in patch_indexes:
+            if patch_index in quality_errors:
+                states[patch_index]["rejected_items"].append({"item_id": item_id, "error": quality_errors[patch_index]})
+                continue
+            quality = quality_values[patch_index]
+            clear_fraction = float(_quality_mask(source, quality).mean())
+            if clear_fraction < min_clear_fraction:
+                states[patch_index]["rejected_items"].append({
+                    "item_id": item_id, "reason": "quality_rejected", "clear_fraction": round(clear_fraction, 6),
+                })
+                continue
+            accepted.append((patch_index, quality, clear_fraction))
+        if accepted:
+            accepted_by_item[item_id] = accepted
+
+    for item_id, accepted in accepted_by_item.items():
+        item = item_patches[item_id][0]
+        # A user-requested zero means all local-clear scenes.  The cap is only
+        # applied after QA screening and therefore never admits cloudy scenes.
+        active = accepted if max_clean_scenes == 0 else accepted[:max_clean_scenes]
+        patch_pairs = [(patch_index, points[patch_index]) for patch_index, _, _ in active]
+        scenes = {
+            patch_index: np.full((band_count, CHIP_PIXELS, CHIP_PIXELS), np.nan, dtype=np.float32)
+            for patch_index, _, _ in active
+        }
+        for patch_index, quality, _ in active:
+            scenes[patch_index][quality_index] = quality
+        failed: set[int] = set()
+        for asset_index, asset in enumerate(assets):
+            if asset == quality_asset:
+                continue
+            values, errors = _read_asset_for_patches(
+                item["assets"][asset]["href"], patch_pairs, asset in config["categorical"],
+            )
+            failed.update(errors)
+            for patch_index, value in values.items():
+                scenes[patch_index][asset_index] = value
+        for patch_index, _quality, clear_fraction in active:
+            if patch_index in failed:
+                states[patch_index]["rejected_items"].append({"item_id": item_id, "error": "full_asset_read_failed"})
+                continue
+            scene = scenes[patch_index]
+            if source == "landsat":
+                _scale_landsat(scene)
+            valid = _scene_valid_mask(source, scene)
+            if not valid.any():
+                states[patch_index]["rejected_items"].append({"item_id": item_id, "reason": "no_valid_pixels"})
+                continue
+            before = counts[patch_index] == 0
+            sums[patch_index] += np.where(valid[None, :, :], scene, 0.0)
+            counts[patch_index] += valid.astype(np.uint16)
+            first_quality[patch_index][before & valid] = scene[quality_index][before & valid]
+            states[patch_index]["selected_items"].append(item_id)
+            states[patch_index]["scene_valid_fractions"].append(round(clear_fraction, 6))
+
+    images: list[np.ndarray] = []
+    masks: list[np.ndarray] = []
+    records: list[dict[str, Any]] = []
+    for patch_index, patch in enumerate(points):
+        valid = counts[patch_index] > 0
+        image = np.full((band_count, CHIP_PIXELS, CHIP_PIXELS), np.nan, dtype=np.float32)
+        if valid.any():
+            denominator = np.where(valid, counts[patch_index], 1).astype(np.float32)
+            image = sums[patch_index] / denominator[None, :, :]
+            image[:, ~valid] = np.nan
+            image[quality_index] = first_quality[patch_index]
+        state = states[patch_index]
+        has_transport_error = any("error" in rejected for rejected in state["rejected_items"])
+        status = (
+            "retryable_error" if has_transport_error else
+            ("ok" if valid.any() else ("no_valid_pixels" if state["candidate_count"] else "no_candidate"))
+        )
+        records.append({
+            "patch_id": patch.patch_id, "source": source, "selected_items": state["selected_items"],
+            "candidate_count": state["candidate_count"], "valid_fraction": round(float(valid.mean()), 6),
+            "scene_valid_fractions": state["scene_valid_fractions"],
+            "status": status,
+            **({"rejected_items": state["rejected_items"]} if state["rejected_items"] else {}),
+        })
+        images.append(image)
+        masks.append(valid.astype(np.uint8))
+    return images, masks, records
+
+
 def _create_arrays(group: zarr.Group, source: str, patch_count: int, months: list[str]) -> tuple[Any, Any]:
     band_count = len(SOURCES[source]["assets"])
     image = group.create_dataset(
@@ -366,10 +527,11 @@ def _create_arrays(group: zarr.Group, source: str, patch_count: int, months: lis
     return image, mask
 
 
-def _fingerprint(points: list[Patch], months: list[str], max_clean_scenes: int) -> str:
+def _fingerprint(points: list[Patch], months: list[str], max_clean_scenes: int, strategy: str) -> str:
     payload = {
         "patch_ids": [patch.patch_id for patch in points], "months": months,
         "max_clean_scenes": max_clean_scenes,
+        "strategy": strategy,
         "quality_thresholds": {source: SOURCES[source]["min_clear_fraction"] for source in SOURCES},
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
@@ -382,6 +544,15 @@ def _record_key(record: dict[str, Any]) -> tuple[str, str, str]:
 def _append_record(path: Path, record: dict[str, Any]) -> None:
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _append_records(path: Path, batch: list[dict[str, Any]]) -> None:
+    """Checkpoint one source/month together instead of fsyncing every patch."""
+    with path.open("a", encoding="utf-8") as handle:
+        for record in batch:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
         handle.flush()
         os.fsync(handle.fileno())
 
@@ -417,7 +588,7 @@ def materialize(
         lock_path.mkdir()
     except FileExistsError as exc:
         raise RuntimeError(f"shard is already owned by another worker: {lock_path}") from exc
-    fingerprint = _fingerprint(points, months, max_clean_scenes)
+    fingerprint = _fingerprint(points, months, max_clean_scenes, "patch")
     try:
         creating = not temporary.exists()
         group = zarr.open_group(str(temporary), mode="w" if creating else "a")
@@ -495,6 +666,96 @@ def materialize(
         lock_path.rmdir()
 
 
+def materialize_scene_centric(
+    points: list[Patch],
+    catalog_root: Path,
+    output: Path,
+    months: list[str],
+    max_clean_scenes: int,
+    catalogs: dict[tuple[str, str], CatalogIndex] | None = None,
+) -> dict[str, Any]:
+    """Restartable scene-first materialization for spatially ordered shards."""
+    if output.exists():
+        raise FileExistsError(f"refusing to overwrite completed shard: {output}")
+    temporary = output.with_name(output.name + ".partial")
+    temporary.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = temporary.with_name(temporary.name + ".lock")
+    try:
+        lock_path.mkdir()
+    except FileExistsError as exc:
+        raise RuntimeError(f"shard is already owned by another worker: {lock_path}") from exc
+    fingerprint = _fingerprint(points, months, max_clean_scenes, "scene")
+    try:
+        creating = not temporary.exists()
+        group = zarr.open_group(str(temporary), mode="w" if creating else "a")
+        if creating:
+            group.attrs.update({
+                "schema_version": "china_v1_zarr_shard_v3_scene", "created_at": datetime.now(timezone.utc).isoformat(),
+                "patch_ids": [patch.patch_id for patch in points], "months": months, "chip_pixels": CHIP_PIXELS,
+                "chip_side_meters": CHIP_SIDE_METERS, "input_fingerprint": fingerprint,
+                "strategy": "scene", "max_clean_scenes": max_clean_scenes,
+                "quality_thresholds": {source: SOURCES[source]["min_clear_fraction"] for source in SOURCES},
+            })
+        elif group.attrs.get("input_fingerprint") != fingerprint:
+            raise ValueError("partial shard fingerprint differs from requested inputs")
+        catalogs = catalogs or load_catalogs(catalog_root, months)
+        arrays = {
+            source: (group[source]["image"], group[source]["valid_mask"])
+            if source in group else _create_arrays(group.create_group(source), source, len(points), months)
+            for source in SOURCES
+        }
+        done = group["done"] if "done" in group else group.create_dataset(
+            "done", shape=(len(points), len(months), len(SOURCES)),
+            chunks=(min(8, len(points)), 1, len(SOURCES)), dtype="u1", fill_value=0,
+        )
+        quality_path = temporary / "quality.jsonl"
+        records = _load_records(quality_path)
+        failures = 0
+        for month_index, month in enumerate(months):
+            for source_index, source in enumerate(SOURCES):
+                if np.all(done[:, month_index, source_index]):
+                    continue
+                LOGGER.info("scene-first %s %s: grouping %s patches by COG", source, month, len(points))
+                images, masks, source_records = _scene_centric_source_month(
+                    source=source, catalog=catalogs[(source, month)], points=points,
+                    max_clean_scenes=max_clean_scenes,
+                )
+                batch: list[dict[str, Any]] = []
+                retryable = False
+                for patch_index, record in enumerate(source_records):
+                    record["month"] = month
+                    arrays[source][0][patch_index, month_index] = images[patch_index]
+                    arrays[source][1][patch_index, month_index] = masks[patch_index]
+                    records[_record_key(record)] = record
+                    batch.append(record)
+                    retryable |= record["status"] == "retryable_error"
+                _append_records(quality_path, batch)
+                if retryable:
+                    failures += sum(record["status"] == "retryable_error" for record in source_records)
+                    raise RuntimeError(f"{source} {month} has retryable COG read errors")
+                done[:, month_index, source_index] = 1
+        if np.count_nonzero(done[:]) != done.size:
+            raise RuntimeError("shard has retryable errors; retain partial output for a later resume")
+        expected_records = len(points) * len(months) * len(SOURCES)
+        if len(records) != expected_records:
+            raise RuntimeError(f"quality record check failed: {len(records)} != {expected_records}")
+        zarr.consolidate_metadata(str(temporary))
+        reopened = zarr.open_consolidated(str(temporary), mode="r")
+        for source in SOURCES:
+            expected = (len(points), len(months), len(SOURCES[source]["assets"]), CHIP_PIXELS, CHIP_PIXELS)
+            if reopened[source]["image"].shape != expected:
+                raise ValueError(f"Zarr shape check failed for {source}: {reopened[source]['image'].shape} != {expected}")
+        report = {
+            "output": str(output), "patches": len(points), "months": len(months), "failures": failures,
+            "records": expected_records, "input_fingerprint": fingerprint, "strategy": "scene",
+        }
+        (temporary / "shard_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(output)
+        return report
+    finally:
+        lock_path.rmdir()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--points", type=Path, required=True, help="Candidate point JSONL; first --limit are materialized.")
@@ -503,6 +764,7 @@ def main() -> None:
     parser.add_argument("--months", nargs="+", required=True)
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--max-clean-scenes", type=int, default=0, help="Maximum locally clean scenes per source/month; 0 keeps all of them.")
+    parser.add_argument("--strategy", choices=("scene", "patch"), default="scene", help="Scene-first reuses each COG across neighbouring patches.")
     parser.add_argument("--asset-workers", type=int, default=2, help="Concurrent COG assets per process; bound the global total across workers.")
     parser.add_argument("--asset-cache-size", type=int, default=256)
     args = parser.parse_args()
@@ -517,7 +779,10 @@ def main() -> None:
     started = time.monotonic()
     cache = AssetReaderCache(args.asset_cache_size)
     try:
-        report = materialize(points, args.catalog_root, args.output, args.months, args.max_clean_scenes, asset_workers=args.asset_workers, reader_cache=cache)
+        if args.strategy == "scene":
+            report = materialize_scene_centric(points, args.catalog_root, args.output, args.months, args.max_clean_scenes)
+        else:
+            report = materialize(points, args.catalog_root, args.output, args.months, args.max_clean_scenes, asset_workers=args.asset_workers, reader_cache=cache)
     finally:
         cache.close()
     report["elapsed_seconds"] = round(time.monotonic() - started, 3)

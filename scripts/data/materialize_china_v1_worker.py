@@ -9,7 +9,7 @@ import logging
 import time
 from pathlib import Path
 
-from materialize_china_v1_shard import AssetReaderCache, _patch_from_record, _read_jsonl, load_catalogs, materialize
+from materialize_china_v1_shard import AssetReaderCache, _patch_from_record, _read_jsonl, load_catalogs, materialize, materialize_scene_centric
 
 
 def main() -> None:
@@ -22,6 +22,7 @@ def main() -> None:
     parser.add_argument("--worker-index", type=int, required=True)
     parser.add_argument("--worker-count", type=int, required=True)
     parser.add_argument("--max-clean-scenes", type=int, default=0, help="0 keeps all locally clean scenes.")
+    parser.add_argument("--strategy", choices=("scene", "patch"), default="scene")
     parser.add_argument("--asset-workers", type=int, default=2)
     parser.add_argument("--asset-cache-size", type=int, default=256)
     parser.add_argument("--passes", type=int, default=3)
@@ -30,7 +31,11 @@ def main() -> None:
         raise ValueError("invalid worker assignment or pass count")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     jobs = sorted(args.points_dir.glob(f"{args.prefix}_[0-9][0-9][0-9].jsonl"))
-    assigned = [job for index, job in enumerate(jobs) if index % args.worker_count == args.worker_index]
+    # Spatially ordered neighbours stay with one worker, allowing its COG
+    # reader cache to carry naturally into the next shard.
+    per_worker = (len(jobs) + args.worker_count - 1) // args.worker_count
+    start = args.worker_index * per_worker
+    assigned = jobs[start:start + per_worker]
     if not assigned:
         raise ValueError("worker received no jobs")
     catalogs = load_catalogs(args.catalog_root, args.months)
@@ -47,7 +52,10 @@ def main() -> None:
                     continue
                 points = [_patch_from_record(record) for record in _read_jsonl(job)]
                 try:
-                    report = materialize(points, args.catalog_root, output, args.months, args.max_clean_scenes, catalogs, args.asset_workers, cache)
+                    if args.strategy == "scene":
+                        report = materialize_scene_centric(points, args.catalog_root, output, args.months, args.max_clean_scenes, catalogs)
+                    else:
+                        report = materialize(points, args.catalog_root, output, args.months, args.max_clean_scenes, catalogs, args.asset_workers, cache)
                 except Exception as exc:
                     logging.exception("pass %s failed: %s", pass_number, job.name)
                     retry.append(job)
