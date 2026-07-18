@@ -67,15 +67,25 @@ run_one() {
   local config="$CONFIG_ROOT/$name.yaml"
   local output="$OUTPUT_ROOT/$name"
   local log="$LOG_ROOT/$name.log"
+  local resume_checkpoint=""
+  local -a resume_args=()
 
   if [[ -f "$output/epoch_800.pt" ]]; then
     printf '%s\tskip_complete\t%s\tlane=%s\n' "$(date -Iseconds)" "$name" "$lane" >> "$STATUS_FILE"
     return 0
   fi
   if [[ -d "$output" ]] && find "$output" -mindepth 1 -print -quit | grep -q .; then
-    printf '%s\trefuse_partial\t%s\tlane=%s\toutput=%s\n' \
-      "$(date -Iseconds)" "$name" "$lane" "$output" >> "$STATUS_FILE"
-    return 3
+    resume_checkpoint=$(find "$output" -maxdepth 1 -type f -name 'epoch_*.pt' -printf '%f\n' \
+      | sort -V | tail -1)
+    if [[ -z "$resume_checkpoint" ]]; then
+      printf '%s\trefuse_partial_without_epoch_checkpoint\t%s\tlane=%s\toutput=%s\n' \
+        "$(date -Iseconds)" "$name" "$lane" "$output" >> "$STATUS_FILE"
+      return 3
+    fi
+    resume_checkpoint="$output/$resume_checkpoint"
+    resume_args=(--resume "$resume_checkpoint")
+    printf '%s\tresume\t%s\tlane=%s\tcheckpoint=%s\n' \
+      "$(date -Iseconds)" "$name" "$lane" "$resume_checkpoint" >> "$STATUS_FILE"
   fi
 
   printf '%s\tstart\t%s\tlane=%s\tdevices=%s\tconfig_sha256=%s\n' \
@@ -84,7 +94,7 @@ run_one() {
 
   ASCEND_RT_VISIBLE_DEVICES="$devices" HCCL_IF_BASE_PORT="$port" \
     torchrun --standalone --master_port "$port" --nproc_per_node=2 \
-      scripts/train/train.py --config "$config" > "$log" 2>&1
+      scripts/train/train.py --config "$config" "${resume_args[@]}" >> "$log" 2>&1
   local status=$?
 
   if (( status == 0 )) && [[ ! -f "$output/epoch_800.pt" ]]; then

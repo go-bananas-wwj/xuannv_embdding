@@ -1,0 +1,126 @@
+# 容器重启前后台任务恢复手册（2026-07-18）
+
+## 1. 暂停状态
+
+暂停时间：2026-07-18 10:32 UTC。
+
+- 论文底座训练已停止，NPU 0-5 已释放。
+- 全国 China V1 数据获取的 3 个 worker 已停止，心跳不再更新。
+- 已完成 checkpoint、训练日志、Zarr partial、质量记录和 STAC 目录均保留。
+- 汇报网站的 8001/8002 服务与本次恢复无关，容器重启后可按需另行启动。
+
+## 2. 论文训练恢复
+
+### 2.1 当前进度
+
+- 队列总数：40。
+- 完整完成：12，均有 `epoch_800.pt`。
+- 队列状态文件：`/data/xuannv_embedding/logs/paper_registered_20260716/status.tsv`。
+- 输出根目录：`/data/xuannv_embedding/outputs/paper_registered_20260716/`。
+- 日志根目录：`/data/xuannv_embedding/logs/paper_registered_20260716/`。
+
+中断任务及可恢复点：
+
+| 任务 | 停止前最后完成 Epoch | 恢复 checkpoint |
+|---|---:|---|
+| `paper_registered_no_highres_path_150_fold2_20260716` | 388 | `epoch_200.pt` |
+| `paper_registered_no_highres_path_150_fold3_20260716` | 480 | `epoch_400.pt` |
+| `paper_registered_no_highres_path_150_fold4_20260716` | 383 | `epoch_200.pt` |
+
+调度器会跳过已有 `epoch_800.pt` 的 12 组任务，并自动从每个非空输出目录中编号最大的 `epoch_*.pt` 恢复 optimizer、scheduler 和 epoch。中断后尚未到下一个保存点的轮次会重新计算，这是预期行为。
+
+### 2.2 恢复命令
+
+```bash
+cd /root/workspace/xuannv
+git pull --rebase
+tmux new-session -d -s paper_registered_20260716 \
+  'cd /root/workspace/xuannv && bash scripts/experiments/run_registered_paper_queue.sh'
+```
+
+恢复后检查：
+
+```bash
+tail -30 /data/xuannv_embedding/logs/paper_registered_20260716/status.tsv
+npu-smi info
+```
+
+状态文件应出现三条 `resume` 记录，并分别指向上表 checkpoint。禁止手工删除已完成目录或把 `best.pt` 当作续训 checkpoint。
+
+## 3. China V1 数据获取恢复
+
+### 3.1 当前进度与问题
+
+- 数据根目录：`/data2/xuannv_embedding/china_v1/`。
+- 当前占用约 7 GB；`/data2` 尚余约 3.2 TB。
+- 正式流水线：60,500 个采样点，13 个月（2025-04 至 2026-04）。
+- 正式输出目录中已有 13 个 partial shard，尚无通过完整校验的正式 shard。
+- 已写入约 1,000 条 patch 质量记录；另外 6 个完整 `shard_report.json` 属于 smoke/pilot，不计入正式进度。
+- 主要阻塞是远端 COG 的 403/206、过期签名与 TIFF tile 短读。partial 和 `done` 矩阵会保留已成功读取的内容，watchdog 重启时重新签名并继续。
+
+暂停时三个活动 partial 为：
+
+- worker 0：`china_v1_full_006.zarr.partial`
+- worker 1：`china_v1_full_215.zarr.partial`
+- worker 2：`china_v1_full_410.zarr.partial`
+
+### 3.2 恢复前清理失效锁
+
+只删除以下三个 `.lock` 目录；不要删除 `.zarr.partial`：
+
+```bash
+rm -rf \
+  /data2/xuannv_embedding/china_v1/shards/full_pc_20260717/china_v1_full_006.zarr.partial.lock \
+  /data2/xuannv_embedding/china_v1/shards/full_pc_20260717/china_v1_full_215.zarr.partial.lock \
+  /data2/xuannv_embedding/china_v1/shards/full_pc_20260717/china_v1_full_410.zarr.partial.lock
+```
+
+### 3.3 启动三个 watchdog
+
+在 `/root/workspace/xuannv` 执行：
+
+```bash
+cd /root/workspace/xuannv
+mkdir -p /data2/xuannv_embedding/china_v1/watchdog/full_pc_20260717
+
+for worker in 0 1 2; do
+  tmux new-session -d -s "china_v1_worker_${worker}" \
+    "cd /root/workspace/xuannv && \
+     bash scripts/data/run_china_v1_direct.sh \
+     python scripts/data/run_china_v1_watchdog.py \
+       --heartbeat /data2/xuannv_embedding/china_v1/watchdog/full_pc_20260717/worker_${worker}.heartbeat.json \
+       --log /data2/xuannv_embedding/china_v1/logs/full_pc_20260717/worker_${worker}.log \
+       --state /data2/xuannv_embedding/china_v1/watchdog/full_pc_20260717/worker_${worker}.state.json \
+       --stall-seconds 180 --restart-delay 15 --max-restarts 100 -- \
+       python scripts/data/materialize_china_v1_worker.py \
+         --points-dir /data2/xuannv_embedding/china_v1/atlas/full_60500_spatial \
+         --prefix china_v1_full \
+         --catalog-root /data2/xuannv_embedding/china_v1/stac_catalogs \
+         --output-root /data2/xuannv_embedding/china_v1/shards/full_pc_20260717 \
+         --months 2025-04 2025-05 2025-06 2025-07 2025-08 2025-09 2025-10 2025-11 2025-12 2026-01 2026-02 2026-03 2026-04 \
+         --worker-index ${worker} --worker-count 3 \
+         --max-clean-scenes 0 --strategy scene \
+         --asset-workers 1 --asset-cache-size 128 --passes 3"
+done
+```
+
+### 3.4 恢复后检查
+
+```bash
+tmux ls
+for f in /data2/xuannv_embedding/china_v1/watchdog/full_pc_20260717/*.heartbeat.json; do
+  stat -c '%y %n' "$f"
+  cat "$f"
+done
+tail -30 /data2/xuannv_embedding/china_v1/logs/full_pc_20260717/worker_0.log
+```
+
+三个 heartbeat 应每隔数秒到数分钟继续更新。若持续出现 403，先看对应 `worker_*.state.json` 是否在重启并刷新签名，不要删除 partial 重下。
+
+## 4. 重启后验收清单
+
+1. `npu-smi info` 中 NPU 0-5 出现三组双卡训练进程。
+2. 训练 `status.tsv` 出现 12 条 `skip_complete` 和 3 条 `resume`。
+3. 三个 China V1 tmux 会话存在，三个 heartbeat 持续更新。
+4. `/data2` 可用空间保持在 3 TB 以上。
+5. 不存在新的 OOM、NaN、Zarr fingerprint mismatch 或锁占用异常。
