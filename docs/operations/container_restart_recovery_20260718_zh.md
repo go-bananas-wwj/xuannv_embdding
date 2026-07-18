@@ -29,6 +29,8 @@
 
 调度器会跳过已有 `epoch_800.pt` 的 12 组任务，并自动从每个非空输出目录中编号最大的 `epoch_*.pt` 恢复 optimizer、scheduler 和 epoch。中断后尚未到下一个保存点的轮次会重新计算，这是预期行为。
 
+调度器默认还会对 Ascend/HCCL 瞬时超时进行最多 3 次自动重试，每次等待 60 秒并重新读取最新编号 checkpoint。可通过 `MAX_JOB_RETRIES` 和 `RETRY_DELAY_SECONDS` 环境变量调整，但正式运行应在状态文件中保留实际值与重试记录。
+
 ### 2.2 恢复命令
 
 ```bash
@@ -116,6 +118,8 @@ tail -30 /data2/xuannv_embedding/china_v1/logs/full_pc_20260717/worker_0.log
 ```
 
 三个 heartbeat 应每隔数秒到数分钟继续更新。若持续出现 403，先看对应 `worker_*.state.json` 是否在重启并刷新签名，不要删除 partial 重下。
+
+`materialize_china_v1_worker.py` 已安装 SIGTERM 处理器。watchdog 因心跳超时终止子进程时，Python 会先展开 shard materializer 的 `finally` 并释放当前 `.lock`，从而允许下一个子进程继续同一个 partial。若使用本修复前的进程产生了 stale lock，必须先停止全部 China V1 worker，确认 heartbeat 不再更新，再仅删除 `.zarr.partial.lock` 空目录；不得在 worker 活跃时批量清锁。
 
 ## 4. 重启后验收清单
 

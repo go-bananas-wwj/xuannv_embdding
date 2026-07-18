@@ -7,6 +7,8 @@ OUTPUT_ROOT=/data/xuannv_embedding/outputs/paper_registered_20260716
 LOG_ROOT=/data/xuannv_embedding/logs/paper_registered_20260716
 STATUS_FILE="$LOG_ROOT/status.tsv"
 EXPECTED_CONFIGS=40
+MAX_JOB_RETRIES=${MAX_JOB_RETRIES:-3}
+RETRY_DELAY_SECONDS=${RETRY_DELAY_SECONDS:-60}
 
 mkdir -p "$OUTPUT_ROOT" "$LOG_ROOT"
 cd "$ROOT"
@@ -113,15 +115,30 @@ run_lane() {
   local port=$3
   shift 3
   local name
+  local attempt
+  local status
 
   printf '%s\tlane_start\tlane=%s\tdevices=%s\tjobs=%d\n' \
     "$(date -Iseconds)" "$lane" "$devices" "$#" >> "$STATUS_FILE"
   for name in "$@"; do
-    if ! run_one "$lane" "$devices" "$port" "$name"; then
-      printf '%s\tlane_failed\tlane=%s\tname=%s\n' \
-        "$(date -Iseconds)" "$lane" "$name" >> "$STATUS_FILE"
-      return 1
-    fi
+    attempt=0
+    while true; do
+      run_one "$lane" "$devices" "$port" "$name"
+      status=$?
+      if (( status == 0 )); then
+        break
+      fi
+      attempt=$((attempt + 1))
+      if (( attempt > MAX_JOB_RETRIES )); then
+        printf '%s\tlane_failed\tlane=%s\tname=%s\texit=%s\tattempts=%s\n' \
+          "$(date -Iseconds)" "$lane" "$name" "$status" "$attempt" >> "$STATUS_FILE"
+        return 1
+      fi
+      printf '%s\tretry\t%s\tlane=%s\texit=%s\tattempt=%s/%s\tdelay=%s\n' \
+        "$(date -Iseconds)" "$name" "$lane" "$status" "$attempt" "$MAX_JOB_RETRIES" \
+        "$RETRY_DELAY_SECONDS" >> "$STATUS_FILE"
+      sleep "$RETRY_DELAY_SECONDS"
+    done
   done
   printf '%s\tlane_complete\tlane=%s\n' "$(date -Iseconds)" "$lane" >> "$STATUS_FILE"
 }

@@ -6,13 +6,25 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import signal
 import time
 from pathlib import Path
 
 from materialize_china_v1_shard import AssetReaderCache, _heartbeat, _patch_from_record, _read_jsonl, load_catalogs, materialize, materialize_scene_centric
 
 
+def _terminate_cleanly(signum: int, _frame: object) -> None:
+    """Turn watchdog termination into normal Python unwinding.
+
+    The shard materializer releases its directory lock in ``finally``.  The
+    default SIGTERM action bypasses that cleanup and makes the next watchdog
+    child mistake the resumable partial shard for an active writer.
+    """
+    raise SystemExit(128 + signum)
+
+
 def main() -> None:
+    signal.signal(signal.SIGTERM, _terminate_cleanly)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--points-dir", type=Path, required=True)
     parser.add_argument("--prefix", required=True)
