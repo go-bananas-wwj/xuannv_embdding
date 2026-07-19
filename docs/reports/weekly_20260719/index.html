@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>玄女项目周报 | 2026-07-19</title>
+  <style>
+    :root { --ink:#172033; --muted:#596579; --line:#d9e0ea; --paper:#fff; --canvas:#f3f6fa; --navy:#10233f; --blue:#1261a6; --teal:#087b73; --amber:#af6500; --red:#b33831; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; color:var(--ink); background:var(--canvas); font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",Arial,sans-serif; }
+    main { max-width:1120px; margin:0 auto; padding:64px 28px; }
+    .eyebrow { color:#72d2c9; font-weight:800; font-size:13px; letter-spacing:0; }
+    header { background:var(--navy); color:white; border-radius:8px; padding:48px; }
+    h1 { font-size:38px; line-height:1.22; margin:8px 0 12px; }
+    header p { color:#d9e7f6; max-width:760px; margin:0; }
+    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; margin-top:24px; }
+    a.card { display:block; color:inherit; background:var(--paper); border:1px solid var(--line); border-radius:8px; padding:28px; text-decoration:none; box-shadow:0 8px 22px rgba(16,35,63,.06); }
+    a.card:hover { border-color:var(--blue); box-shadow:0 12px 28px rgba(16,35,63,.12); }
+    .tag { color:var(--blue); font-size:13px; font-weight:800; }
+    h2 { margin:8px 0 10px; font-size:25px; line-height:1.3; }
+    .meta { color:var(--muted); font-size:14px; }
+    footer { color:var(--muted); font-size:13px; margin-top:30px; }
+    @media (max-width:720px) { main{padding:22px 16px;} header{padding:28px 22px;} h1{font-size:30px;} .grid{grid-template-columns:1fr;} }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="eyebrow">XUANNVEARTH · WEEKLY BRIEFING</div>
+      <h1>玄女月度地理嵌入项目<br>双主题工作汇报</h1>
+      <p>汇报日期：2026-07-19。内容按证据等级组织：生产版业务结果与论文级严格空间验证分开展示，避免将进行中的实验误写为结论。</p>
+    </header>
+    <section class="grid" aria-label="汇报入口">
+      <a class="card" href="model_training_report.html">
+        <div class="tag">汇报一</div>
+        <h2>模型训练与阶段成果</h2>
+        <p>模型目标、训练数据与方法、核心指标、AEF 对比、多类别能力、近期工程与实验进展。</p>
+        <div class="meta">适合模型、产品、业务应用汇报</div>
+      </a>
+      <a class="card" href="paper_progress_report.html">
+        <div class="tag">汇报二</div>
+        <h2>论文规划与实验进度</h2>
+        <p>JRS 投稿定位、研究问题、论文大纲、注册实验矩阵、已完成证据、风险控制与后续里程碑。</p>
+        <div class="meta">适合科研规划、论文立项与阶段检查汇报</div>
+      </a>
+    </section>
+    <footer>数据截至 2026-07-19 12:08 UTC。页面可使用浏览器打印功能导出 PDF。</footer>
+  </main>
+</body>
+</html>
