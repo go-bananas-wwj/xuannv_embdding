@@ -3,124 +3,101 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>玄女模型训练与阶段成果汇报 | 2026-07-19</title>
-  <style>
-    :root { --ink:#152238; --muted:#58667a; --line:#d8e0ea; --paper:#fff; --canvas:#eff3f8; --navy:#10233f; --blue:#1261a6; --teal:#087b73; --green:#18794e; --amber:#9a5b00; --red:#af3530; --softblue:#eef6ff; --softgreen:#edf9f2; --softamber:#fff8e9; }
-    * { box-sizing:border-box; } html { scroll-behavior:smooth; }
-    body { margin:0; color:var(--ink); background:var(--canvas); font:15px/1.68 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",Arial,sans-serif; }
-    a { color:var(--blue); } .layout { display:grid; grid-template-columns:252px minmax(0,1fr); max-width:1560px; margin:auto; min-height:100vh; background:#f7f9fc; }
-    nav { position:sticky; top:0; height:100vh; padding:26px 18px; overflow:auto; background:var(--navy); color:#dfe8f4; }
-    nav strong { display:block; color:#fff; font-size:17px; line-height:1.35; } nav small { color:#aebfd3; display:block; margin:8px 0 18px; }
-    nav a { display:block; padding:8px 0; border-top:1px solid rgba(255,255,255,.09); color:#d9e5f3; text-decoration:none; font-size:13px; }
-    main { padding:28px; max-width:1240px; } section { margin:0 0 20px; padding:28px; background:var(--paper); border:1px solid var(--line); border-radius:8px; box-shadow:0 6px 18px rgba(17,35,61,.05); }
-    .hero { background:var(--navy); color:white; padding:38px; } .eyebrow { color:#75d1c7; font-size:12px; font-weight:800; } h1 { margin:7px 0 12px; font-size:34px; line-height:1.2; } h2 { margin:0 0 15px; font-size:23px; line-height:1.35; } h3 { margin:24px 0 9px; font-size:17px; } p { margin:8px 0 12px; } .subtitle { max-width:920px; color:#d9e6f4; font-size:17px; }
-    .grid { display:grid; gap:14px; } .two { grid-template-columns:repeat(2,minmax(0,1fr)); } .three { grid-template-columns:repeat(3,minmax(0,1fr)); } .four { grid-template-columns:repeat(4,minmax(0,1fr)); }
-    .kpi { padding:16px; border:1px solid var(--line); background:#fbfdff; border-radius:7px; } .kpi .label { color:var(--muted); font-size:13px; } .kpi .value { margin:5px 0; font-size:28px; font-weight:800; line-height:1.08; } .kpi .note { color:var(--muted); font-size:12px; }
-    .callout { margin:16px 0; padding:13px 15px; border-left:4px solid var(--blue); background:var(--softblue); } .good { border-color:var(--green); background:var(--softgreen); } .warn { border-color:var(--amber); background:var(--softamber); }
-    table { width:100%; border-collapse:collapse; margin:13px 0; font-size:14px; } th,td { padding:10px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; } th { color:#344155; background:#f6f8fb; font-weight:800; } td.num,th.num { text-align:right; font-variant-numeric:tabular-nums; } .positive { color:var(--green); font-weight:750; } .caution { color:var(--amber); font-weight:750; }
-    ul { margin:8px 0; padding-left:20px; } li { margin:5px 0; } .figure { margin:16px 0; padding:12px; border:1px solid var(--line); background:#fafcff; } .figure img { width:100%; display:block; max-height:680px; object-fit:contain; background:#fff; } figcaption { color:var(--muted); font-size:13px; margin-top:8px; }
-    .evidence { display:inline-block; padding:2px 7px; border-radius:4px; font-size:12px; font-weight:800; } .verified { background:#dff4e7; color:#12603b; } .prelim { background:#fff0ce; color:#865005; } .pending { background:#e7edf5; color:#4a596b; }
-    .footer { color:var(--muted); font-size:12px; } @media (max-width:880px) { .layout { display:block; } nav { position:static; height:auto; } main { padding:16px; } .two,.three,.four { grid-template-columns:1fr; } section,.hero { padding:22px; } h1 { font-size:29px; } } @media print { body{background:white;} .layout{display:block;} nav{display:none;} main{max-width:none;padding:0;} section{box-shadow:none;break-inside:avoid;} .hero{print-color-adjust:exact;-webkit-print-color-adjust:exact;} }
-  </style>
+  <title>玄女模型训练、产品能力与全国计划 | 2026-07-19</title>
+  <link rel="stylesheet" href="/weekly/assets/weekly-report.css">
 </head>
 <body>
 <div class="layout">
-  <nav>
-    <strong>玄女模型训练汇报</strong>
-    <small>2026-07-19 · 海淀月度嵌入</small>
-    <a href="/">返回汇报首页</a><a href="#overview">成果概览</a><a href="#method">模型与训练</a><a href="#metrics">核心效果</a><a href="#comparison">外部对标</a><a href="#capability">多类别能力</a><a href="#week">本周进展</a><a href="#risks">边界与下一步</a>
+  <nav><span class="nav-title">玄女模型训练与产品能力</span><span class="nav-meta">周度正式汇报 · 2026-07-19</span>
+    <a href="/">返回汇报首页</a><a href="#summary">管理摘要</a><a href="#product">产品与训练设计</a><a href="#results">效果与对标</a><a href="#visuals">可视化证据</a><a href="#capability">多任务能力</a><a href="#national">全国计划</a><a href="#support">所需支持</a><a href="#risks">边界与里程碑</a>
   </nav>
   <main>
-    <section class="hero" id="overview">
-      <div class="eyebrow">MODEL TRAINING & PRODUCT EVIDENCE</div>
-      <h1>玄女海淀月度地理嵌入<br>模型训练与阶段成果</h1>
-      <p class="subtitle">目标不是为每一种地物单独训练一个分割模型，而是把多源遥感信息沉淀为可复用的 64 维月度嵌入，再用少量标注和轻量下游头快速完成多类制图。</p>
+    <section class="hero" id="summary">
+      <div class="eyebrow">XUANNVEARTH · MONTHLY GEOSPATIAL EMBEDDING</div>
+      <h1>从海淀可用产品到全国训练底座<br>玄女月度地理嵌入阶段汇报</h1>
+      <p class="subtitle">玄女将多源遥感观测压缩为按月份索引的稠密语义特征场。下游人员只需标少量样本，即可训练轻量任务头完成建筑、道路、水体、绿地、施工等制图；当前已形成海淀生产版，并同步启动论文级严格验证和全国数据底座建设。</p>
       <div class="grid four">
-        <div class="kpi"><div class="label">产品输出</div><div class="value">128×128×64</div><div class="note">每 patch、每月 10 m 稠密特征场</div></div>
-        <div class="kpi"><div class="label">时段</div><div class="value">6 个月</div><div class="note">2025-12 至 2026-05</div></div>
-        <div class="kpi"><div class="label">生产基线</div><div class="value">P10C e800</div><div class="note">多任务最均衡的 64 维版本</div></div>
-        <div class="kpi"><div class="label">论文级重训</div><div class="value">16 / 40</div><div class="note">严格空间折 encoder 已完成</div></div>
+        <div class="kpi"><div class="label">生产输出</div><div class="value">128×128×64</div><div class="note">每个 1.28 km patch、每月 10 m embedding</div></div>
+        <div class="kpi"><div class="label">训练观测</div><div class="value">6 个月</div><div class="note">2025-12 至 2026-05，多源时序</div></div>
+        <div class="kpi"><div class="label">生产版本</div><div class="value">P10C e800</div><div class="note">当前多任务表现最均衡的 64 维模型</div></div>
+        <div class="kpi"><div class="label">科学重训</div><div class="value">16 / 40</div><div class="note">严格空间 5-fold encoder 已完成</div></div>
       </div>
     </section>
 
     <section>
-      <h2>汇报结论</h2>
-      <div class="callout good"><b>已验证的业务结论：</b>P10C 已能作为海淀区域的可复用月度 embedding 底座，支持建筑、道路、水体、施工工地、林地、湖泊、耕地等多任务；其核心价值在少量标注下的快速制图与多任务复用。</div>
-      <div class="callout warn"><b>正在补强的科学结论：</b>生产版看过海淀全域数据，适合作为传导式区域产品展示；“未见区域泛化”“某个训练组件必然有效”等论文结论，必须等待严格空间 5-fold 注册实验完成后再下定论。</div>
+      <h2>管理摘要</h2>
+      <div class="callout good"><b>已形成可用能力。</b> 海淀生产版 P10C 能在冻结 embedding 后，以轻量 <code>conv3×3</code> 头完成建筑、道路、水体、施工工地等任务；同一份 embedding 可反复用于新类别、少样本制图与向量检索。</div>
+      <div class="callout"><b>核心业务价值在“少量标注 + 快速复用”。</b> 当每个任务都有大量标签并允许训练 UNet/DeepLab 等重型模型时，原始影像强基线仍很强；但在 5/10-shot 小样本场景，玄女在建筑、道路、水体上均优于原始多源影像基线。</div>
+      <div class="callout warn"><b>本周的关键升级不是再调一次参数，而是建立可发表的验证体系。</b> 生产版全域训练结果用于业务案例；论文结论改用空间独立 5-fold、验证集选阈值、统一基线和可追溯结果门禁。</div>
     </section>
 
-    <section id="method">
-      <h2>模型与训练方法</h2>
+    <section id="product">
+      <h2>产品形态与训练设计</h2>
+      <div class="flow" aria-label="玄女训练与应用流程">
+        <div class="flow-box"><b>多源观测</b>Sentinel-2、Sentinel-1、Landsat；稀疏高分光学与 SAR。</div>
+        <div class="flow-box"><b>质量控制</b>云雾、阴影、无效像素与源可用性掩膜；月内质量筛选复合。</div>
+        <div class="flow-box"><b>表征学习</b>跨月时空融合、有效目标重建、OSM 辅助弱语义与结构化输入遮挡。</div>
+        <div class="flow-box"><b>月度 embedding</b>每月输出单位球面上的 64 维、128×128 稠密特征场。</div>
+        <div class="flow-box"><b>轻量下游</b>少量 patch 标注后训练轻量头，生成全域制图、检索与后续变化分析。</div>
+      </div>
       <div class="grid two">
-        <div><h3>输入数据与质量控制</h3><ul><li>6 个月 Sentinel-2（12 通道）、Sentinel-1（2 通道）、Landsat（7 通道）。</li><li>稀疏高分光学与高分 SAR 作为独立来源，重采样到 10 m 嵌入网格。</li><li>使用云雾、无效像素和数据可用性掩膜；同月多景影像先进行质量筛选和合成。</li><li>训练前对多源影像、掩膜、弱标签进行空间配准和随机 patch 可视化审计。</li></ul></div>
-        <div><h3>表示学习机制</h3><ul><li>多源卷积 stem 后进行时空融合，输出 6 个按月份索引的稠密特征场。</li><li>采用 vMF-style 单位球面瓶颈，输出 64 维 embedding。</li><li>训练时随机丢弃模态、月份和空间块，但仍在全部有效目标上计算重建损失。</li><li>使用清洗、合并后的 OSM 语义作为辅助弱监督，不直接使用最终人工下游标签训练主模型。</li></ul></div>
+        <div><h3>输入与质量策略</h3><ul><li>主时序输入：Sentinel-2 12 通道、Sentinel-1 2 通道、Landsat 7 通道。</li><li>稀疏高分光学和高分 SAR 独立重采样到 10 m 网格，用于输入融合与重建监督。</li><li>云雾/有效像素 mask 不参与重建目标；同月多景只保留质量较好的观测。</li><li>训练前固定抽取 patch，逐月检查各源影像、mask、OSM 和空间对齐。</li></ul></div>
+        <div><h3>目标函数与训练约束</h3><ul><li>有效像素重建权重：S2 0.80、S1 0.25、Landsat 0.45、高分光学 0.90、高分 SAR 0.35、粗 OSM 0.45。</li><li>细粒度 OSM 弱语义使用 13 个独立 probe；语义权重在 80 epoch 内升至 0.14，困难负样本系数在 120 epoch 内升至 0.35。</li><li>结构化输入遮挡包括模态、月份和空间块遮挡；模型在所有原本有效的目标上学习复原。</li><li>输出保留 128×128 空间分辨率；P10C 使用 vMF-style 球面瓶颈与跨月注意力。</li></ul></div>
       </div>
-      <p class="footer">重要说明：模型使用跨月注意力和跨日期聚合的高分上下文，因此“月度索引”表示每个月都有对应输出，并不等于输出只看该月观测。</p>
+      <p class="footer">术语边界：月度索引表示每个月均输出一份 embedding；由于模型采用跨月注意力和跨日期高分上下文，它不是严格“只看当月”的因果编码。</p>
     </section>
 
-    <section id="metrics">
-      <h2>生产版核心任务效果</h2>
-      <p>以下为 P10C epoch 800 在海淀 2026-04 embedding 上的业务评测结果，冻结 embedding 后训练同一轻量 <code>conv3×3</code> 下游头。F1 衡量查准率与召回率的平衡，AP 衡量不同阈值下的整体排序质量，AUC 衡量正负样本排序能力。</p>
-      <table><thead><tr><th>任务</th><th class="num">F1</th><th class="num">AP</th><th class="num">AUC</th><th>解释</th></tr></thead><tbody>
-        <tr><td>施工工地检测</td><td class="num positive">0.550</td><td class="num">0.544</td><td class="num">0.959</td><td>复杂纹理场景下具备稳定排序能力。</td></tr>
-        <tr><td>建筑物提取</td><td class="num">0.484</td><td class="num">0.450</td><td class="num">0.896</td><td>屋顶、硬化地面与道路仍会带来假正例。</td></tr>
-        <tr><td>道路提取</td><td class="num positive">0.522</td><td class="num positive">0.566</td><td class="num">0.834</td><td>细长线状目标受 10 m 分辨率限制。</td></tr>
-        <tr><td>水体提取</td><td class="num positive">0.624</td><td class="num positive">0.604</td><td class="num">0.891</td><td>四项核心任务中表现最佳。</td></tr>
-      </tbody></table>
-      <p class="footer"><span class="evidence verified">已验证：生产版业务评测</span> 该表不是尚在运行的严格空间 5-fold 论文主表。</p>
+    <section id="results">
+      <h2>生产版效果与公平对标</h2>
+      <p><span class="badge verified">已验证：业务生产评测</span> 以下为海淀 2026-04 embedding、冻结表示 + 轻量 <code>conv3×3</code> 头的统一口径。F1 衡量查准与召回的平衡，AP 衡量整体排序质量，AUC 反映正负样本排序能力；三者必须共同观察，不能只用 AUC 判断效果。</p>
+      <div class="table-wrap"><table><thead><tr><th>核心任务</th><th class="num">F1</th><th class="num">AP</th><th class="num">AUC</th><th>业务解释</th></tr></thead><tbody>
+        <tr><td>施工工地检测</td><td class="num positive">0.550</td><td class="num">0.544</td><td class="num">0.959</td><td>复杂纹理目标排序能力较强，可作为重点场景监测候选。</td></tr>
+        <tr><td>建筑物提取</td><td class="num">0.484</td><td class="num">0.450</td><td class="num">0.896</td><td>屋顶、硬化地面与道路仍会导致假正例。</td></tr>
+        <tr><td>道路提取</td><td class="num positive">0.522</td><td class="num positive">0.566</td><td class="num">0.834</td><td>细长线状目标受 10 m 网格与标签边界影响。</td></tr>
+        <tr><td>水体提取</td><td class="num positive">0.624</td><td class="num positive">0.604</td><td class="num">0.891</td><td>核心任务中最稳定，适合小样本快速制图。</td></tr>
+      </tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>任务（F1 / AP）</th><th>P10C 64维</th><th>AEF 官方 64维</th><th>DINOv3 1024维</th><th>专业解读</th></tr></thead><tbody>
+        <tr><td>施工工地</td><td>0.550 / 0.544</td><td>0.545 / 0.567</td><td>0.582 / 0.522</td><td>P10C 与 AEF 同量级；DINO 特征维度和成本显著更高。</td></tr>
+        <tr><td>建筑</td><td>0.484 / 0.450</td><td>0.486 / 0.422</td><td>0.499 / 0.482</td><td>与 AEF 基本持平，仍有语义混淆空间。</td></tr>
+        <tr><td>道路</td><td class="positive">0.522 / 0.566</td><td>0.517 / 0.564</td><td>0.602 / 0.673</td><td>同 64 维条件下 P10C 略优；DINO 是更高信息预算的上界参照。</td></tr>
+        <tr><td>水体</td><td>0.624 / 0.604</td><td class="positive">0.666 / 0.687</td><td>0.677 / 0.720</td><td>水体是当前相对短板，不能回避。</td></tr>
+      </tbody></table></div>
+      <div class="callout">对标结论应表述为：<b>在同为 64 维、同下游头的业务验证中，玄女与 AEF 达到同一量级，并在施工和道路上具备竞争力；水体仍落后。</b> 不应表述为“全面超过 AEF”。建筑、道路、水体与训练期 OSM 语义存在重叠，因此其少样本优势属于“OSM 辅助条件下”的业务证据；更一般的表征结论将由 no-OSM、留出类别和独立标签实验承担。</div>
     </section>
 
-    <section>
-      <h2>少量标注快速制图</h2>
-      <p>Few-shot 的单位是正样本 patch：5-shot 表示只用 5 个正 patch 和数量相同的负 patch 训练下游头。这个设置最贴近业务中“给出少量样例，快速制图”的流程。</p>
-      <table><thead><tr><th>任务</th><th class="num">5-shot F1</th><th class="num">10-shot F1</th><th class="num">50-shot F1</th></tr></thead><tbody>
-        <tr><td>公园绿地</td><td class="num positive">0.746</td><td class="num positive">0.773</td><td class="num positive">0.816</td></tr>
-        <tr><td>水体</td><td class="num">0.619</td><td class="num">0.615</td><td class="num">0.647</td></tr>
-        <tr><td>建筑</td><td class="num">0.473</td><td class="num">0.481</td><td class="num">0.502</td></tr>
-        <tr><td>道路</td><td class="num">0.468</td><td class="num">0.501</td><td class="num">0.566</td></tr>
-      </tbody></table>
-      <figure class="figure"><img src="/docs/production/assets/haidian_v1_20260708/fewshot_best_f1.png" alt="玄女与原始影像方法的少样本 F1 对比图"><figcaption>图 1. 建筑、道路、水体任务中，玄女 embedding 在 5-shot 和 10-shot 下相对原始影像方法的优势最明显。图仅用于生产版业务效果展示，论文主结果将使用严格空间 5-fold 重新计算。</figcaption></figure>
-    </section>
-
-    <section id="comparison">
-      <h2>与 AEF、DINOv3 的阶段性对比</h2>
-      <table><thead><tr><th>任务（F1 / AP）</th><th>P10C 64维</th><th>AEF 官方 64维</th><th>DINOv3 1024维</th></tr></thead><tbody>
-        <tr><td>施工工地</td><td>0.550 / 0.544</td><td>0.545 / 0.567</td><td class="positive">0.582 / 0.522</td></tr>
-        <tr><td>建筑</td><td>0.484 / 0.450</td><td>0.486 / 0.422</td><td class="positive">0.499 / 0.482</td></tr>
-        <tr><td>道路</td><td class="positive">0.522 / 0.566</td><td>0.517 / 0.564</td><td class="positive">0.602 / 0.673</td></tr>
-        <tr><td>水体</td><td>0.624 / 0.604</td><td class="positive">0.666 / 0.687</td><td class="positive">0.677 / 0.720</td></tr>
-      </tbody></table>
-      <div class="callout"><b>正确解读：</b>对 AEF 的比较表明，P10C 在同为 64 维的产品形态下已达到同一量级，施工和道路具有竞争力；水体仍是明确短板。DINOv3 维度为 1024，不能直接被表述为同等存储与计算预算下的公平替代。</div>
+    <section id="visuals">
+      <h2>可视化证据：表征、制图与少样本效果</h2>
+      <figure class="figure"><img src="/docs/production/assets/nonbuilding_fewshot_semantic_20260705/xuannv_aef_global_pca_compare.png" alt="玄女与 AEF 的海淀全域 PCA embedding 对比"><figcaption>图 1. 海淀全域 embedding PCA 对比。该图用于观察空间连续性与地物边界，并不单独作为下游性能证据；正式判断仍依赖 F1、AP、AUC 与真实标签。</figcaption></figure>
+      <div class="gallery">
+        <figure class="figure"><img src="/docs/production/assets/haidian_fine_osm_leadership_20260705/foundation_building_water_road_320patch.png" alt="建筑道路水体三类任务的海淀全域 320 patch 制图"><figcaption>图 2. 建筑、道路、水体三项核心任务的全域 320 patch 制图结果。</figcaption></figure>
+        <figure class="figure"><img src="/docs/production/assets/haidian_v1_20260708/fewshot_5shot_examples.png" alt="5-shot 场景下玄女和原始影像基线代表性样例"><figcaption>图 3. 5-shot 代表性样例：少量标注下，玄女 embedding 与原始影像强头的预测对比。</figcaption></figure>
+        <figure class="figure"><img src="/docs/production/assets/haidian_v1_20260708/raw_vs_xuannv_f1.png" alt="玄女与原始影像全监督 F1 对比"><figcaption>图 4. 充分标注时，raw + UNet/DeepLab 是强基线；这说明 embedding 的价值应聚焦复用与小样本，而非回避强监督上限。</figcaption></figure>
+        <figure class="figure"><img src="/docs/production/assets/haidian_v1_20260708/fewshot_best_f1.png" alt="建筑道路水体少样本 F1 对比"><figcaption>图 5. 5/10/50-shot 对比：标注越少，embedding 的优势越明显，尤其是水体和道路。</figcaption></figure>
+        <figure class="figure wide"><img src="/docs/production/assets/haidian_fine_osm_leadership_20260705/embedding_similarity_retrieval.png" alt="基于 embedding 的目标相似性检索案例"><figcaption>图 6. 向量检索：以一个已标注区域的 embedding 为查询，可在全域寻找语义相近区域，适合作为稀有类别人工核查和候选样本发现工具。</figcaption></figure>
+      </div>
     </section>
 
     <section id="capability">
-      <h2>多类别地物能力盘点</h2>
-      <div class="grid three"><div class="kpi"><div class="label">林地</div><div class="value">F1 0.814</div><div class="note">最稳定的扩展类别之一</div></div><div class="kpi"><div class="label">耕地</div><div class="value">F1 0.544</div><div class="note">可用于区域级制图</div></div><div class="kpi"><div class="label">湖泊</div><div class="value">F1 0.539</div><div class="note">优于细碎池塘</div></div></div>
-      <table><thead><tr><th>能力层级</th><th>类别</th><th>当前判断</th></tr></thead><tbody>
-        <tr><td class="positive">可直接使用</td><td>林地、湖泊、耕地、河流、操场、建筑物、主干道、施工工地、水体</td><td>适合接轻量下游头后生成区域制图。</td></tr>
-        <tr><td class="caution">需降级使用</td><td>池塘、裸地、草地、火车站</td><td>受 10 m 分辨率、标签稀疏或 OSM 噪声限制，适合检索/辅助人工核查。</td></tr>
-        <tr><td class="caution">需补标注</td><td>停车场、体育场、湿地、垃圾场、机场</td><td>样本过少或与相邻地物不可分，需优先补充人工高质量标签。</td></tr>
-      </tbody></table>
-      <p class="footer">扩展类别评测主要采用 OSM 标签，因此可证明业务可行性，但不能替代独立人工标签上的泛化结论。</p>
+      <h2>多任务能力与版本选择</h2>
+      <div class="grid three"><div class="kpi"><div class="label">林地</div><div class="value">F1 0.814</div><div class="note">扩展类别中最稳定之一</div></div><div class="kpi"><div class="label">耕地</div><div class="value">F1 0.544</div><div class="note">可用于区域级覆盖制图</div></div><div class="kpi"><div class="label">湖泊</div><div class="value">F1 0.539</div><div class="note">大尺度水体较稳定</div></div></div>
+      <div class="grid two"><div><h3>当前可直接服务的类别</h3><p>林地、湖泊、耕地、河流、操场、建筑物、主干道、施工工地、水体大类。它们可接统一轻量下游头，形成面向业务的区域制图流程。</p><h3>需降级或补标注的类别</h3><p>池塘、裸地、草地、火车站受标签噪声或目标尺度影响，应作为检索/人工核查辅助；停车场、体育场、湿地、垃圾场、机场样本太少，应先补充高质量人工标签。</p></div><div><h3>为什么保留 P10C 作为生产基线</h3><p>P11-P14 等后续版本提高了有效秩和 PCA 空间健康度，但未稳定提升 few-shot 与多任务指标；V4A 蒸馏版在施工工地达到 F1 0.599、AP 0.611，却牺牲了其他任务的通用性。</p><p><b>产品策略：</b>P10C 继续作为通用嵌入底座；V4A 可作为施工专用候选，不以单任务最高分替换多任务生产模型。</p></div></div>
     </section>
 
-    <section id="week">
-      <h2>本周训练与工程进展</h2>
-      <table><thead><tr><th>工作项</th><th>本周完成情况</th><th>价值</th></tr></thead><tbody>
-        <tr><td>论文级空间划分</td><td>固定连续空间 5-fold、验证带与一格缓冲区；训练集、验证集、测试集严格隔离。</td><td>解决随机划分可能高估泛化的问题。</td></tr>
-        <tr><td>注册实验矩阵</td><td>已配置 40 个自包含实验，覆盖 40/80/150 patch、OSM、高分路径、遮挡训练、困难负样本等因素。</td><td>从“调参试验”升级为可追溯的因果验证。</td></tr>
-        <tr><td>训练完成度</td><td>16/40 个 encoder 已完成至 epoch 800：完整配方、仅粗 OSM、去高分路径均已完成 5-fold；去遮挡已完成 1/5。</td><td>第一批可进行跨折比较的权重已就绪。</td></tr>
-        <tr><td>稳定性工程</td><td>新增训练 watchdog、10 分钟停滞检测、每 20 epoch 滚动恢复点、自动从最新恢复点续跑。</td><td>针对 Ascend HCCL 偶发超时，减少长时间卡死和训练回退损失。</td></tr>
-        <tr><td>全国数据准备</td><td>修复 COG 下载、断点续传、无效场景判定和 shard 级检查点，3 个数据 worker 持续运行。</td><td>为跨城市和更大规模训练准备可恢复数据管线。</td></tr>
-      </tbody></table>
-      <p class="footer">核查时去遮挡训练的三个活跃折处于 epoch 163、291、32；该进度仅作运行状态说明，尚未产生可引用的下游结论。</p>
+    <section id="national">
+      <h2>全国训练数据与模型升级计划</h2>
+      <div class="callout good"><b>已启动的数据工程：</b> 全国候选点已固定为 60,500 个 1.28 km × 1.28 km patch，覆盖 2025-04 至 2026-04 共 13 个月。当前三路数据 worker 正在物化 Sentinel-2、Sentinel-1 和 Landsat 的 patch 窗口；不下载全国整景，不把低质量影像强行补入训练。</div>
+      <div class="grid two"><div><h3>全国样本设计</h3><ul><li>57,405 个全国空间主样本：提供约 1% 陆地空间骨架。</li><li>2,595 个空间分层补样：补足低覆盖 UTM 区域。</li><li>500 个海岸补样：基于独立海洋面确认，避免将国界误判为海岸。</li><li>后续建议扩展为“全国基础 1% + 重点区域 0.25%”：训练混合为 70% 基础池、30% 高密城市/多云/高原/海岸等困难区域补样。</li></ul></div><div><h3>下载与质量门禁</h3><ul><li>按“月份 × UTM 分区 × 数据源”缓存 STAC 元数据，再对 COG 只读取 patch 窗口。</li><li>每月最多保留质量最好的少量场景，生成质量评分、有效像素 mask、来源清单与随机可视化。</li><li>任一连续 6 月窗口要求每个核心源至少有 4 个完整月份，且总可用源-月份记录不少于 14。</li><li>mask 缺失、系统性配准偏移、低质量兜底影像均不能进入最终训练清单。</li></ul></div></div>
+      <div class="timeline"><div class="timeline-item"><div class="time">阶段 A · 已完成</div><div><b>候选点与静态数据冻结。</b> 固定抽样种子、空间分层、OSM 2025-01 快照、国界和海洋面版本及哈希。</div></div><div class="timeline-item"><div class="time">阶段 B · 进行中</div><div><b>全国数据物化与可恢复下载。</b> 三个 worker 以 shard 和 patch 状态检查点运行；已加入 COG 重试、有效景上限、断点恢复和 watchdog。</div></div><div class="timeline-item"><div class="time">阶段 C · 准入</div><div><b>2,000 patch 试点评审。</b> 审核 S1 路径、云 mask、配准、吞吐、容量和真实 ETA；通过后才扩大到全量。</div></div><div class="timeline-item"><div class="time">阶段 D · 全国训练</div><div><b>冻结清单后启动 NPU 训练。</b> 以固定 update 数而不是“重复若干 epoch”定义全国训练预算，并保留跨区域验证块。</div></div></div>
+      <div class="table-wrap"><table><thead><tr><th>全国数据方案</th><th class="num">样本规模</th><th class="num">影像与辅助数据预算</th><th>用途</th></tr></thead><tbody><tr><td>当前候选池</td><td class="num">60,500 patch</td><td class="num">约 1.30–1.40 TB 峰值</td><td>13 个月核心传感器物化、质量审计与训练清单构建。</td></tr><tr><td>建议首轮全国训练池</td><td class="num">73,242 patch（1.25%）</td><td class="num">约 2.9 TB 六个月筛选训练包</td><td>全国覆盖 + 困难地区补样，作为下一代预训练底座。</td></tr></tbody></table></div>
     </section>
 
-    <section id="risks">
-      <h2>边界、风险与下一步</h2>
-      <div class="grid two"><div><h3>当前边界</h3><ul><li>充分标注时，原始多源影像加 UNet/DeepLab 等强任务模型仍可能达到或超过轻量 embedding 头。</li><li>有效维度增加不等于多任务能力增加：P11-P14 的有效秩提升，但并未稳定超过 P10C。</li><li>云雾、传感器缺测、弱标签噪声和小目标分辨率仍是主要误差来源。</li><li>生产版 P10C 是区域传导式产品，不应用于空间泛化宣称。</li></ul></div><div><h3>下一步</h3><ul><li>完成剩余 24 个严格空间折 encoder 训练，并自动导出统一下游评测。</li><li>以 5-fold × 3 下游随机种子汇总 F1、AP、AUC、IoU 和空间置信区间。</li><li>在独立标签、留出类别、云量/缺模态分层上复核 OSM 弱监督收益。</li><li>将 P10C 作为通用生产底座，V4A 作为施工专用候选，避免以单任务最优替换多任务产品。</li></ul></div></div>
+    <section id="support">
+      <h2>下一阶段需要的支持</h2>
+      <div class="grid three"><div class="request"><b>算力</b><p>当前 6 张 Ascend NPU 足以完成海淀论文级消融与评测。全国首轮正式训练建议申请 <b>16 张 64 GB NPU</b>；按 10 万 updates 估算约 18 天，20 万 updates 约 36 天。若需压缩周期，可申请 24 张卡。</p></div><div class="request"><b>存储与网络</b><p>全国全量前建议预留 <b>至少 20 TB 在线可用空间</b>，并提供每 8 卡节点 8–16 TB 本地 NVMe、双 200 Gb/s 级互联或等效网络。需持续保障 CDSE/Planetary Computer/USGS 数据访问和 Sentinel-1 合规路径。</p></div><div class="request"><b>标注与领域审核</b><p>优先补充独立于 OSM 的建筑与施工工地验证集，各建议 <b>30–50 个 patch</b>；同时建立停车场、体育场、湿地、垃圾场、机场等稀有类的标注规范和小规模高质量验证集。</p></div><div class="request"><b>遥感 QA 人力</b><p>需要 1 名熟悉遥感影像与地物边界的人员参与月度云雾、配准、数据源质量抽检，并确认 OSM 标签与真实地物定义的一致性。</p></div><div class="request"><b>论文实验窗口</b><p>建议保障剩余 24 个空间折训练、批量 embedding 导出和 5-fold × 3-seed 下游评测的连续算力窗口，避免队列中断影响可重复性。</p></div><div class="request"><b>成果发布支持</b><p>确认代码开放范围、数据下载脚本、可公开 embedding、作者排序与单位署名；论文投稿前还需完成 OSM 快照溯源和 prior-publication 审核。</p></div></div>
     </section>
-    <p class="footer">数据截至 2026-07-19 12:08 UTC。来源：<a href="/docs/experiments/haidian_embedding_report_summary_20260714_zh.md">生产版阶段汇总</a>、<a href="/docs/experiments/p11_p13_consolidated_eval_20260710_zh.md">版本横评</a>、<a href="/docs/experiments/osm_18class_eval_20260713_zh.md">18 类能力评测</a>、<a href="/docs/paper/xuannv_paper_experiment_protocol_20260715_zh.md">论文实验协议</a>。</p>
+
+    <section id="risks"><h2>边界、风险与下一步里程碑</h2><div class="grid two"><div><h3>必须如实说明的边界</h3><ul><li>充分标注时，raw 多源影像 + 强分割头仍可达到更高的任务上限。</li><li>生产版 P10C 使用海淀全域训练，应称为区域传导式产品，不是空间泛化证据。</li><li>OSM 为弱语义标签，空白区域不等于负类；OSM 类评测不能替代独立人工标签。</li><li>云雾、缺模态、配准偏差和 10 m 小目标仍是最主要的误差来源。</li></ul></div><div><h3>未来四个可检查节点</h3><ol><li>完成 40 组空间独立 encoder 训练与自动恢复队列。</li><li>完成统一下游主表：5-fold × 3 seed，报告 F1、AP、AUC、IoU 和空间置信区间。</li><li>完成独立标签、留出类别、云量/缺模态和哈尔滨复现实验。</li><li>全国数据试点通过质量门禁后，冻结清单并启动 16 卡级全国预训练。</li></ol></div></div></section>
+    <p class="footer">数据截至 2026-07-19 12:29 UTC。依据：<a href="/docs/experiments/haidian_embedding_report_summary_20260714_zh.md">生产版汇总</a>、<a href="/docs/production/haidian_fewshot_raw_vs_xuannv_20260708.md">few-shot 对比</a>、<a href="/docs/experiments/osm_18class_eval_20260713_zh.md">18 类能力评测</a>、<a href="/docs/plans/china_v1_materialization_plan_20260717_zh.md">China V1 数据计划</a>、<a href="/docs/reviews/china_alphaearth_national_1pct_targeted_sampling_plan_20260716_zh.md">全国采样与资源评估</a>。</p>
   </main>
 </div>
 </body>

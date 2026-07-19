@@ -3,104 +3,89 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>玄女论文规划与实验进度 | 2026-07-19</title>
-  <style>
-    :root { --ink:#152238; --muted:#58667a; --line:#d8e0ea; --paper:#fff; --canvas:#eff3f8; --navy:#10233f; --blue:#1261a6; --teal:#087b73; --green:#18794e; --amber:#9a5b00; --red:#af3530; --softblue:#eef6ff; --softgreen:#edf9f2; --softamber:#fff8e9; }
-    * { box-sizing:border-box; } html { scroll-behavior:smooth; } body { margin:0; color:var(--ink); background:var(--canvas); font:15px/1.68 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",Arial,sans-serif; } a { color:var(--blue); }
-    .layout { display:grid; grid-template-columns:252px minmax(0,1fr); max-width:1560px; margin:auto; min-height:100vh; background:#f7f9fc; } nav { position:sticky; top:0; height:100vh; padding:26px 18px; overflow:auto; background:var(--navy); color:#dfe8f4; } nav strong { display:block; color:#fff; font-size:17px; line-height:1.35; } nav small { color:#aebfd3; display:block; margin:8px 0 18px; } nav a { display:block; padding:8px 0; border-top:1px solid rgba(255,255,255,.09); color:#d9e5f3; text-decoration:none; font-size:13px; }
-    main { padding:28px; max-width:1240px; } section { margin:0 0 20px; padding:28px; background:var(--paper); border:1px solid var(--line); border-radius:8px; box-shadow:0 6px 18px rgba(17,35,61,.05); } .hero { background:var(--navy); color:white; padding:38px; } .eyebrow { color:#75d1c7; font-size:12px; font-weight:800; } h1 { margin:7px 0 12px; font-size:34px; line-height:1.2; } h2 { margin:0 0 15px; font-size:23px; line-height:1.35; } h3 { margin:22px 0 9px; font-size:17px; } p { margin:8px 0 12px; } .subtitle { max-width:920px; color:#d9e6f4; font-size:17px; }
-    .grid { display:grid; gap:14px; } .two { grid-template-columns:repeat(2,minmax(0,1fr)); } .three { grid-template-columns:repeat(3,minmax(0,1fr)); } .four { grid-template-columns:repeat(4,minmax(0,1fr)); } .kpi { padding:16px; border:1px solid var(--line); background:#fbfdff; border-radius:7px; } .kpi .label { color:var(--muted); font-size:13px; } .kpi .value { margin:5px 0; font-size:28px; font-weight:800; line-height:1.08; } .kpi .note { color:var(--muted); font-size:12px; }
-    .callout { margin:16px 0; padding:13px 15px; border-left:4px solid var(--blue); background:var(--softblue); } .good { border-color:var(--green); background:var(--softgreen); } .warn { border-color:var(--amber); background:var(--softamber); } table { width:100%; border-collapse:collapse; margin:13px 0; font-size:14px; } th,td { padding:10px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; } th { color:#344155; background:#f6f8fb; font-weight:800; } td.num,th.num { text-align:right; font-variant-numeric:tabular-nums; } ul,ol { margin:8px 0; padding-left:20px; } li { margin:5px 0; } .status { display:inline-block; padding:2px 7px; border-radius:4px; font-size:12px; font-weight:800; white-space:nowrap; } .done { color:#12603b; background:#dff4e7; } .run { color:#865005; background:#fff0ce; } .pending { color:#4a596b; background:#e7edf5; } .prelim { color:#785100; background:#fff4d6; } .footer { color:var(--muted); font-size:12px; } .step { padding:13px 15px; border-left:3px solid var(--blue); background:#fbfdff; margin:9px 0; } .step b { color:var(--blue); }
-    @media (max-width:880px) { .layout { display:block; } nav { position:static; height:auto; } main { padding:16px; } .two,.three,.four { grid-template-columns:1fr; } section,.hero { padding:22px; } h1 { font-size:29px; } } @media print { body{background:white;} .layout{display:block;} nav{display:none;} main{max-width:none;padding:0;} section{box-shadow:none;break-inside:avoid;} .hero{print-color-adjust:exact;-webkit-print-color-adjust:exact;} }
-  </style>
+  <title>XuannvEarth 论文规划与实验进度 | 2026-07-19</title>
+  <link rel="stylesheet" href="/weekly/assets/weekly-report.css">
 </head>
 <body>
 <div class="layout">
-  <nav>
-    <strong>玄女论文进度汇报</strong><small>JRS 专刊 · 2026-07-19</small>
-    <a href="/">返回汇报首页</a><a href="#position">论文定位</a><a href="#outline">论文大纲</a><a href="#questions">研究问题</a><a href="#matrix">实验矩阵</a><a href="#status">当前进度</a><a href="#evidence">已有证据</a><a href="#governance">严谨性控制</a><a href="#next">下一里程碑</a>
+  <nav><span class="nav-title">XuannvEarth 论文进度</span><span class="nav-meta">JRS 专刊 · 2026-07-19</span>
+    <a href="/">返回汇报首页</a><a href="#summary">论文摘要</a><a href="#framework">论文框架图</a><a href="#outline">章节与图表</a><a href="#innovation">创新点</a><a href="#protocol">实验设计</a><a href="#status">进度与结果</a><a href="#governance">可信度控制</a><a href="#next">下一里程碑</a>
   </nav>
   <main>
-    <section class="hero" id="position">
-      <div class="eyebrow">PAPER PLANNING & REGISTERED EVALUATION</div>
-      <h1>XuannvEarth 论文规划<br>与注册实验进度</h1>
-      <p class="subtitle">目标投稿：<i>Journal of Remote Sensing</i> 专刊 “Foundation Models based Multimodal Earth Observation Data Fusion and Applications”。论文的核心不是宣称模型规模，而是严格回答：城市尺度月度多模态 embedding 能否以更少标注 patch 支撑可复用的多类制图。</p>
-      <div class="grid four"><div class="kpi"><div class="label">论文定位</div><div class="value">区域嵌入框架</div><div class="note">不宣称全球 foundation model</div></div><div class="kpi"><div class="label">目标对象</div><div class="value">64 维月度场</div><div class="note">10 m、128×128 稠密输出</div></div><div class="kpi"><div class="label">注册训练</div><div class="value">40 组</div><div class="note">严格空间 5-fold encoder</div></div><div class="kpi"><div class="label">已完成</div><div class="value">16 组</div><div class="note">截至 2026-07-19 12:08 UTC</div></div></div>
+    <section class="hero" id="summary">
+      <div class="eyebrow">JOURNAL OF REMOTE SENSING · RESEARCH ARTICLE</div>
+      <h1>XuannvEarth：城市尺度月度多模态嵌入<br>论文规划与证据建设进度</h1>
+      <p class="subtitle">拟投 <i>Journal of Remote Sensing</i> 专刊 “Foundation Models based Multimodal Earth Observation Data Fusion and Applications”（计划截稿：2026-12-31）。论文不以模型规模取胜，而是通过严格空间验证回答：月度多模态 embedding 是否能以更少标注 patch 支撑可复用的城市制图。</p>
+      <div class="grid four"><div class="kpi"><div class="label">论文类型</div><div class="value">Research Article</div><div class="note">目标 8,000–10,000 词</div></div><div class="kpi"><div class="label">主对象</div><div class="value">64维月度场</div><div class="note">10 m、128×128 稠密输出</div></div><div class="kpi"><div class="label">注册重训</div><div class="value">40 组</div><div class="note">严格空间 5-fold encoder</div></div><div class="kpi"><div class="label">已完成</div><div class="value">16 组</div><div class="note">其余实验持续运行</div></div></div>
     </section>
 
     <section>
-      <h2>一句话科学主张</h2>
-      <div class="callout good"><b>拟验证的主张：</b>将连续六个月的多源遥感观测编码为按月份索引的 10 m、64 维稠密特征场后，冻结该表示并只训练一个浅层下游头，能否在严格空间留出区域中支持多种城市制图任务，并降低所需的标注 patch 预算。</div>
-      <div class="callout warn"><b>当前不作的主张：</b>不宣称玄女全面超过 AEF/DINO、不宣称月度输出天然提高变化检测、不将生产版 P10C 当作空间泛化证据，也不把 OSM 标签评测直接当成完全独立的泛化证明。</div>
+      <h2>论文要解决的科学问题</h2>
+      <div class="callout good"><b>候选主张：</b>将六个月的 Sentinel-2、Sentinel-1、Landsat 与稀疏高分来源编码为按月份索引的 10 m、64 维稠密特征场后，冻结该表示并训练浅层下游头，能否在严格空间留出区域内支持多种城市地物制图，并提高标注 patch 的使用效率。</div>
+      <div class="callout warn"><b>明确不做的过度主张：</b>不称玄女为全球基础模型；不写“全面超过 AEF/DINO”；不把月度输出直接等同于时序变化检测能力；不把生产版 P10C 的全域训练结果写为空间泛化结论。建筑、道路、水体与训练期 OSM 语义重叠，因此不能仅凭这些任务写成完全独立的通用少样本能力。</div>
+    </section>
+
+    <section id="framework">
+      <h2>论文整体框架图</h2>
+      <p>图示对应论文的主叙事：从多源观测、质量控制和弱语义，到月度 embedding，再到严格空间独立的多任务验证。每个模块均有明确写作内容和对应实验，不以结果倒推方法选择。</p>
+      <div class="flow" aria-label="论文方法与验证框架">
+        <div class="flow-box"><b>1. 数据</b>海淀连续六个月多源 EO；稀疏高分来源；OSM 弱语义；云/有效像素 mask。</div>
+        <div class="flow-box"><b>2. 学习</b>结构化输入遮挡下的有效目标重建；高分路径；vMF-style 64 维瓶颈；辅助弱监督。</div>
+        <div class="flow-box"><b>3. 产品</b>每月一份 10 m 稠密 embedding；允许跨月注意力，因此称月度索引而非当月因果表示。</div>
+        <div class="flow-box"><b>4. 读出</b>冻结 encoder；同一浅层 conv3×3 probe；5/10/50-shot；验证集选阈值。</div>
+        <div class="flow-box"><b>5. 证据</b>空间 5-fold、数据规模、消融、独立标签、鲁棒性、跨城与外部基线。</div>
+      </div>
+      <figure class="figure"><img src="/docs/production/assets/nonbuilding_fewshot_semantic_20260705/xuannv_aef_global_pca_compare.png" alt="玄女与 AEF 的全域 PCA embedding 对比"><figcaption>图 A. 生产版 embedding 与 AEF 的全域空间可视化。论文将保留此类图作为直观案例，但主结论只以严格空间留出的量化结果为准。</figcaption></figure>
     </section>
 
     <section id="outline">
-      <h2>论文大纲</h2>
-      <ol>
-        <li><b>Introduction：</b>城市制图需要反复训练任务模型；提出“按月份索引、可复用、标注 patch 效率”的问题。</li>
-        <li><b>Related Work：</b>AEF/EO embedding、多模态遥感、掩码重建与 OSM 弱监督的现状与边界。</li>
-        <li><b>Materials and Methods：</b>首先呈现 Experimental and Technical Design，再说明区域、数据质量、OSM、模型、损失和冻结表示评测。</li>
-        <li><b>Results：</b>空间 5-fold 主结果、few-shot 曲线、基线对比、数据规模和消融、云雾/缺模态/时间/跨城分析。</li>
-        <li><b>Discussion：</b>解释弱标签、区域数据规模、有效维度、月度云雾与多源对齐带来的限制。</li>
-        <li><b>Conclusion and Availability：</b>总结可复用月度嵌入的适用范围，公开代码、配置、划分与可发布产物。</li>
-      </ol>
-      <p class="footer">主文控制在约 8,000–10,000 词、摘要不超过 250 词、主图表合计不超过 10 个；未完成实验一律标记为 pending，不进入摘要或结论。</p>
+      <h2>论文章节、每部分写什么、需要什么图表</h2>
+      <div class="chapter-list">
+        <div class="chapter"><div class="n">01</div><div><b>Introduction</b><p>提出城市制图的重复训练与标注成本问题；指出年度/global embedding 与月度区域产品的差异：月度观测更受云、缺测、SAR 噪声和配准影响。明确“复用、按月份索引、标注 patch 效率”三个关键词。</p></div><div class="chapter-side muted">图：问题定义与应用场景。<br>证据：研究问题与贡献清单。</div></div>
+        <div class="chapter"><div class="n">02</div><div><b>Related Work</b><p>梳理 AEF 等稠密地理 embedding、EO foundation encoder、多模态/时间融合、masked reconstruction 与 OSM 弱监督；明确本文创新在系统组合与严格评测，而非声称每个损失都是原创。</p></div><div class="chapter-side muted">表：与 AEF、DINO、raw 方法的产品形态与评测边界。</div></div>
+        <div class="chapter"><div class="n">03</div><div><b>Materials and Methods</b><p>以 Experimental and Technical Design 开篇，说明海淀空间单元、多源数据、质量 mask、OSM 本体、模型结构、训练目标、结构化遮挡、优化细节和冻结特征评测协议。需明确高分来源是稀疏可用、先对齐到 10 m 网格，且细粒度 OSM 只监督最终月份槽位。</p></div><div class="chapter-side muted">图 1：端到端框架。<br>图 2：区域、数据源、mask、OSM 示例。<br>表 1：数据与训练配置。</div></div>
+        <div class="chapter"><div class="n">04</div><div><b>Results</b><p>先报告空间 5-fold 主表，再给 few-shot 曲线、数据规模、配方消融、外部基线、云量/缺模态、时间上下文和哈尔滨复现。生产版全域图仅作为最后的应用案例。</p></div><div class="chapter-side muted">图 3–7：主结果、few-shot、scaling、消融、鲁棒性/跨城。<br>表 2：主基线与不确定性。</div></div>
+        <div class="chapter"><div class="n">05</div><div><b>Discussion</b><p>解释什么条件下 embedding 有价值、为什么 full-label raw+UNet 仍强、OSM 弱监督的泄露风险、云雾和尺度限制、有效秩负结果，以及可复用的产品边界。</p></div><div class="chapter-side muted">图 8：生产版全域案例与失败模式。<br>补充材料：全类结果与失败实验。</div></div>
+        <div class="chapter"><div class="n">06</div><div><b>Conclusion & Availability</b><p>仅总结已完成证据支持的结论；提供代码、配置、分割清单、数据下载入口、权重/embedding 产物和 OSM 快照溯源。</p></div><div class="chapter-side muted">数据可用性、代码可用性、局限与伦理/利益声明。</div></div>
+      </div>
     </section>
 
-    <section id="questions">
-      <h2>四个研究问题与证据需求</h2>
-      <table><thead><tr><th>研究问题</th><th>需要的实验</th><th>当前状态</th></tr></thead><tbody>
-        <tr><td>RQ1：冻结 embedding 能否支持多任务制图？</td><td>建筑、道路、水体及扩展类别；5-fold × 3 下游 seed。</td><td><span class="status run">encoder 重训中</span></td></tr>
-        <tr><td>RQ2：是否提升标注 patch 效率？</td><td>5/10/50-shot，和 AEF、DINO、raw 基线用同一 split/head/阈值规则。</td><td><span class="status prelim">已有 fold-0 预证据</span></td></tr>
-        <tr><td>RQ3：哪些训练模块有效？</td><td>数据规模、OSM、高分路径、困难负样本、遮挡训练的受控消融。</td><td><span class="status run">40 组主矩阵</span></td></tr>
-        <tr><td>RQ4：月度方案是否稳健和可复现？</td><td>云量/缺模态分层、1/3/6 月时间对照、哈尔滨从零复现。</td><td><span class="status pending">部分待评测</span></td></tr>
-      </tbody></table>
+    <section id="innovation">
+      <h2>拟突出创新点</h2>
+      <div class="grid two"><div class="request"><b>创新 1：月度索引的城市稠密 embedding 产品形态</b><p>每个 1.28 km patch 输出 128×128×64 月度特征场。相对于年度 embedding，研究目标是保留月度城市地表状态；同时明确其可使用跨月上下文，避免对“当月信息”做不准确承诺。</p></div><div class="request"><b>创新 2：高分来源服务于 10 m 表征，而不是伪造高分输出</b><p>将稀疏高分光学/SAR 先对齐至 10 m 网格，用作输入融合和有效目标重建；重点验证其对边界与下游制图的影响，而不把 10 m embedding 写成原生高分辨率预测。</p></div><div class="request"><b>创新 3：面向月度缺测的结构化多源重建</b><p>训练中随机遮挡模态、月份和空间块，并在所有有效观测目标上重建；这是针对云雾、源缺失、SAR 噪声和月度观测稀疏的实际工程问题设计。</p></div><div class="request"><b>创新 4：OSM 弱语义 + 严格泄露意识的评测设计</b><p>OSM 只作为辅助弱监督，最终主张必须跨“编码器是否见过 OSM、下游类别是否重叠、标签是否独立”三条轴检验；以空间隔离和结果门禁限制弱标签带来的虚高。</p></div></div>
+      <div class="callout">创新表述原则：可称“<b>经严格验证的系统级方法与评测框架</b>”，不能在没有 2×2 高分路径实验、独立标签和空间 5-fold 结果前声称单个组件具有确定因果收益。</div>
     </section>
 
-    <section id="matrix">
-      <h2>注册实验矩阵</h2>
-      <p>所有科学实验使用连续空间 block 5-fold：测试 block、验证带和一圈缓冲区不进入 embedding 训练；40/80/150 patch 子集在每一折内严格嵌套。每个实验配置自包含，结果需要绑定代码版本、权重、数据清单、split、阈值和下游 head。</p>
-      <table><thead><tr><th>编号</th><th>实验</th><th>目的</th><th>状态</th></tr></thead><tbody>
-        <tr><td>E0</td><td>P10C 生产版全域案例</td><td>业务展示与全域制图。</td><td><span class="status done">完成；仅案例</span></td></tr>
-        <tr><td>E1</td><td>40 / 80 / 150 patch scale</td><td>量化数据规模是否为主要瓶颈。</td><td><span class="status pending">排队待训</span></td></tr>
-        <tr><td>E2</td><td>full / no OSM / coarse OSM / no hard-negative</td><td>分离弱语义与困难背景的贡献。</td><td><span class="status run">部分已完成</span></td></tr>
-        <tr><td>E2-HR</td><td>去高分辨率完整路径</td><td>测试高分输入融合和高分重建的合并作用。</td><td><span class="status done">5 / 5 encoder 完成</span></td></tr>
-        <tr><td>E2-Mask</td><td>去结构化输入遮挡</td><td>验证困难重建/遮挡训练的作用。</td><td><span class="status run">1 / 5 完成，3 折运行</span></td></tr>
-        <tr><td>E3</td><td>5-fold × 3 downstream seeds</td><td>估计空间和下游训练波动。</td><td><span class="status pending">依赖 encoder</span></td></tr>
-        <tr><td>E4</td><td>独立人工或非 OSM 标签</td><td>检查 OSM 弱监督的标签来源偏差。</td><td><span class="status pending">待执行</span></td></tr>
-        <tr><td>E5</td><td>哈尔滨从零复现</td><td>验证训练配方可在第二城市复现。</td><td><span class="status prelim">e800 已有，统一评测待做</span></td></tr>
-        <tr><td>E6</td><td>Raw / AEF / DINOv3</td><td>统一下游协议的外部基线比较。</td><td><span class="status prelim">fold-0 已有，主评测待做</span></td></tr>
-        <tr><td>E7/E8</td><td>时间上下文、云量与缺模态</td><td>检验月度输出的稳健性边界。</td><td><span class="status pending">待执行</span></td></tr>
-      </tbody></table>
+    <section id="protocol">
+      <h2>实验设计：从业务诊断升级为论文证据</h2>
+      <div class="grid two"><div><h3>统一主协议</h3><ul><li>连续空间 block 5-fold，而非随机 patch 划分；测试块、验证带和一格缓冲区不参加 embedding 训练。</li><li>玄女、AEF、DINOv3、raw 特征共享标签、空间 split、shot、下游 head、优化预算和阈值选择规则。</li><li>阈值仅由验证集预测决定；测试集报告 <code>F1@validation threshold</code>、AP、AUC、IoU。</li><li>主表采用 5-fold × 3 downstream seed，报告均值、标准差及空间 patch 配对置信区间。</li></ul></div><div><h3>为什么如此设计</h3><ul><li>避免临近 patch、OSM 标签或预训练祖先权重泄露到测试区。</li><li>避免在测试集上挑阈值、挑 checkpoint 或只选最佳 fold。</li><li>区分 encoder 随机种子与下游头随机种子，避免把后者误称为独立预训练重复。</li><li>面对类别不均衡时，避免仅以 AUC 得出“效果好”的结论。</li></ul></div></div>
+      <div class="table-wrap"><table><thead><tr><th>实验组</th><th>核心问题</th><th>当前状态</th><th>可用于论文的结论</th></tr></thead><tbody>
+        <tr><td>E0 P10C 全域案例</td><td>产品能否实际支持多任务制图？</td><td><span class="badge verified">完成</span></td><td>可作为应用案例；不可用于空间泛化结论。</td></tr>
+        <tr><td>E1 40/80/150 patch</td><td>数据量是否为主要瓶颈？</td><td><span class="badge pending">待训练</span></td><td>完成后形成严格 nested scaling 曲线。</td></tr>
+        <tr><td>E2 OSM / hard-negative</td><td>弱语义与困难背景的作用是什么？</td><td><span class="badge running">部分重训中</span></td><td>需至少三组独立 encoder 才能作稳健机制表述。</td></tr>
+        <tr><td>E2-HR 高分路径</td><td>高分输入/重建是否保留边界？</td><td><span class="badge verified">5/5 encoder 完成</span></td><td>当前仅检验“完整路径”作用；输入融合开/关 × 重建目标开/关的 2×2 因果拆分仍待补。</td></tr>
+        <tr><td>E2-Mask 去遮挡</td><td>结构化遮挡是否提升鲁棒性？</td><td><span class="badge running">1/5 完成，3 折运行</span></td><td>待云量/缺模态分层后综合解释。</td></tr>
+        <tr><td>E3 probes</td><td>结果是否受空间和头部初始化影响？</td><td><span class="badge pending">依赖 encoder</span></td><td>形成主表不确定性与配对置信区间。</td></tr>
+        <tr><td>E4 独立标签</td><td>OSM 结果是否存在标签来源偏差？</td><td><span class="badge pending">待执行</span></td><td>决定 OSM 弱监督结论强度。</td></tr>
+        <tr><td>E5 哈尔滨</td><td>训练配方能否在第二城市复现？</td><td><span class="badge diagnostic">e800 已有，统一评测待做</span></td><td>从零训练复现不等于海淀模型零样本迁移。</td></tr>
+        <tr><td>E6 / E7 / E8</td><td>外部基线、时间、云量和缺测边界？</td><td><span class="badge pending">待执行</span></td><td>决定“月度与鲁棒性”相关的最终主张。</td></tr>
+      </tbody></table></div>
     </section>
 
     <section id="status">
-      <h2>当前训练进度</h2>
-      <div class="grid three"><div class="kpi"><div class="label">完整配方 full-150</div><div class="value">5 / 5</div><div class="note">encoder epoch 800 已完成</div></div><div class="kpi"><div class="label">仅粗 OSM coarse-150</div><div class="value">5 / 5</div><div class="note">encoder epoch 800 已完成</div></div><div class="kpi"><div class="label">去高分路径 no-highres</div><div class="value">5 / 5</div><div class="note">encoder epoch 800 已完成</div></div></div>
-      <div class="grid three" style="margin-top:14px"><div class="kpi"><div class="label">去遮挡 no-masking</div><div class="value">1 / 5</div><div class="note">另有 3 个折正在运行</div></div><div class="kpi"><div class="label">总体 encoder</div><div class="value">16 / 40</div><div class="note">严格空间论文重训</div></div><div class="kpi"><div class="label">训练资源</div><div class="value">6 张 NPU</div><div class="note">三组两卡并行</div></div></div>
-      <div class="callout"><b>运行保障：</b>本周已为训练队列增加 watchdog。每 10 分钟检测日志停滞，每 20 epoch 生成滚动恢复点；检测到 Ascend HCCL 通信停滞时自动终止并从最新恢复点续跑，避免等待和长距离回退。</div>
-    </section>
-
-    <section id="evidence">
-      <h2>已有结果能说明什么</h2>
-      <div class="grid two"><div><h3><span class="status done">可作为生产版证据</span></h3><ul><li>P10C 在海淀多任务、few-shot、检索和全域制图上已有完整业务验证。</li><li>同一轻量头下，P10C 与 AEF 64 维对比总体同量级；施工、道路有竞争力，水体存在差距。</li><li>少量标注下，玄女对 raw 多源影像强基线在建筑、道路、水体上有优势，尤其是 5-shot 和 10-shot。</li><li>有效秩与下游效果不呈简单正相关：P14/V4 的诊断为论文 Discussion 提供了有价值的负结果。</li></ul></div><div><h3><span class="status pending">尚不能进入论文主结论</span></h3><ul><li>完整配方对 no-OSM、no-masking、no-hard-negative 的稳健差异。</li><li>数据量 40/80/150 patch 的跨折 scaling 曲线。</li><li>独立标签上的 OSM 弱监督收益和类别留出能力。</li><li>月度时间上下文、云雾/缺模态鲁棒性、哈尔滨统一评测与跨城迁移。</li></ul></div></div>
-      <div class="callout warn"><b>论文写作原则：</b>当前生产版数字可放在应用案例或预实验；摘要、主结果与结论只使用通过门禁、登记在正式结果注册表中的空间独立结果。</div>
+      <h2>当前进度、已有证据与可视化</h2>
+      <div class="grid three"><div class="kpi"><div class="label">full-150</div><div class="value">5 / 5</div><div class="note">完整配方 encoder 已完成</div></div><div class="kpi"><div class="label">coarse-OSM-150</div><div class="value">5 / 5</div><div class="note">仅粗弱语义 encoder 已完成</div></div><div class="kpi"><div class="label">no-highres-150</div><div class="value">5 / 5</div><div class="note">去高分路径 encoder 已完成</div></div></div>
+      <div class="grid two" style="margin-top:14px"><figure class="figure"><img src="/docs/production/assets/haidian_v1_20260708/fewshot_best_f1.png" alt="少样本下玄女和原始影像的 F1 对比"><figcaption>图 B. 已有生产版预证据：在 5/10-shot，玄女对 raw 多源影像基线在建筑、道路、水体上均具有优势。论文主表将按空间 5-fold 重算。</figcaption></figure><figure class="figure"><img src="/docs/production/assets/haidian_fine_osm_leadership_20260705/advantage_metric_delta_heatmap.png" alt="多类别任务的指标差异热力图"><figcaption>图 C. 多类别任务的阶段性指标可视化。弱标签类别的 F1 与 AUC 差异提醒我们必须在独立标签上复核。</figcaption></figure></div>
+      <div class="callout warn"><b>正确的进度判断：</b>论文的“框架、研究问题、实验协议、结果门禁”已经完成并经多轮审查；主结果尚未完成。现有 P10C、随机 fold、单折和 OSM 结果是高价值预证据，但不应提前写入摘要和结论。</div>
     </section>
 
     <section id="governance">
-      <h2>为什么这套方案更经得起审稿</h2>
-      <div class="grid two"><div class="step"><b>1. 训练与测试隔离</b><br>测试区、验证区和空间缓冲区均不参与 encoder 训练；避免相邻 patch 信息泄露。</div><div class="step"><b>2. 基线同协议</b><br>玄女、AEF、DINOv3、raw baseline 使用同一标签、同一空间划分、同一 head、同一训练预算和验证集阈值。</div><div class="step"><b>3. 统计而非单点最优</b><br>主结果报告 5-fold × 3 下游 seed 的均值、标准差与空间配对置信区间，而非只选最好的一个 fold。</div><div class="step"><b>4. 可追溯与失败公开</b><br>每个结果绑定 Git commit、配置、权重、数据/标签清单、阈值、预测和汇总代码；失败与负结果同样保留。</div></div>
-      <p class="footer">论文框架与实验协议已经过多轮独立审查，最终对“方法事实、统计严谨性、JRS 规范、科学叙事、对抗性可复现性”均给出 PASS。该 PASS 表示设计可执行，并不等于未完成实验已经得出结论。</p>
+      <h2>科学可信度与可复现性控制</h2>
+      <div class="grid two"><div><h3>结果进入主文前必须满足</h3><ul><li>绑定 preregistration、Git commit、自包含配置、训练 patch 清单、权重与祖先谱系。</li><li>保存标签版本、OSM 快照、split/shot manifest、验证阈值、逐 patch 预测及聚合脚本。</li><li>仅使用 <code>paper_eligible=true</code> 的正式结果注册表条目生成主表和图。</li><li>主实验从折内随机初始化，禁止继承看过该折验证/测试块的 P10C 等生产权重。</li></ul></div><div><h3>已完成的审查与工程保障</h3><ul><li>方法事实、统计协议、JRS 合规、科学叙事和对抗性可复现性五条审查线均通过框架审查。</li><li>训练队列增加 watchdog、停滞检测和每 20 epoch 滚动恢复点，降低 Ascend HCCL 超时导致的不可控中断。</li><li>未完成实验、失败尝试和负结果将保留在补充材料，而不是只保留最优结果。</li><li>投稿前仍需完成 prior-publication 审核、作者信息、代码/数据开放范围与 OSM 时间溯源。</li></ul></div></div>
     </section>
 
-    <section id="next">
-      <h2>下一阶段里程碑</h2>
-      <div class="step"><b>第一步：</b>完成剩余 24 个严格空间 encoder 训练，并由 watchdog 自动保证队列恢复。</div>
-      <div class="step"><b>第二步：</b>批量导出 best checkpoint embedding，运行统一 5-fold × 3-seed downstream probes；中间 embedding 按规范清理，仅保留可复现产物。</div>
-      <div class="step"><b>第三步：</b>生成主表、few-shot 曲线、scaling 图、消融图、云雾分层图、跨城结果和对应可视化。</div>
-      <div class="step"><b>第四步：</b>只将通过证据门禁的数字写入英文稿，并补齐数据/代码可用性、OSM 溯源、作者与 prior-publication 审计。</div>
-    </section>
-    <p class="footer">资料来源：<a href="/docs/paper/jrs_2026/writing_blueprint_zh.md">论文写作蓝图</a>、<a href="/docs/paper/xuannv_paper_experiment_protocol_20260715_zh.md">实验协议</a>、<a href="/docs/paper/jrs_2026/claim_evidence_matrix.md">主张—证据矩阵</a>、<a href="/docs/paper/jrs_2026/multi_agent_review_log.md">框架审查记录</a>。</p>
+    <section id="next"><h2>从当前进度到可投稿论文的里程碑</h2><div class="timeline"><div class="timeline-item"><div class="time">里程碑 1</div><div><b>完成 40 组严格空间 encoder 重训。</b> 完整配方、OSM、高分路径、遮挡、困难负样本和数据规模配置均形成可审计权重。</div></div><div class="timeline-item"><div class="time">里程碑 2</div><div><b>完成统一下游与外部基线。</b> 对每组执行 5-fold × 3 seed probe，汇总 F1、AP、AUC、IoU、置信区间和全域可视化。</div></div><div class="timeline-item"><div class="time">里程碑 3</div><div><b>补齐可信度缺口。</b> 完成独立人工/非 OSM 标签、云量/缺模态、时间上下文、哈尔滨复现与必要的高分 2×2 消融。</div></div><div class="timeline-item"><div class="time">里程碑 4</div><div><b>图表先行写作与投稿审查。</b> 先锁定 8 幅主图和 2 张主表，再写英文稿；最终仅使用通过门禁的数字。</div></div></div></section>
+    <p class="footer">资料来源：<a href="/docs/paper/jrs_2026/manuscript_outline_en.md">英文论文框架</a>、<a href="/docs/paper/jrs_2026/writing_blueprint_zh.md">中文写作蓝图</a>、<a href="/docs/paper/xuannv_paper_experiment_protocol_20260715_zh.md">实验协议</a>、<a href="/docs/paper/jrs_2026/claim_evidence_matrix.md">主张—证据矩阵</a>、<a href="/docs/paper/jrs_2026/multi_agent_review_log.md">框架审查记录</a>。</p>
   </main>
 </div>
 </body>
