@@ -51,6 +51,10 @@ npu-smi info
 
 ## 3. China V1 数据获取恢复
 
+> 2026-07-19 更新：正式生产根目录已切换为
+> `/data2/xuannv_embedding/china_v1/shards/full_pc_v2_20260719/`。旧目录
+> `full_pc_20260717/` 只保留早期故障 partial，不计入当前进度，也不再恢复写入。
+
 ### 3.1 当前进度与问题
 
 - 数据根目录：`/data2/xuannv_embedding/china_v1/`。
@@ -90,15 +94,15 @@ for worker in 0 1 2; do
     "cd /root/workspace/xuannv && \
      bash scripts/data/run_china_v1_direct.sh \
      python scripts/data/run_china_v1_watchdog.py \
-       --heartbeat /data2/xuannv_embedding/china_v1/watchdog/full_pc_20260717/worker_${worker}.heartbeat.json \
-       --log /data2/xuannv_embedding/china_v1/logs/full_pc_20260717/worker_${worker}.log \
-       --state /data2/xuannv_embedding/china_v1/watchdog/full_pc_20260717/worker_${worker}.state.json \
+       --heartbeat /data2/xuannv_embedding/china_v1/watchdog/full_pc_v2_20260719/worker_${worker}.heartbeat.json \
+       --log /data2/xuannv_embedding/china_v1/logs/full_pc_v2_20260719/worker_${worker}.log \
+       --state /data2/xuannv_embedding/china_v1/watchdog/full_pc_v2_20260719/worker_${worker}.state.json \
        --stall-seconds 900 --restart-delay 30 --max-restarts 100 -- \
        python scripts/data/materialize_china_v1_worker.py \
          --points-dir /data2/xuannv_embedding/china_v1/atlas/full_60500_spatial \
          --prefix china_v1_full \
          --catalog-root /data2/xuannv_embedding/china_v1/stac_catalogs \
-         --output-root /data2/xuannv_embedding/china_v1/shards/full_pc_20260717 \
+         --output-root /data2/xuannv_embedding/china_v1/shards/full_pc_v2_20260719 \
          --months 2025-04 2025-05 2025-06 2025-07 2025-08 2025-09 2025-10 2025-11 2025-12 2026-01 2026-02 2026-03 2026-04 \
          --worker-index ${worker} --worker-count 3 \
          --max-clean-scenes 3 --strategy scene \
@@ -122,6 +126,8 @@ tail -30 /data2/xuannv_embedding/china_v1/logs/full_pc_20260717/worker_0.log
 单个 COG 候选景读取失败、但同一 patch 已由其他清晰景形成有效合成时，质量记录会保留失败景信息，但不会再阻止 shard 完成。只有远端错误导致该 patch 完全没有有效像素时才保留为 `retryable_error`。正式全国任务使用 900 秒心跳阈值，避免一个跨境 COG 批量窗口读取超过 180 秒时被误杀。
 
 `--max-clean-scenes 3` 表示每个 patch、每个数据源、每个月最多合成 3 景通过本地质量筛选的影像。scene-first 实现必须按 patch 计数，不能把该上限错误应用成“每景最多处理 3 个 patch”。
+
+逐 patch 的 `done` 矩阵会立即保留成功的数据源/月组合，后续恢复只重试失败 patch。STAC 几何与真实 COG 边界不一致产生的 `WindowError: Intersection is empty` 属于永久不覆盖，记录为无有效像素并通过 availability mask 表达，不作无限网络重试。修复后的端到端 smoke 位于 `/data2/xuannv_embedding/china_v1/smoke/fix_20260719_0428.zarr`，已通过 1 patch、1 月、S2/S1/Landsat 三源原子落盘与形状校验。
 
 `materialize_china_v1_worker.py` 已安装 SIGTERM 处理器。watchdog 因心跳超时终止子进程时，Python 会先展开 shard materializer 的 `finally` 并释放当前 `.lock`，从而允许下一个子进程继续同一个 partial。若使用本修复前的进程产生了 stale lock，必须先停止全部 China V1 worker，确认 heartbeat 不再更新，再仅删除 `.zarr.partial.lock` 空目录；不得在 worker 活跃时批量清锁。
 
