@@ -556,8 +556,13 @@ def _scene_centric_source_month(
                 image[quality_index] = first_quality[patch_index]
         state = states[patch_index]
         has_transport_error = any("error" in rejected for rejected in state["rejected_items"])
+        # A remote scene may fail while another clear scene still provides a
+        # complete local composite.  Treat transport errors as retryable only
+        # when they leave the patch without any usable pixels; otherwise a
+        # single unhealthy candidate would prevent national shards from ever
+        # completing despite valid observations from other scenes.
         status = (
-            "retryable_error" if has_transport_error else
+            "retryable_error" if has_transport_error and not valid.any() else
             ("ok" if valid.any() else ("no_valid_pixels" if state["candidate_count"] else "no_candidate"))
         )
         records.append({

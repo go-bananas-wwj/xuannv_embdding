@@ -9,6 +9,7 @@ STATUS_FILE="$LOG_ROOT/status.tsv"
 EXPECTED_CONFIGS=40
 MAX_JOB_RETRIES=${MAX_JOB_RETRIES:-3}
 RETRY_DELAY_SECONDS=${RETRY_DELAY_SECONDS:-60}
+ACTIVE_LANES=${ACTIVE_LANES:-0,1,2}
 
 mkdir -p "$OUTPUT_ROOT" "$LOG_ROOT"
 cd "$ROOT"
@@ -117,6 +118,7 @@ run_lane() {
   local name
   local attempt
   local status
+  local lane_failed=0
 
   printf '%s\tlane_start\tlane=%s\tdevices=%s\tjobs=%d\n' \
     "$(date -Iseconds)" "$lane" "$devices" "$#" >> "$STATUS_FILE"
@@ -132,7 +134,8 @@ run_lane() {
       if (( attempt > MAX_JOB_RETRIES )); then
         printf '%s\tlane_failed\tlane=%s\tname=%s\texit=%s\tattempts=%s\n' \
           "$(date -Iseconds)" "$lane" "$name" "$status" "$attempt" >> "$STATUS_FILE"
-        return 1
+        lane_failed=1
+        break
       fi
       printf '%s\tretry\t%s\tlane=%s\texit=%s\tattempt=%s/%s\tdelay=%s\n' \
         "$(date -Iseconds)" "$name" "$lane" "$status" "$attempt" "$MAX_JOB_RETRIES" \
@@ -140,15 +143,26 @@ run_lane() {
       sleep "$RETRY_DELAY_SECONDS"
     done
   done
-  printf '%s\tlane_complete\tlane=%s\n' "$(date -Iseconds)" "$lane" >> "$STATUS_FILE"
+  printf '%s\tlane_complete\tlane=%s\tfailed=%s\n' \
+    "$(date -Iseconds)" "$lane" "$lane_failed" >> "$STATUS_FILE"
+  return "$lane_failed"
 }
 
-run_lane 0 0,1 35401 "${LANE0[@]}" & pid0=$!
-run_lane 1 2,3 35402 "${LANE1[@]}" & pid1=$!
-run_lane 2 4,5 35403 "${LANE2[@]}" & pid2=$!
+lane_enabled() {
+  [[ ",$ACTIVE_LANES," == *",$1,"* ]]
+}
+
+declare -a lane_pids=()
+if lane_enabled 0; then run_lane 0 0,1 35401 "${LANE0[@]}" & lane_pids+=("$!"); fi
+if lane_enabled 1; then run_lane 1 2,3 35402 "${LANE1[@]}" & lane_pids+=("$!"); fi
+if lane_enabled 2; then run_lane 2 4,5 35403 "${LANE2[@]}" & lane_pids+=("$!"); fi
+if (( ${#lane_pids[@]} == 0 )); then
+  printf 'ACTIVE_LANES must select at least one of 0,1,2: %s\n' "$ACTIVE_LANES" >&2
+  exit 2
+fi
 
 failed=0
-for pid in "$pid0" "$pid1" "$pid2"; do
+for pid in "${lane_pids[@]}"; do
   if ! wait "$pid"; then failed=1; fi
 done
 
