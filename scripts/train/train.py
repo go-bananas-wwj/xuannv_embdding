@@ -9,6 +9,7 @@ import logging
 import os
 import random
 from pathlib import Path
+from collections.abc import Iterator
 from typing import Any
 
 import numpy as np
@@ -200,12 +201,50 @@ def _resolve_device(args_device: str | None, is_distributed: bool) -> torch.devi
     return torch.device("cpu")
 
 
+class _PreparedLoader:
+    """Apply stochastic batch preparation in the rank process.
+
+    DataLoader workers are responsible only for file IO and CPU collation.
+    Running masking and other torch tensor transforms in those workers can
+    inherit an initialized NPU runtime and make DDP ranks progress at wildly
+    different speeds.
+    """
+
+    def __init__(
+        self,
+        loader: DataLoader,
+        target_heads: dict[str, dict[str, Any]],
+        source_dropout_probs: dict[str, float],
+        input_masking: dict[str, Any],
+        keep_highres_inputs: bool,
+    ) -> None:
+        self.loader = loader
+        self.sampler = loader.sampler
+        self.target_heads = target_heads
+        self.source_dropout_probs = source_dropout_probs
+        self.input_masking = input_masking
+        self.keep_highres_inputs = keep_highres_inputs
+
+    def __iter__(self) -> Iterator[dict[str, Any]]:
+        for batch in self.loader:
+            yield prepare_batch(
+                batch,
+                self.target_heads,
+                source_dropout_probs=self.source_dropout_probs,
+                input_masking=self.input_masking,
+                keep_highres_inputs=self.keep_highres_inputs,
+            )
+
+    def __len__(self) -> int:
+        return len(self.loader)
+
+
 def _build_loader(
     cfg: Config,
     target_heads: dict[str, dict[str, Any]],
     split: str,
     is_distributed: bool,
-) -> DataLoader:
+) -> _PreparedLoader:
     """构造训练或验证 DataLoader，内置 ``prepare_batch`` 转换。"""
     manifest_path = cfg.data.manifest_path
     if split == "train" and cfg.data.train_manifest_path is not None:
@@ -262,33 +301,25 @@ def _build_loader(
             shuffle=(split == "train"),
         )
 
-    def training_collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
-        collated = collate_fn(batch)
-        source_dropout_probs = cfg.data.source_dropout_probs if split == "train" else {}
-        input_masking = cfg.training.input_masking if split == "train" else {}
-        keep_highres_inputs = bool(
-            cfg.model.stp.get("highres_fusion_to_embedding", True)
-        )
-        return prepare_batch(
-            collated,
-            target_heads,
-            source_dropout_probs=source_dropout_probs,
-            input_masking=input_masking,
-            keep_highres_inputs=keep_highres_inputs,
-        )
-
     shuffle = (split == "train") and (sampler is None)
     drop_last = split == "train"
 
-    return DataLoader(
+    loader = DataLoader(
         dataset=dataset,
         batch_size=cfg.data.batch_size,
         shuffle=shuffle,
         sampler=sampler,
         num_workers=cfg.data.num_workers,
-        collate_fn=training_collate_fn,
+        collate_fn=collate_fn,
         pin_memory=True,
         drop_last=drop_last,
+    )
+    return _PreparedLoader(
+        loader,
+        target_heads,
+        cfg.data.source_dropout_probs if split == "train" else {},
+        cfg.training.input_masking if split == "train" else {},
+        bool(cfg.model.stp.get("highres_fusion_to_embedding", True)),
     )
 
 
