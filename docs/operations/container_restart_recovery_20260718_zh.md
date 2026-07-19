@@ -31,7 +31,37 @@
 
 调度器默认还会对 Ascend/HCCL 瞬时超时进行最多 3 次自动重试，每次等待 60 秒并重新读取最新编号 checkpoint。可通过 `MAX_JOB_RETRIES` 和 `RETRY_DELAY_SECONDS` 环境变量调整，但正式运行应在状态文件中保留实际值与重试记录。
 
-### 2.2 恢复命令
+### 2.2 训练 watchdog 与滚动恢复
+
+训练器默认每 20 个 epoch 原子覆盖一次 `recovery.pt`；可通过
+`XUANNV_RECOVERY_SAVE_EVERY` 调整。调度器会在 `recovery.pt`、`epoch_*.pt`
+和 `best.pt` 中按原子写入时间选择最新状态，因此首次 200 epoch 保存点前发生故障也可以恢复。
+
+独立 watchdog 每 30 秒扫描一次 `torchrun`。某个实验启动超过 10 分钟且训练日志连续
+10 分钟没有更新时，watchdog 对对应 torchrun 发送 SIGTERM，由所属队列在 90 秒后重试，
+不再等待 HCCL 默认约 30 分钟超时：
+
+```bash
+tmux new-session -d -s paper_training_watchdog \
+  'cd /root/workspace/xuannv && while true; do \
+   PYTHONPATH=/root/workspace/xuannv/src \
+   /data/wwj_torch21/conda/envs/torch26/bin/python \
+   scripts/train/watch_training_jobs.py \
+     --log-root /data/xuannv_embedding/logs/paper_registered_20260716 \
+     --heartbeat /data/xuannv_embedding/logs/paper_registered_20260716/watchdog_heartbeat.json \
+     --events /data/xuannv_embedding/logs/paper_registered_20260716/watchdog_events.jsonl \
+     --stall-seconds 600 --startup-grace-seconds 600 --poll-seconds 30; \
+   sleep 30; done'
+```
+
+查看状态：
+
+```bash
+cat /data/xuannv_embedding/logs/paper_registered_20260716/watchdog_heartbeat.json
+tail -20 /data/xuannv_embedding/logs/paper_registered_20260716/watchdog_events.jsonl
+```
+
+### 2.3 恢复命令
 
 ```bash
 cd /root/workspace/xuannv
