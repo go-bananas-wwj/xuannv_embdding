@@ -78,14 +78,18 @@ run_one() {
     return 0
   fi
   if [[ -d "$output" ]] && find "$output" -mindepth 1 -print -quit | grep -q .; then
-    resume_checkpoint=$(find "$output" -maxdepth 1 -type f -name 'epoch_*.pt' -printf '%f\n' \
-      | sort -V | tail -1)
+    # All three checkpoint kinds contain model, optimizer, scheduler and
+    # criterion state.  Modification time selects the newest atomic write;
+    # recovery.pt normally wins between sparse numbered milestones, while a
+    # best-only partial run remains recoverable instead of blocking its lane.
+    resume_checkpoint=$(find "$output" -maxdepth 1 -type f \
+      \( -name 'epoch_*.pt' -o -name 'recovery.pt' -o -name 'best.pt' \) \
+      -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
     if [[ -z "$resume_checkpoint" ]]; then
       printf '%s\trefuse_partial_without_epoch_checkpoint\t%s\tlane=%s\toutput=%s\n' \
         "$(date -Iseconds)" "$name" "$lane" "$output" >> "$STATUS_FILE"
       return 3
     fi
-    resume_checkpoint="$output/$resume_checkpoint"
     resume_args=(--resume "$resume_checkpoint")
     printf '%s\tresume\t%s\tlane=%s\tcheckpoint=%s\n' \
       "$(date -Iseconds)" "$name" "$lane" "$resume_checkpoint" >> "$STATUS_FILE"

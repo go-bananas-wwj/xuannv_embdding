@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -758,6 +759,26 @@ class Trainer:
                         )
 
                         self._cleanup_old_checkpoints(keep_last=3)
+
+                    recovery_every = int(
+                        os.environ.get("XUANNV_RECOVERY_SAVE_EVERY", "20")
+                    )
+                    one_based_epoch = epoch + 1
+                    if recovery_every > 0 and one_based_epoch % recovery_every == 0:
+                        save_checkpoint(
+                            self.output_dir / "recovery.pt",
+                            self._unwrap_model(),
+                            self.optimizer,
+                            self.scheduler,
+                            epoch,
+                            {"train": train_metrics, "val": val_metrics},
+                            trainer_state={
+                                "best_val_loss": self.best_val_loss,
+                                "best_epoch": self.best_epoch,
+                            },
+                            criterion=self._unwrap_criterion(),
+                        )
+                        logger.info("更新滚动恢复 checkpoint: epoch=%d", epoch)
         finally:
             self._finish_wandb()
 

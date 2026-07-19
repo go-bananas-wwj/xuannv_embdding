@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +46,12 @@ def save_checkpoint(
     }
     if criterion is not None:
         state["criterion"] = criterion.state_dict()
-    torch.save(state, path)
+    # Keep the previous checkpoint valid if the process is terminated while a
+    # large state dict is being written.  This matters for watchdog-driven
+    # recovery on Ascend jobs that may be killed after a stalled collective.
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    torch.save(state, temporary)
+    os.replace(temporary, path)
 
 
 def load_checkpoint(
