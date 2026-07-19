@@ -28,7 +28,7 @@
   <nav>
     <strong>玄女模型训练汇报</strong>
     <small>2026-07-19 · 海淀月度嵌入</small>
-    <a href="index.html">返回汇报首页</a><a href="#overview">成果概览</a><a href="#method">模型与训练</a><a href="#metrics">核心效果</a><a href="#comparison">外部对标</a><a href="#capability">多类别能力</a><a href="#week">本周进展</a><a href="#risks">边界与下一步</a>
+    <a href="/">返回汇报首页</a><a href="#overview">成果概览</a><a href="#method">模型与训练</a><a href="#metrics">核心效果</a><a href="#comparison">外部对标</a><a href="#capability">多类别能力</a><a href="#week">本周进展</a><a href="#risks">边界与下一步</a>
   </nav>
   <main>
     <section class="hero" id="overview">
@@ -79,7 +79,7 @@
         <tr><td>建筑</td><td class="num">0.473</td><td class="num">0.481</td><td class="num">0.502</td></tr>
         <tr><td>道路</td><td class="num">0.468</td><td class="num">0.501</td><td class="num">0.566</td></tr>
       </tbody></table>
-      <figure class="figure"><img src="../production/assets/haidian_v1_20260708/fewshot_best_f1.png" alt="玄女与原始影像方法的少样本 F1 对比图"><figcaption>图 1. 建筑、道路、水体任务中，玄女 embedding 在 5-shot 和 10-shot 下相对原始影像方法的优势最明显。图仅用于生产版业务效果展示，论文主结果将使用严格空间 5-fold 重新计算。</figcaption></figure>
+      <figure class="figure"><img src="/docs/production/assets/haidian_v1_20260708/fewshot_best_f1.png" alt="玄女与原始影像方法的少样本 F1 对比图"><figcaption>图 1. 建筑、道路、水体任务中，玄女 embedding 在 5-shot 和 10-shot 下相对原始影像方法的优势最明显。图仅用于生产版业务效果展示，论文主结果将使用严格空间 5-fold 重新计算。</figcaption></figure>
     </section>
 
     <section id="comparison">
@@ -120,7 +120,7 @@
       <h2>边界、风险与下一步</h2>
       <div class="grid two"><div><h3>当前边界</h3><ul><li>充分标注时，原始多源影像加 UNet/DeepLab 等强任务模型仍可能达到或超过轻量 embedding 头。</li><li>有效维度增加不等于多任务能力增加：P11-P14 的有效秩提升，但并未稳定超过 P10C。</li><li>云雾、传感器缺测、弱标签噪声和小目标分辨率仍是主要误差来源。</li><li>生产版 P10C 是区域传导式产品，不应用于空间泛化宣称。</li></ul></div><div><h3>下一步</h3><ul><li>完成剩余 24 个严格空间折 encoder 训练，并自动导出统一下游评测。</li><li>以 5-fold × 3 下游随机种子汇总 F1、AP、AUC、IoU 和空间置信区间。</li><li>在独立标签、留出类别、云量/缺模态分层上复核 OSM 弱监督收益。</li><li>将 P10C 作为通用生产底座，V4A 作为施工专用候选，避免以单任务最优替换多任务产品。</li></ul></div></div>
     </section>
-    <p class="footer">数据截至 2026-07-19 12:08 UTC。来源：<a href="../experiments/haidian_embedding_report_summary_20260714_zh.md">生产版阶段汇总</a>、<a href="../experiments/p11_p13_consolidated_eval_20260710_zh.md">版本横评</a>、<a href="../experiments/osm_18class_eval_20260713_zh.md">18 类能力评测</a>、<a href="../paper/xuannv_paper_experiment_protocol_20260715_zh.md">论文实验协议</a>。</p>
+    <p class="footer">数据截至 2026-07-19 12:08 UTC。来源：<a href="/docs/experiments/haidian_embedding_report_summary_20260714_zh.md">生产版阶段汇总</a>、<a href="/docs/experiments/p11_p13_consolidated_eval_20260710_zh.md">版本横评</a>、<a href="/docs/experiments/osm_18class_eval_20260713_zh.md">18 类能力评测</a>、<a href="/docs/paper/xuannv_paper_experiment_protocol_20260715_zh.md">论文实验协议</a>。</p>
   </main>
 </div>
 </body>

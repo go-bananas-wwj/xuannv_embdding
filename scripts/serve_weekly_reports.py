@@ -17,6 +17,15 @@ class WeeklyReportHandler(SimpleHTTPRequestHandler):
         clean_path = unquote(urlparse(path).path)
         if clean_path in {"/", "/index.html"}:
             return str(REPORT_ROOT / "index.html")
+        routes = {
+            "/weekly/model-training/": "model_training_report.html",
+            "/weekly/paper-progress/": "paper_progress_report.html",
+            # Keep links copied from the first report revision working.
+            "/model_training_report.html": "model_training_report.html",
+            "/paper_progress_report.html": "paper_progress_report.html",
+        }
+        if clean_path in routes:
+            return str(REPORT_ROOT / routes[clean_path])
         if clean_path.startswith("/weekly/"):
             return str(REPORT_ROOT / clean_path.removeprefix("/weekly/"))
         return str(REPO_ROOT / clean_path.lstrip("/"))
