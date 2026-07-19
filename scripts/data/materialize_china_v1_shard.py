@@ -492,7 +492,7 @@ def _scene_centric_source_month(
             item["assets"][quality_asset]["href"], patch_pairs, quality_asset in config["categorical"],
         )
         accepted: list[tuple[int, np.ndarray, float]] = []
-        for patch_index in patch_indexes:
+        for patch_index in eligible_indexes:
             if patch_index in quality_errors:
                 states[patch_index]["rejected_items"].append({"item_id": item_id, "error": quality_errors[patch_index]})
                 continue
@@ -789,25 +789,36 @@ def materialize_scene_centric(
             for source_index, source in enumerate(SOURCES):
                 if np.all(done[:, month_index, source_index]):
                     continue
-                LOGGER.info("scene-first %s %s: grouping %s patches by COG", source, month, len(points))
+                pending_indexes = [
+                    patch_index for patch_index in range(len(points))
+                    if not done[patch_index, month_index, source_index]
+                ]
+                pending_points = [points[patch_index] for patch_index in pending_indexes]
+                LOGGER.info(
+                    "scene-first %s %s: grouping %s pending patches by COG",
+                    source, month, len(pending_points),
+                )
                 images, masks, source_records = _scene_centric_source_month(
-                    source=source, catalog=catalogs[(source, month)], points=points,
+                    source=source, catalog=catalogs[(source, month)], points=pending_points,
                     max_clean_scenes=max_clean_scenes,
                 )
                 batch: list[dict[str, Any]] = []
                 retryable = False
-                for patch_index, record in enumerate(source_records):
+                for local_index, record in enumerate(source_records):
+                    patch_index = pending_indexes[local_index]
                     record["month"] = month
-                    arrays[source][0][patch_index, month_index] = images[patch_index]
-                    arrays[source][1][patch_index, month_index] = masks[patch_index]
+                    arrays[source][0][patch_index, month_index] = images[local_index]
+                    arrays[source][1][patch_index, month_index] = masks[local_index]
                     records[_record_key(record)] = record
                     batch.append(record)
-                    retryable |= record["status"] == "retryable_error"
+                    if record["status"] == "retryable_error":
+                        retryable = True
+                    else:
+                        done[patch_index, month_index, source_index] = 1
                 _append_records(quality_path, batch)
                 if retryable:
                     failures += sum(record["status"] == "retryable_error" for record in source_records)
                     raise RuntimeError(f"{source} {month} has retryable COG read errors")
-                done[:, month_index, source_index] = 1
         if np.count_nonzero(done[:]) != done.size:
             raise RuntimeError("shard has retryable errors; retain partial output for a later resume")
         expected_records = len(points) * len(months) * len(SOURCES)

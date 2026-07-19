@@ -220,3 +220,31 @@ def test_scene_centric_scene_limit_is_applied_per_patch(monkeypatch) -> None:
     assert all(mask.all() for mask in masks)
     assert all(record["selected_items"] == ["scene-1"] for record in records)
     assert all("scene-2" not in href for href, _ in calls)
+
+
+def test_scene_limit_skips_only_patches_that_reached_the_cap(monkeypatch) -> None:
+    items = [
+        {"id": "partial", "assets": {"vv": {"href": "partial-vv"}, "vh": {"href": "partial-vh"}}},
+        {"id": "shared", "assets": {"vv": {"href": "shared-vv"}, "vh": {"href": "shared-vh"}}},
+    ]
+    monkeypatch.setattr(MODULE, "_select_items", lambda _catalog, patch, *_args, **_kwargs: items if patch.patch_id == "p0" else items[1:])
+
+    def fake_read(href, patch_pairs, _categorical):
+        values = {
+            index: np.full((128, 128), 1.0 if href.endswith("vv") else 2.0, dtype=np.float32)
+            for index, _ in patch_pairs
+        }
+        return values, {}
+
+    monkeypatch.setattr(MODULE, "_read_asset_for_patches", fake_read)
+    points = [
+        MODULE.Patch("p0", 32643, (0, 0, 1, 1), (0, 0, 1, 1)),
+        MODULE.Patch("p1", 32643, (1, 0, 2, 1), (1, 0, 2, 1)),
+    ]
+    _images, masks, records = MODULE._scene_centric_source_month(
+        source="s1", catalog=object(), points=points, max_clean_scenes=1,
+    )
+
+    assert all(mask.all() for mask in masks)
+    assert records[0]["selected_items"] == ["partial"]
+    assert records[1]["selected_items"] == ["shared"]
