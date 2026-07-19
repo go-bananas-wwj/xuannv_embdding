@@ -477,10 +477,17 @@ def _scene_centric_source_month(
             item_patches[item_id][1].append(patch_index)
 
     accepted_by_item: dict[str, list[tuple[int, np.ndarray, float]]] = {}
+    accepted_scene_counts = np.zeros(len(points), dtype=np.uint16)
     min_clear_fraction = float(config["min_clear_fraction"])
     for item_id, (item, patch_indexes) in item_patches.items():
-        _heartbeat("quality_scene", source=source, item_id=item_id, patches=len(patch_indexes))
-        patch_pairs = [(index, points[index]) for index in patch_indexes]
+        eligible_indexes = [
+            index for index in patch_indexes
+            if max_clean_scenes == 0 or accepted_scene_counts[index] < max_clean_scenes
+        ]
+        if not eligible_indexes:
+            continue
+        _heartbeat("quality_scene", source=source, item_id=item_id, patches=len(eligible_indexes))
+        patch_pairs = [(index, points[index]) for index in eligible_indexes]
         quality_values, quality_errors = _read_asset_for_patches(
             item["assets"][quality_asset]["href"], patch_pairs, quality_asset in config["categorical"],
         )
@@ -497,15 +504,16 @@ def _scene_centric_source_month(
                 })
                 continue
             accepted.append((patch_index, quality, clear_fraction))
+            accepted_scene_counts[patch_index] += 1
         if accepted:
             accepted_by_item[item_id] = accepted
 
     for item_id, accepted in accepted_by_item.items():
         item = item_patches[item_id][0]
         _heartbeat("full_scene", source=source, item_id=item_id, patches=len(accepted))
-        # A user-requested zero means all local-clear scenes.  The cap is only
-        # applied after QA screening and therefore never admits cloudy scenes.
-        active = accepted if max_clean_scenes == 0 else accepted[:max_clean_scenes]
+        # The per-patch scene cap was applied during QA screening.  Every
+        # accepted tuple here is locally clear and belongs in the composite.
+        active = accepted
         patch_pairs = [(patch_index, points[patch_index]) for patch_index, _, _ in active]
         scenes = {
             patch_index: np.full((band_count, CHIP_PIXELS, CHIP_PIXELS), np.nan, dtype=np.float32)

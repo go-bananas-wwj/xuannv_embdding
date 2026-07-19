@@ -193,3 +193,30 @@ def test_scene_centric_keeps_valid_composite_when_another_scene_fails(monkeypatc
     assert records[0]["selected_items"] == ["good-scene"]
     assert records[0]["rejected_items"][0]["item_id"] == "broken-scene"
     assert np.all(images[0][0] == 1.0) and np.all(images[0][1] == 2.0)
+
+
+def test_scene_centric_scene_limit_is_applied_per_patch(monkeypatch) -> None:
+    items = [
+        {"id": "scene-1", "assets": {"vv": {"href": "scene-1-vv"}, "vh": {"href": "scene-1-vh"}}},
+        {"id": "scene-2", "assets": {"vv": {"href": "scene-2-vv"}, "vh": {"href": "scene-2-vh"}}},
+    ]
+    calls = []
+    monkeypatch.setattr(MODULE, "_select_items", lambda *_args, **_kwargs: items)
+
+    def fake_read(href, patch_pairs, _categorical):
+        calls.append((href, [index for index, _ in patch_pairs]))
+        value = 1.0 if href.endswith("vv") else 2.0
+        return ({index: np.full((128, 128), value, dtype=np.float32) for index, _ in patch_pairs}, {})
+
+    monkeypatch.setattr(MODULE, "_read_asset_for_patches", fake_read)
+    points = [
+        MODULE.Patch("p0", 32643, (0, 0, 1, 1), (0, 0, 1, 1)),
+        MODULE.Patch("p1", 32643, (1, 0, 2, 1), (1, 0, 2, 1)),
+    ]
+    _images, masks, records = MODULE._scene_centric_source_month(
+        source="s1", catalog=object(), points=points, max_clean_scenes=1,
+    )
+
+    assert all(mask.all() for mask in masks)
+    assert all(record["selected_items"] == ["scene-1"] for record in records)
+    assert all("scene-2" not in href for href, _ in calls)
