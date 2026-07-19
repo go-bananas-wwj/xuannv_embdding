@@ -248,3 +248,24 @@ def test_scene_limit_skips_only_patches_that_reached_the_cap(monkeypatch) -> Non
     assert all(mask.all() for mask in masks)
     assert records[0]["selected_items"] == ["partial"]
     assert records[1]["selected_items"] == ["shared"]
+
+
+def test_scene_centric_treats_stac_raster_extent_mismatch_as_permanent(monkeypatch) -> None:
+    item = {"id": "bad-extent", "assets": {"vv": {"href": "vv"}, "vh": {"href": "vh"}}}
+    monkeypatch.setattr(MODULE, "_select_items", lambda *_args, **_kwargs: [item])
+    monkeypatch.setattr(
+        MODULE,
+        "_read_asset_for_patches",
+        lambda _href, patch_pairs, _categorical: (
+            {},
+            {index: "WindowError: Intersection is empty Window(...)" for index, _ in patch_pairs},
+        ),
+    )
+    point = MODULE.Patch("p0", 32643, (0, 0, 1, 1), (0, 0, 1, 1))
+    _images, masks, records = MODULE._scene_centric_source_month(
+        source="s1", catalog=object(), points=[point], max_clean_scenes=1,
+    )
+
+    assert not masks[0].any()
+    assert records[0]["status"] == "no_valid_pixels"
+    assert records[0]["rejected_items"][0]["item_id"] == "bad-extent"

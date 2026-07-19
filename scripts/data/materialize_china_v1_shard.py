@@ -563,7 +563,11 @@ def _scene_centric_source_month(
             if quality_asset in config["categorical"]:
                 image[quality_index] = first_quality[patch_index]
         state = states[patch_index]
-        has_transport_error = any("error" in rejected for rejected in state["rejected_items"])
+        has_transport_error = any(
+            "error" in rejected
+            and not str(rejected["error"]).startswith("WindowError: Intersection is empty")
+            for rejected in state["rejected_items"]
+        )
         # A remote scene may fail while another clear scene still provides a
         # complete local composite.  Treat transport errors as retryable only
         # when they leave the patch without any usable pixels; otherwise a
