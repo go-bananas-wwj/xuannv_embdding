@@ -14,9 +14,7 @@ from docx.shared import Cm, Pt, RGBColor
 
 REPO_ROOT = Path("/root/workspace/xuannv")
 ASSET_ROOT = REPO_ROOT / "docs/production/assets"
-DEFAULT_OUTPUT = Path(
-    "/data/xuannv_embedding/reports/haidian_production_capability_report_20260720.docx"
-)
+DEFAULT_OUTPUT = REPO_ROOT / "docs/reports/haidian_production_capability_report_20260720.docx"
 
 
 def set_cell_text(cell, text: str, bold: bool = False) -> None:
