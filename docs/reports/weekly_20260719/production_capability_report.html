@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>玄女海淀生产版能力报告 | 2026-07-20</title>
+  <link rel="stylesheet" href="/weekly/assets/weekly-report.css">
+</head>
+<body>
+<div class="layout">
+  <nav>
+    <span class="nav-title">玄女海淀生产版能力报告</span>
+    <span class="nav-meta">P10C epoch 800 · 2026-07-20</span>
+    <a href="/">返回汇报首页</a><a href="#summary">成果摘要</a><a href="#model">模型与数据</a><a href="#benchmark">核心任务</a><a href="#fewshot">少样本制图</a><a href="#visuals">可视化证据</a><a href="#extended">扩展类别与检索</a><a href="#delivery">交付与使用</a><a href="#limits">适用边界</a>
+  </nav>
+  <main>
+    <section class="hero" id="summary">
+      <div class="eyebrow">XUANNVEARTH · HAI DIAN PRODUCTION EMBEDDING</div>
+      <h1>玄女海淀月度地理 Embedding<br>生产能力成果报告</h1>
+      <p class="subtitle">本报告仅汇总已完成的产品训练、下游验证、可视化和交付能力，不包含论文实验计划或投稿进度。当前生产版本为 P10C epoch 800，可将多源月度遥感观测转化为可复用的 64 维稠密地理语义特征。</p>
+      <div class="grid four">
+        <div class="kpi"><div class="label">生产版本</div><div class="value">P10C e800</div><div class="note">多任务最均衡的海淀 64 维版本</div></div>
+        <div class="kpi"><div class="label">空间输出</div><div class="value">128×128×64</div><div class="note">每个 1.28 km patch 的 10 m 月度 embedding</div></div>
+        <div class="kpi"><div class="label">训练时间窗</div><div class="value">6 个月</div><div class="note">2025-12 至 2026-05 多源时序</div></div>
+        <div class="kpi"><div class="label">核心任务</div><div class="value">4 类</div><div class="note">施工、建筑、道路、水体</div></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>成果摘要</h2>
+      <div class="callout good"><b>一份 embedding，多类任务复用。</b> 主模型只生成一次海淀月度 embedding；下游使用冻结特征加轻量 <code>conv3×3</code> 头，即可完成建筑、道路、水体、施工工地及多个 OSM 细粒度类别的制图。</div>
+      <div class="callout"><b>最突出的应用价值是少标注快速制图。</b> 在 5-shot 与 10-shot 条件下，玄女 embedding 在建筑、道路和水体上均优于直接使用原始多源影像训练的强下游基线；新类别可用少量样例快速建立初图。</div>
+      <div class="callout warn"><b>版本口径。</b> 6 月的 P2A/P1B 为历史实验，P10A 是 P10 训练链中的早期候选；当前稳定生产模型是 <b>P10C epoch 800</b>。后续单项更高的版本不以牺牲通用多任务能力为代价替换生产底座。</div>
+    </section>
+
+    <section id="model">
+      <h2>模型、数据与训练方法</h2>
+      <div class="flow">
+        <div class="flow-box"><b>月度多源观测</b>Sentinel-2、Sentinel-1、Landsat；稀疏高分光学与高分 SAR。</div>
+        <div class="flow-box"><b>数据质检</b>云雾、阴影、无效像素、配准与多景质量筛选。</div>
+        <div class="flow-box"><b>自监督表征</b>多模态重建、月份/模态/空间块遮挡与跨月时空融合。</div>
+        <div class="flow-box"><b>弱语义增强</b>清洗后的 OSM 广义地物语义探针与困难负样本。</div>
+        <div class="flow-box"><b>下游制图</b>冻结月度 embedding，少量标注训练轻量头并输出全域图。</div>
+      </div>
+      <div class="grid two">
+        <div><h3>输入与质量控制</h3><ul><li>主时序：Sentinel-2（12 通道）、Sentinel-1（VV/VH）和 Landsat（7 通道）。</li><li>高分光学、高分 SAR 作为独立模态，重采样至统一 10 m 网格。</li><li>云雾和无效区域由有效像素 mask 排除出重建目标；同月多景只使用质量较好的观测。</li><li>训练前随机抽检每月各源影像、mask、OSM 栅格和空间对齐，避免把云雾与错位当作地物语义学习。</li></ul></div>
+        <div><h3>P10C 的关键训练设计</h3><ul><li>保持 128×128 空间输出，避免把边界细节压缩到低分辨率格网。</li><li>重建权重强调高分光学细节，降低噪声较大的 S1/SAR 影响。</li><li>随机遮挡月份、模态和空间块，要求模型利用其他有效观测恢复目标，而非记忆单一输入。</li><li>13 类 OSM 弱语义以辅助 probe 接入，配合困难负样本，改善相似地物的可分性；不直接使用最终人工下游标签训练主模型。</li></ul></div>
+      </div>
+    </section>
+
+    <section id="benchmark">
+      <h2>核心任务：生产版下游指标</h2>
+      <p>评测采用海淀 2026-04 embedding，冻结特征后训练轻量 <code>conv3×3</code> 探针；阈值由验证集选定，再报告测试指标。F1 兼顾查准率与召回率，AP 描述全阈值排序质量，AUC 描述正负样本的排序能力，三者需共同解读。</p>
+      <div class="table-wrap"><table><thead><tr><th>任务</th><th class="num">F1</th><th class="num">AP</th><th class="num">AUC</th><th>当前解读</th></tr></thead><tbody>
+        <tr><td>施工工地检测</td><td class="num positive">0.550</td><td class="num">0.544</td><td class="num">0.959</td><td>排序能力强，可用于监测候选筛选与变化核查。</td></tr>
+        <tr><td>建筑物提取</td><td class="num">0.484</td><td class="num">0.450</td><td class="num">0.896</td><td>屋顶、硬化地面与道路纹理相近时仍有假正例。</td></tr>
+        <tr><td>道路提取</td><td class="num positive">0.522</td><td class="num positive">0.566</td><td class="num">0.834</td><td>细长目标受 10 m 网格和标签边界影响，但局部连通性可用。</td></tr>
+        <tr><td>水体提取</td><td class="num positive">0.624</td><td class="num positive">0.604</td><td class="num">0.891</td><td>基础任务中最稳定，适合快速制图和后续人工核验。</td></tr>
+      </tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>任务（F1 / AP）</th><th>P10C 64维</th><th>AEF 官方 64维</th><th>DINOv3 1024维</th><th>结果说明</th></tr></thead><tbody>
+        <tr><td>施工工地</td><td>0.550 / 0.544</td><td>0.545 / 0.567</td><td>0.582 / 0.522</td><td>与 AEF 同量级；DINOv3 是更高维的能力上界参考。</td></tr>
+        <tr><td>建筑</td><td>0.484 / 0.450</td><td>0.486 / 0.422</td><td>0.499 / 0.482</td><td>与 AEF 基本持平，仍需控制纹理混淆。</td></tr>
+        <tr><td>道路</td><td class="positive">0.522 / 0.566</td><td>0.517 / 0.564</td><td>0.602 / 0.673</td><td>同为 64 维和同一轻量头时 P10C 略优。</td></tr>
+        <tr><td>水体</td><td>0.624 / 0.604</td><td class="positive">0.666 / 0.687</td><td>0.677 / 0.720</td><td>水体是当前主要提升方向。</td></tr>
+      </tbody></table></div>
+      <p class="footer">AEF 与 P10C 均为 64 维并接同一评测头；DINOv3 为 1024 维、约 16 倍特征维度，作为高信息预算参照，不应称为同成本对比。</p>
+    </section>
+
+    <section id="fewshot">
+      <h2>少样本快速制图：玄女的核心使用方式</h2>
+      <p><b>Shot</b> 指用于下游训练的正样本 patch 数，同时配同等数量的负样本 patch。所有比较使用相同标签、相同数据划分与相同验证集阈值选择。结果表明，标注越稀缺，预训练 embedding 的价值越明显。</p>
+      <div class="table-wrap"><table><thead><tr><th>任务</th><th>5-shot：玄女 / 原始影像</th><th>10-shot：玄女 / 原始影像</th><th>50-shot：玄女 / 原始影像</th></tr></thead><tbody>
+        <tr><td>建筑</td><td class="positive">0.459 / 0.418（+9.8%）</td><td class="positive">0.454 / 0.439（+3.5%）</td><td class="positive">0.490 / 0.467（+5.0%）</td></tr>
+        <tr><td>道路</td><td class="positive">0.474 / 0.401（+18.3%）</td><td class="positive">0.487 / 0.435（+11.8%）</td><td class="positive">0.517 / 0.501（+3.3%）</td></tr>
+        <tr><td>水体</td><td class="positive">0.613 / 0.433（+41.5%）</td><td class="positive">0.612 / 0.487（+25.6%）</td><td>0.631 / 0.631（持平）</td></tr>
+      </tbody></table></div>
+      <figure class="figure"><img src="/docs/production/assets/haidian_v1_20260708/fewshot_best_f1.png" alt="玄女与原始影像少样本 F1 对比"><figcaption>图 1. 建筑、道路、水体的 5/10/50-shot 最佳 F1。标注量较少时，玄女 embedding 的优势最明显。</figcaption></figure>
+      <figure class="figure"><img src="/docs/production/assets/haidian_v1_20260708/fewshot_head_heatmap.png" alt="不同下游头的少样本 F1 对比热力图"><figcaption>图 2. 不同下游头比较。纯 MLP 不稳定时，轻量 conv3×3 可利用 embedding 的局部空间信息，通常表现更稳。</figcaption></figure>
+    </section>
+
+    <section id="visuals">
+      <h2>可视化证据：embedding 结构与制图结果</h2>
+      <figure class="figure"><img src="/docs/production/assets/nonbuilding_fewshot_semantic_20260705/xuannv_aef_global_pca_compare.png" alt="玄女与 AEF 海淀全域 PCA 对比"><figcaption>图 3. 海淀全域 embedding PCA：用于观察建成区、水系、林地等的空间连续性与边界。PCA 是诊断图，最终效果以真实标签下的 F1、AP、AUC 为准。</figcaption></figure>
+      <figure class="figure"><img src="/docs/production/assets/haidian_fine_osm_leadership_20260705/foundation_building_water_road_320patch.png" alt="海淀建筑道路水体 320 patch 全域制图"><figcaption>图 4. 海淀 320 个 patch 的建筑、道路、水体全域制图。每个单元为一个 1.28 km × 1.28 km patch。</figcaption></figure>
+      <div class="gallery">
+        <figure class="figure"><img src="/docs/production/assets/haidian_v1_20260708/building_xuannv_vs_raw_examples.png" alt="建筑任务玄女与原始影像对比样例"><figcaption>图 5. 建筑任务样例：用于识别屋顶、硬化地面造成的假正例。</figcaption></figure>
+        <figure class="figure"><img src="/docs/production/assets/haidian_v1_20260708/road_xuannv_vs_raw_examples.png" alt="道路任务玄女与原始影像对比样例"><figcaption>图 6. 道路任务样例：检查细长目标的连续性、断裂和误检。</figcaption></figure>
+        <figure class="figure"><img src="/docs/production/assets/haidian_v1_20260708/water_xuannv_vs_raw_examples.png" alt="水体任务玄女与原始影像对比样例"><figcaption>图 7. 水体任务样例：检查水体边界、小水面和阴影混淆。</figcaption></figure>
+        <figure class="figure"><img src="/docs/production/assets/haidian_v1_20260708/fewshot_5shot_examples.png" alt="5-shot 少样本样例"><figcaption>图 8. 只提供 5 个正样本 patch 的代表性结果：对比玄女与原始影像强头预测。</figcaption></figure>
+        <figure class="figure"><img src="/docs/production/assets/haidian_v1_20260708/raw_vs_xuannv_f1.png" alt="全监督下玄女与原始影像 F1 对比"><figcaption>图 9. 充分标注时，原始影像 + UNet/DeepLab-lite 的任务上限更高；这与 embedding 面向少样本和复用的定位并不冲突。</figcaption></figure>
+        <figure class="figure"><img src="/docs/production/assets/haidian_v1_20260708/raw_vs_xuannv_ap.png" alt="全监督下玄女与原始影像 AP 对比"><figcaption>图 10. AP 对比补充：概率排序与单一阈值下的 F1 应一起检查。</figcaption></figure>
+      </div>
+    </section>
+
+    <section id="extended">
+      <h2>扩展类别与相似性检索</h2>
+      <div class="grid three"><div class="kpi"><div class="label">林地</div><div class="value">F1 0.814</div><div class="note">扩展类别中较稳定</div></div><div class="kpi"><div class="label">耕地</div><div class="value">F1 0.544</div><div class="note">适合区域覆盖制图</div></div><div class="kpi"><div class="label">湖泊</div><div class="value">F1 0.539</div><div class="note">大尺度水体表现较稳</div></div></div>
+      <div class="grid two"><div><h3>已具备较好可用性的类别</h3><p>林地、湖泊、耕地、河流、操场、建筑物、主干道、施工工地与水体大类，可按统一流程接轻量下游头，形成区域级制图结果。</p><h3>建议作为检索或人工核查辅助的类别</h3><p>池塘、裸地、草地、火车站受目标尺度或 OSM 标签噪声影响较大；停车场、体育场、湿地、垃圾场、机场样本不足，应补充人工标注后再作为正式检测任务。</p></div><div><h3>从“标一个点”到“找一类目标”</h3><p>对一个已标注的操场、公园或其他目标区域，提取其 embedding 向量并在全域计算相似度，即可得到同类候选区域。该流程适合稀有类别的样本发现、人工核查和半自动标注，不替代最终语义分割验证。</p></div></div>
+      <div class="gallery">
+        <figure class="figure"><img src="/docs/production/assets/haidian_fine_osm_leadership_20260705/advantage_categories_f1_auc.png" alt="细粒度类别 F1 AUC 图"><figcaption>图 11. 细粒度类别的 F1 与 AUC 概览；类别覆盖与标签可靠性共同决定最终分数。</figcaption></figure>
+        <figure class="figure"><img src="/docs/production/assets/haidian_fine_osm_leadership_20260705/shot50_f1_auc.png" alt="细粒度类别 50-shot F1 AUC 图"><figcaption>图 12. 50-shot 条件下的细粒度类别结果，展示新增类别使用少量样例后的可扩展性。</figcaption></figure>
+        <figure class="figure wide"><img src="/docs/production/assets/haidian_fine_osm_leadership_20260705/embedding_similarity_retrieval.png" alt="embedding 相似性检索可视化"><figcaption>图 13. embedding 相似性检索案例：以一个查询区域为例，在海淀全域筛选语义相近候选区域，辅助人工发现同类地物。</figcaption></figure>
+        <figure class="figure wide"><img src="/docs/production/assets/nonbuilding_fewshot_semantic_20260705/pitch_fewshot_5_10_50_visual.png" alt="运动场 few-shot 可视化"><figcaption>图 14. 运动场类别的 5/10/50-shot 全域制图对比，展示基础三类以外的细粒度拓展能力。</figcaption></figure>
+      </div>
+    </section>
+
+    <section id="delivery">
+      <h2>交付物与业务使用流程</h2>
+      <div class="flow"><div class="flow-box"><b>获取月度 embedding</b>选择月份与区域，读取 P10C 生成的 64 维特征场。</div><div class="flow-box"><b>标注少量样例</b>为目标类别标注少量正/负 patch，或先用检索发现候选。</div><div class="flow-box"><b>训练轻量任务头</b>首选 conv3×3；验证集选阈值并保留指标。</div><div class="flow-box"><b>生成全域制图</b>输出概率图、阈值掩膜、GT 对比和 320 patch 拼图。</div><div class="flow-box"><b>人工复核与迭代</b>针对假正例、边界和稀有目标补样，快速重训下游头。</div></div>
+      <div class="grid two"><div><h3>已整理资产</h3><ul><li>生产 checkpoint：P10C epoch 800 及稳定路径。</li><li>2025-12 至 2026-05 的海淀月度 embedding。</li><li>建筑、道路、水体等任务的下游头、配置与评测脚本。</li><li>全域 PCA、任务拼图、单 patch 样例、few-shot 和检索可视化。</li><li>代码与文档在 Git；权重和大体积产物在 ModelScope。</li></ul></div><div><h3>推荐的任务头选择</h3><ul><li>快速小样本二值制图：优先 <code>conv3×3</code>，兼顾轻量、稳定与局部空间连续性。</li><li>只需验证向量可分性：使用 linear 或 MLP probe，但需检查概率校准，不能只看 AUC。</li><li>标签充分且追求单任务最高上限：可使用原始多源影像 + UNet/DeepLab-lite；其代价是任务间无法直接复用主模型。</li></ul></div></div>
+    </section>
+
+    <section id="limits">
+      <h2>适用边界与下一步改进</h2>
+      <div class="grid two"><div><h3>当前适用边界</h3><ul><li>海淀 P10C 是区域传导式生产模型，适合海淀区域的月度制图与下游快速迭代。</li><li>OSM 是弱语义标签，地图未标注区域不等于真实负类；关键业务类别仍应补充独立人工验证。</li><li>充分标注条件下，原始影像 + 强分割模型可获得更高单任务上限。</li><li>云雾、缺失数据源、配准偏差和 10 m 以下小目标仍是主要误差来源。</li></ul></div><div><h3>面向业务的后续提升方向</h3><ul><li>补充建筑与施工工地独立人工验证集，量化真实业务误差。</li><li>为停车场、湿地、垃圾场、机场等稀有类建立标注规范与样本池。</li><li>在持续月度数据中验证同一任务头跨月迁移，并将异常区域送入人工复核闭环。</li><li>以全国多区域数据扩展预训练底座，提高跨城市和复杂成像条件下的稳健性。</li></ul></div></div>
+      <p class="footer">数据与图件截至 2026-07-20。主要依据：生产版 P10C 汇总、海淀 few-shot 与原始影像对比、细粒度 OSM 能力评测、生产资产清单与已保存可视化。</p>
+    </section>
+  </main>
+</div>
+</body>
+</html>

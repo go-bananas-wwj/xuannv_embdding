@@ -20,9 +20,11 @@ class WeeklyReportHandler(SimpleHTTPRequestHandler):
         routes = {
             "/weekly/model-training/": "model_training_report.html",
             "/weekly/paper-progress/": "paper_progress_report.html",
+            "/weekly/production-report/": "production_capability_report.html",
             # Keep links copied from the first report revision working.
             "/model_training_report.html": "model_training_report.html",
             "/paper_progress_report.html": "paper_progress_report.html",
+            "/production_capability_report.html": "production_capability_report.html",
         }
         if clean_path in routes:
             return str(REPORT_ROOT / routes[clean_path])
