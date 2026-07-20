@@ -3,6 +3,8 @@
 > **历史归档报告**  
 > 原始汇报日期：2026-06-29 ｜ 覆盖区域：海淀、哈尔滨 ｜ 数据周期：2025-12 至 2026-05  
 > 本文由 [`leadership_embedding_report_20260629.html`](leadership_embedding_report_20260629.html) 转换而来，保留当时的模型、数据和评测口径。P2A/P1B/AEF 数字均为当期历史结果，**不替代**当前 P10C 生产版结果或正在进行的论文级空间独立评测。
+>
+> **请优先阅读最新汇报：[`leadership_embedding_report_latest_20260720.md`](leadership_embedding_report_latest_20260720.md)。** 当前海淀生产版为 P10C `epoch_800`；P10A 是其训练链上的早期候选，并非当前生产定版。
 
 ## 目录
 
