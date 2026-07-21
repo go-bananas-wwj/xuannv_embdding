@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>玄女海淀生产版能力报告 | 2026-07-20</title>
+  <title>玄女海淀生产版能力报告 | 2026-07-21</title>
   <link rel="stylesheet" href="/weekly/assets/weekly-report.css">
 </head>
 <body>
 <div class="layout">
   <nav>
     <span class="nav-title">玄女海淀生产版能力报告</span>
-    <span class="nav-meta">P10C epoch 800 · 2026-07-20</span>
-    <a href="/">返回汇报首页</a><a href="#summary">成果摘要</a><a href="#model">模型与数据</a><a href="#benchmark">核心任务</a><a href="#fewshot">少样本制图</a><a href="#visuals">可视化证据</a><a href="#retrieval">向量检索</a><a href="#extended">扩展类别</a><a href="#delivery">交付与使用</a><a href="#limits">适用边界</a>
+    <span class="nav-meta">P10C epoch 800 · 2026-07-21</span>
+    <a href="/">返回汇报首页</a><a href="#summary">成果摘要</a><a href="#model">模型与数据</a><a href="#benchmark">核心任务</a><a href="#fewshot">少样本制图</a><a href="#visuals">可视化证据</a><a href="#retrieval">向量检索</a><a href="#pu-query">PU + Query</a><a href="#extended">扩展类别</a><a href="#delivery">交付与使用</a><a href="#limits">适用边界</a>
   </nav>
   <main>
     <section class="hero" id="summary">
@@ -119,6 +119,25 @@
       </div>
     </section>
 
+    <section id="pu-query">
+      <h2>PU + Query：1--9 个用户圈选 Polygon 的即时制图</h2>
+      <p>参考 <a href="https://github.com/go-bananas-wwj/embedding-api/commit/530b8f4">embedding-api 的 PU + Query 复现提交</a>，新补充实验模拟业务人员只圈选极少量目标区域时的即时制图。<b>这不是训练下游网络：</b>每个 Polygon 等权形成前景原型；模型从正样本周围排除边界后，只取最不相似的 30% 未标注像素作为可靠背景；再以 F0.5 选取强调 Precision 的阈值。当前 patch 的极高置信像素可触发一次受面积保护的 Query 自适应。</p>
+      <div class="flow"><div class="flow-box"><b>用户圈选 1--9 个 Polygon</b>Polygon 内为确定正样本，外部仅是未标注区域。</div><div class="flow-box"><b>PU 前景/可靠背景原型</b>不把全部未标注像素误当负例，降低少标注时的大面积误检。</div><div class="flow-box"><b>受保护 Query 自适应</b>只使用当前 patch 的极高置信响应；面积异常增长时自动回退。</div><div class="flow-box"><b>即时候选制图</b>不训练网络，输出概率候选图；达到 10 个 Polygon 后切换 Conv3×3 训练路径。</div></div>
+      <div class="callout good"><b>严格评测口径。</b> 支持 Polygon 只从第 0 折的 231 个训练 patch 以固定随机种子抽取；阈值仅使用支持正样本和 PU 可靠背景；所有指标只在 64 个独立测试 patch 上统计。没有复用历史画廊的全域统计量或精选测试样例。</div>
+      <div class="table-wrap"><table><thead><tr><th>类别</th><th class="num">Polygon 数</th><th class="num">Test F1</th><th class="num">AUC</th><th class="num">AP</th><th>业务解读</th></tr></thead><tbody>
+        <tr><td>建筑物</td><td class="num">1 / 3 / 5 / 9</td><td class="num">0.237 / 0.328 / <b>0.354</b> / 0.359</td><td class="num">0.714 / 0.781 / 0.830 / 0.835</td><td class="num">0.228 / 0.261 / 0.288 / 0.294</td><td>5 个 Polygon 已可形成候选制图；更多样本带来温和提升。</td></tr>
+        <tr><td>道路</td><td class="num">1 / 3 / 5 / 9</td><td class="num">0.269 / 0.357 / <b>0.455</b> / 0.430</td><td class="num">0.522 / 0.685 / 0.799 / 0.770</td><td class="num">0.182 / 0.248 / 0.435 / 0.492</td><td>5 个 Polygon 的效果最好；第 9 个样本引入的地物差异使 F1 回落。</td></tr>
+        <tr><td>水体</td><td class="num">1 / 3 / 5 / 9</td><td class="num">0.111 / 0.131 / 0.108 / 0.184</td><td class="num">0.793 / 0.767 / 0.830 / 0.795</td><td class="num">0.520 / 0.081 / 0.269 / 0.095</td><td>排序能力存在，但 OSM 弱标签与 PU 阈值校准不稳；当前只适合候选检索与人工核验。</td></tr>
+      </tbody></table></div>
+      <div class="callout warn"><b>如实解读。</b> PU + Query 对建筑、道路的“极少标注启动”是有效的，但不能替代有监督的 <code>conv3×3</code> 头；水体结果也提醒我们，OSM 空白不等于真实背景。对于需要直接交付的水体掩膜，应使用 ≥10 Polygon 的轻量训练头或人工复核闭环。</div>
+      <figure class="figure"><img src="/docs/production/assets/haidian_pu_query_strict_20260721/pu_query_sparse_summary.png" alt="PU Query 稀疏 Polygon 独立测试指标曲线"><figcaption>图 24. 严格独立测试上的 PU + Query 曲线。横轴是用户圈选 Polygon 数；左图 F1，右图 AUC。建筑、道路在 1 至 5 个 Polygon 时改善最明显。</figcaption></figure>
+      <div class="gallery">
+        <figure class="figure"><img src="/docs/production/assets/haidian_pu_query_strict_20260721/building_5polygons_example.png" alt="建筑五 Polygon PU Query 样例"><figcaption>图 25. 建筑 5 Polygon 样例：左上为训练折中的可见 Polygon；右下为独立测试 patch 的红色预测。GT 只用于离线评估。</figcaption></figure>
+        <figure class="figure"><img src="/docs/production/assets/haidian_pu_query_strict_20260721/road_5polygons_example.png" alt="道路五 Polygon PU Query 样例"><figcaption>图 26. 道路 5 Polygon 样例：展示支持原型、测试 embedding PCA、PU + Query 分数和阈值预测。</figcaption></figure>
+        <figure class="figure"><img src="/docs/production/assets/haidian_pu_query_strict_20260721/water_5polygons_example.png" alt="水体五 Polygon PU Query 样例"><figcaption>图 27. 水体 5 Polygon 样例：可视化说明为何需将其作为候选图而非直接自动化掩膜。</figcaption></figure>
+      </div>
+    </section>
+
     <section id="extended">
       <h2>扩展类别能力</h2>
       <div class="grid three"><div class="kpi"><div class="label">林地</div><div class="value">F1 0.814</div><div class="note">扩展类别中较稳定</div></div><div class="kpi"><div class="label">耕地</div><div class="value">F1 0.544</div><div class="note">适合区域覆盖制图</div></div><div class="kpi"><div class="label">湖泊</div><div class="value">F1 0.539</div><div class="note">大尺度水体表现较稳</div></div></div>
@@ -140,7 +159,7 @@
     <section id="limits">
       <h2>适用边界与下一步改进</h2>
       <div class="grid two"><div><h3>当前适用边界</h3><ul><li>海淀 P10C 是区域传导式生产模型，适合海淀区域的月度制图与下游快速迭代。</li><li>OSM 是弱语义标签，地图未标注区域不等于真实负类；关键业务类别仍应补充独立人工验证。</li><li>充分标注条件下，原始影像 + 强分割模型可获得更高单任务上限。</li><li>云雾、缺失数据源、配准偏差和 10 m 以下小目标仍是主要误差来源。</li></ul></div><div><h3>面向业务的后续提升方向</h3><ul><li>补充建筑与施工工地独立人工验证集，量化真实业务误差。</li><li>为停车场、湿地、垃圾场、机场等稀有类建立标注规范与样本池。</li><li>在持续月度数据中验证同一任务头跨月迁移，并将异常区域送入人工复核闭环。</li><li>以全国多区域数据扩展预训练底座，提高跨城市和复杂成像条件下的稳健性。</li></ul></div></div>
-      <p class="footer">数据与图件截至 2026-07-20。主要依据：生产版 P10C 汇总、海淀 few-shot 与原始影像对比、细粒度 OSM 能力评测、生产资产清单与已保存可视化。</p>
+      <p class="footer">数据与图件截至 2026-07-21。主要依据：生产版 P10C 汇总、海淀 few-shot 与原始影像对比、细粒度 OSM 能力评测、PU + Query 严格独立测试与已保存可视化。</p>
     </section>
   </main>
 </div>

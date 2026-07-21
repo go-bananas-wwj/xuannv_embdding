@@ -14,7 +14,7 @@ from docx.shared import Cm, Pt, RGBColor
 
 REPO_ROOT = Path("/root/workspace/xuannv")
 ASSET_ROOT = REPO_ROOT / "docs/production/assets"
-DEFAULT_OUTPUT = REPO_ROOT / "docs/reports/haidian_production_capability_report_20260720.docx"
+DEFAULT_OUTPUT = REPO_ROOT / "docs/reports/haidian_production_capability_report_20260721.docx"
 
 
 def set_cell_text(cell, text: str, bold: bool = False) -> None:
@@ -72,7 +72,7 @@ def build(output_path: Path) -> None:
 
     title = document.add_heading("玄女海淀月度地理 Embedding\n生产能力成果报告", 0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    document.add_paragraph("当前生产版：P10C epoch 800 | 更新日期：2026-07-20").alignment = (
+    document.add_paragraph("当前生产版：P10C epoch 800 | 更新日期：2026-07-21").alignment = (
         WD_ALIGN_PARAGRAPH.CENTER
     )
     document.add_paragraph(
@@ -188,7 +188,40 @@ def build(output_path: Path) -> None:
     add_figure(document, "haidian_v1_vector_retrieval_20260710/road_sample_comparison.png", "图 16. 道路原型检索的单 patch 对照。")
     add_figure(document, "haidian_v1_vector_retrieval_20260710/water_sample_comparison.png", "图 17. 水体原型检索的单 patch 对照。")
 
-    add_heading(document, "七、扩展类别、交付与使用建议")
+    document.add_section(WD_SECTION.NEW_PAGE)
+    add_heading(document, "七、PU + Query 极少标注即时制图")
+    document.add_paragraph(
+        "本节参考 embedding-api 的 PU + Query 配方，模拟业务人员仅圈选 1--9 个目标 Polygon 时的即时制图。"
+        "该流程不训练下游网络：每个 Polygon 等权形成前景原型；从目标外的未标注区域中筛选可靠背景；"
+        "使用 F0.5 阈值和受面积保护的 Query 自适应生成候选图。"
+    )
+    document.add_paragraph(
+        "严格评测口径：支持 Polygon 只从第 0 折的 231 个训练 patch 固定随机抽取；"
+        "测试标签不参与原型、背景或阈值选择；所有指标仅在 64 个独立测试 patch 上汇总。"
+    )
+    add_table(
+        document,
+        ["类别", "Polygon 数", "Test F1", "AUC", "AP", "解读"],
+        [
+            ["建筑", "1 / 3 / 5 / 9", "0.237 / 0.328 / 0.354 / 0.359", "0.714 / 0.781 / 0.830 / 0.835", "0.228 / 0.261 / 0.288 / 0.294", "5 个 Polygon 即可形成候选制图。"],
+            ["道路", "1 / 3 / 5 / 9", "0.269 / 0.357 / 0.455 / 0.430", "0.522 / 0.685 / 0.799 / 0.770", "0.182 / 0.248 / 0.435 / 0.492", "5 个 Polygon 效果最佳。"],
+            ["水体", "1 / 3 / 5 / 9", "0.111 / 0.131 / 0.108 / 0.184", "0.793 / 0.767 / 0.830 / 0.795", "0.520 / 0.081 / 0.269 / 0.095", "排序存在，但弱标签下阈值校准不稳。"],
+        ],
+    )
+    add_bullet_list(
+        document,
+        [
+            "建筑、道路支持“极少量标注启动候选制图”的使用方式，但不能替代有监督 conv3×3 头。",
+            "水体应作为候选检索图并配合人工复核；需要直接交付时，建议使用 10 个以上 Polygon 的轻量训练头。",
+            "9 个 Polygon 并不必然优于 5 个，接口需要保留用户补样预览，并在 10 个 Polygon 后切换 Conv3×3 训练路径。",
+        ],
+    )
+    add_figure(document, "haidian_pu_query_strict_20260721/pu_query_sparse_summary.png", "图 18. PU + Query 在独立测试折上的 F1 与 AUC 曲线。")
+    add_figure(document, "haidian_pu_query_strict_20260721/building_5polygons_example.png", "图 19. 建筑 5 Polygon：支持标注来自训练折，GT 仅用于独立测试评估。")
+    add_figure(document, "haidian_pu_query_strict_20260721/road_5polygons_example.png", "图 20. 道路 5 Polygon：展示支持、embedding PCA、得分与预测。")
+    add_figure(document, "haidian_pu_query_strict_20260721/water_5polygons_example.png", "图 21. 水体 5 Polygon：展示当前阈值校准边界。")
+
+    add_heading(document, "八、扩展类别、交付与使用建议")
     add_table(
         document,
         ["类别", "代表性指标", "建议"],
