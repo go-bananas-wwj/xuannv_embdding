@@ -1,242 +1,217 @@
-# 中国版 Alpha Earth 技术方案：现有资源季度版
+# 中国版 Alpha Earth 技术方案（现有资源版）
 
-> **一句话结论：** 使用现有 300 TB 在线存储和 16 张 Ascend 910B，可建设
-> 2020Q1--2021Q4 共 8 期、全国 10 m、64 维 int8 地理 embedding；完整源档案、
-> 训练工作区、模型权重和季度产品合计按 **250--300 TB** 管理，20 万 updates
-> 正式训练约 **36 天**，8 期导出与验收约 **17--27 天**。
+版本：2026 年 7 月 21 日
 
-版本：2026-07-21  
-目标里程碑：2026-10-30，DTDC 大会发布  
-拟启动：2026-08-01  
-模型研发：赵龙、伍炜杰、陆君言  
-数据支撑：CB 项目  
-硬件支撑：LZ 项目
+建设内容：使用现有数据训练全国地理嵌入模型，生成 2020 年和 2021 年共 8 期季度嵌入。
 
-## 一、建设目标
+产品范围：中国陆地及主要近岸岛屿。
 
-建设一个面向中国陆地的季度地理 embedding 底座。产品不是某一个建筑、道路
-或水体分割模型，而是每个地理位置一个可复用的 64 维向量，下游只需少量标注
-和轻量头即可完成土地覆盖、建筑、道路、水体、绿地、农业、检索和变化分析。
+产品规格：10 米空间分辨率，64 维，int8 编码。
 
-| 项目 | 本方案定义 |
+计划启动时间：2026 年 8 月 1 日。
+
+计划交付时间：2026 年 11 月上旬。
+
+## 一、资源和交付时间
+
+### 1. 显存和算力
+
+全国数据不需要一次性装入显存。训练时从磁盘分片读取，显存主要用于模型参数、优化器、输入批次和重建分支。
+
+| 项目 | 规划值 |
+| --- | ---: |
+| 训练设备 | 16 张 Ascend 910B 64 GB |
+| 单卡预计实际显存 | 20--32 GB |
+| 单卡显存控制线 | 不超过 48 GB |
+| 16 卡预计实际显存 | 320--512 GB |
+| 16 卡物理总显存 | 1,024 GB |
+| 正式训练步数 | 20 万 updates |
+| 正式训练时间 | 约 36 天 |
+
+正式训练前先运行 1,000 step。确认单卡显存不超过 48 GB、16 卡通信正常、训练可以从 checkpoint 恢复后，再开始长时间训练。
+
+### 2. 磁盘存储
+
+| 内容 | 规划容量 |
+| --- | ---: |
+| 2020--2021 年完整源数据档案 | 190--220 TB |
+| 62,000 个训练位置的裁窗和训练张量 | 3--5 TB |
+| 两套处理版本、缓存、日志和 checkpoint | 15--25 TB |
+| 8 期全国 10 米 int8 嵌入 | 45--55 TB |
+| 项目最低可用存储 | 300 TB |
+| 建议物理存储 | 350--400 TB |
+
+300 TB 可以完成本版建设，但空间比较紧。源数据只保留一份，训练数据使用分片格式，嵌入导出完成后及时清理临时文件。
+
+如需长期保存两套全国嵌入副本，应在上述容量之外再增加 60 TB 左右。
+
+### 3. 交付时间
+
+| 工作 | 预计时间 |
+| --- | ---: |
+| 数据清单、许可和质量检查 | 12--15 天 |
+| 2,000 点试运行和训练配置确认 | 10--12 天 |
+| 16 卡正式训练 | 36--42 天 |
+| 8 期全国嵌入导出 | 15--20 天 |
+| 下游测试、补片和验收 | 12--15 天 |
+| 机动时间 | 7--10 天 |
+| 项目总工期 | 约 92--110 天 |
+
+按照 2026 年 8 月 1 日启动，正常情况下可在 2026 年 11 月上旬完成。数据到位较晚或训练中需要返工时，交付时间相应顺延。
+
+## 二、训练需要的数据
+
+### 1. 本地现有数据
+
+| 数据 | 年份 | 分辨率 | 训练用途 |
+| --- | --- | ---: | --- |
+| Sentinel-2 L2A | 2020、2021 | 10/20/60 米 | 主要光学输入，生成季度无云合成 |
+| Sentinel-1 GRD/RTC | 2020、2021 | 约 10 米 | 补充全天候结构和散射信息 |
+| Landsat-8 Collection 2 L2 | 2020、2021 | 30 米 | 独立光学、热红外和质量信息 |
+| Landsat-9 Collection 2 L2 | 2021 年第四季度 | 30 米 | 补充 2021 年第四季度观测 |
+| GF-1、GF-2、GF-6、GF-7 | 以本地清单为准 | 2--16 米 | 提供部分地区的高分辨率细节 |
+| HJ-2A、HJ-2B、ZY-2 | 以本地清单为准 | 以产品为准 | 补充国产多源观测 |
+| 吉林一号黑土地数据 | 2020--2021 | 5 米 | 补充东北农业区细节 |
+| Hi-GLASS 地表反射率 | 2020、2021 | 30 米 | 提供光谱和物理信息 |
+| MODIS 产品 | 2020、2021 | 250 米--1 千米 | NDVI、EVI、LAI、GPP 和地表温度 |
+
+本地数据优先使用已经落盘、授权明确、成像日期和投影信息完整的版本。
+
+本地清单中的数据大小单位不完全一致。项目启动后按实际文件字节重新统计，存储预算不直接使用表格中的 MB 数值相加。
+
+### 2. 需要从外网补充的数据
+
+| 数据 | 年份 | 分辨率 | 训练用途 | 来源 |
+| --- | --- | ---: | --- | --- |
+| ESA WorldCover | 2020、2021 | 10 米 | 土地覆盖弱标签 | [ESA WorldCover](https://esa-worldcover.org/en/data-access) |
+| Dynamic World | 2020、2021 | 10 米 | 土地覆盖概率标签 | [Dynamic World](https://www.dynamicworld.app/about/index.html) |
+| GlobeLand30 | 2020 | 30 米 | 土地利用辅助标签 | [国家基础地理信息中心](https://www.ngcc.cn/xwzx/ywcg/202401/t20240103_1270.html) |
+| GLC_FCS30D | 2020、2021 | 30 米 | 细分类土地覆盖辅助标签 | [GLC_FCS30D](https://essd.copernicus.org/articles/16/1353/2024/) |
+| CLCD | 覆盖 2020 年 | 30 米 | 中国土地覆盖辅助标签 | [CLCD](https://essd.copernicus.org/articles/13/3907/2021/) |
+| Copernicus DEM GLO-30 | 静态 | 30 米 | 高程、坡度和坡向 | [Copernicus DEM](https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM) |
+| WorldCereal | 2021 | 10 米 | 农业、作物和灌溉信息 | [ESA WorldCereal](https://esa-worldcereal.org/en/products/global-maps) |
+| JRC Global Surface Water | 2020、2021 | 30 米 | 月度和季度水体信息 | [JRC Global Surface Water](https://global-surface-water.appspot.com/download) |
+| 历史 OSM | 2020、2021 季末 | 矢量 | 道路、建筑、水体和土地利用弱标签 | [ohsome API](https://docs.ohsome.org/ohsome-api/stable/endpoints.html) |
+| NODA 中国 NDVI/FVC | 2020、2021 | 250 米 | 植被状态辅助信息 | [NODA](https://www.noda.ac.cn/rsgs/news/showNewsById?id=6916eb157575fb4d046058df) |
+
+外网数据只补充标签、地形和本地缺失的小体量产品。全国 Sentinel 和 Landsat 不采用单机公网逐景下载，优先通过已有数据中心、对象存储或离线硬盘迁移。
+
+### 3. 数据如何用于训练
+
+1、Sentinel-2 和 Landsat 使用质量波段去除云、薄云、阴影、雪和无效像素。
+
+2、同一季度有多景影像时，先删除质量差的场景，再对有效观测做中位数或分位数组合。
+
+3、Sentinel-1 作为低权重重建目标，不让 SAR 噪声主导嵌入。
+
+4、高分辨率光学用于学习道路、建筑、岸线和田块边界。
+
+5、土地覆盖、OSM、DEM 和植被产品作为辅助信息。标签空白位置不当作背景，冲突位置不计算标签损失。
+
+6、每个季度只使用该季度观测和静态数据，不使用未来季度影像。
+
+## 三、模型训练和产品生成
+
+1、模型使用多源独立输入分支，将 Sentinel-2、Sentinel-1、Landsat 和高分辨率影像统一编码为 64 维嵌入。
+
+2、模型输出保持 `128 x 128 x 64`，每个 patch 对应 `1,280 m x 1,280 m`，等效分辨率为 10 米。
+
+3、训练保留光学重建、低权重 SAR 重建、连续物理量重建、弱语义标签和困难重建。
+
+4、训练过程中定期运行固定下游测试，检查建筑、道路、水体、土地覆盖、检索和变化任务。
+
+5、训练完成后使用固定权重分别导出 2020Q1 至 2021Q4 共 8 期全国嵌入。
+
+6、正式产品使用 int8 保存，同时保留分块量化参数、有效像素掩膜、空间索引和文件校验值。
+
+## 四、时间安排
+
+| 时间 | 工作内容 |
 | --- | --- |
-| 空间范围 | 中国陆地及主要近岸岛屿 |
-| 训练位置 | 62,000 个 `1280 m x 1280 m` patch，约占中国陆地 1.06% |
-| 时间范围 | 2020、2021 两年 |
-| 产品频率 | 每季度一期，共 8 期 |
-| 产品分辨率 | 10 m |
-| embedding 维度 | 64 维 |
-| 发布编码 | int8，保留分块/分通道量化参数 |
-| 模型输出 | 每个 patch 为 `128 x 128 x 64` |
-| 训练硬件 | 16 张 Ascend 910B 64 GB |
+| 2026-08-01 至 08-15 | 核对本地数据、外网补充数据、许可、真实容量和季度覆盖 |
+| 2026-08-16 至 08-27 | 完成 2,000 点试运行、输入可视化、掩膜和配准检查 |
+| 2026-08-28 至 09-03 | 完成 16 卡性能测试、恢复测试和训练配置确认 |
+| 2026-09-04 至 10-15 | 进行正式训练，期间保存 best 和 last 权重 |
+| 2026-10-01 至 10-25 | 分区导出 8 期嵌入，训练后半程可与已完成分区并行 |
+| 2026-10-20 至 11-05 | 完成补片、下游测试、质量检查和交付文档 |
+| 2026-11-06 至 11-10 | 预留问题处理时间 |
 
-季度定义固定为 Q1（1--3 月）、Q2（4--6 月）、Q3（7--9 月）、Q4（10--12 月）。
-每一期 embedding 只能使用该季度及静态数据，禁止看到未来季度影像。
+## 五、项目支持
 
-## 二、与 AlphaEarth 和现有底座的关系
+模型研发：赵龙、伍炜杰、陆君言。
 
-[AlphaEarth Foundations](https://arxiv.org/abs/2507.22291) 证明了约 10 m、64 维
-通用地理 embedding 可以支持少样本制图、检索和变化任务。玄女海淀/哈尔滨
-底座已经验证 S2、S1、Landsat、稀疏高分影像和 OSM 弱语义的多模态训练路径，
-并测得 6 张 910B 约 2,394 patch-visits/卡·小时。
+数据支持：CB 项目提供现有遥感数据档案、数据清单和批量读取条件。
 
-本方案沿用以下已验证原则：
+硬件支持：LZ 项目提供 16 张 Ascend 910B、训练节点、共享存储和高速网络。
 
-1. 主 embedding 保持 64 维和 10 m 网格；
-2. 月/季度光学必须使用像素级云、阴影、雪和无效值掩膜；
-3. OSM 仅作宽泛弱语义，空白区域是 unknown，不是 background；
-4. 不使用最终下游人工测试标签训练 embedding；
-5. S1/SAR 重建权重低于高质量光学，高分目标负责边界细节；
-6. 模型按固定 updates 训练，不再用小数据的 800 epoch 口径。
+软件支持：玄女 Embedding 项目提供数据处理、训练、导出、下游测试和 watchdog 代码。
 
-## 三、数据方案
+交付内容：训练配置、best/last 模型权重、8 期全国嵌入、质量报告、下游测试结果和数据来源清单。
 
-### 3.1 现有清单内的主数据
+## 六、项目验收内容
 
-输入清单为《遥感影像（含产品、地面站数据）》，SHA-256：
-`91fc81e02ac836683325e9edb1c9312c7c4299c24f2088a324f11ee60b4f1907`。
-清单“数据大小（MB）”单位不统一，本方案以“数据大小（TB）”列和实际文件字节
-复核为准。
+1、8 期全国嵌入分片完整，空间索引和校验值正确。
 
-| 数据 | 2020/2021 可用性 | 分辨率 | 训练用途 | 状态 |
-| --- | --- | ---: | --- | --- |
-| Sentinel-2 L2A | 两年完整 | 10/20/60 m | 主光学、季度反射率、云掩膜 | 核心 |
-| Sentinel-1 GRD/RTC | 两年完整 | 约 10 m | 全天候结构和散射信息 | 核心 |
-| Landsat-8 C2 L2 | 两年完整 | 30 m | 独立光学、热红外和 QA | 核心 |
-| Landsat-9 C2 L2 | 仅 2021Q4 | 30 m | Q4 补充，不作为跨年必需源 | 可选 |
-| GF1/GF6/HJ2 | 清单覆盖 2021，2020 需再核验 | 2/16 m | 稀疏高分光学目标 | 辅助 |
-| JL1GP02 黑土地 | 2020-10 至 2021-10 | 5 m | 东北农业和黑土地细节 | 辅助 |
-| Hi-GLASS 地表反射率 | 2013--2022 | 30 m | 光谱一致性和物理目标 | 辅助 |
-| MOD/MYD 系列 | 两年完整 | 250 m--1 km | NDVI/EVI、LAI、GPP、LST | 辅助 |
+2、全国 PCA 图不出现明显 patch 接缝、大范围云块和传感器条带。
 
-Sentinel 和 Landsat 的正式访问分别采用
-[Copernicus Data Space](https://www.copernicus.eu/en/access-data) 与
-[USGS Landsat Collection 2](https://www.usgs.gov/landsat-missions/landsat-collection-2)。
-只读取 62,000 点对应窗口，不通过公网逐景下载全国整景作为主生产路径。
+3、建筑、道路、水体、土地覆盖、检索和变化任务使用统一协议测试。
 
-### 3.2 建议补充的土地、地形和植被产品
+4、模型权重、训练配置、数据清单和产品文件都有版本号和校验值。
 
-| 产品 | 年份/频率 | 分辨率 | 如何进入训练 | 访问与注意事项 |
-| --- | --- | ---: | --- | --- |
-| ESA WorldCover | 2020、2021 年度 | 10 m | 11 类宽语义弱标签 | [官方数据页](https://esa-worldcover.org/en/data-access)；两年算法版本不同，不能直接作为变化真值 |
-| WorldCover S1/S2/NDVI composites | 2020、2021 年度 | 10/20 m | 年度稳健光谱和 NDVI 教师 | 官方 AWS COG；与 S1/S2 同源，不能作独立评测 |
-| Dynamic World | 两年逐景 | 10 m | 9 类概率弱标签和置信度 | [官方说明](https://www.dynamicworld.app/about/index.html)；只在高置信像素监督 |
-| GlobeLand30 | 2020 | 30 m | 2020 宽类土地覆盖交叉约束 | [自然资源部介绍](https://www.ngcc.cn/xwzx/ywcg/202401/t20240103_1270.html) |
-| GLC_FCS30D | 覆盖 2020、2021 | 30 m | 细类土地覆盖和一致性筛选 | [ESSD 数据说明](https://essd.copernicus.org/articles/16/1353/2024/) |
-| CLCD | 至少覆盖 2020 | 30 m | 中国年度土地覆盖辅助 | [数据与论文](https://essd.copernicus.org/articles/13/3907/2021/)；2021 可用性单独验收 |
-| Copernicus DEM GLO-30 | 静态 | 30 m | 高程、坡度、坡向连续目标 | [官方产品页](https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM) |
-| MOD13Q1/MYD13Q1 | 16 天 | 250 m | 季度 NDVI/EVI 时序目标 | [NASA MODIS](https://modis.gsfc.nasa.gov/data/dataprod/mod13.php) |
-| NODA 中国 NDVI/FVC | 2000--2024 | 250 m | 中国区域植被指数交叉约束 | [NODA 公告](https://www.noda.ac.cn/rsgs/news/showNewsById?id=6916eb157575fb4d046058df)；需在线申请 |
-| WorldCereal | 2021 季节产品 | 10 m | 作物、灌溉和农业语义 | [官方产品页](https://esa-worldcereal.org/en/products/global-maps)；仅用于 2021 |
-| JRC Global Surface Water | 2020/2021 月度 | 30 m | 季节水体连续目标 | [官方入口](https://global-surface-water.appspot.com/download) |
-| 历史 OSM | 2020/2021 季末快照 | 矢量 | 建筑、道路、水体、土地利用弱语义 | [ohsome API](https://docs.ohsome.org/ohsome-api/stable/endpoints.html)；保留 known mask |
+5、数据来源、下载地址、使用许可和处理方法形成完整记录。
 
-数据优先级为：10 m 动态观测 > 可靠像素掩膜 > 静态 DEM > 宽语义弱标签 >
-250 m--1 km 物理目标。粗分辨率产品不能上采样后冒充 10 m 细节，只能提供
-区域级语义或连续物理约束。
+## 七、全国样本怎么选
 
-### 3.3 NODA 专题入口
+### 1. 基础 1% 空间抽样
 
-- 用户指定专题一：[NODA 主题 6690d6...](https://www.noda.ac.cn/datasharing/theme/viewThemeById?id=6690d6b3494be1036384ea58)；
-- 用户指定专题二：[NODA 主题 63ef0d...](https://www.noda.ac.cn/datasharing/theme/viewThemeById?id=63ef0d710e2b985f5244c382)；
-- 2020 年 2 m 一张图专题：[NODA 主题 64ffc7...](https://www.noda.ac.cn/datasharing/theme/viewThemeById?id=64ffc7a0ae06c00d8763ec3f)。
+全国陆地按照不同 UTM 分区建立规则网格。每个训练 patch 的范围为 `1,280 m x 1,280 m`，对应 `128 x 128` 个 10 米像素。
 
-NODA 页面部分元数据需要登录后动态加载。正式冻结数据前必须导出每个数据集的
-景数、时间范围、波段、位深、覆盖 footprint、许可和真实字节数；网页可访问
-不等于已经获得批量训练许可。
+将相邻的 `10 x 10` 个 patch 组成一个宏网格。使用固定随机种子和 patch ID 的 SHA-256 哈希，在每个宏网格中选择一个位于中国陆地范围内的 patch。
 
-## 四、全国 62,000 点抽样
+海岸和国界附近的宏网格有效 patch 数量不足 100 时，按照实际有效数量修正接纳概率，避免边界地区被重复采样。
 
-基础抽样沿用已经实现的地理网格方案：`10 x 10` 个 1,280 m patch 构成一个
-宏网格，通过固定种子 SHA-256 选择候选；边界残缺宏网格按有效候选数修正接纳
-概率，保证每个有效 patch 的期望入选概率约为 1%。
+经过国界、岛屿和完整 patch 检查后，基础样本为 57,405 个。
 
 ![全国基础1%空间抽样分布](assets/china_v1_2021_multisource/national_static_1pct_sampling_preview.png)
 
-**图 1  全国基础 1% 空间抽样分布。** 红点为 57,405 个基础候选；再增加
-2,595 个空间均衡样本、500 个海岸样本和 1,500 个城市/稀有地物/困难观测样本，
-最终为 62,000 个，不删除、不重采样现有候选。
+图 1  全国基础 1% 空间抽样分布。红点表示 57,405 个基础训练位置。
 
-训练期间按 sampling reason 控制 batch 组成，避免城市和易获取地区占满训练。
-验证使用空间 block split；最终配方确认后允许用 62,000 点全量再训练生产权重，
-但独立评测区始终不参与生产指标报告。
+### 2. 空间均衡补样
 
-## 五、季度数据处理和模型训练
+在基础样本上增加 2,595 个空间均衡样本，将样本数补到 60,000 个。
 
-### 5.1 季度合成
+新增样本按照 UTM 分区面积的平方根分配。面积大的区域获得更多样本，面积较小的区域也保留基本样本数量。
 
-每个 patch、每个季度执行以下流程：
+新增样本与基础样本去重，每个宏网格原则上只增加一个 patch。
 
-1. S2 用 SCL 掩膜云、阴影和无效像素，Landsat 用 QA_PIXEL，S1 保留有效掩膜；
-2. 先按 patch 内有效像素比例筛场景，再对质量合格观测做中位数/分位数组合；
-3. 不把低质量景作为兜底，允许某源某季度缺失；
-4. 每个源保留观测日期、场景 ID、质量分数和每像素掩膜；
-5. 土地覆盖、DEM 和 OSM 使用 known/confidence mask；冲突位置关闭语义损失；
-6. 2020 与 2021 使用同一投影、网格原点、波段标度和类别映射。
+### 3. 海岸线补样
 
-### 5.2 模型和损失
+增加 500 个海岸 patch，用于学习海岸、港口、滩涂、河口和近海水体。
 
-模型保持 P10C 已验证的多源编码器、64 维 bottleneck 和 `128 x 128` 输出，按
-模态独立归一化和独立解码。主要损失保持简洁：
+海岸位置同时参考中国陆地边界和 Natural Earth 海洋面。河流、省界和湖泊边界不作为海岸线。
 
-- 掩膜内 S2/Landsat 光学重建；
-- 低权重 S1 重建；
-- DEM/NDVI/LAI 等连续物理目标；
-- OSM/土地覆盖 masked weak semantic loss；
-- modality dropout 困难重建；
-- 低权重方差/协方差约束，防止 64 维坍缩。
+500 个样本按照沿海 UTM 分区分配，并与前 60,000 个样本去重。
 
-所有损失先做梯度尺度审计。某个辅助损失若降低但 downstream probe 持续下降，
-应移除或降权，不以“损失越多越先进”为目标。
+### 4. 城市、稀有地物和困难区域补样
 
-## 六、存储和算力
+再增加 1,500 个样本，不删除、不替换前面的 60,500 个样本。
 
-### 6.1 10 m 季度 embedding 容量
-
-```text
-中国陆地面积 = 9.6 x 10^12 m2
-10 m 像素数 = 9.6 x 10^12 / 100 = 96,000,000,000
-单季度 int8 = 960 亿 x 64 Byte = 6.144 TB
-8 个季度 = 49.152 TB
-```
-
-| 内容 | 单份净载荷 | 工程规划 |
-| --- | ---: | ---: |
-| 8 期全国 int8 embedding | 49.15 TB | 45--55 TB（分块压缩、索引和质量掩膜） |
-| 62,000 点季度训练数据包 | 约 1.5--2.5 TB | 3 TB 验收线 |
-| best/last 权重与下游头 | 小于 0.01 TB | 0.05 TB |
-| 完整 2020/2021 源档案 | 约 190--220 TB | 以真实文件审计更新 |
-| 缓存、双处理版本、QA 和日志 | - | 15--25 TB |
-| **项目在线存储合计** | - | **约 250--300 TB** |
-
-结论：现有 300 TB 可以支撑，但必须采用“源档案只保留一份、训练裁窗分片、
-embedding int8、临时缓存按 shard 回收”的策略。若还要求 embedding 双副本，
-应再增加至少 60 TB；更稳妥的物理容量为 350--400 TB。
-
-### 6.2 训练和导出时间
-
-| 阶段 | 16 张 910B 预计时间 | 通过条件 |
+| 补样类型 | 数量 | 主要内容 |
 | --- | ---: | --- |
-| 2,000 点试点 | 5--7 天 | 对齐、掩膜、季度覆盖和容量通过 |
-| 1,000-step 性能基准 | 1--2 天 | 每卡 HBM <=48 GB，扩展效率 >=70% |
-| 20 万 updates 正式训练 | 约 36 天 | 固定 probe 和恢复演练通过 |
-| 8 期全国 embedding 导出 | 约 10--17 天 | 16 卡端到端 >=35 patch/s |
-| QA、索引和下游验收 | 约 7--10 天 | 无缺片、无接缝、量化精度通过 |
+| 城市和建成区 | 500 | 城市、道路密集区和建筑密集区 |
+| 稀有自然地物 | 400 | 湿地、雪地、高原、裸地、绿洲和河湖 |
+| 稀有基础设施 | 300 | 铁路、机场、港口、工业、教育和体育设施 |
+| 困难观测区 | 300 | 长期多云、缺测、复杂地形和传感器差异较大区域 |
+| 合计 | 1,500 | 与前 60,500 个样本去重 |
 
-模型训练预计实际峰值 20--32 GB HBM/卡，工程控制线 48 GB/卡。16 张 64 GB
-910B 总 HBM 1,024 GB，满足本方案。
+### 5. 最终样本数量
 
-## 七、实施计划
+| 样本组成 | 数量 |
+| --- | ---: |
+| 全国基础空间样本 | 57,405 |
+| 空间均衡补样 | 2,595 |
+| 海岸线补样 | 500 |
+| 城市、稀有地物和困难区域补样 | 1,500 |
+| 最终合计 | 62,000 |
 
-| 日期 | 工作 | 交付门槛 |
-| --- | --- | --- |
-| 08-01 至 08-10 | 数据清单、许可、真实容量和季度覆盖审计 | 2020/2021 各源 coverage matrix |
-| 08-11 至 08-20 | 2,000 点物化、可视化和时序方案消融 | 数据 QA 报告、冻结配置 |
-| 08-21 至 08-25 | 16 卡性能与恢复基准 | HBM、吞吐和 checkpoint 通过 |
-| 08-26 至 10-01 | 20 万 updates 正式训练 | best/last 权重和周期 probe |
-| 10-02 至 10-18 | 8 期 embedding 并行导出 | 分区分片验收、失败自动恢复 |
-| 10-19 至 10-25 | 下游评测、检索、变化分析和报告 | 固定协议结果与全域 QA |
-| 10-26 至 10-30 | 补片、文档和发布缓冲 | 不新增大实验 |
-
-如果 16 卡直到 8 月底才可用，正式训练和导出将直接进入关键路径，10 月 30 日
-仅有极小缓冲。此时必须在 8 月内提前完成全部数据物化和 CPU 侧 QA，并禁止在
-训练启动后临时增加新模态。
-
-## 八、验收指标
-
-1. 8 个季度全国分片数量完整，checksum、索引和质量掩膜齐全；
-2. 全域 PCA 不出现系统性 patch 接缝、省域颜色漂移和云块；
-3. 同协议 linear/MLP/conv3x3 probe 覆盖建筑、道路、水体、土地覆盖和农业；
-4. 报告 F1、AP、AUC、mIoU、Recall@K 和 5-fold x 3-seed 均值方差；
-5. 2020Q4--2021Q1 的变化结果不能由季节、云或标签版本差异主导；
-6. int8 相对 FP16 的固定下游指标下降不超过预设容差；
-7. 训练数据、权重、季度 embedding 和下游头都有版本、哈希和数据许可清单。
-
-## 九、主要风险与决策门
-
-- **WorldCover 版本差异：** 2020 v100 与 2021 v200 不能直接作为变化真值；
-- **NODA 批量许可：** 页面可访问不等于可批量训练，8 月 10 日前必须书面确认；
-- **2020 国产高分覆盖：** 缺失区域不做虚假填充，以 S2/S1/L8 为主；
-- **公网下载：** 公网只用于小型标签和补充，不承担全国主数据迁移；
-- **300 TB 容量紧张：** 不保留重复整景和数百万 `.pt` 小文件；
-- **时间节点：** 任一核心源 8 月 20 日仍未通过 QA，则从首版移出而不是拖延全局。
-
-## 十、公开依据
-
-- [AlphaEarth Foundations 论文](https://arxiv.org/abs/2507.22291)
-- [ESA WorldCover 2020/2021 数据与年度 composites](https://esa-worldcover.org/en/data-access)
-- [Copernicus Sentinel 数据访问](https://www.copernicus.eu/en/access-data)
-- [USGS Landsat Collection 2](https://www.usgs.gov/landsat-missions/landsat-collection-2)
-- [Copernicus DEM GLO-30](https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM)
-- [NASA MODIS Vegetation Indices](https://modis.gsfc.nasa.gov/data/dataprod/mod13.php)
-- [ESA WorldCereal 2021](https://esa-worldcereal.org/en/products/global-maps)
-- [ohsome 历史 OSM API](https://docs.ohsome.org/ohsome-api/stable/endpoints.html)
-- [NODA 2021 高分一张图发布说明](https://www.noda.ac.cn/aircas/news/showNewsById?id=6694ccca4782da475b5c8ffa)
-
-## 十一、项目实现依据
-
-- [全国基础 1% 抽样代码](https://github.com/go-bananas-wwj/xuannv_embdding/blob/v3-semantic-64d/scripts/data/visualize_national_sampling.py)
-- [空间补采样代码](https://github.com/go-bananas-wwj/xuannv_embdding/blob/v3-semantic-64d/scripts/data/build_national_spatial_supplement.py)
-- [海岸补采样代码](https://github.com/go-bananas-wwj/xuannv_embdding/blob/v3-semantic-64d/scripts/data/build_national_coastal_supplement.py)
-- [全国数据物化器](https://github.com/go-bananas-wwj/xuannv_embdding/blob/v3-semantic-64d/scripts/data/materialize_china_v1_shard.py)
-- [全国下载 watchdog](https://github.com/go-bananas-wwj/xuannv_embdding/blob/v3-semantic-64d/scripts/data/run_china_v1_watchdog.py)
+最终 62,000 个 patch 约占全国完整网格的 1.06%。每个样本保存采样原因、空间坐标、数据覆盖情况和质量统计，保证样本可以复现和检查。

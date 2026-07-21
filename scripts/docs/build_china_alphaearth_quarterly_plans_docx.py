@@ -7,7 +7,6 @@ import re
 from pathlib import Path
 
 from docx import Document
-from docx.enum.section import WD_SECTION
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
@@ -21,43 +20,33 @@ SOURCES = [
     ROOT / "docs/plans/china_alphaearth_high_resolution_quarterly_2020_2021_20260721_zh.md",
 ]
 OUTPUT_DIR = ROOT / "docs/plans/word"
-BLUE = "1F4E78"
-LIGHT_BLUE = "D9EAF7"
-LIGHT_GRAY = "F2F5F7"
-TEXT = RGBColor(31, 41, 55)
+BLACK = RGBColor(0, 0, 0)
 
 
-def set_run_font(run, name="Microsoft YaHei", size=None, bold=None, color=None):
-    run.font.name = name
-    run._element.rPr.rFonts.set(qn("w:eastAsia"), name)
+def set_run_font(run, size=None, bold=None):
+    run.font.name = "Times New Roman"
+    fonts = run._element.get_or_add_rPr().get_or_add_rFonts()
+    fonts.set(qn("w:ascii"), "Times New Roman")
+    fonts.set(qn("w:hAnsi"), "Times New Roman")
+    fonts.set(qn("w:cs"), "Times New Roman")
+    fonts.set(qn("w:eastAsia"), "宋体")
     if size is not None:
         run.font.size = Pt(size)
     if bold is not None:
         run.bold = bold
-    if color is not None:
-        run.font.color.rgb = color
-
-
-def set_cell_shading(cell, fill):
-    tc_pr = cell._tc.get_or_add_tcPr()
-    shd = tc_pr.find(qn("w:shd"))
-    if shd is None:
-        shd = OxmlElement("w:shd")
-        tc_pr.append(shd)
-    shd.set(qn("w:fill"), fill)
+    run.font.color.rgb = BLACK
 
 
 def set_cell_text(cell, text, header=False):
     cell.text = ""
     paragraph = cell.paragraphs[0]
-    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER if header else WD_ALIGN_PARAGRAPH.LEFT
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     add_inline(paragraph, text)
     for run in paragraph.runs:
         set_run_font(
             run,
-            size=9,
+            size=12,
             bold=True if header else run.bold,
-            color=RGBColor(255, 255, 255) if header else TEXT,
         )
     cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
 
@@ -72,11 +61,17 @@ def add_hyperlink(paragraph, label, url):
     hyperlink.set(qn("r:id"), relation_id)
     run = OxmlElement("w:r")
     run_props = OxmlElement("w:rPr")
+    fonts = OxmlElement("w:rFonts")
+    fonts.set(qn("w:ascii"), "Times New Roman")
+    fonts.set(qn("w:hAnsi"), "Times New Roman")
+    fonts.set(qn("w:eastAsia"), "宋体")
     color = OxmlElement("w:color")
-    color.set(qn("w:val"), "0563C1")
+    color.set(qn("w:val"), "000000")
     underline = OxmlElement("w:u")
-    underline.set(qn("w:val"), "single")
-    run_props.extend([color, underline])
+    underline.set(qn("w:val"), "none")
+    size = OxmlElement("w:sz")
+    size.set(qn("w:val"), "24")
+    run_props.extend([fonts, color, underline, size])
     text = OxmlElement("w:t")
     text.text = label
     run.extend([run_props, text])
@@ -92,33 +87,33 @@ def add_inline(paragraph, text):
     for match in INLINE_RE.finditer(text):
         if match.start() > cursor:
             run = paragraph.add_run(text[cursor : match.start()])
-            set_run_font(run, size=10.5, color=TEXT)
+            set_run_font(run, size=12)
         token = match.group(0)
         if token.startswith("**"):
             run = paragraph.add_run(token[2:-2])
-            set_run_font(run, size=10.5, bold=True, color=TEXT)
+            set_run_font(run, size=12, bold=True)
         elif token.startswith("`"):
             run = paragraph.add_run(token[1:-1])
-            set_run_font(run, name="Consolas", size=9.5, color=TEXT)
+            set_run_font(run, size=12)
         else:
             label, url = re.match(r"\[([^\]]+)\]\(([^)]+)\)", token).groups()
             add_hyperlink(paragraph, label, url)
         cursor = match.end()
     if cursor < len(text):
         run = paragraph.add_run(text[cursor:])
-        set_run_font(run, size=10.5, color=TEXT)
+        set_run_font(run, size=12)
 
 
 def add_page_number(section):
     paragraph = section.footer.paragraphs[0]
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = paragraph.add_run("第 ")
-    set_run_font(run, size=9, color=RGBColor(100, 116, 139))
+    set_run_font(run, size=9)
     field = OxmlElement("w:fldSimple")
     field.set(qn("w:instr"), "PAGE")
     paragraph._p.append(field)
     run = paragraph.add_run(" 页")
-    set_run_font(run, size=9, color=RGBColor(100, 116, 139))
+    set_run_font(run, size=9)
 
 
 def configure_document(document, title):
@@ -133,26 +128,30 @@ def configure_document(document, title):
 
     styles = document.styles
     normal = styles["Normal"]
-    normal.font.name = "Microsoft YaHei"
-    normal._element.rPr.rFonts.set(qn("w:eastAsia"), "Microsoft YaHei")
-    normal.font.size = Pt(10.5)
-    normal.font.color.rgb = TEXT
-    normal.paragraph_format.line_spacing = 1.35
-    normal.paragraph_format.space_after = Pt(5)
+    normal.font.name = "Times New Roman"
+    normal._element.rPr.rFonts.set(qn("w:ascii"), "Times New Roman")
+    normal._element.rPr.rFonts.set(qn("w:hAnsi"), "Times New Roman")
+    normal._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
+    normal.font.size = Pt(12)
+    normal.font.color.rgb = BLACK
+    normal.paragraph_format.line_spacing = 1.5
+    normal.paragraph_format.space_after = Pt(6)
 
     heading_specs = {
-        "Title": (22, RGBColor(20, 54, 86), 18, 12),
-        "Heading 1": (15, RGBColor(31, 78, 120), 14, 6),
-        "Heading 2": (12, RGBColor(46, 95, 130), 10, 4),
-        "Heading 3": (11, RGBColor(55, 65, 81), 8, 3),
+        "Title": (16, 18, 12),
+        "Heading 1": (14, 14, 6),
+        "Heading 2": (14, 10, 4),
+        "Heading 3": (14, 8, 3),
     }
-    for style_name, (size, color, before, after) in heading_specs.items():
+    for style_name, (size, before, after) in heading_specs.items():
         style = styles[style_name]
-        style.font.name = "Microsoft YaHei"
-        style._element.rPr.rFonts.set(qn("w:eastAsia"), "Microsoft YaHei")
+        style.font.name = "Times New Roman"
+        style._element.rPr.rFonts.set(qn("w:ascii"), "Times New Roman")
+        style._element.rPr.rFonts.set(qn("w:hAnsi"), "Times New Roman")
+        style._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
         style.font.size = Pt(size)
         style.font.bold = True
-        style.font.color.rgb = color
+        style.font.color.rgb = BLACK
         style.paragraph_format.space_before = Pt(before)
         style.paragraph_format.space_after = Pt(after)
 
@@ -181,10 +180,6 @@ def add_table(document, rows):
             value = row[column_index] if column_index < len(row) else ""
             cell = table.cell(row_index, column_index)
             set_cell_text(cell, value, header=row_index == 0)
-            if row_index == 0:
-                set_cell_shading(cell, BLUE)
-            elif row_index % 2 == 0:
-                set_cell_shading(cell, LIGHT_GRAY)
     document.add_paragraph().paragraph_format.space_after = Pt(0)
 
 
@@ -208,7 +203,7 @@ def build_docx(source):
                 paragraph.paragraph_format.space_before = Pt(4)
                 paragraph.paragraph_format.space_after = Pt(7)
                 run = paragraph.add_run("\n".join(code_lines))
-                set_run_font(run, name="Consolas", size=9, color=RGBColor(51, 65, 85))
+                set_run_font(run, size=11)
                 in_code = False
                 code_lines = []
             else:
@@ -243,7 +238,8 @@ def build_docx(source):
             style = "Title" if level == 1 else f"Heading {level - 1}"
             paragraph = document.add_paragraph(style=style)
             paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER if level == 1 else WD_ALIGN_PARAGRAPH.LEFT
-            add_inline(paragraph, heading.group(2))
+            run = paragraph.add_run(heading.group(2))
+            set_run_font(run, size=16 if level == 1 else 14, bold=True)
             index += 1
             continue
         if stripped.startswith(">"):
@@ -257,18 +253,16 @@ def build_docx(source):
             paragraph.paragraph_format.space_before = Pt(6)
             paragraph.paragraph_format.space_after = Pt(8)
             add_inline(paragraph, " ".join(quote_lines))
-            p_pr = paragraph._p.get_or_add_pPr()
-            shading = OxmlElement("w:shd")
-            shading.set(qn("w:fill"), LIGHT_BLUE)
-            p_pr.append(shading)
             continue
         bullet = re.match(r"^[-*]\s+(.+)$", stripped)
-        numbered = re.match(r"^\d+\.\s+(.+)$", stripped)
+        numbered = re.match(r"^\d+[\.、]\s*(.+)$", stripped)
         if bullet or numbered:
-            paragraph = document.add_paragraph(
-                style="List Bullet" if bullet else "List Number"
-            )
-            add_inline(paragraph, (bullet or numbered).group(1))
+            paragraph = document.add_paragraph()
+            if bullet:
+                add_inline(paragraph, bullet.group(1))
+            else:
+                prefix = re.match(r"^(\d+[\.、])", stripped).group(1)
+                add_inline(paragraph, f"{prefix}{numbered.group(1)}")
             index += 1
             continue
 
@@ -279,7 +273,7 @@ def build_docx(source):
             if (
                 not candidate
                 or candidate.startswith(("#", "|", ">", "```", "![", "- ", "* "))
-                or re.match(r"^\d+\.\s+", candidate)
+                or re.match(r"^\d+[\.、]\s*", candidate)
             ):
                 break
             paragraph_lines.append(candidate)
