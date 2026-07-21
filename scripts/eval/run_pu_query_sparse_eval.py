@@ -38,6 +38,8 @@ QUERY_MIN_PIXELS, QUERY_MAX_PIXELS = 4, 128
 QUERY_MIN_MARGIN = 0.05
 QUERY_MAX_GROWTH, QUERY_MIN_AREA_CAP = 1.35, 64
 
+PLOT_NAMES = {"building": "Building", "road": "Road", "water": "Water"}
+
 
 @dataclass(frozen=True)
 class PolygonSupport:
@@ -165,7 +167,7 @@ def score_pu_query(feature: np.ndarray, model: dict[str, np.ndarray | float | in
     if not QUERY_MIN_PIXELS <= selected_count <= QUERY_MAX_PIXELS:
         return base.astype(np.float32), False
     query = l2(pixels[selected].mean(0, keepdims=True))[0]
-    query_score = pixels @ query - BACKGROUND_WEIGHT * (pixels @ background)
+    query_score = gaussian_filter(pixels @ query - BACKGROUND_WEIGHT * (pixels @ background), sigma=0.55)
     refined = (1.0 - QUERY_BLEND) * base + QUERY_BLEND * query_score
     base_area, refined_area = int((base >= threshold).sum()), int((refined >= threshold).sum())
     if refined_area > max(QUERY_MIN_AREA_CAP, math.ceil(base_area * QUERY_MAX_GROWTH)):
@@ -212,7 +214,7 @@ def make_visual(root: Path, args: argparse.Namespace, task: str, label_root: Pat
         axis.imshow(image, cmap="turbo" if image.ndim == 2 else None)
         axis.set_title(title, fontsize=10)
         axis.axis("off")
-    fig.suptitle(f"{TASKS[task][0]} | {len(supports)} polygons | representative independent test patch {patch_id}", fontsize=13)
+    fig.suptitle(f"{PLOT_NAMES[task]} | {len(supports)} polygons | representative independent test patch {patch_id}", fontsize=13)
     fig.tight_layout()
     output = root / f"{task}_{len(supports)}polygons_example.png"
     fig.savefig(output, dpi=180)
@@ -236,8 +238,8 @@ def plot_summary(rows: list[dict[str, object]], output: Path) -> None:
     for task in tasks:
         values = [next(float(row["metrics"]["f1"]) for row in rows if row["task"] == task and row["polygon_count"] == count) for count in counts]
         auc = [next(float(row["metrics"]["auc"]) for row in rows if row["task"] == task and row["polygon_count"] == count) for count in counts]
-        ax_f1.plot(counts, values, marker="o", label=TASKS[task][0])
-        ax_auc.plot(counts, auc, marker="o", label=TASKS[task][0])
+        ax_f1.plot(counts, values, marker="o", label=PLOT_NAMES[task])
+        ax_auc.plot(counts, auc, marker="o", label=PLOT_NAMES[task])
     for axis, title in ((ax_f1, "Independent-test F1"), (ax_auc, "Independent-test AUC")):
         axis.set_title(title); axis.set_xlabel("Number of labelled polygons"); axis.set_xticks(counts); axis.set_ylim(0, 1); axis.grid(alpha=.25); axis.legend()
     fig.suptitle("P10C PU + Query: sparse polygon mapping")
