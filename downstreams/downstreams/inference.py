@@ -130,9 +130,9 @@ def build_inference_loader(
         statistics_dirs_by_region=statistics_dirs_by_region,
         sources=cfg.data.sources,
         patch_size=cfg.data.patch_size,
-        context_margin=getattr(cfg.data, "context_margin", 0)
-        if context_margin is None
-        else context_margin,
+        context_margin=(
+            getattr(cfg.data, "context_margin", 0) if context_margin is None else context_margin
+        ),
         patch_grid_path=getattr(cfg.data, "patch_grid_path", None),
         num_months=cfg.model.num_months,
         ref_year=getattr(cfg.model, "ref_year", 2025),
@@ -210,9 +210,7 @@ def precompute_embeddings(
                 crop = int(center_crop_size)
                 height, width = emb_map_tensor.shape[-2:]
                 if height < crop or width < crop:
-                    raise ValueError(
-                        f"无法将 embedding_map 从 {(height, width)} 中心裁剪到 {crop}"
-                    )
+                    raise ValueError(f"无法将 embedding_map 从 {(height, width)} 中心裁剪到 {crop}")
                 top = (height - crop) // 2
                 left = (width - crop) // 2
                 emb_map_tensor = emb_map_tensor[..., top : top + crop, left : left + crop]
@@ -248,7 +246,7 @@ def write_meta_json(
     manifest_path: Path | None = None,
 ) -> None:
     if checkpoint_path is not None:
-        sha = hashlib.sha256(checkpoint_path.read_bytes()).hexdigest()[:16]
+        sha = hashlib.sha256(checkpoint_path.read_bytes()).hexdigest()
     else:
         sha = None
     commit = subprocess.run(
