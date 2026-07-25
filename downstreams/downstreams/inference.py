@@ -22,6 +22,34 @@ from xuannv_embedding.utils.device import get_device
 logger = logging.getLogger(__name__)
 
 
+def manifest_provenance(manifest_path: Path) -> dict[str, str | int]:
+    """Return content and patch-set hashes for an auditable export manifest."""
+    manifest_path = Path(manifest_path).resolve()
+    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(raw, list):
+        raise ValueError(f"Manifest must be a list: {manifest_path}")
+    patch_ids = [str(entry["patch_id"]) for entry in raw]
+    if len(patch_ids) != len(set(patch_ids)):
+        raise ValueError(f"Manifest contains duplicate patch IDs: {manifest_path}")
+    patch_payload = "\n".join(sorted(patch_ids)).encode("utf-8")
+    return {
+        "manifest_path": str(manifest_path),
+        "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        "patch_count": len(patch_ids),
+        "patch_ids_sha256": hashlib.sha256(patch_payload).hexdigest(),
+    }
+
+
+def validate_manifest_region(manifest_path: Path, expected_region: str) -> None:
+    """Reject an explicit manifest whose records belong to another region."""
+    raw = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    regions = {str(entry.get("region", "")) for entry in raw}
+    if regions != {expected_region}:
+        raise ValueError(
+            f"Explicit manifest regions {sorted(regions)} do not match {expected_region!r}"
+        )
+
+
 def load_model_for_inference(
     config_path: str | Path,
     checkpoint_path: str | Path | None,
@@ -41,8 +69,8 @@ def load_model_for_inference(
         target_heads=aef_target_heads,
         stem_dim=cfg.model.stem_dim,
         num_months=cfg.model.num_months,
-        ref_year=cfg.model.ref_year,
-        ref_month=cfg.model.ref_month,
+        ref_year=getattr(cfg.model, "ref_year", 2025),
+        ref_month=getattr(cfg.model, "ref_month", 1),
         stp=cfg.model.stp,
         gradient_checkpointing=False,  # 推理关闭
     )
@@ -67,16 +95,28 @@ def build_inference_loader(
     context_margin: int | None = None,
     shard_id: int | None = None,
     num_shards: int | None = None,
+    manifest_path: Path | None = None,
 ) -> DataLoader:
     # TODO: 当 MonthlyEmbeddingDataset 支持 split 过滤时，根据 split 值筛选 patch。
-    if cfg.data.statistics_dirs_by_region:
+    if manifest_path is not None:
+        manifest_path = Path(manifest_path)
+        if not manifest_path.is_file():
+            raise FileNotFoundError(f"推理 manifest 不存在: {manifest_path}")
+        statistics_dir = cfg.data.statistics_dir or (
+            Path(cfg.data.root).parent / "statistics" / region
+        )
+        statistics_dirs_by_region = cfg.data.statistics_dirs_by_region
+        region_filter = None
+    elif cfg.data.statistics_dirs_by_region:
         manifest_path = cfg.data.manifest_path
         statistics_dir = cfg.data.statistics_dir
         statistics_dirs_by_region = cfg.data.statistics_dirs_by_region
         region_filter = region
     elif region == cfg.data.region and cfg.data.manifest_path.exists():
         manifest_path = cfg.data.manifest_path
-        statistics_dir = cfg.data.statistics_dir or Path(cfg.data.root).parent / "statistics" / region
+        statistics_dir = cfg.data.statistics_dir or (
+            Path(cfg.data.root).parent / "statistics" / region
+        )
         statistics_dirs_by_region = {}
         region_filter = None
     else:
@@ -90,11 +130,13 @@ def build_inference_loader(
         statistics_dirs_by_region=statistics_dirs_by_region,
         sources=cfg.data.sources,
         patch_size=cfg.data.patch_size,
-        context_margin=cfg.data.context_margin if context_margin is None else context_margin,
-        patch_grid_path=cfg.data.patch_grid_path,
+        context_margin=getattr(cfg.data, "context_margin", 0)
+        if context_margin is None
+        else context_margin,
+        patch_grid_path=getattr(cfg.data, "patch_grid_path", None),
         num_months=cfg.model.num_months,
-        ref_year=cfg.model.ref_year,
-        ref_month=cfg.model.ref_month,
+        ref_year=getattr(cfg.model, "ref_year", 2025),
+        ref_month=getattr(cfg.model, "ref_month", 1),
         region_filter=region_filter,
     )
     if num_shards is not None:
@@ -129,9 +171,10 @@ def precompute_embeddings(
     output_dir: Path,
     months: list[str] | None = None,
     center_crop_size: int | None = None,
-) -> None:
+) -> list[str]:
     output_dir.mkdir(parents=True, exist_ok=True)
     selected_months = {str(month) for month in months} if months is not None else None
+    produced_patch_ids: list[str] = []
     with torch.no_grad():
         for batch in loader:
             patch_ids = batch["patch_ids"]
@@ -182,6 +225,7 @@ def precompute_embeddings(
             ts = batch["timestamps"].cpu()  # (B, T_month)
 
             for b, patch_id in enumerate(patch_ids):
+                produced_patch_ids.append(str(patch_id))
                 patch_dir = output_dir / patch_id
                 patch_dir.mkdir(parents=True, exist_ok=True)
                 for m in range(emb_map.shape[1]):
@@ -193,6 +237,7 @@ def precompute_embeddings(
                     month_scene = scene_emb[b, m].contiguous().clone()
                     torch.save(month_map, patch_dir / f"{month_int}_embedding_map.pt")
                     torch.save(month_scene, patch_dir / f"{month_int}_scene_embedding.pt")
+    return produced_patch_ids
 
 
 def write_meta_json(
@@ -200,6 +245,7 @@ def write_meta_json(
     checkpoint_path: Path | None,
     config_path: Path,
     command_line: str,
+    manifest_path: Path | None = None,
 ) -> None:
     if checkpoint_path is not None:
         sha = hashlib.sha256(checkpoint_path.read_bytes()).hexdigest()[:16]
@@ -231,5 +277,7 @@ def write_meta_json(
         "torch_version": torch.__version__,
         "month_format": "YYYYMM",
     }
+    if manifest_path is not None:
+        meta["manifest"] = manifest_provenance(manifest_path)
     with open(output_dir / "meta.json", "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)

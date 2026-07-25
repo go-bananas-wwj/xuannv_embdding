@@ -10,8 +10,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 import rasterio
+from downstreams.inference import (
+    build_inference_loader,
+    manifest_provenance,
+    validate_manifest_region,
+)
 from torch.optim import Adam
 
+from xuannv_embedding.config import Config
 from xuannv_embedding.models.model import AEFModel
 from xuannv_embedding.training.checkpoint import save_checkpoint
 
@@ -238,6 +244,49 @@ def test_extract_embeddings_argparse() -> None:
     assert args.output == "out.npz"
     assert args.split == "train"
     assert args.include_maps is False
+
+
+def test_inference_loader_uses_explicit_manifest_override(tmp_path: Path) -> None:
+    """论文导出必须能覆盖训练子集之外的 held-out patch。"""
+    config_path, _, _ = _make_dummy_dataset(tmp_path, num_samples=4)
+    cfg = Config.from_yaml(config_path)
+    source_manifest = cfg.data.manifest_path
+    full_manifest = source_manifest.parent / "full_manifest.json"
+    entries = json.loads(source_manifest.read_text(encoding="utf-8"))
+    full_manifest.write_text(json.dumps(entries[:3]), encoding="utf-8")
+
+    loader = build_inference_loader(
+        cfg,
+        region="test",
+        manifest_path=full_manifest,
+    )
+
+    assert len(loader.dataset) == 3
+
+
+def test_manifest_provenance_records_hash_and_unique_patch_ids(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps([{"patch_id": "patch_002"}, {"patch_id": "patch_001"}]),
+        encoding="utf-8",
+    )
+
+    provenance = manifest_provenance(manifest_path)
+
+    assert provenance["patch_count"] == 2
+    assert len(provenance["manifest_sha256"]) == 64
+    assert len(provenance["patch_ids_sha256"]) == 64
+
+
+def test_explicit_manifest_rejects_a_different_region(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps([{"patch_id": "patch_001", "region": "haidian"}]),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="do not match"):
+        validate_manifest_region(manifest_path, "harbin")
 
 
 def test_knn_eval_end_to_end(tmp_path: Path) -> None:

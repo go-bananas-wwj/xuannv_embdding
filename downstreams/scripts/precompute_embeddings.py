@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from datetime import datetime, timezone
@@ -10,6 +11,7 @@ from pathlib import Path
 from downstreams.inference import (
     build_inference_loader,
     load_model_for_inference,
+    manifest_provenance,
     precompute_embeddings,
     write_meta_json,
 )
@@ -23,6 +25,12 @@ def main() -> None:
     p.add_argument("--config", type=Path, required=True)
     p.add_argument("--regions", nargs="+", required=True)
     p.add_argument("--output-root", type=Path, required=True)
+    p.add_argument(
+        "--manifest-path",
+        type=Path,
+        default=None,
+        help="Override the config manifest for auditable full-domain export.",
+    )
     p.add_argument("--suffix", default="")
     p.add_argument("--split", default="all")
     p.add_argument("--device", default=None, help="Override inference device, e.g. npu:0 or cpu.")
@@ -69,6 +77,23 @@ def main() -> None:
         p.error(f"config 不存在: {args.config}")
     if args.checkpoint is not None and not args.checkpoint.exists():
         p.error(f"checkpoint 不存在: {args.checkpoint}")
+    if args.manifest_path is not None and not args.manifest_path.is_file():
+        p.error(f"manifest 不存在: {args.manifest_path}")
+    if args.manifest_path is not None and len(args.regions) != 1:
+        p.error("--manifest-path requires exactly one --regions value")
+    if args.manifest_path is not None:
+        from downstreams.inference import validate_manifest_region
+
+        try:
+            validate_manifest_region(args.manifest_path, args.regions[0])
+        except ValueError as exc:
+            p.error(str(exc))
+        try:
+            manifest_provenance(args.manifest_path)
+        except ValueError as exc:
+            p.error(str(exc))
+    if (args.shard_id is None) != (args.num_shards is None):
+        p.error("--shard-id and --num-shards must be provided together")
 
     model, cfg, device = load_model_for_inference(
         args.config,
@@ -93,9 +118,10 @@ def main() -> None:
             context_margin=args.context_margin,
             shard_id=args.shard_id,
             num_shards=args.num_shards,
+            manifest_path=args.manifest_path,
         )
         region_dir = out_root / region
-        precompute_embeddings(
+        produced_patch_ids = precompute_embeddings(
             model,
             loader,
             device,
@@ -103,8 +129,23 @@ def main() -> None:
             months=args.months,
             center_crop_size=args.center_crop_size,
         )
+        shard_name = (
+            f"produced_patch_ids_shard_{args.shard_id}.json"
+            if args.shard_id is not None
+            else "produced_patch_ids.json"
+        )
+        (region_dir / shard_name).write_text(
+            json.dumps(sorted(produced_patch_ids), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
-    write_meta_json(out_root, args.checkpoint, args.config, " ".join(sys.argv))
+    write_meta_json(
+        out_root,
+        args.checkpoint,
+        args.config,
+        " ".join(sys.argv),
+        manifest_path=args.manifest_path,
+    )
     logger.info("embedding 保存至 %s", out_root)
 
 
