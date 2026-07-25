@@ -142,3 +142,146 @@ def test_registered_shot_manifest_is_nested_and_rejects_budget_shortage() -> Non
             split_sha256="split",
             pixel_count=lambda patch_id: {"p0": 64, "n0": 0}[patch_id],
         )
+
+
+def test_registered_embedding_index_rejects_tampered_feature_file(tmp_path: Path) -> None:
+    root = tmp_path / "embeddings"
+    feature = root / "haidian" / "patch_000001" / "202604_embedding_map.pt"
+    feature.parent.mkdir(parents=True)
+    feature.write_bytes(b"original feature tensor")
+
+    index = registered.build_embedding_file_index(root, "haidian", "202604")
+    registered.verify_embedding_file_index(root, index, "haidian", "202604")
+
+    feature.write_bytes(b"modified feature tensor")
+    with pytest.raises(ValueError, match="hash mismatch"):
+        registered.verify_embedding_file_index(root, index, "haidian", "202604")
+
+    with pytest.raises(ValueError, match="patch IDs"):
+        registered.verify_embedding_file_index(
+            root,
+            registered.build_embedding_file_index(root, "haidian", "202604"),
+            "haidian",
+            "202604",
+            expected_patch_ids={"patch_000001", "patch_000002"},
+        )
+
+
+def test_registered_result_directory_refuses_to_overwrite_artifacts(tmp_path: Path) -> None:
+    output = tmp_path / "result"
+    registered.prepare_result_output(output)
+    with pytest.raises(FileExistsError, match="refusing to overwrite"):
+        registered.prepare_result_output(output)
+
+
+def test_registered_embedding_index_requires_meta_seal(tmp_path: Path) -> None:
+    root = tmp_path / "embeddings"
+    feature = root / "haidian" / "patch_000001" / "202604_embedding_map.pt"
+    feature.parent.mkdir(parents=True)
+    feature.write_bytes(b"feature tensor")
+    index_path = root / "embedding_file_index.json"
+    index_path.write_text(
+        json.dumps(registered.build_embedding_file_index(root, "haidian", "202604")),
+        encoding="utf-8",
+    )
+    meta = {
+        "embedding_file_index_sha256": registered.sha256_file(index_path),
+        "embedding_file_index": {
+            "path": "embedding_file_index.json",
+            "region": "haidian",
+            "month": "202604",
+            "file_count": 1,
+        },
+    }
+    registered.load_sealed_embedding_file_index(root, meta, "haidian", "202604")
+
+    index_path.write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="does not match export metadata"):
+        registered.load_sealed_embedding_file_index(root, meta, "haidian", "202604")
+
+
+def test_registered_embedding_index_rejects_inconsistent_meta_description(tmp_path: Path) -> None:
+    root = tmp_path / "embeddings"
+    feature = root / "haidian" / "patch_000001" / "202604_embedding_map.pt"
+    feature.parent.mkdir(parents=True)
+    feature.write_bytes(b"feature tensor")
+    index_path = root / "embedding_file_index.json"
+    index_path.write_text(
+        json.dumps(registered.build_embedding_file_index(root, "haidian", "202604")),
+        encoding="utf-8",
+    )
+    meta = {
+        "embedding_file_index_sha256": registered.sha256_file(index_path),
+        "embedding_file_index": {
+            "path": "embedding_file_index.json",
+            "region": "haidian",
+            "month": "202604",
+            "file_count": 2,
+        },
+    }
+    with pytest.raises(ValueError, match="metadata file_count"):
+        registered.load_sealed_embedding_file_index(root, meta, "haidian", "202604")
+
+
+def test_registered_embedding_index_sealing_writes_meta_binding(tmp_path: Path) -> None:
+    root = tmp_path / "embeddings"
+    feature = root / "haidian" / "patch_000001" / "202604_embedding_map.pt"
+    feature.parent.mkdir(parents=True)
+    feature.write_bytes(b"feature tensor")
+    (root / "meta.json").write_text("{}", encoding="utf-8")
+
+    index = registered.seal_embedding_file_index(root, "haidian", "202604")
+    stored_meta = json.loads((root / "meta.json").read_text(encoding="utf-8"))
+    assert stored_meta["embedding_file_index_sha256"] == registered.sha256_file(
+        root / "embedding_file_index.json"
+    )
+    assert index["files"][0]["path"] == "haidian/patch_000001/202604_embedding_map.pt"
+
+
+def test_registered_embedding_registry_requires_external_index_hash(tmp_path: Path) -> None:
+    registry_path = tmp_path / "embedding_registry.json"
+    registry_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "exports": [
+                    {
+                        "checkpoint_sha256": "checkpoint",
+                        "manifest_sha256": "manifest",
+                        "embedding_file_index_sha256": "index",
+                        "region": "haidian",
+                        "month": "202604",
+                        "patch_count": 320,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    registered.verify_embedding_registry(
+        registry_path,
+        checkpoint_sha256="checkpoint",
+        manifest_sha256="manifest",
+        index_sha256="index",
+        region="haidian",
+        month="202604",
+        patch_count=320,
+    )
+
+    with pytest.raises(ValueError, match="does not contain the sealed export"):
+        registered.verify_embedding_registry(
+            registry_path,
+            checkpoint_sha256="checkpoint",
+            manifest_sha256="manifest",
+            index_sha256="tampered",
+            region="haidian",
+            month="202604",
+            patch_count=320,
+        )
+
+
+def test_registered_external_registry_must_be_a_clean_head_tracked_file(tmp_path: Path) -> None:
+    tracked = ROOT / "configs/eval/haidian_spatial_5fold_buffer1_seed42.json"
+    registered.verify_git_head_file(tracked)
+    with pytest.raises(ValueError, match="inside the repository"):
+        registered.verify_git_head_file(tmp_path / "untracked.json")

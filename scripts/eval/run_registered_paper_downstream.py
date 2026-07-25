@@ -46,6 +46,185 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def build_embedding_file_index(embedding_root: Path, region: str, month: str) -> dict[str, Any]:
+    """Hash every exported map consumed by one registered probe."""
+    embedding_root = embedding_root.resolve()
+    files = sorted((embedding_root / region).glob(f"*/{month}_embedding_map.pt"))
+    if not files:
+        raise FileNotFoundError(f"No {month} embedding maps under {embedding_root / region}")
+    entries = [
+        {
+            "path": str(path.relative_to(embedding_root)),
+            "sha256": sha256_file(path),
+            "bytes": path.stat().st_size,
+        }
+        for path in files
+    ]
+    payload = {"schema_version": 1, "region": region, "month": str(month), "files": entries}
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
+    return {**payload, "index_sha256": hashlib.sha256(encoded).hexdigest()}
+
+
+def verify_embedding_file_index(
+    embedding_root: Path,
+    index: dict[str, Any],
+    region: str,
+    month: str,
+    expected_patch_ids: set[str] | None = None,
+) -> None:
+    """Fail closed when an exported embedding map differs from its frozen index."""
+    if index.get("region") != region or str(index.get("month")) != str(month):
+        raise ValueError("Embedding index region or month does not match this evaluation")
+    expected = index.get("files")
+    if not isinstance(expected, list) or not expected:
+        raise ValueError("Embedding index has no file entries")
+    actual = build_embedding_file_index(embedding_root, region, month)
+    expected_paths = [entry.get("path") for entry in expected]
+    actual_paths = [entry["path"] for entry in actual["files"]]
+    if expected_paths != actual_paths:
+        raise ValueError("Embedding index file set differs from exported embedding maps")
+    if expected_patch_ids is not None:
+        actual_patch_ids = {Path(path).parent.name for path in actual_paths}
+        if actual_patch_ids != expected_patch_ids:
+            raise ValueError("Embedding index patch IDs differ from the frozen manifest")
+    for stored, observed in zip(expected, actual["files"], strict=True):
+        if stored.get("sha256") != observed["sha256"]:
+            raise ValueError(f"Embedding map hash mismatch: {observed['path']}")
+        if stored.get("bytes") != observed["bytes"]:
+            raise ValueError(f"Embedding map byte size mismatch: {observed['path']}")
+
+
+def load_sealed_embedding_file_index(
+    embedding_root: Path,
+    export_meta: dict[str, Any],
+    region: str,
+    month: str,
+    expected_patch_ids: set[str] | None = None,
+) -> dict[str, Any]:
+    """Load an index whose content hash is sealed into the export metadata."""
+    index_path = embedding_root / "embedding_file_index.json"
+    if not index_path.is_file():
+        raise FileNotFoundError(f"Missing embedding file index: {index_path}")
+    if export_meta.get("embedding_file_index_sha256") != sha256_file(index_path):
+        raise ValueError("Embedding file index does not match export metadata seal")
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    description = export_meta.get("embedding_file_index")
+    if not isinstance(description, dict):
+        raise ValueError("Embedding export metadata lacks an index description")
+    if description.get("path") != index_path.name:
+        raise ValueError("Embedding metadata index path is inconsistent")
+    if description.get("region") != region or str(description.get("month")) != str(month):
+        raise ValueError("Embedding metadata region or month is inconsistent")
+    if description.get("file_count") != len(index.get("files", [])):
+        raise ValueError("Embedding metadata file_count is inconsistent")
+    expected_index = index.get("index_sha256")
+    actual_index = build_embedding_file_index(embedding_root, region, month).get("index_sha256")
+    if expected_index != actual_index:
+        raise ValueError("Embedding file index content hash is invalid")
+    verify_embedding_file_index(embedding_root, index, region, month, expected_patch_ids)
+    return index
+
+
+def seal_embedding_file_index(embedding_root: Path, region: str, month: str) -> dict[str, Any]:
+    """Write a content index and bind it into an already-complete export's metadata."""
+    meta_path = embedding_root / "meta.json"
+    if not meta_path.is_file():
+        raise FileNotFoundError(f"Missing embedding export metadata: {meta_path}")
+    index = build_embedding_file_index(embedding_root, region, month)
+    index_path = embedding_root / "embedding_file_index.json"
+    _write_json(index_path, index)
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["embedding_file_index_sha256"] = sha256_file(index_path)
+    meta["embedding_file_index"] = {
+        "path": index_path.name,
+        "region": region,
+        "month": str(month),
+        "file_count": len(index["files"]),
+    }
+    _write_json(meta_path, meta)
+    return index
+
+
+def prepare_result_output(output: Path) -> None:
+    """Atomically claim a fresh output directory for exactly one probe run."""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        output.mkdir()
+    except FileExistsError as exc:
+        raise FileExistsError(
+            f"Registered evaluation refusing to overwrite or reuse: {output}"
+        ) from exc
+
+
+def verify_embedding_registry(
+    registry_path: Path,
+    *,
+    checkpoint_sha256: str,
+    manifest_sha256: str,
+    index_sha256: str,
+    region: str,
+    month: str,
+    patch_count: int,
+) -> dict[str, Any]:
+    """Require an external frozen record for the exact exported feature set."""
+    if not registry_path.is_file():
+        raise FileNotFoundError(f"Missing external embedding registry: {registry_path}")
+    raw = json.loads(registry_path.read_text(encoding="utf-8"))
+    entries = raw.get("exports")
+    if raw.get("schema_version") != 1 or not isinstance(entries, list):
+        raise ValueError("Invalid external embedding registry schema")
+    expected = {
+        "checkpoint_sha256": checkpoint_sha256,
+        "manifest_sha256": manifest_sha256,
+        "embedding_file_index_sha256": index_sha256,
+        "region": region,
+        "month": str(month),
+        "patch_count": patch_count,
+    }
+    matches = [
+        entry
+        for entry in entries
+        if all(entry.get(key) == value for key, value in expected.items())
+    ]
+    if len(matches) != 1:
+        raise ValueError("External embedding registry does not contain the sealed export")
+    return {
+        "path": str(registry_path.resolve()),
+        "sha256": sha256_file(registry_path),
+        **matches[0],
+    }
+
+
+def verify_git_head_file(path: Path) -> None:
+    """Require that an external registry is a clean, Git-tracked HEAD artifact."""
+    repo_root = Path(__file__).resolve().parents[2]
+    resolved = path.resolve()
+    try:
+        relative = resolved.relative_to(repo_root)
+    except ValueError as exc:
+        raise ValueError("External registry must be inside the repository") from exc
+    relative_text = str(relative)
+    tracked = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", "--", relative_text],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if tracked.returncode != 0:
+        raise ValueError("External registry must be Git tracked")
+    head = subprocess.run(
+        ["git", "show", f"HEAD:{relative_text}"],
+        cwd=repo_root,
+        capture_output=True,
+        check=False,
+    )
+    if head.returncode != 0 or head.stdout != resolved.read_bytes():
+        raise ValueError("External registry must exactly match the current Git HEAD")
+
+
 def verify_encoder_provenance(
     config_path: Path,
     checkpoint_path: Path,
@@ -126,7 +305,7 @@ def _verify_frozen_split(path: Path, fold: int) -> dict[str, list[str]]:
 
 
 def _verify_embedding_export(
-    embedding_root: Path, manifest_path: Path, checkpoint_sha256: str
+    embedding_root: Path, manifest_path: Path, checkpoint_sha256: str, month: str
 ) -> dict[str, Any]:
     if sha256_file(manifest_path) != FROZEN_EVAL_MANIFEST_SHA256:
         raise ValueError("Evaluation must use the registered 320-patch manifest")
@@ -141,6 +320,11 @@ def _verify_embedding_export(
         raise ValueError("Embedding export provenance does not contain 320 patches")
     if meta.get("checkpoint_sha256") != checkpoint_sha256:
         raise ValueError("Embedding export checkpoint hash does not match the evaluated encoder")
+    manifest_records = json.loads(manifest_path.read_text(encoding="utf-8"))
+    expected_patch_ids = {str(record["patch_id"]) for record in manifest_records}
+    if len(expected_patch_ids) != 320:
+        raise ValueError("Registered evaluation manifest must contain 320 unique patch IDs")
+    load_sealed_embedding_file_index(embedding_root, meta, "haidian", month, expected_patch_ids)
     return meta
 
 
@@ -387,6 +571,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--encoder-config", type=Path, required=True)
     parser.add_argument("--encoder-checkpoint", type=Path, required=True)
     parser.add_argument("--embedding-root", type=Path, required=True)
+    parser.add_argument(
+        "--embedding-registry",
+        type=Path,
+        required=True,
+        help="Git-tracked external registry sealing the embedding file index.",
+    )
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--label-root", type=Path, required=True)
     parser.add_argument("--spatial-split", type=Path, required=True)
@@ -406,8 +596,19 @@ def main() -> None:
     provenance = verify_encoder_provenance(args.encoder_config, args.encoder_checkpoint, args.fold)
     split = _verify_frozen_split(args.spatial_split, args.fold)
     export_meta = _verify_embedding_export(
-        args.embedding_root, args.manifest, str(provenance["checkpoint_sha256"])
+        args.embedding_root, args.manifest, str(provenance["checkpoint_sha256"]), args.month
     )
+    verify_git_head_file(args.embedding_registry)
+    embedding_registry = verify_embedding_registry(
+        args.embedding_registry,
+        checkpoint_sha256=str(provenance["checkpoint_sha256"]),
+        manifest_sha256=FROZEN_EVAL_MANIFEST_SHA256,
+        index_sha256=str(export_meta["embedding_file_index_sha256"]),
+        region="haidian",
+        month=args.month,
+        patch_count=320,
+    )
+    prepare_result_output(args.output_root)
     probe_seed = int.from_bytes(
         hashlib.sha256(f"{args.fold}|{args.task}|{args.shot_seed}".encode()).digest()[:4],
         "little",
@@ -439,7 +640,6 @@ def main() -> None:
             if shot_manifest != expected:
                 raise ValueError("Existing shot manifest does not match frozen selection rule")
         else:
-            args.output_root.mkdir(parents=True, exist_ok=True)
             _write_json(shot_manifest_path, expected)
             shot_manifest = expected
         train_ids = shot_manifest["sets"][args.shot]["train_patch_ids"]
@@ -490,7 +690,6 @@ def main() -> None:
     )
     metrics["roc_auc"] = float(roc_auc_score(test_targets, sigmoid_probabilities(test_logits)))
     output = args.output_root
-    output.mkdir(parents=True, exist_ok=True)
     predictions = output / "predictions_test.npz"
     ordered_patch_ids = sorted(test_by_patch)
     probability_maps = np.stack(
@@ -528,6 +727,7 @@ def main() -> None:
         "spatial_split_sha256": split_sha,
         "manifest_sha256": sha256_file(args.manifest),
         "embedding_export": export_meta,
+        "embedding_registry": embedding_registry,
         "normalization": {"mean": mean.flatten().tolist(), "std": std.flatten().tolist()},
         "git_commit": _git_commit(),
         "python": platform.python_version(),

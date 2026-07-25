@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "purpose": "Git-anchored content indices for registered RSE downstream evaluation exports.",
+  "exports": [
+    {
+      "id": "full_150_fold0_best_202604",
+      "checkpoint_sha256": "e42ec6ca3e6edfdd1145cf377a1f53263987281651f8728ce185a3550221abfd",
+      "config_sha256": "ebc12f2c7e3b768d6e43248c35bd76b53868fe5bc0b8b53a8aa503bb070eef1e",
+      "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
+      "embedding_file_index_sha256": "274401bc52a151f7e44721ab557b76263fcae0450e1277878215eb30493e2afc",
+      "region": "haidian",
+      "month": "202604",
+      "patch_count": 320
+    }
+  ]
+}
