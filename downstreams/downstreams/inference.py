@@ -43,8 +43,8 @@ def manifest_provenance(manifest_path: Path) -> dict[str, str | int]:
 def validate_manifest_region(manifest_path: Path, expected_region: str) -> None:
     """Reject an explicit manifest whose records belong to another region."""
     raw = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
-    regions = {str(entry.get("region", "")) for entry in raw}
-    if regions != {expected_region}:
+    regions = {str(entry["region"]) for entry in raw if entry.get("region")}
+    if regions and regions != {expected_region}:
         raise ValueError(
             f"Explicit manifest regions {sorted(regions)} do not match {expected_region!r}"
         )
