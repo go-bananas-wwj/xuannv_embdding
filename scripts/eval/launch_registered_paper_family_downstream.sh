@@ -5,23 +5,35 @@ set -euo pipefail
 ROOT=/root/workspace/xuannv
 EVAL_ROOT=/data/xuannv_embedding/experiments/paper_registered_eval_20260725
 EMBEDDING_ROOT="$EVAL_ROOT/embeddings"
-REGISTRY="$EVAL_ROOT/registry/results_v3.jsonl"
 MANIFEST=/data/xuannv_embedding/processed/haidian/manifest_p6a_202512_202605_pixelmask_clean_osm_landcover.json
 LABEL_ROOT=/data/xuannv_embedding/processed/haidian/labels
 SPLIT="$ROOT/configs/eval/haidian_spatial_5fold_buffer1_seed42.json"
 EMBEDDING_REGISTRY="$ROOT/configs/eval/registered_embedding_exports_20260725.json"
 SCHEDULE_ROOT="$EVAL_ROOT/shared_shot_schedules_v2"
 FAMILY=""
+EVALUATION_VERSION="v3"
 DRY_RUN=false
 
 usage() {
-  echo "usage: $0 --family <family> [--dry-run]" >&2
+  echo "usage: $0 --family <family> [--evaluation-version v3|v4] [--dry-run]" >&2
 }
 
 while (( $# > 0 )); do
   case "$1" in
     --family)
+      if (( $# < 2 )); then
+        usage
+        exit 2
+      fi
       FAMILY=${2:-}
+      shift 2
+      ;;
+    --evaluation-version)
+      if (( $# < 2 )); then
+        usage
+        exit 2
+      fi
+      EVALUATION_VERSION=${2:-}
       shift 2
       ;;
     --dry-run)
@@ -34,6 +46,22 @@ while (( $# > 0 )); do
       ;;
   esac
 done
+
+case "$EVALUATION_VERSION" in
+  v3|v4)
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac
+
+REGISTRY="$EVAL_ROOT/registry/results_${EVALUATION_VERSION}.jsonl"
+PROBE_ROOT="$EVAL_ROOT/probes_${EVALUATION_VERSION}"
+LOG_SUFFIX=""
+if [[ "$EVALUATION_VERSION" == "v4" ]]; then
+  LOG_SUFFIX="_v4"
+fi
 
 case "$FAMILY" in
   no_osm_150|coarse_osm_only_150|probe_nohardneg_150|no_highres_path_150|no_masking_150)
@@ -71,9 +99,9 @@ run_job() {
   IFS='|' read -r fold task shot seed <<< "$spec"
   local stem="paper_registered_${FAMILY}_fold${fold}_20260716"
   local embedding_root="$EMBEDDING_ROOT/20260725_${stem}_best_${FAMILY}_fold${fold}"
-  local output_root="$EVAL_ROOT/probes_v3/${FAMILY}_fold${fold}/${task}/shot_${shot}/seed_${seed}"
+  local output_root="$PROBE_ROOT/${FAMILY}_fold${fold}/${task}/shot_${shot}/seed_${seed}"
   local schedule="$SCHEDULE_ROOT/${task}_fold${fold}_seed${seed}.json"
-  local log_root="$EVAL_ROOT/logs/${FAMILY}_downstream"
+  local log_root="$EVAL_ROOT/logs/${FAMILY}_downstream${LOG_SUFFIX}"
   local log="$log_root/fold${fold}_${task}_shot${shot}_seed${seed}.log"
 
   printf 'JOB\tfamily=%s fold=%s task=%s shot=%s seed=%s device=npu:%s\n' \
@@ -102,7 +130,7 @@ if [[ "$DRY_RUN" == true ]]; then
   exit 0
 fi
 
-LOG_ROOT="$EVAL_ROOT/logs/${FAMILY}_downstream"
+LOG_ROOT="$EVAL_ROOT/logs/${FAMILY}_downstream${LOG_SUFFIX}"
 mkdir -p "$LOG_ROOT"
 printf '%s\tstart\tjobs=%s\tgit=%s\n' "$(date -Iseconds)" "${#JOBS[@]}" \
   "$(git rev-parse HEAD)" > "$LOG_ROOT/status.tsv"
