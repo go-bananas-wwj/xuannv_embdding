@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from scripts.report import paired_spatial_bootstrap as bootstrap
@@ -135,3 +138,186 @@ def test_result_identities_are_sorted_and_fail_closed() -> None:
                 }
             ]
         )
+
+
+def test_input_snapshot_has_a_stable_identity_hash() -> None:
+    baseline = [
+        {"result_id": "base-a", "artifact_sha256": "artifact-a", "registry_entry_sha256": "entry-a"}
+    ]
+    candidate = [
+        {
+            "result_id": "candidate-a",
+            "artifact_sha256": "artifact-b",
+            "registry_entry_sha256": "entry-b",
+        }
+    ]
+
+    snapshot = bootstrap.build_input_identity_snapshot(baseline, candidate)
+
+    assert snapshot["schema_version"] == 1
+    assert snapshot["baseline_result_count"] == 1
+    assert snapshot["candidate_result_count"] == 1
+    assert len(snapshot["sha256"]) == 64
+
+
+def test_matrix_selection_excludes_unrequested_task_or_shot() -> None:
+    records = [
+        {"metric_provenance": {"task": "building", "shot": "5"}},
+        {"metric_provenance": {"task": "building", "shot": "10"}},
+        {"metric_provenance": {"task": "road", "shot": "5"}},
+    ]
+
+    selected = bootstrap.select_records_for_matrix(records, tasks=("building",), shots=("5",))
+
+    assert selected == [records[0]]
+
+
+def test_derived_bootstrap_admission_is_never_automatic() -> None:
+    admission = bootstrap.derived_bootstrap_admission()
+
+    assert admission == {
+        "preliminary": True,
+        "paper_eligible": False,
+        "admission_status": "derived_statistic_pending_external_admission",
+    }
+
+
+def test_compare_rejects_duplicate_matrix_dimensions_before_loading_records(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        bootstrap.aggregate,
+        "load_verified_records",
+        lambda *_args, **_kwargs: pytest.fail(
+            "duplicate dimensions must fail before record loading"
+        ),
+    )
+
+    with pytest.raises(ValueError, match="unique"):
+        bootstrap.compare_families(
+            registry_path=tmp_path / "results.jsonl",
+            baseline_family="full_40",
+            candidate_family="full_150",
+            tasks=("building", "building"),
+            shots=("5",),
+            allow_preliminary=True,
+            n_resamples=1,
+            seed=1,
+        )
+
+
+def _matrix_records(prefix: str, *, include_unrelated: bool) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    for task in ("building", "road", "water"):
+        for shot in ("5", "10"):
+            for fold in range(5):
+                for seed in (42, 43, 44):
+                    result_id = f"{prefix}-{task}-{shot}-{fold}-{seed}"
+                    records.append(
+                        {
+                            "result_id": result_id,
+                            "artifact_sha256": f"artifact-{result_id}",
+                            "registry_entry_sha256": f"entry-{result_id}",
+                            "metric_provenance": {
+                                "task": task,
+                                "shot": shot,
+                                "fold": fold,
+                                "shot_seed": seed,
+                                "per_patch_confusion": {
+                                    "patch-a": _confusion(4, 1, 1),
+                                    "patch-b": _confusion(3, 1, 1),
+                                },
+                            },
+                        }
+                    )
+    if include_unrelated:
+        records.append(
+            {
+                "result_id": f"{prefix}-unrelated",
+                "artifact_sha256": f"artifact-{prefix}-unrelated",
+                "registry_entry_sha256": f"entry-{prefix}-unrelated",
+                "metric_provenance": {
+                    "task": "unrelated",
+                    "shot": "50",
+                    "fold": 0,
+                    "shot_seed": 42,
+                    "per_patch_confusion": {"patch-a": _confusion(1, 0, 0)},
+                },
+            }
+        )
+    return records
+
+
+def test_compare_snapshot_excludes_unrelated_family_records_and_stays_preliminary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    baseline = _matrix_records("baseline", include_unrelated=True)
+    candidate = _matrix_records("candidate", include_unrelated=True)
+
+    def load_records(_path: object, *, family: str, **_kwargs: object) -> list[dict[str, object]]:
+        return baseline if family == "full_40" else candidate
+
+    monkeypatch.setattr(bootstrap.aggregate, "load_verified_records", load_records)
+    report = bootstrap.compare_families(
+        registry_path=tmp_path / "results.jsonl",
+        baseline_family="full_40",
+        candidate_family="full_150",
+        tasks=("building", "road", "water"),
+        shots=("5", "10"),
+        allow_preliminary=False,
+        n_resamples=1,
+        seed=1,
+    )
+
+    snapshot = report["input_identity_snapshot"]
+    assert snapshot["baseline_result_count"] == 90
+    assert snapshot["candidate_result_count"] == 90
+    assert all("unrelated" not in item["result_id"] for item in snapshot["baseline_input_results"])
+    assert all("unrelated" not in item["result_id"] for item in snapshot["candidate_input_results"])
+    assert report["preliminary"] is True
+    assert report["paper_eligible"] is False
+
+
+def test_main_writes_a_sealed_selected_input_snapshot(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    baseline = _matrix_records("baseline", include_unrelated=True)
+    candidate = _matrix_records("candidate", include_unrelated=True)
+
+    def load_records(_path: object, *, family: str, **_kwargs: object) -> list[dict[str, object]]:
+        return baseline if family == "full_40" else candidate
+
+    output_path = tmp_path / "bootstrap.json"
+    monkeypatch.setattr(bootstrap.aggregate, "load_verified_records", load_records)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paired_spatial_bootstrap.py",
+            "--registry",
+            str(tmp_path / "results.jsonl"),
+            "--baseline-family",
+            "full_40",
+            "--candidate-family",
+            "full_150",
+            "--output",
+            str(output_path),
+            "--n-resamples",
+            "1",
+        ],
+    )
+
+    bootstrap.main()
+
+    report = json.loads(output_path.read_text(encoding="utf-8"))
+    snapshot_path = Path(report["input_identity_snapshot"]["path"])
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    assert snapshot_path.name == "bootstrap_input_identity_snapshot.json"
+    assert report["input_identity_snapshot"][
+        "sha256"
+    ] == bootstrap.aggregate.registered.sha256_file(snapshot_path)
+    assert snapshot["baseline_result_count"] == 90
+    assert snapshot["candidate_result_count"] == 90
+    assert all("unrelated" not in item["result_id"] for item in snapshot["baseline_input_results"])
+    assert all("unrelated" not in item["result_id"] for item in snapshot["candidate_input_results"])
+    assert report["preliminary"] is True
+    assert report["paper_eligible"] is False

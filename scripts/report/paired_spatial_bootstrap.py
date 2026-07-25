@@ -226,6 +226,54 @@ def result_identities(records: list[dict[str, Any]]) -> list[dict[str, str]]:
     return sorted(identities, key=lambda item: item["result_id"])
 
 
+def select_records_for_matrix(
+    records: list[dict[str, Any]], *, tasks: tuple[str, ...], shots: tuple[str, ...]
+) -> list[dict[str, Any]]:
+    """Return only records that participate in the requested comparison matrix."""
+    return [
+        record
+        for record in records
+        if str(aggregate._metric_payload(record)["task"]) in tasks
+        and str(aggregate._metric_payload(record)["shot"]) in shots
+    ]
+
+
+def build_input_identity_snapshot(
+    baseline_identities: list[dict[str, str]], candidate_identities: list[dict[str, str]]
+) -> dict[str, Any]:
+    """Create a self-contained immutable identity snapshot for one comparison."""
+    payload: dict[str, Any] = {
+        "schema_version": 1,
+        "baseline_input_results": baseline_identities,
+        "candidate_input_results": candidate_identities,
+        "baseline_result_count": len(baseline_identities),
+        "candidate_result_count": len(candidate_identities),
+        "baseline_input_results_sha256": aggregate.registered._canonical_sha256(
+            {"results": baseline_identities}
+        ),
+        "candidate_input_results_sha256": aggregate.registered._canonical_sha256(
+            {"results": candidate_identities}
+        ),
+    }
+    payload["sha256"] = aggregate.registered._canonical_sha256(payload)
+    return payload
+
+
+def derived_bootstrap_admission() -> dict[str, Any]:
+    """Derived intervals require a separate evidence-admission decision."""
+    return {
+        "preliminary": True,
+        "paper_eligible": False,
+        "admission_status": "derived_statistic_pending_external_admission",
+    }
+
+
+def validate_matrix_dimensions(*, tasks: tuple[str, ...], shots: tuple[str, ...]) -> None:
+    """Reject duplicate matrix dimensions before reading any registered artifacts."""
+    if len(set(tasks)) != len(tasks) or len(set(shots)) != len(shots):
+        raise ValueError("Bootstrap task and shot dimensions must be unique")
+
+
 def compare_families(
     *,
     registry_path: Path,
@@ -238,16 +286,20 @@ def compare_families(
     seed: int,
 ) -> dict[str, Any]:
     """Load sealed records and compute one paired hierarchical interval per task/shot."""
+    validate_matrix_dimensions(tasks=tasks, shots=shots)
     baseline_records = aggregate.load_verified_records(
         registry_path, family=baseline_family, allow_preliminary=allow_preliminary
     )
     candidate_records = aggregate.load_verified_records(
         registry_path, family=candidate_family, allow_preliminary=allow_preliminary
     )
-    baseline = _records_by_cell(baseline_records, tasks=tasks, shots=shots)
-    candidate = _records_by_cell(candidate_records, tasks=tasks, shots=shots)
-    baseline_identities = result_identities(baseline_records)
-    candidate_identities = result_identities(candidate_records)
+    baseline_selected = select_records_for_matrix(baseline_records, tasks=tasks, shots=shots)
+    candidate_selected = select_records_for_matrix(candidate_records, tasks=tasks, shots=shots)
+    baseline = _records_by_cell(baseline_selected, tasks=tasks, shots=shots)
+    candidate = _records_by_cell(candidate_selected, tasks=tasks, shots=shots)
+    baseline_identities = result_identities(baseline_selected)
+    candidate_identities = result_identities(candidate_selected)
+    identity_snapshot = build_input_identity_snapshot(baseline_identities, candidate_identities)
     expected = {
         (task, shot, fold, probe_seed)
         for task in tasks
@@ -282,23 +334,9 @@ def compare_families(
         "comparison_direction": "candidate_minus_baseline",
         "baseline_family": baseline_family,
         "candidate_family": candidate_family,
-        "registry": str(registry_path.resolve()),
-        "registry_sha256": aggregate.registered.sha256_file(registry_path),
-        "baseline_input_results": baseline_identities,
-        "candidate_input_results": candidate_identities,
-        "baseline_input_results_sha256": aggregate.registered._canonical_sha256(
-            {"results": baseline_identities}
-        ),
-        "candidate_input_results_sha256": aggregate.registered._canonical_sha256(
-            {"results": candidate_identities}
-        ),
-        "preliminary": allow_preliminary,
-        "paper_eligible": not allow_preliminary,
-        "admission_status": (
-            "registered_preliminary_pending_external_gates"
-            if allow_preliminary
-            else "registered_paper_eligible"
-        ),
+        "source_registry_path": str(registry_path.resolve()),
+        "input_identity_snapshot": identity_snapshot,
+        **derived_bootstrap_admission(),
         "n_resamples": n_resamples,
         "random_seed": seed,
         "comparisons": comparisons,
@@ -332,6 +370,18 @@ def main() -> None:
         seed=args.seed,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    snapshot = result.pop("input_identity_snapshot")
+    snapshot_path = args.output.with_name(f"{args.output.stem}_input_identity_snapshot.json")
+    snapshot_path.write_text(
+        json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    result["input_identity_snapshot"] = {
+        "path": str(snapshot_path.resolve()),
+        "sha256": aggregate.registered.sha256_file(snapshot_path),
+        "identity_sha256": snapshot["sha256"],
+        "baseline_result_count": snapshot["baseline_result_count"],
+        "candidate_result_count": snapshot["candidate_result_count"],
+    }
     args.output.write_text(
         json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
