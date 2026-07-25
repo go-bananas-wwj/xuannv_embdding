@@ -747,6 +747,102 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _canonical_sha256(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def registry_entry_core_sha256(result_id: str, artifact: dict[str, Any]) -> str:
+    """Hash the registry fields that can be known before the sidecar hash exists."""
+    return _canonical_sha256(
+        {
+            "result_id": result_id,
+            "paper_eligible": artifact["paper_eligible"],
+            "admission_status": artifact["admission_status"],
+            "metrics_sha256": artifact["metrics_sha256"],
+            "metric_provenance_sha256": _canonical_sha256(artifact["metric_provenance"]),
+        }
+    )
+
+
+def build_artifact_manifest(
+    *,
+    metric_payload: dict[str, Any],
+    output: Path,
+    predictions: Path,
+    result_id: str,
+    registry_path: Path,
+    label_sha256: str,
+    patch_count: int,
+) -> dict[str, Any]:
+    """Bind binary probe artifacts to their metric record and registry identity."""
+    artifact = {
+        "schema_version": 1,
+        "paper_eligible": metric_payload["paper_eligible"],
+        "admission_status": metric_payload["admission_status"],
+        "result_id": result_id,
+        "registry_path": str(registry_path.resolve()),
+        "metrics_path": str((output / "metrics.json").resolve()),
+        "metrics_sha256": sha256_file(output / "metrics.json"),
+        "predictions_sha256": sha256_file(predictions),
+        "probe_sha256": sha256_file(output / "final_probe.pt"),
+        # The complete metric payload is the authoritative provenance record.
+        "metric_provenance": metric_payload,
+        "label_sha256": label_sha256,
+        "patch_count": patch_count,
+    }
+    artifact["registry_entry_core_sha256"] = registry_entry_core_sha256(result_id, artifact)
+    return artifact
+
+
+def verify_artifact_registry_binding(artifact_path: Path, registry_path: Path) -> None:
+    """Reject a sidecar unless a unique registry record cryptographically binds it."""
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    output = artifact_path.parent
+    metrics_path = output / "metrics.json"
+    predictions_path = output / "predictions_test.npz"
+    probe_path = output / "final_probe.pt"
+    if artifact.get("metrics_path") != str(metrics_path.resolve()):
+        raise ValueError("Artifact metrics path differs from its sidecar directory")
+    if artifact.get("metrics_sha256") != sha256_file(metrics_path):
+        raise ValueError("Artifact metrics hash does not match metrics.json")
+    if artifact.get("predictions_sha256") != sha256_file(predictions_path):
+        raise ValueError("Artifact predictions hash does not match predictions_test.npz")
+    if artifact.get("probe_sha256") != sha256_file(probe_path):
+        raise ValueError("Artifact probe hash does not match final_probe.pt")
+    if json.loads(metrics_path.read_text(encoding="utf-8")) != artifact.get("metric_provenance"):
+        raise ValueError("Artifact metric provenance does not match metrics.json")
+    if artifact.get("registry_path") != str(registry_path.resolve()):
+        raise ValueError("Artifact registry path differs from the requested result registry")
+    result_id = artifact.get("result_id")
+    expected_core = registry_entry_core_sha256(str(result_id), artifact)
+    if artifact.get("registry_entry_core_sha256") != expected_core:
+        raise ValueError("Artifact registry-entry core hash is invalid")
+    if not registry_path.is_file():
+        raise FileNotFoundError(f"Missing result registry: {registry_path}")
+    matches = [
+        json.loads(line)
+        for line in registry_path.read_text(encoding="utf-8").splitlines()
+        if json.loads(line).get("result_id") == result_id
+    ]
+    if len(matches) != 1:
+        raise ValueError("Artifact must bind exactly one registry entry")
+    record = matches[0]
+    if record.get("artifact_sha256") != sha256_file(artifact_path):
+        raise ValueError("Registry artifact hash does not match the sidecar")
+    if record.get("registry_entry_core_sha256") != expected_core:
+        raise ValueError("Registry entry core hash does not match the sidecar")
+    sidecar_fields = {key: record.get(key) for key in artifact}
+    if sidecar_fields != artifact:
+        raise ValueError("Registry entry fields do not match the sidecar")
+    record_without_hash = dict(record)
+    entry_sha256 = record_without_hash.pop("registry_entry_sha256", None)
+    if entry_sha256 != _canonical_sha256(record_without_hash):
+        raise ValueError("Registry entry hash does not match its content")
+
+
 def _git_commit() -> str | None:
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False
@@ -932,27 +1028,28 @@ def main() -> None:
         "per_patch_confusion": per_patch,
     }
     _write_json(output / "metrics.json", metric_payload)
-    artifact = {
-        "metrics_sha256": sha256_file(output / "metrics.json"),
-        "predictions_sha256": sha256_file(predictions),
-        "probe_sha256": sha256_file(output / "final_probe.pt"),
-        "encoder": provenance,
-        "split_sha256": split_sha,
-        "label_sha256": _label_tree_hash(task.label_roots),
-        "patch_count": len(ordered_patch_ids),
-    }
-    _write_json(output / "artifact_manifest.json", artifact)
     result_id = hashlib.sha256(
         f"{provenance['checkpoint_sha256']}|{args.task}|{args.fold}|{args.shot}|{args.shot_seed}".encode()
     ).hexdigest()
-    _append_registry(
-        args.registry,
-        {
-            "result_id": result_id,
-            "artifact_sha256": sha256_file(output / "artifact_manifest.json"),
-            **artifact,
-        },
+    artifact = build_artifact_manifest(
+        metric_payload=metric_payload,
+        output=output,
+        predictions=predictions,
+        result_id=result_id,
+        registry_path=args.registry,
+        label_sha256=_label_tree_hash(task.label_roots),
+        patch_count=len(ordered_patch_ids),
     )
+    _write_json(output / "artifact_manifest.json", artifact)
+    registry_record = {
+        "result_id": result_id,
+        "artifact_sha256": sha256_file(output / "artifact_manifest.json"),
+        "registry_entry_core_sha256": artifact["registry_entry_core_sha256"],
+        **artifact,
+    }
+    registry_record["registry_entry_sha256"] = _canonical_sha256(registry_record)
+    _append_registry(args.registry, registry_record)
+    verify_artifact_registry_binding(output / "artifact_manifest.json", args.registry)
 
 
 if __name__ == "__main__":

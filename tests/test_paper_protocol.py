@@ -15,6 +15,76 @@ from scripts.eval import run_traditional_ml_benchmark as benchmark
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_registered_artifact_sidecar_binds_metric_registry_and_provenance(tmp_path: Path) -> None:
+    """Keep binary-artifact admission fail-closed and machine readable."""
+    output = tmp_path / "probe"
+    output.mkdir()
+    predictions = output / "predictions_test.npz"
+    predictions.write_bytes(b"predictions")
+    (output / "final_probe.pt").write_bytes(b"probe")
+    metrics = output / "metrics.json"
+    metric_payload = {
+        "paper_eligible": False,
+        "admission_status": "registered_preliminary_pending_external_gates",
+        "provenance": {"checkpoint_sha256": "checkpoint"},
+        "spatial_split_sha256": "split",
+        "manifest_sha256": "manifest",
+        "embedding_export": {"embedding_file_index_sha256": "embedding"},
+        "embedding_registry": {"sha256": "registry"},
+        "shot_manifest_sha256": "shots",
+        "git_commit": "commit",
+        "probe": {"head": "conv3x3"},
+    }
+    metrics.write_text(json.dumps(metric_payload), encoding="utf-8")
+    registry_path = tmp_path / "results.jsonl"
+
+    artifact = registered.build_artifact_manifest(
+        metric_payload=metric_payload,
+        output=output,
+        predictions=predictions,
+        result_id="result-1",
+        registry_path=registry_path,
+        label_sha256="labels",
+        patch_count=64,
+    )
+
+    assert artifact["paper_eligible"] is False
+    assert artifact["admission_status"] == metric_payload["admission_status"]
+    assert artifact["result_id"] == "result-1"
+    assert artifact["registry_path"] == str(registry_path.resolve())
+    assert artifact["metrics_sha256"] == hashlib.sha256(metrics.read_bytes()).hexdigest()
+    assert artifact["metric_provenance"] == metric_payload
+
+    artifact_path = output / "artifact_manifest.json"
+    artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+    record = {
+        "result_id": "result-1",
+        "artifact_sha256": hashlib.sha256(artifact_path.read_bytes()).hexdigest(),
+        "registry_entry_core_sha256": artifact["registry_entry_core_sha256"],
+        **artifact,
+    }
+    record["registry_entry_sha256"] = registered._canonical_sha256(record)
+    registry_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    registered.verify_artifact_registry_binding(artifact_path, registry_path)
+
+    record["paper_eligible"] = True
+    record["registry_entry_sha256"] = registered._canonical_sha256(
+        {key: value for key, value in record.items() if key != "registry_entry_sha256"}
+    )
+    registry_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="fields"):
+        registered.verify_artifact_registry_binding(artifact_path, registry_path)
+
+    record["paper_eligible"] = False
+    record["registry_entry_sha256"] = registered._canonical_sha256(
+        {key: value for key, value in record.items() if key != "registry_entry_sha256"}
+    )
+    registry_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    predictions.write_bytes(b"tampered predictions")
+    with pytest.raises(ValueError, match="predictions hash"):
+        registered.verify_artifact_registry_binding(artifact_path, registry_path)
+
+
 def test_registered_scaling_subsets_are_nested_and_within_train_folds() -> None:
     split_path = ROOT / "configs/eval/haidian_spatial_5fold_buffer1_seed42.json"
     registry_path = ROOT / "configs/eval/haidian_paper_subsets_40_80_150_seed42.json"
