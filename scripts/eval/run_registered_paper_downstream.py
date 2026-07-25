@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import random
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import yaml
@@ -103,3 +104,73 @@ def select_validation_threshold(
             best_threshold = float(threshold)
             best_f1 = score
     return best_threshold, best_f1
+
+
+def build_shot_manifest(
+    task_name: str,
+    train_ids: list[str],
+    fold: int,
+    seed: int,
+    label_sha256: str,
+    split_sha256: str,
+    pixel_count: Callable[[str], int],
+    budgets: tuple[int, ...] = (5, 10, 50),
+    min_positive_pixels: int = 64,
+) -> dict[str, Any]:
+    """Create one immutable, nested positive/negative patch schedule.
+
+    Patch ordering is sampled once at the largest budget.  Smaller shot levels
+    are prefixes of that ordering, so all representations consume identical
+    examples and the 5/10/50-shot sets are genuinely nested.
+    """
+    if not budgets or any(budget <= 0 for budget in budgets):
+        raise ValueError("Shot budgets must be non-empty positive integers")
+    if tuple(sorted(set(budgets))) != budgets:
+        raise ValueError("Shot budgets must be strictly increasing without duplicates")
+    if len(train_ids) != len(set(train_ids)):
+        raise ValueError("Training patch IDs must be unique for sampling without replacement")
+    positive_ids: list[str] = []
+    negative_ids: list[str] = []
+    for patch_id in train_ids:
+        count = int(pixel_count(patch_id))
+        if count >= min_positive_pixels:
+            positive_ids.append(patch_id)
+        elif count == 0:
+            negative_ids.append(patch_id)
+    rng = random.Random(seed + fold * 1009)
+    rng.shuffle(positive_ids)
+    rng.shuffle(negative_ids)
+    largest_budget = budgets[-1]
+    if len(positive_ids) < largest_budget or len(negative_ids) < largest_budget:
+        raise RuntimeError(
+            f"Exact {largest_budget}+{largest_budget} shot budget infeasible for {task_name}: "
+            f"positive={len(positive_ids)} negative={len(negative_ids)}"
+        )
+    sets: dict[str, dict[str, list[str]]] = {}
+    for budget in budgets:
+        selected_pos = positive_ids[:budget]
+        selected_neg = negative_ids[:budget]
+        combined = selected_pos + selected_neg
+        level_rng = random.Random(seed + fold * 1009 + budget)
+        level_rng.shuffle(combined)
+        sets[str(budget)] = {
+            "positive_patch_ids": selected_pos,
+            "negative_patch_ids": selected_neg,
+            "train_patch_ids": combined,
+        }
+    return {
+        "schema_version": 1,
+        "task": task_name,
+        "fold": fold,
+        "seed": seed,
+        "rule": {
+            "min_positive_pixels": min_positive_pixels,
+            "negative_rule": "exactly_zero_positive_pixels",
+            "selection": "deterministic_nested_prefix",
+        },
+        "label_sha256": label_sha256,
+        "split_sha256": split_sha256,
+        "eligible_positive_count": len(positive_ids),
+        "eligible_negative_count": len(negative_ids),
+        "sets": sets,
+    }

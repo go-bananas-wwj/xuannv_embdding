@@ -102,3 +102,43 @@ def test_registered_threshold_excludes_invalid_pixels_and_rejects_nonfinite_valu
             probabilities=np.array([0.1, np.nan]),
             targets=np.array([0, 1]),
         )
+
+
+def test_registered_shot_manifest_is_nested_and_rejects_budget_shortage() -> None:
+    counts = {f"p{i}": 64 for i in range(60)} | {f"n{i}": 0 for i in range(60)}
+    manifest = registered.build_shot_manifest(
+        task_name="building",
+        train_ids=list(counts),
+        fold=0,
+        seed=42,
+        label_sha256="labels",
+        split_sha256="split",
+        pixel_count=lambda patch_id: counts[patch_id],
+    )
+    assert set(manifest["sets"]["5"]["positive_patch_ids"]) < set(
+        manifest["sets"]["10"]["positive_patch_ids"]
+    )
+    assert len(manifest["sets"]["10"]["negative_patch_ids"]) == 10
+
+    limited_counts = {f"p{i}": 64 for i in range(12)} | {f"n{i}": 0 for i in range(12)}
+    with pytest.raises(RuntimeError, match=r"Exact 50\+50 shot budget infeasible"):
+        registered.build_shot_manifest(
+            task_name="building",
+            train_ids=list(limited_counts),
+            fold=0,
+            seed=42,
+            label_sha256="labels",
+            split_sha256="split",
+            pixel_count=lambda patch_id: limited_counts[patch_id],
+        )
+
+    with pytest.raises(ValueError, match="unique"):
+        registered.build_shot_manifest(
+            task_name="building",
+            train_ids=["p0", "p0", "n0"],
+            fold=0,
+            seed=42,
+            label_sha256="labels",
+            split_sha256="split",
+            pixel_count=lambda patch_id: {"p0": 64, "n0": 0}[patch_id],
+        )
