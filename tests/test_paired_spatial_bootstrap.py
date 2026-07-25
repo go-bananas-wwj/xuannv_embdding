@@ -96,3 +96,42 @@ def test_hierarchical_bootstrap_rejects_inconsistent_seed_support() -> None:
 
     with pytest.raises(ValueError, match="same non-empty probe-seed set"):
         bootstrap.hierarchical_paired_bootstrap(baseline, candidate, n_resamples=10, seed=1)
+
+
+def test_result_identities_are_sorted_and_fail_closed() -> None:
+    records = [
+        {
+            "result_id": "result-b",
+            "artifact_sha256": "artifact-b",
+            "registry_entry_sha256": "entry-b",
+        },
+        {
+            "result_id": "result-a",
+            "artifact_sha256": "artifact-a",
+            "registry_entry_sha256": "entry-a",
+        },
+    ]
+
+    assert bootstrap.result_identities(records) == [
+        {
+            "result_id": "result-a",
+            "artifact_sha256": "artifact-a",
+            "registry_entry_sha256": "entry-a",
+        },
+        {
+            "result_id": "result-b",
+            "artifact_sha256": "artifact-b",
+            "registry_entry_sha256": "entry-b",
+        },
+    ]
+
+    with pytest.raises(ValueError, match="incomplete identity"):
+        bootstrap.result_identities(
+            [
+                {
+                    "result_id": "result-a",
+                    "artifact_sha256": "",
+                    "registry_entry_sha256": "entry-a",
+                }
+            ]
+        )

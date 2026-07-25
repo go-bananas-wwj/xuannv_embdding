@@ -211,6 +211,21 @@ def _records_by_cell(
     return indexed
 
 
+def result_identities(records: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Return a deterministic, portable identity list for all bootstrap inputs."""
+    identities: list[dict[str, str]] = []
+    for record in records:
+        identity = {
+            "result_id": str(record["result_id"]),
+            "artifact_sha256": str(record["artifact_sha256"]),
+            "registry_entry_sha256": str(record["registry_entry_sha256"]),
+        }
+        if any(not value for value in identity.values()):
+            raise ValueError("Bootstrap input record has an incomplete identity")
+        identities.append(identity)
+    return sorted(identities, key=lambda item: item["result_id"])
+
+
 def compare_families(
     *,
     registry_path: Path,
@@ -231,6 +246,8 @@ def compare_families(
     )
     baseline = _records_by_cell(baseline_records, tasks=tasks, shots=shots)
     candidate = _records_by_cell(candidate_records, tasks=tasks, shots=shots)
+    baseline_identities = result_identities(baseline_records)
+    candidate_identities = result_identities(candidate_records)
     expected = {
         (task, shot, fold, probe_seed)
         for task in tasks
@@ -265,6 +282,16 @@ def compare_families(
         "comparison_direction": "candidate_minus_baseline",
         "baseline_family": baseline_family,
         "candidate_family": candidate_family,
+        "registry": str(registry_path.resolve()),
+        "registry_sha256": aggregate.registered.sha256_file(registry_path),
+        "baseline_input_results": baseline_identities,
+        "candidate_input_results": candidate_identities,
+        "baseline_input_results_sha256": aggregate.registered._canonical_sha256(
+            {"results": baseline_identities}
+        ),
+        "candidate_input_results_sha256": aggregate.registered._canonical_sha256(
+            {"results": candidate_identities}
+        ),
         "preliminary": allow_preliminary,
         "paper_eligible": not allow_preliminary,
         "admission_status": (
