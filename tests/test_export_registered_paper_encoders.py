@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -31,10 +32,43 @@ def test_export_launcher_dry_run_enumerates_five_folds_and_six_shards() -> None:
 
 
 def test_export_launcher_refuses_ambiguous_roots_and_executes_recorded_commands() -> None:
-    """A sealed export must have one root and a provenance command that is actually run."""
+    """A sealed export must have one root, exact commands, and one metadata writer."""
     source = LAUNCHER.read_text(encoding="utf-8")
 
     assert 'if (( ${#existing[@]} != 0 )); then' in source
     assert 'existing=()' not in source
     assert 'eval "${commands[$shard]}"' in source
     assert 'commands+=("ASCEND_RT_VISIBLE_DEVICES=${shard} python ' not in source
+    assert '--skip-meta' in source
+    assert 'write_export_meta "$export_root" "$config" "$checkpoint"' in source
+
+
+def test_precompute_rejects_skip_meta_without_valid_shard_arguments() -> None:
+    """A root metadata skip is valid only while a sharded coordinator will replace it."""
+    script = ROOT / "downstreams/scripts/precompute_embeddings.py"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--config",
+            "missing.yaml",
+            "--regions",
+            "haidian",
+            "--output-root",
+            "unused-output",
+            "--checkpoint",
+            "missing.pt",
+            "--skip-meta",
+        ],
+        cwd=ROOT,
+        env={
+            "PYTHONPATH": f"{ROOT}:{ROOT / 'src'}:{ROOT / 'downstreams'}",
+            "TORCH_DEVICE_BACKEND_AUTOLOAD": "0",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "--skip-meta requires" in result.stderr

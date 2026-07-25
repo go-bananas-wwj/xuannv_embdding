@@ -64,6 +64,14 @@ def main() -> None:
         default=None,
         help="Only save selected YYYYMM embedding months. Defaults to all model months.",
     )
+    p.add_argument(
+        "--skip-meta",
+        action="store_true",
+        help=(
+            "Do not write root-level meta.json. Intended only for a coordinated sharded export, "
+            "whose launcher writes metadata once after every shard has succeeded."
+        ),
+    )
     init_group = p.add_mutually_exclusive_group(required=True)
     init_group.add_argument("--checkpoint", type=Path, default=None)
     init_group.add_argument(
@@ -73,6 +81,13 @@ def main() -> None:
     )
     args = p.parse_args()
 
+    if args.skip_meta and (
+        args.num_shards is None
+        or args.shard_id is None
+        or args.num_shards < 2
+        or not 0 <= args.shard_id < args.num_shards
+    ):
+        p.error("--skip-meta requires --num-shards >= 2 and a valid --shard-id")
     if not args.config.exists():
         p.error(f"config 不存在: {args.config}")
     if args.checkpoint is not None and not args.checkpoint.exists():
@@ -139,13 +154,14 @@ def main() -> None:
             encoding="utf-8",
         )
 
-    write_meta_json(
-        out_root,
-        args.checkpoint,
-        args.config,
-        " ".join(sys.argv),
-        manifest_path=args.manifest_path,
-    )
+    if not args.skip_meta:
+        write_meta_json(
+            out_root,
+            args.checkpoint,
+            args.config,
+            " ".join(sys.argv),
+            manifest_path=args.manifest_path,
+        )
     logger.info("embedding 保存至 %s", out_root)
 
 

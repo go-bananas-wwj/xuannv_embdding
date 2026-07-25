@@ -83,6 +83,30 @@ print(json.dumps({
 PY
 }
 
+write_export_meta() {
+  local export_root=$1
+  local config=$2
+  local checkpoint=$3
+  /data/wwj_torch21/conda/envs/torch26/bin/python - "$export_root" "$config" "$checkpoint" "$MANIFEST" <<'PY'
+import sys
+from pathlib import Path
+
+from downstreams.inference import write_meta_json
+
+output_root = Path(sys.argv[1])
+config = Path(sys.argv[2])
+checkpoint = Path(sys.argv[3])
+manifest = Path(sys.argv[4])
+write_meta_json(
+    output_root,
+    checkpoint,
+    config,
+    "registered_sharded_export_coordinator",
+    manifest_path=manifest,
+)
+PY
+}
+
 for fold in 0 1 2 3 4; do
   stem="paper_registered_${FAMILY}_fold${fold}_20260716"
   config="$CONFIG_ROOT/${stem}.yaml"
@@ -104,7 +128,8 @@ for fold in 0 1 2 3 4; do
       downstreams/scripts/precompute_embeddings.py \
       --config "$config" --checkpoint "$checkpoint" --regions haidian \
       --manifest-path "$MANIFEST" --output-root "$EMBED_ROOT" --suffix "$suffix" \
-      --months "$MONTH" --center-crop-size 128 --num-shards 6 --shard-id "$shard" --device npu:0
+      --months "$MONTH" --center-crop-size 128 --num-shards 6 --shard-id "$shard" --device npu:0 \
+      --skip-meta
     commands+=("${command}${escaped% }")
   done
   if [[ "$DRY_RUN" == true ]]; then
@@ -140,6 +165,7 @@ for fold in 0 1 2 3 4; do
     exit 6
   fi
   export_root="${produced[0]}"
+  write_export_meta "$export_root" "$config" "$checkpoint"
   commands_json="$(/data/wwj_torch21/conda/envs/torch26/bin/python - "${commands[@]}" <<'PY'
 import json
 import sys
