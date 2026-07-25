@@ -51,6 +51,56 @@
       "region": "haidian",
       "month": "202604",
       "patch_count": 320
+    },
+    {
+      "id": "full_80_fold0_best_202604",
+      "checkpoint_sha256": "48410a06967942e99fdd04d3564a8975d04e9c2c02f9172e79e72d229083aede",
+      "config_sha256": "fe648abc33dc56650549eefabab5308dcb08c28319dd885279605629e8307081",
+      "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
+      "embedding_file_index_sha256": "65f7d30d3616f8b9db204de395723635371b0c63107d2f75b45a406c0a168e88",
+      "region": "haidian",
+      "month": "202604",
+      "patch_count": 320
+    },
+    {
+      "id": "full_80_fold1_best_202604",
+      "checkpoint_sha256": "26331254ecfae5f1464423cf665154bd5ef22e2ab84f197a0aa48ba846115861",
+      "config_sha256": "36dfa3f6b06c92067f6db6a1294a13a08d5053bf8fd5cee9ad4047776fb051f2",
+      "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
+      "embedding_file_index_sha256": "62f267ba5e630ebac294a32590d8c7c1d2ec99e150efdbfa8382395d735d931f",
+      "region": "haidian",
+      "month": "202604",
+      "patch_count": 320
+    },
+    {
+      "id": "full_80_fold2_best_202604",
+      "checkpoint_sha256": "b2944e2325a111d8aeff0e47acb573808837f1ddf0804185a3dd801d9b9c575f",
+      "config_sha256": "f85e9576caf95ea65addd58ae303b63aefc7f8f3c8b0622fa71791a1f8c3df90",
+      "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
+      "embedding_file_index_sha256": "9c0a83ae4ce42d89f4b84c495e59430146a4c09775fa1139824ba4dc18e6d6a5",
+      "region": "haidian",
+      "month": "202604",
+      "patch_count": 320
+    },
+    {
+      "id": "full_80_fold3_best_202604",
+      "checkpoint_sha256": "e25e3c7efabf647127cf497ed64ce494a494aeed3ee308d8f577d922e8a1a822",
+      "config_sha256": "4225a4d6d3c97e584b52fb9a7ef84b6d37c16a85b86c7b2e06c523922a7558c0",
+      "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
+      "embedding_file_index_sha256": "b416992fce99f10675e5823a99f96ac2fa6de7b9a8ce5c25fbff2111424bcc80",
+      "region": "haidian",
+      "month": "202604",
+      "patch_count": 320
+    },
+    {
+      "id": "full_80_fold4_best_202604",
+      "checkpoint_sha256": "1234c7496fb7322d6731fe727837b46170ef51596547708aa57b911c0f4996d5",
+      "config_sha256": "b85ed4c866f7b4f0f139526e8e0b05560b352cd125639212bd1c68fbca8447ca",
+      "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
+      "embedding_file_index_sha256": "64c4e653486a8989a8052e38f9cfc6a80437322b69051a0b681474b245c97995",
+      "region": "haidian",
+      "month": "202604",
+      "patch_count": 320
     }
   ]
 }
