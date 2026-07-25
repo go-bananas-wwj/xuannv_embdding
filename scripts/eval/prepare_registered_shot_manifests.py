@@ -10,9 +10,11 @@ import tempfile
 from pathlib import Path
 
 from scripts.eval.run_registered_paper_downstream import (
+    _assert_binary_label_roots,
     _label_tree_hash,
-    _positive_pixel_count,
-    build_registered_shot_schedule,
+    _positive_background_pixel_counts,
+    _verify_frozen_split,
+    build_registered_mixed_shot_schedule,
     sha256_file,
 )
 from scripts.eval.run_traditional_ml_benchmark import task_spec
@@ -60,22 +62,27 @@ def main() -> None:
     args = parse_args()
     split = json.loads(args.spatial_split.read_text(encoding="utf-8"))
     split_hash = sha256_file(args.spatial_split)
+    for fold_data in split["folds"]:
+        _verify_frozen_split(args.spatial_split, int(fold_data["fold"]))
     index: list[dict[str, object]] = []
     for task_name in args.tasks:
         task = task_spec(task_name, args.label_root)
+        _assert_binary_label_roots(task.label_roots)
         label_hash = _label_tree_hash(task.label_roots)
         for fold_data in split["folds"]:
             fold = int(fold_data["fold"])
             train_ids = [str(patch_id) for patch_id in fold_data["train"]]
             for seed in args.seeds:
-                schedule = build_registered_shot_schedule(
+                schedule = build_registered_mixed_shot_schedule(
                     task_name=task_name,
                     train_ids=train_ids,
                     fold=fold,
                     seed=seed,
                     label_sha256=label_hash,
                     split_sha256=split_hash,
-                    pixel_count=lambda patch_id, spec=task: _positive_pixel_count(spec, patch_id),
+                    pixel_counts=lambda patch_id, spec=task: _positive_background_pixel_counts(
+                        spec, patch_id
+                    ),
                 )
                 path = args.output_root / f"{task_name}_fold{fold}_seed{seed}.json"
                 write_or_verify(path, schedule)

@@ -1,6 +1,9 @@
 # Registered Evaluation Protocol for the JRS Manuscript
 
-> Status: frozen design specification. No value may enter a main-paper table until every relevant implementation gate in Section 12 passes.
+> Status: V2 frozen design specification. V1 used an infeasible whole-patch
+> negative rule for dense road segmentation and is retained as a superseded
+> audit artifact. No value may enter a main-paper table until every relevant
+> implementation gate in Section 12 passes.
 
 ## 1. Scientific Settings
 
@@ -44,15 +47,16 @@ Before annotation, freeze a label handbook containing class definitions, inclusi
 
 ## 5. Few-Shot Sampling Unit
 
-For a task, a **positive patch** contains at least 64 valid positive pixels (0.39% of a 128 x 128 grid); a **negative patch** contains zero annotated positive pixels. Unknown and ignored pixels do not count toward either criterion.
+For a task, an eligible **mixed-class support patch** contains at least 64 positive pixels and at least 64 background pixels (each 0.39% of a 128 x 128 grid). The current registered masks are strictly binary; any future ignored/unknown label encoding requires a separately versioned evaluator that excludes those pixels from both support eligibility and loss computation.
 
-- A nominal `N`-shot run uses exactly `N` positive and `N` negative training patches, sampled without replacement from the training fold.
+- A nominal `N`-shot run uses exactly `N` mixed-class labeled training patches, sampled without replacement from the training fold. The dense binary mask inside every selected patch supplies both foreground and background supervision to the pixelwise loss.
 - The fixed seeds are 42, 43, and 44. For each seed and task, `5-shot subset 10-shot subset 50-shot` is strictly nested.
 - The identical shot manifest is used by every representation in a paired comparison.
-- If either class has fewer than `N` eligible patches, the task-fold-shot cell is `NA`; code must fail loudly and must not truncate with `min()`.
+- If fewer than `N` eligible mixed-class patches exist, the task-fold-shot cell is `NA`; code must fail loudly and must not truncate with `min()`.
 - The confirmatory budgets are 5 and 10 shots. The 50-shot result is secondary and is reported only for task-fold pairs where the exact budget is feasible.
 - The validation and test patch sets never change across shot levels or seeds.
 - Shot seed controls patch selection; probe initialization uses a separately recorded seed derived deterministically from `(fold, task, shot_seed)`.
+- Each immutable V2 manifest records the selected patch IDs and their foreground/background pixel totals. V1 manifests and their `NA` outcomes remain archived and are never pooled with V2 results.
 
 ## 6. Feature and Information-Budget Controls
 
@@ -93,11 +97,11 @@ The primary probe uses a fixed epoch count and the **final epoch checkpoint**; n
 
 For each `(representation, task, fold, shot seed)`:
 
-1. Pool all valid validation pixels after applying the frozen valid/ignore mask.
+1. Pool all validation pixels. V2 accepts only binary masks, so every pixel is valid; any future valid/ignore-mask handling requires a separately versioned evaluator.
 2. Evaluate thresholds `0.001, 0.002, ..., 0.999` on sigmoid probabilities.
 3. Select the threshold maximizing pooled validation F1; if tied to machine precision, choose the largest threshold to favor fewer false positives.
 4. Freeze that threshold and apply it once to the corresponding test predictions.
-5. If validation contains no positive or no negative valid pixels, mark the cell invalid and do not use test labels to repair it.
+5. If validation contains no positive or no negative pixels, mark the cell invalid and do not use test labels to repair it.
 
 Primary metrics are pooled-pixel test F1 at the validation-selected threshold and average precision. Secondary metrics are pooled IoU, precision, recall, and ROC-AUC. Oracle test F1 is an explicitly labeled supplementary upper bound only. Per-image min-max normalization is forbidden in metrics.
 
@@ -106,7 +110,7 @@ Primary metrics are pooled-pixel test F1 at the validation-selected threshold an
 - The main downstream analysis is explicitly `one frozen encoder checkpoint per fold x three shot/probe seeds`, not three independent encoder seeds.
 - Confidence intervals therefore quantify spatial-test and downstream-sampling uncertainty conditional on the selected encoder initialization.
 - Pretraining stability is a separate experiment. Any scaling or ablation trained with one encoder seed is described as exploratory; a confirmatory causal claim requires at least three independently initialized encoders for the compared conditions.
-- For each test fold, compute metrics by pooling valid pixels. Also retain per-patch confusion counts and probabilities.
+- For each test fold, compute metrics by pooling all binary-mask pixels. Also retain per-patch confusion counts and probabilities.
 - Paired differences use identical folds, shots, seeds, labels, and test pixels.
 - Use a 10,000-replicate paired hierarchical block bootstrap: resample the five folds with replacement, resample 2 x 2 geographic patch clusters within each selected fold, and resample the three downstream seeds with replacement. Preserve paired model predictions at every level.
 - Report the point estimate, descriptive fold and seed standard deviations separately, and the percentile 95% confidence interval of the paired difference.

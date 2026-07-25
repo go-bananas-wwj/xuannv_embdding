@@ -52,7 +52,7 @@ The implementation must fail closed unless it can verify and record:
 
 1. the frozen split, encoder train/validation/test/buffer manifests, and their
    hashes;
-2. exact, nested positive and negative patch budgets with no silent truncation;
+2. exact, nested mixed-class support-patch budgets with no silent truncation;
 3. train-fold-only feature normalization artifacts and hashes;
 4. the fixed final-epoch Conv3x3 probe, validation threshold grid, and pooled
    test F1/AP/AUC/IoU/precision/recall;
@@ -64,6 +64,25 @@ comparative confidence intervals.  Independent manual labels, held-out
 ontology controls, raw/DINO information-matched baselines, Harbin replication,
 and temporal/cloud strata remain separate registered experiments.  They cannot
 be inferred from the 40 completed encoder checkpoints.
+
+## Protocol Amendment V2 (2026-07-25)
+
+The initial V1 schedule required every few-shot segmentation task to provide
+the same number of entirely foreground-free patches as foreground-containing
+patches. This is infeasible for road extraction: every training patch in some
+spatial folds contains roads, although each such dense mask still has abundant
+background pixels. The probe uses pixelwise BCE and therefore does not require
+an image-level negative patch for binary class supervision.
+
+V2 defines a shot as one mixed-class labeled segmentation patch with at least
+64 foreground and 64 background pixels. It is applied uniformly to building,
+road, and water for every fold, seed, representation, and baseline. Schedules
+remain deterministic and nested, record pixel counts, and fail as `NA` when an
+exact budget is unavailable. V1 manifests and attempted `NA` road cells are
+retained as superseded audit evidence; no V1 and V2 result is pooled.
+
+The first V2 outputs remain explicitly preliminary (`paper_eligible=false`)
+until all remaining admission gates are implemented and independently audited.
 
 ## Interpretation Guardrails
 

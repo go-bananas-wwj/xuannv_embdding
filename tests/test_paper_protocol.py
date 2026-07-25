@@ -6,6 +6,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import rasterio
+from rasterio.transform import Affine
 
 from scripts.eval import run_registered_paper_downstream as registered
 from scripts.eval import run_traditional_ml_benchmark as benchmark
@@ -89,19 +91,38 @@ def test_registered_provenance_requires_validation_selected_best_checkpoint(tmp_
         )
 
 
-def test_registered_threshold_excludes_invalid_pixels_and_rejects_nonfinite_values() -> None:
-    threshold, score = registered.select_validation_threshold(
-        probabilities=np.array([0.1, 0.4, 0.6, 0.9]),
-        targets=np.array([0, -1, 1, 1]),
-    )
-    assert threshold == pytest.approx(0.6)
-    assert score == pytest.approx(1.0)
-
+def test_registered_threshold_rejects_nonbinary_targets_and_nonfinite_values() -> None:
+    with pytest.raises(ValueError, match="binary"):
+        registered.select_validation_threshold(
+            probabilities=np.array([0.1, 0.4, 0.6, 0.9]),
+            targets=np.array([0, -1, 1, 1]),
+        )
     with pytest.raises(ValueError, match="finite"):
         registered.select_validation_threshold(
             probabilities=np.array([0.1, np.nan]),
             targets=np.array([0, 1]),
         )
+
+
+def test_registered_binary_label_preflight_rejects_ignore_encoding(tmp_path: Path) -> None:
+    root = tmp_path / "task"
+    masks = root / "masks"
+    masks.mkdir(parents=True)
+    path = masks / "patch_000001.tif"
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        height=2,
+        width=2,
+        count=1,
+        dtype="uint8",
+        transform=Affine.identity(),
+    ) as dst:
+        dst.write(np.array([[[0, 1], [255, 0]]], dtype=np.uint8))
+
+    with pytest.raises(ValueError, match="Non-binary"):
+        registered._assert_binary_label_roots([root])
 
 
 def test_registered_shot_manifest_is_nested_and_rejects_budget_shortage() -> None:
@@ -247,6 +268,53 @@ def test_registered_shot_schedule_loader_requires_matching_shared_schedule(tmp_p
     schedule["label_sha256"] = "different"
     with pytest.raises(ValueError, match="does not match"):
         registered.load_registered_shot_ids(path, expected_schedule=schedule, shot="5")
+
+
+def test_registered_mixed_shot_schedule_uses_pixelwise_background_without_empty_patches() -> None:
+    """Dense segmentation support is valid when every image has foreground and background pixels."""
+    pixel_counts = {f"p{i}": (64 + i, 16_384 - 64 - i) for i in range(60)}
+    schedule = registered.build_registered_mixed_shot_schedule(
+        task_name="road",
+        train_ids=list(pixel_counts),
+        fold=1,
+        seed=42,
+        label_sha256="labels",
+        split_sha256="split",
+        pixel_counts=lambda patch_id: pixel_counts[patch_id],
+    )
+
+    assert schedule["schema_version"] == 3
+    assert schedule["rule"]["support_unit"] == "mixed_class_labeled_patch"
+    assert schedule["eligible_mixed_patch_count"] == 60
+    assert not schedule["unavailable"]
+    assert len(schedule["sets"]["5"]["train_patch_ids"]) == 5
+    assert set(schedule["sets"]["5"]["train_patch_ids"]) < set(
+        schedule["sets"]["10"]["train_patch_ids"]
+    )
+    support = schedule["sets"]["10"]["support_pixel_counts"]
+    assert len(support) == 10
+    assert all(entry["positive_pixels"] >= 64 for entry in support)
+    assert all(entry["background_pixels"] >= 64 for entry in support)
+
+
+def test_registered_mixed_shot_schedule_marks_budget_na_when_background_is_insufficient() -> None:
+    pixel_counts = {f"p{i}": (64, 16_320) for i in range(4)} | {
+        f"full{i}": (16_384, 0) for i in range(60)
+    }
+    schedule = registered.build_registered_mixed_shot_schedule(
+        task_name="road",
+        train_ids=list(pixel_counts),
+        fold=0,
+        seed=42,
+        label_sha256="labels",
+        split_sha256="split",
+        pixel_counts=lambda patch_id: pixel_counts[patch_id],
+    )
+
+    assert schedule["eligible_mixed_patch_count"] == 4
+    assert schedule["sets"] == {}
+    assert schedule["unavailable"]["5"]["status"] == "NA"
+    assert schedule["unavailable"]["5"]["eligible_available"] == 4
 
 
 def test_registered_embedding_index_rejects_tampered_feature_file(tmp_path: Path) -> None:

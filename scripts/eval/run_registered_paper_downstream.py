@@ -355,22 +355,15 @@ def binary_f1(probabilities: np.ndarray, targets: np.ndarray, threshold: float) 
 def select_validation_threshold(
     probabilities: np.ndarray,
     targets: np.ndarray,
-    valid_mask: np.ndarray | None = None,
 ) -> tuple[float, float]:
-    """Select F1 threshold on the registered validation grid only."""
+    """Select F1 threshold on the all-binary registered validation grid."""
     probabilities = np.asarray(probabilities, dtype=np.float64).reshape(-1)
     targets = np.asarray(targets).reshape(-1)
     if probabilities.shape != targets.shape:
         raise ValueError("probabilities and targets must have identical flattened shapes")
-    if valid_mask is not None:
-        valid_mask = np.asarray(valid_mask, dtype=bool).reshape(-1)
-        if valid_mask.shape != targets.shape:
-            raise ValueError("valid_mask must have the same flattened shape as targets")
-    else:
-        valid_mask = np.ones_like(targets, dtype=bool)
-    valid_mask &= np.isin(targets, [0, 1])
-    probabilities = probabilities[valid_mask]
-    targets = targets[valid_mask].astype(np.uint8)
+    if not np.isin(targets, [0, 1]).all():
+        raise ValueError("Validation targets must be binary for the registered V2 evaluator")
+    targets = targets.astype(np.uint8)
     if not np.isfinite(probabilities).all():
         raise ValueError("Validation probabilities must be finite")
     if targets.size == 0 or targets.sum() in {0, targets.size}:
@@ -529,6 +522,87 @@ def build_registered_shot_schedule(
     }
 
 
+def build_registered_mixed_shot_schedule(
+    task_name: str,
+    train_ids: list[str],
+    fold: int,
+    seed: int,
+    label_sha256: str,
+    split_sha256: str,
+    pixel_counts: Callable[[str], tuple[int, int]],
+    budgets: tuple[int, ...] = (5, 10, 50),
+    min_positive_pixels: int = 64,
+    min_background_pixels: int = 64,
+) -> dict[str, Any]:
+    """Freeze a nested schedule of pixelwise mixed-class support patches.
+
+    A dense segmentation support image supplies both classes when it contains
+    sufficient foreground and background pixels.  This V2 rule avoids the
+    inappropriate requirement that a road-support image be entirely road-free.
+    """
+    if not budgets or any(type(budget) is not int or budget <= 0 for budget in budgets):
+        raise ValueError("Shot budgets must be non-empty positive integers")
+    if tuple(sorted(set(budgets))) != budgets:
+        raise ValueError("Shot budgets must be strictly increasing without duplicates")
+    if len(train_ids) != len(set(train_ids)):
+        raise ValueError("Training patch IDs must be unique for sampling without replacement")
+
+    eligible: list[tuple[str, int, int]] = []
+    for patch_id in sorted(train_ids):
+        positive_pixels, background_pixels = pixel_counts(patch_id)
+        if positive_pixels < 0 or background_pixels < 0:
+            raise ValueError(f"Negative pixel count for {task_name}/{patch_id}")
+        if positive_pixels >= min_positive_pixels and background_pixels >= min_background_pixels:
+            eligible.append((patch_id, int(positive_pixels), int(background_pixels)))
+
+    rng = random.Random(seed + fold * 1009)
+    rng.shuffle(eligible)
+    sets: dict[str, dict[str, Any]] = {}
+    unavailable: dict[str, dict[str, int | str]] = {}
+    for budget in budgets:
+        if len(eligible) < budget:
+            unavailable[str(budget)] = {
+                "status": "NA",
+                "reason": "insufficient_mixed_class_support_patches",
+                "eligible_available": len(eligible),
+            }
+            continue
+        selected = eligible[:budget]
+        sets[str(budget)] = {
+            "train_patch_ids": [patch_id for patch_id, _, _ in selected],
+            "support_pixel_counts": [
+                {
+                    "patch_id": patch_id,
+                    "positive_pixels": positive_pixels,
+                    "background_pixels": background_pixels,
+                }
+                for patch_id, positive_pixels, background_pixels in selected
+            ],
+        }
+    rule = {
+        "support_unit": "mixed_class_labeled_patch",
+        "min_positive_pixels": min_positive_pixels,
+        "min_background_pixels": min_background_pixels,
+        "selection": "deterministic_nested_prefix",
+    }
+    rule_sha256 = hashlib.sha256(
+        json.dumps(rule, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {
+        "schema_version": 3,
+        "task": task_name,
+        "fold": fold,
+        "seed": seed,
+        "rule": rule,
+        "rule_sha256": rule_sha256,
+        "label_sha256": label_sha256,
+        "split_sha256": split_sha256,
+        "eligible_mixed_patch_count": len(eligible),
+        "sets": sets,
+        "unavailable": unavailable,
+    }
+
+
 def load_registered_shot_ids(
     path: Path, *, expected_schedule: dict[str, Any], shot: str
 ) -> tuple[list[str], dict[str, Any]]:
@@ -563,6 +637,16 @@ def _positive_pixel_count(task: Any, patch_id: str) -> int:
     if not np.isin(values, [0, 1]).all():
         raise ValueError(f"Non-binary label encoding in {task.name}/{patch_id}")
     return int((values == 1).sum())
+
+
+def _positive_background_pixel_counts(task: Any, patch_id: str) -> tuple[int, int]:
+    """Return valid foreground/background pixel counts for a binary task mask."""
+    from scripts.eval.run_traditional_ml_benchmark import load_binary_mask
+
+    values = load_binary_mask(task, patch_id)
+    if not np.isin(values, [0, 1]).all():
+        raise ValueError(f"Non-binary label encoding in {task.name}/{patch_id}")
+    return int((values == 1).sum()), int((values == 0).sum())
 
 
 def _assert_binary_label_roots(label_roots: list[Path]) -> None:
@@ -734,14 +818,14 @@ def main() -> None:
         if args.shot_manifest is None:
             raise ValueError("--shot-manifest is required for registered few-shot evaluation")
         label_hash = _label_tree_hash(task.label_roots)
-        expected = build_registered_shot_schedule(
+        expected = build_registered_mixed_shot_schedule(
             args.task,
             split["train"],
             args.fold,
             args.shot_seed,
             label_hash,
             split_sha,
-            lambda patch_id: _positive_pixel_count(task, patch_id),
+            lambda patch_id: _positive_background_pixel_counts(task, patch_id),
             budgets=(5, 10, 50),
         )
         train_ids, shot_manifest = load_registered_shot_ids(
