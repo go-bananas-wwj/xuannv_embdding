@@ -133,6 +133,161 @@ def test_registered_threshold_uses_validation_probabilities_and_largest_tie() ->
     assert score == pytest.approx(1.0)
 
 
+def test_registered_threshold_selection_records_the_complete_validation_grid() -> None:
+    selection = registered.build_validation_threshold_selection(
+        probabilities=np.array([0.1, 0.4, 0.6, 0.9]),
+        targets=np.array([0, 0, 1, 1]),
+    )
+
+    assert selection["grid_start"] == pytest.approx(0.001)
+    assert selection["grid_stop_exclusive"] == pytest.approx(1.0)
+    assert selection["grid_step"] == pytest.approx(0.001)
+    assert len(selection["candidates"]) == 999
+    assert selection["selected_threshold"] == pytest.approx(0.6)
+    assert selection["selected_f1"] == pytest.approx(1.0)
+    assert selection["candidates"][-1]["threshold"] == pytest.approx(0.999)
+
+
+def test_registered_prediction_archive_preserves_float64_scores(tmp_path: Path) -> None:
+    output = tmp_path / "predictions_validation.npz"
+    threshold = float(np.arange(0.001, 1.0, 0.001)[21])
+    probabilities = registered.sigmoid_probabilities(np.array([[-3.7944672]], dtype=np.float32))
+    targets = np.array([[1]], dtype=np.uint8)
+
+    registered.write_prediction_archive(
+        output,
+        patch_ids=["patch_a"],
+        probability_maps=probabilities,
+        target_maps=targets,
+    )
+
+    with np.load(output, allow_pickle=True) as archive:
+        assert archive["probabilities"].dtype == np.float64
+        assert archive["probabilities"][0, 0] == probabilities[0, 0]
+        assert archive["targets"].dtype == np.uint8
+        assert archive["valid_masks"].dtype == bool
+        replay = registered.compute_registered_metrics(
+            probabilities=archive["probabilities"],
+            targets=archive["targets"],
+            threshold=threshold,
+        )
+    assert replay["f1_at_threshold"] == pytest.approx(1.0)
+
+
+def test_registered_metrics_are_computed_from_the_archived_float64_probabilities() -> None:
+    threshold = float(np.arange(0.001, 1.0, 0.001)[21])
+    logits = np.array([-3.7944672], dtype=np.float32)
+    probabilities = registered.sigmoid_probabilities(logits)
+
+    metrics = registered.compute_registered_metrics(
+        probabilities=probabilities,
+        targets=np.array([1], dtype=np.uint8),
+        threshold=threshold,
+    )
+
+    assert probabilities[0] >= threshold
+    assert metrics["f1_at_threshold"] == pytest.approx(1.0)
+    assert "best_threshold" not in metrics
+
+
+def test_artifact_verifier_rejects_validation_hash_disagreement(tmp_path: Path) -> None:
+    output = tmp_path / "probe"
+    output.mkdir()
+    predictions = output / "predictions_test.npz"
+    validation_predictions = output / "predictions_validation.npz"
+    predictions.write_bytes(b"test predictions")
+    validation_predictions.write_bytes(b"validation predictions")
+    (output / "final_probe.pt").write_bytes(b"probe")
+    registry_path = tmp_path / "results.jsonl"
+    metric_payload = {
+        "paper_eligible": False,
+        "admission_status": "registered_preliminary_pending_external_gates",
+        "provenance": {"checkpoint_sha256": "checkpoint"},
+        "spatial_split_sha256": "split",
+        "manifest_sha256": "manifest",
+        "embedding_export": {"embedding_file_index_sha256": "embedding"},
+        "embedding_registry": {"sha256": "registry"},
+        "shot_manifest_sha256": "shots",
+        "git_commit": "commit",
+        "probe": {"head": "conv3x3"},
+        "validation_prediction_file": str(validation_predictions),
+        "validation_prediction_sha256": "not-the-archive-hash",
+    }
+    (output / "metrics.json").write_text(json.dumps(metric_payload), encoding="utf-8")
+    artifact = registered.build_artifact_manifest(
+        metric_payload=metric_payload,
+        output=output,
+        predictions=predictions,
+        validation_predictions=validation_predictions,
+        result_id="result-validation-hash",
+        registry_path=registry_path,
+        label_sha256="labels",
+        patch_count=1,
+    )
+    artifact_path = output / "artifact_manifest.json"
+    artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+    record = {
+        "result_id": artifact["result_id"],
+        "artifact_sha256": registered.sha256_file(artifact_path),
+        "registry_entry_core_sha256": artifact["registry_entry_core_sha256"],
+        **artifact,
+    }
+    record["registry_entry_sha256"] = registered._canonical_sha256(record)
+    registry_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="validation prediction hash"):
+        registered.verify_artifact_registry_binding(artifact_path, registry_path)
+
+
+def test_artifact_verifier_rejects_validation_path_disagreement(tmp_path: Path) -> None:
+    output = tmp_path / "probe"
+    output.mkdir()
+    predictions = output / "predictions_test.npz"
+    validation_predictions = output / "predictions_validation.npz"
+    predictions.write_bytes(b"test predictions")
+    validation_predictions.write_bytes(b"validation predictions")
+    (output / "final_probe.pt").write_bytes(b"probe")
+    registry_path = tmp_path / "results.jsonl"
+    metric_payload = {
+        "paper_eligible": False,
+        "admission_status": "registered_preliminary_pending_external_gates",
+        "provenance": {"checkpoint_sha256": "checkpoint"},
+        "spatial_split_sha256": "split",
+        "manifest_sha256": "manifest",
+        "embedding_export": {"embedding_file_index_sha256": "embedding"},
+        "embedding_registry": {"sha256": "registry"},
+        "shot_manifest_sha256": "shots",
+        "git_commit": "commit",
+        "probe": {"head": "conv3x3"},
+        "validation_prediction_file": str((tmp_path / "wrong.npz").resolve()),
+        "validation_prediction_sha256": registered.sha256_file(validation_predictions),
+    }
+    (output / "metrics.json").write_text(json.dumps(metric_payload), encoding="utf-8")
+    artifact = registered.build_artifact_manifest(
+        metric_payload=metric_payload,
+        output=output,
+        predictions=predictions,
+        validation_predictions=validation_predictions,
+        result_id="result-validation-path",
+        registry_path=registry_path,
+        label_sha256="labels",
+        patch_count=1,
+    )
+    artifact_path = output / "artifact_manifest.json"
+    artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+    record = {
+        "result_id": artifact["result_id"],
+        "artifact_sha256": registered.sha256_file(artifact_path),
+        "registry_entry_core_sha256": artifact["registry_entry_core_sha256"],
+        **artifact,
+    }
+    record["registry_entry_sha256"] = registered._canonical_sha256(record)
+    registry_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="validation prediction path"):
+        registered.verify_artifact_registry_binding(artifact_path, registry_path)
+
+
 def test_registered_provenance_rejects_mismatched_encoder_fold(tmp_path: Path) -> None:
     config_path = tmp_path / "encoder.yaml"
     config_path.write_text("data:\n  paper_fold: 1\n", encoding="utf-8")

@@ -19,11 +19,10 @@ import numpy as np
 import rasterio
 import torch
 import yaml
-from sklearn.metrics import average_precision_score, roc_auc_score
+from sklearn.metrics import auc, average_precision_score, precision_recall_curve, roc_auc_score
 
 from scripts.eval.run_strong_downstream_benchmark import (
     PatchTensor,
-    compute_metrics,
     load_manifest,
     load_patch_list,
     make_device,
@@ -616,11 +615,69 @@ def binary_f1(probabilities: np.ndarray, targets: np.ndarray, threshold: float) 
     return 0.0 if denominator == 0 else float(2 * true_positive / denominator)
 
 
+def compute_registered_metrics(
+    probabilities: np.ndarray,
+    targets: np.ndarray,
+    threshold: float,
+) -> dict[str, float | int]:
+    """Compute all registered test metrics from the exact archived probabilities."""
+    probability = np.asarray(probabilities, dtype=np.float64).reshape(-1)
+    target = (np.asarray(targets).reshape(-1) == 1).astype(np.uint8)
+    if probability.shape != target.shape:
+        raise ValueError("Metric probabilities and targets must have identical flattened shapes")
+    if not np.isfinite(probability).all():
+        raise ValueError("Metric probabilities must be finite")
+    pred = probability >= threshold
+    truth = target.astype(bool)
+    tp = int(np.logical_and(pred, truth).sum())
+    fp = int(np.logical_and(pred, ~truth).sum())
+    fn = int(np.logical_and(~pred, truth).sum())
+    tn = int(np.logical_and(~pred, ~truth).sum())
+    precision = 0.0 if tp + fp == 0 else tp / (tp + fp)
+    recall = 0.0 if tp + fn == 0 else tp / (tp + fn)
+    f1 = 0.0 if precision + recall == 0.0 else 2.0 * precision * recall / (precision + recall)
+    iou = 0.0 if tp + fp + fn == 0 else tp / (tp + fp + fn)
+    result: dict[str, float | int] = {
+        "f1_at_threshold": float(f1),
+        "f1_0.5": binary_f1(probability, target, 0.5),
+        "miou": float(iou),
+        "precision": float(precision),
+        "recall": float(recall),
+        "threshold": float(threshold),
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "tn": tn,
+        "positive_ratio": float(target.mean()) if target.size else 0.0,
+    }
+    if target.sum() in {0, target.size}:
+        result.update({"ap": 0.0, "auprc": 0.0, "auc_roc": 0.0})
+        return result
+    precision_curve, recall_curve, _ = precision_recall_curve(target, probability)
+    result.update(
+        {
+            "ap": float(average_precision_score(target, probability)),
+            "auprc": float(auc(recall_curve, precision_curve)),
+            "auc_roc": float(roc_auc_score(target, probability)),
+        }
+    )
+    return result
+
+
 def select_validation_threshold(
     probabilities: np.ndarray,
     targets: np.ndarray,
 ) -> tuple[float, float]:
     """Select F1 threshold on the all-binary registered validation grid."""
+    selection = build_validation_threshold_selection(probabilities, targets)
+    return float(selection["selected_threshold"]), float(selection["selected_f1"])
+
+
+def build_validation_threshold_selection(
+    probabilities: np.ndarray,
+    targets: np.ndarray,
+) -> dict[str, Any]:
+    """Return the complete validation-only threshold grid and selected candidate."""
     probabilities = np.asarray(probabilities, dtype=np.float64).reshape(-1)
     targets = np.asarray(targets).reshape(-1)
     if probabilities.shape != targets.shape:
@@ -632,14 +689,24 @@ def select_validation_threshold(
         raise ValueError("Validation probabilities must be finite")
     if targets.size == 0 or targets.sum() in {0, targets.size}:
         raise ValueError("Validation pixels must contain both positive and negative labels")
+    candidates: list[dict[str, float]] = []
     best_threshold = 0.001
     best_f1 = -1.0
     for threshold in np.arange(0.001, 1.0, 0.001):
         score = binary_f1(probabilities, targets, float(threshold))
+        candidates.append({"threshold": float(threshold), "f1": score})
         if score >= best_f1:
             best_threshold = float(threshold)
             best_f1 = score
-    return best_threshold, best_f1
+    return {
+        "grid_start": 0.001,
+        "grid_stop_exclusive": 1.0,
+        "grid_step": 0.001,
+        "candidate_count": len(candidates),
+        "candidates": candidates,
+        "selected_threshold": best_threshold,
+        "selected_f1": best_f1,
+    }
 
 
 def build_shot_manifest(
@@ -936,6 +1003,29 @@ def _confusion(target: np.ndarray, probability: np.ndarray, threshold: float) ->
     }
 
 
+def write_prediction_archive(
+    path: Path,
+    *,
+    patch_ids: list[str],
+    probability_maps: np.ndarray,
+    target_maps: np.ndarray,
+) -> None:
+    """Write a lossless score archive used to independently reconstruct metrics."""
+    probabilities = np.asarray(probability_maps, dtype=np.float64)
+    targets = np.asarray(target_maps, dtype=np.uint8)
+    if probabilities.shape != targets.shape:
+        raise ValueError("Prediction archive probabilities and targets must share a shape")
+    if probabilities.shape[0] != len(patch_ids):
+        raise ValueError("Prediction archive patch IDs must match the first array dimension")
+    np.savez_compressed(
+        path,
+        patch_ids=np.array(patch_ids, dtype=object),
+        probabilities=probabilities,
+        targets=targets,
+        valid_masks=np.ones_like(targets, dtype=bool),
+    )
+
+
 def _append_registry(path: Path, record: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     result_id = record["result_id"]
@@ -1034,6 +1124,7 @@ def build_artifact_manifest(
     metric_payload: dict[str, Any],
     output: Path,
     predictions: Path,
+    validation_predictions: Path | None = None,
     result_id: str,
     registry_path: Path,
     label_sha256: str,
@@ -1055,6 +1146,8 @@ def build_artifact_manifest(
         "label_sha256": label_sha256,
         "patch_count": patch_count,
     }
+    if validation_predictions is not None:
+        artifact["validation_predictions_sha256"] = sha256_file(validation_predictions)
     artifact["registry_entry_core_sha256"] = registry_entry_core_sha256(result_id, artifact)
     return artifact
 
@@ -1065,6 +1158,7 @@ def verify_artifact_registry_binding(artifact_path: Path, registry_path: Path) -
     output = artifact_path.parent
     metrics_path = output / "metrics.json"
     predictions_path = output / "predictions_test.npz"
+    validation_predictions_path = output / "predictions_validation.npz"
     probe_path = output / "final_probe.pt"
     if artifact.get("metrics_path") != str(metrics_path.resolve()):
         raise ValueError("Artifact metrics path differs from its sidecar directory")
@@ -1072,6 +1166,21 @@ def verify_artifact_registry_binding(artifact_path: Path, registry_path: Path) -
         raise ValueError("Artifact metrics hash does not match metrics.json")
     if artifact.get("predictions_sha256") != sha256_file(predictions_path):
         raise ValueError("Artifact predictions hash does not match predictions_test.npz")
+    if "validation_predictions_sha256" in artifact:
+        if artifact["validation_predictions_sha256"] != sha256_file(validation_predictions_path):
+            raise ValueError(
+                "Artifact validation predictions hash does not match predictions_validation.npz"
+            )
+        metric_payload = artifact.get("metric_provenance", {})
+        if metric_payload.get("validation_prediction_file") != str(
+            validation_predictions_path.resolve()
+        ):
+            raise ValueError("Artifact validation prediction path does not match metrics.json")
+        if (
+            metric_payload.get("validation_prediction_sha256")
+            != artifact["validation_predictions_sha256"]
+        ):
+            raise ValueError("Artifact validation prediction hash does not match metrics.json")
     if artifact.get("probe_sha256") != sha256_file(probe_path):
         raise ValueError("Artifact probe hash does not match final_probe.pt")
     if json.loads(metrics_path.read_text(encoding="utf-8")) != artifact.get("metric_provenance"):
@@ -1226,38 +1335,48 @@ def main() -> None:
     for _ in range(FROZEN_PROBE["epochs"]):
         train_epoch(model, train_items, device, optimizer, loss_fn, FROZEN_PROBE["batch_size"])
         scheduler.step()
-    val_logits, val_targets, _ = _logits_for_items(
-        model, val_items, device, FROZEN_PROBE["batch_size"]
-    )
-    threshold, val_f1 = select_validation_threshold(sigmoid_probabilities(val_logits), val_targets)
-    test_logits, test_targets, test_by_patch = _logits_for_items(
-        model, test_items, device, FROZEN_PROBE["batch_size"]
-    )
-    metrics = compute_metrics(test_logits, test_targets, threshold=threshold)
-    metrics["oracle_test_f1"] = metrics.pop("f1_best")
-    metrics["oracle_test_threshold"] = metrics.pop("best_threshold")
-    metrics["val_f1_at_selected_threshold"] = val_f1
-    metrics["average_precision"] = float(
-        average_precision_score(test_targets, sigmoid_probabilities(test_logits))
-    )
-    metrics["roc_auc"] = float(roc_auc_score(test_targets, sigmoid_probabilities(test_logits)))
+    _, _, val_by_patch = _logits_for_items(model, val_items, device, FROZEN_PROBE["batch_size"])
+    _, _, test_by_patch = _logits_for_items(model, test_items, device, FROZEN_PROBE["batch_size"])
     output = args.output_root
     predictions = output / "predictions_test.npz"
+    validation_predictions = output / "predictions_validation.npz"
+    ordered_validation_patch_ids = sorted(val_by_patch)
+    validation_probability_maps = np.stack(
+        [
+            sigmoid_probabilities(val_by_patch[patch_id][0])
+            for patch_id in ordered_validation_patch_ids
+        ]
+    )
+    validation_target_maps = np.stack(
+        [val_by_patch[patch_id][1] for patch_id in ordered_validation_patch_ids]
+    )
+    validation_selection = build_validation_threshold_selection(
+        validation_probability_maps.reshape(-1), validation_target_maps.reshape(-1)
+    )
+    threshold = float(validation_selection["selected_threshold"])
+    val_f1 = float(validation_selection["selected_f1"])
+    write_prediction_archive(
+        validation_predictions,
+        patch_ids=ordered_validation_patch_ids,
+        probability_maps=validation_probability_maps,
+        target_maps=validation_target_maps,
+    )
     ordered_patch_ids = sorted(test_by_patch)
     probability_maps = np.stack(
         [sigmoid_probabilities(test_by_patch[patch_id][0]) for patch_id in ordered_patch_ids]
-    ).astype(np.float32)
-    target_maps = np.stack([test_by_patch[patch_id][1] for patch_id in ordered_patch_ids]).astype(
-        np.uint8
     )
-    valid_maps = np.ones_like(target_maps, dtype=bool)
-    np.savez_compressed(
+    target_maps = np.stack([test_by_patch[patch_id][1] for patch_id in ordered_patch_ids])
+    write_prediction_archive(
         predictions,
-        patch_ids=np.array(ordered_patch_ids, dtype=object),
-        probabilities=probability_maps,
-        targets=target_maps,
-        valid_masks=valid_maps,
+        patch_ids=ordered_patch_ids,
+        probability_maps=probability_maps,
+        target_maps=target_maps,
     )
+    metrics = compute_registered_metrics(
+        probability_maps.reshape(-1), target_maps.reshape(-1), threshold=threshold
+    )
+    metrics["val_f1_at_selected_threshold"] = val_f1
+    metrics["average_precision"] = float(metrics["ap"])
     torch.save(model.state_dict(), output / "final_probe.pt")
     per_patch = {
         patch_id: _confusion(target_maps[index], probability_maps[index], threshold)
@@ -1274,6 +1393,9 @@ def main() -> None:
         "probe_seed": probe_seed,
         "probe": {"head": "conv3x3_64_128_64", **FROZEN_PROBE, "final_epoch_only": True},
         "threshold": threshold,
+        "validation_threshold_selection": validation_selection,
+        "validation_prediction_file": str(validation_predictions.resolve()),
+        "validation_prediction_sha256": sha256_file(validation_predictions),
         "train_seconds": time.perf_counter() - start_time,
         "provenance": provenance,
         "spatial_split_sha256": split_sha,
@@ -1284,7 +1406,7 @@ def main() -> None:
         "git_commit": _git_commit(),
         "python": platform.python_version(),
         "torch": torch.__version__,
-        "prediction_file": str(predictions),
+        "prediction_file": str(predictions.resolve()),
         "shot_manifest": shot_manifest,
         "shot_manifest_path": str(shot_manifest_path) if shot_manifest_path else None,
         "shot_manifest_sha256": sha256_file(shot_manifest_path) if shot_manifest_path else None,
@@ -1298,6 +1420,7 @@ def main() -> None:
         metric_payload=metric_payload,
         output=output,
         predictions=predictions,
+        validation_predictions=validation_predictions,
         result_id=result_id,
         registry_path=args.registry,
         label_sha256=_label_tree_hash(task.label_roots),
