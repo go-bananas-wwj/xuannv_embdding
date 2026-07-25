@@ -27,6 +27,9 @@ not a paper result.
   is for internal diagnosis only and must be labelled preliminary.
 - OSM-overlap tasks are reported as OSM-assisted readout evidence. They do not by themselves
   establish ontology-independent semantic transfer.
+- The locally retained OSM caches are not versioned historical snapshots aligned with the
+  2025--2026 imagery. See `osm_temporal_provenance_audit_20260725.md`; do not use OSM masks for
+  contemporaneous ground-truth or monthly-change claims.
 
 ## Manuscript decision rule
 
