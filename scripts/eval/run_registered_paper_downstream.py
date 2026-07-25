@@ -164,6 +164,7 @@ def verify_embedding_registry(
     registry_path: Path,
     *,
     checkpoint_sha256: str,
+    config_sha256: str,
     manifest_sha256: str,
     index_sha256: str,
     region: str,
@@ -179,6 +180,7 @@ def verify_embedding_registry(
         raise ValueError("Invalid external embedding registry schema")
     expected = {
         "checkpoint_sha256": checkpoint_sha256,
+        "config_sha256": config_sha256,
         "manifest_sha256": manifest_sha256,
         "embedding_file_index_sha256": index_sha256,
         "region": region,
@@ -794,6 +796,7 @@ def main() -> None:
     embedding_registry = verify_embedding_registry(
         args.embedding_registry,
         checkpoint_sha256=str(provenance["checkpoint_sha256"]),
+        config_sha256=str(provenance["config_sha256"]),
         manifest_sha256=FROZEN_EVAL_MANIFEST_SHA256,
         index_sha256=str(export_meta["embedding_file_index_sha256"]),
         region="haidian",

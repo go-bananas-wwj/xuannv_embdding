@@ -41,6 +41,16 @@
       "region": "haidian",
       "month": "202604",
       "patch_count": 320
+    },
+    {
+      "id": "full_150_fold4_best_202604",
+      "checkpoint_sha256": "48d6fe952735719eb09bd1e5ff2fbbea01a438d36fe637e623f6332d0005794e",
+      "config_sha256": "61c40949ba0042e856523632155e42fee2b322466339206fbdb8f0a4bcc9c6de",
+      "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
+      "embedding_file_index_sha256": "0154d6bd05322123e859943463502665be0dd130aacc737446fe06c2ca9cc730",
+      "region": "haidian",
+      "month": "202604",
+      "patch_count": 320
     }
   ]
 }

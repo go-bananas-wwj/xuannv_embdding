@@ -420,6 +420,7 @@ def test_registered_embedding_registry_requires_external_index_hash(tmp_path: Pa
                 "exports": [
                     {
                         "checkpoint_sha256": "checkpoint",
+                        "config_sha256": "config",
                         "manifest_sha256": "manifest",
                         "embedding_file_index_sha256": "index",
                         "region": "haidian",
@@ -434,6 +435,7 @@ def test_registered_embedding_registry_requires_external_index_hash(tmp_path: Pa
     registered.verify_embedding_registry(
         registry_path,
         checkpoint_sha256="checkpoint",
+        config_sha256="config",
         manifest_sha256="manifest",
         index_sha256="index",
         region="haidian",
@@ -445,8 +447,21 @@ def test_registered_embedding_registry_requires_external_index_hash(tmp_path: Pa
         registered.verify_embedding_registry(
             registry_path,
             checkpoint_sha256="checkpoint",
+            config_sha256="config",
             manifest_sha256="manifest",
             index_sha256="tampered",
+            region="haidian",
+            month="202604",
+            patch_count=320,
+        )
+
+    with pytest.raises(ValueError, match="does not contain the sealed export"):
+        registered.verify_embedding_registry(
+            registry_path,
+            checkpoint_sha256="checkpoint",
+            config_sha256="different-config",
+            manifest_sha256="manifest",
+            index_sha256="index",
             region="haidian",
             month="202604",
             patch_count=320,
