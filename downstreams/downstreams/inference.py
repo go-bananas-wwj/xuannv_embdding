@@ -269,6 +269,7 @@ def write_meta_json(
         "checkpoint_path": str(checkpoint_path) if checkpoint_path else None,
         "checkpoint_sha256": sha,
         "config_path": str(config_path),
+        "config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
         "python_version": (
             f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
         ),

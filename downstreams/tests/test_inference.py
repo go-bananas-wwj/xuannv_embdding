@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +52,7 @@ def test_write_meta_json_random_init(tmp_path: Path) -> None:
     assert meta["checkpoint_path"] is None
     assert meta["checkpoint_sha256"] is None
     assert meta["config_path"] == str(config_path)
+    assert meta["config_sha256"] == sha256(config_path.read_bytes()).hexdigest()
 
 
 def test_write_meta_json_with_checkpoint(tmp_path: Path) -> None:
@@ -74,7 +76,8 @@ def test_write_meta_json_with_checkpoint(tmp_path: Path) -> None:
         meta = json.load(f)
     assert meta["checkpoint_path"] == str(checkpoint_path)
     assert meta["checkpoint_sha256"] is not None
-    assert len(meta["checkpoint_sha256"]) == 16
+    assert len(meta["checkpoint_sha256"]) == 64
+    assert meta["config_sha256"] == sha256(config_path.read_bytes()).hexdigest()
 
 
 def test_precompute_embeddings_structure(tmp_path: Path) -> None:
