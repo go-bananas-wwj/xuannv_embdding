@@ -276,6 +276,61 @@
       "region": "haidian",
       "month": "202604",
       "patch_count": 320
+    },
+    {
+      "id": "probe_nohardneg_150_fold0_best_202604",
+      "checkpoint_sha256": "525bb12005015beed96fda03cdecc26278de2f944b0e685832febfddcd9552e1",
+      "config_sha256": "66ceb37d776eaa12b34cbd1567c0c7db7a6bf04db715bcc738288ecfdab16fa9",
+      "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
+      "embedding_file_index_sha256": "2f8cb51c763d428cf04bdc153c73f4f1de2a808d73a5a46c83b7153f1f174305",
+      "canonical_export_provenance_sha256": "e7eb4929488a9afc37cf068ae8fd97180b595145e78373e1274aaddb0d1a2e5a",
+      "region": "haidian",
+      "month": "202604",
+      "patch_count": 320
+    },
+    {
+      "id": "probe_nohardneg_150_fold1_best_202604",
+      "checkpoint_sha256": "506f4a7d8b74b234be1158783d9cc6fc19fd06a53a9318bd3e3cc4fbec742ada",
+      "config_sha256": "6e7e36c9aa4e5e78c4cf1ef933670d9c91f0fcbd784c651a761bcd5b4fb87191",
+      "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
+      "embedding_file_index_sha256": "fe42f185f649b7f59344a83d5fa4dfe3ad79ffb669f3ddac85e4718292dddf2b",
+      "canonical_export_provenance_sha256": "67f22466d0a458f0b8213c1b6156b12ddd15a25648de2d1c9d7102bb2eebfe5a",
+      "region": "haidian",
+      "month": "202604",
+      "patch_count": 320
+    },
+    {
+      "id": "probe_nohardneg_150_fold2_best_202604",
+      "checkpoint_sha256": "e6fc93226b3d49afb2a09f64ce05d385a4f2f0922228bd89380730e672a1671f",
+      "config_sha256": "d34b5ee825d2561c4c043a82884d87564fc2d4e67b7fe8e67bc0c2c6554e4e83",
+      "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
+      "embedding_file_index_sha256": "059576fe4b781374617f488a9af74897b5826064c4d7e3a640aa46ae3459a65c",
+      "canonical_export_provenance_sha256": "b6e26673ff071f36189fc6773f89e0745b9578b02b641400398142adc339db73",
+      "region": "haidian",
+      "month": "202604",
+      "patch_count": 320
+    },
+    {
+      "id": "probe_nohardneg_150_fold3_best_202604",
+      "checkpoint_sha256": "6a407683959b032645f78e3a2291413b36a7e7d7a30cbc28c4b6bdb669c97d9b",
+      "config_sha256": "a1c813177e3e6823e90d613ef032cce67dc9f73b613cf51100e6758c5aae2d08",
+      "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
+      "embedding_file_index_sha256": "659ba4e4867e0a3d2399b4b8f8ed6b88e316bec633df40c342a785242c4a9ac5",
+      "canonical_export_provenance_sha256": "f72a580f81ec656da122e6962dab16db40730b328b8086ea0172c46d915a8abe",
+      "region": "haidian",
+      "month": "202604",
+      "patch_count": 320
+    },
+    {
+      "id": "probe_nohardneg_150_fold4_best_202604",
+      "checkpoint_sha256": "590ba7eed2cde69748c5eabf0c438d337fdcada01e6979b4fce2f60e43abbfe5",
+      "config_sha256": "3f1a43923a846d8dc4008fb7e9cabbfc223ddb9b7b8b8bbcc84656cb7178b607",
+      "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
+      "embedding_file_index_sha256": "aa0ef1317e472f2bf711564ae2422d2588406aa43b917433d5adfa9d5765181a",
+      "canonical_export_provenance_sha256": "6158913cbad960e7882cba5e5e840c122c08c1021aa9d8c27269c3936e967ab9",
+      "region": "haidian",
+      "month": "202604",
+      "patch_count": 320
     }
   ]
 }
