@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
+import os
 import platform
 import random
 import subprocess
@@ -498,15 +500,23 @@ def _append_registry(path: Path, record: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     result_id = record["result_id"]
     encoded = json.dumps(record, ensure_ascii=False, sort_keys=True)
-    if path.exists():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            existing = json.loads(line)
-            if existing.get("result_id") == result_id:
-                if json.dumps(existing, ensure_ascii=False, sort_keys=True) != encoded:
-                    raise ValueError(f"Result registry collision: {result_id}")
-                return
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(encoded + "\n")
+    lock_path = path.parent / f".{path.name}.lock"
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            if path.exists():
+                for line in path.read_text(encoding="utf-8").splitlines():
+                    existing = json.loads(line)
+                    if existing.get("result_id") == result_id:
+                        if json.dumps(existing, ensure_ascii=False, sort_keys=True) != encoded:
+                            raise ValueError(f"Result registry collision: {result_id}")
+                        return
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(encoded + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 def _set_seed(seed: int) -> None:

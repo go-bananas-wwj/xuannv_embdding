@@ -285,3 +285,26 @@ def test_registered_external_registry_must_be_a_clean_head_tracked_file(tmp_path
     registered.verify_git_head_file(tracked)
     with pytest.raises(ValueError, match="inside the repository"):
         registered.verify_git_head_file(tmp_path / "untracked.json")
+
+
+def test_registered_result_registry_is_idempotent_and_rejects_conflict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "results.jsonl"
+    record = {"result_id": "same", "artifact_sha256": "artifact"}
+    fsync_calls: list[int] = []
+
+    class OsShim:
+        @staticmethod
+        def fsync(file_descriptor: int) -> None:
+            fsync_calls.append(file_descriptor)
+
+    monkeypatch.setattr(registered, "os", OsShim, raising=False)
+    registered._append_registry(path, record)
+    assert (path.parent / ".results.jsonl.lock").is_file()
+    assert fsync_calls
+    registered._append_registry(path, record)
+    assert path.read_text(encoding="utf-8").count("\n") == 1
+
+    with pytest.raises(ValueError, match="collision"):
+        registered._append_registry(path, {"result_id": "same", "artifact_sha256": "other"})
