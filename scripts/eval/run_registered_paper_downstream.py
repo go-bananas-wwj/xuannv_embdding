@@ -529,6 +529,24 @@ def build_registered_shot_schedule(
     }
 
 
+def load_registered_shot_ids(
+    path: Path, *, expected_schedule: dict[str, Any], shot: str
+) -> tuple[list[str], dict[str, Any]]:
+    """Load a shared schedule only when it exactly matches the registered selection rule."""
+    if not path.is_file():
+        raise FileNotFoundError(f"Missing shared shot schedule: {path}")
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    if loaded != expected_schedule:
+        raise ValueError("Shared shot schedule does not match the registered selection rule")
+    if shot in loaded.get("unavailable", {}):
+        raise RuntimeError(f"Shot {shot} is registered NA: {loaded['unavailable'][shot]}")
+    try:
+        train_ids = loaded["sets"][shot]["train_patch_ids"]
+    except KeyError as exc:
+        raise ValueError(f"Shared shot schedule has no exact {shot}-shot set") from exc
+    return list(train_ids), loaded
+
+
 def _label_tree_hash(label_roots: list[Path]) -> str:
     digest = hashlib.sha256()
     for root in sorted(label_roots):
@@ -669,7 +687,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--task", choices=["building", "road", "water"], required=True)
     parser.add_argument("--fold", type=int, required=True)
     parser.add_argument("--month", default="202604")
-    parser.add_argument("--shot", choices=["5", "10", "full"], required=True)
+    parser.add_argument("--shot", choices=["5", "10", "50", "full"], required=True)
+    parser.add_argument(
+        "--shot-manifest",
+        type=Path,
+        default=None,
+        help="Shared frozen schedule for a task/fold/seed; required unless --shot full.",
+    )
     parser.add_argument("--shot-seed", type=int, choices=[42, 43, 44], required=True)
     parser.add_argument("--device", default="npu:0")
     return parser.parse_args()
@@ -692,7 +716,6 @@ def main() -> None:
         month=args.month,
         patch_count=320,
     )
-    prepare_result_output(args.output_root)
     probe_seed = int.from_bytes(
         hashlib.sha256(f"{args.fold}|{args.task}|{args.shot_seed}".encode()).digest()[:4],
         "little",
@@ -706,10 +729,12 @@ def main() -> None:
     if args.shot == "full":
         train_ids = split["train"]
         shot_manifest: dict[str, Any] | None = None
+        shot_manifest_path: Path | None = None
     else:
+        if args.shot_manifest is None:
+            raise ValueError("--shot-manifest is required for registered few-shot evaluation")
         label_hash = _label_tree_hash(task.label_roots)
-        shot_manifest_path = args.output_root / "shot_manifest.json"
-        expected = build_shot_manifest(
+        expected = build_registered_shot_schedule(
             args.task,
             split["train"],
             args.fold,
@@ -717,16 +742,12 @@ def main() -> None:
             label_hash,
             split_sha,
             lambda patch_id: _positive_pixel_count(task, patch_id),
-            budgets=(5, 10),
+            budgets=(5, 10, 50),
         )
-        if shot_manifest_path.exists():
-            shot_manifest = json.loads(shot_manifest_path.read_text(encoding="utf-8"))
-            if shot_manifest != expected:
-                raise ValueError("Existing shot manifest does not match frozen selection rule")
-        else:
-            _write_json(shot_manifest_path, expected)
-            shot_manifest = expected
-        train_ids = shot_manifest["sets"][args.shot]["train_patch_ids"]
+        train_ids, shot_manifest = load_registered_shot_ids(
+            args.shot_manifest, expected_schedule=expected, shot=args.shot
+        )
+        shot_manifest_path = args.shot_manifest
     train_items = load_patch_list(
         records,
         task,
@@ -746,6 +767,7 @@ def main() -> None:
     train_items = _normalize_items(train_items, mean, std)
     val_items = _normalize_items(val_items, mean, std)
     test_items = _normalize_items(test_items, mean, std)
+    prepare_result_output(args.output_root)
     model = make_model("conv3x3", 64, 64).to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -818,6 +840,8 @@ def main() -> None:
         "torch": torch.__version__,
         "prediction_file": str(predictions),
         "shot_manifest": shot_manifest,
+        "shot_manifest_path": str(shot_manifest_path) if shot_manifest_path else None,
+        "shot_manifest_sha256": sha256_file(shot_manifest_path) if shot_manifest_path else None,
         "per_patch_confusion": per_patch,
     }
     _write_json(output / "metrics.json", metric_payload)

@@ -219,6 +219,36 @@ def test_registered_shot_schedule_is_nested_at_every_feasible_budget() -> None:
         )
 
 
+def test_registered_shot_schedule_loader_requires_matching_shared_schedule(tmp_path: Path) -> None:
+    counts = {f"p{i}": 64 for i in range(12)} | {f"n{i}": 0 for i in range(12)}
+    schedule = registered.build_registered_shot_schedule(
+        task_name="building",
+        train_ids=list(counts),
+        fold=0,
+        seed=42,
+        label_sha256="labels",
+        split_sha256="split",
+        pixel_count=lambda patch_id: counts[patch_id],
+    )
+    path = tmp_path / "building_fold0_seed42.json"
+    path.write_text(json.dumps(schedule), encoding="utf-8")
+
+    ids, loaded = registered.load_registered_shot_ids(
+        path,
+        expected_schedule=schedule,
+        shot="5",
+    )
+    assert ids == schedule["sets"]["5"]["train_patch_ids"]
+    assert loaded == schedule
+
+    with pytest.raises(RuntimeError, match="registered NA"):
+        registered.load_registered_shot_ids(path, expected_schedule=schedule, shot="50")
+
+    schedule["label_sha256"] = "different"
+    with pytest.raises(ValueError, match="does not match"):
+        registered.load_registered_shot_ids(path, expected_schedule=schedule, shot="5")
+
+
 def test_registered_embedding_index_rejects_tampered_feature_file(tmp_path: Path) -> None:
     root = tmp_path / "embeddings"
     feature = root / "haidian" / "patch_000001" / "202604_embedding_map.pt"
