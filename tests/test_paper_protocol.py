@@ -144,6 +144,81 @@ def test_registered_shot_manifest_is_nested_and_rejects_budget_shortage() -> Non
         )
 
 
+def test_registered_shot_schedule_records_infeasible_budgets_without_truncating() -> None:
+    counts = {f"p{i}": 64 for i in range(12)} | {f"n{i}": 0 for i in range(7)}
+    schedule = registered.build_registered_shot_schedule(
+        task_name="building",
+        train_ids=list(counts),
+        fold=0,
+        seed=42,
+        label_sha256="labels",
+        split_sha256="split",
+        pixel_count=lambda patch_id: counts[patch_id],
+    )
+    assert set(schedule["sets"]) == {"5"}
+    assert set(schedule["sets"]["5"]["positive_patch_ids"]) <= set(counts)
+    assert schedule["unavailable"]["10"]["status"] == "NA"
+    assert schedule["unavailable"]["50"]["positive_available"] == 12
+    assert schedule["unavailable"]["50"]["negative_available"] == 7
+    assert len(schedule["rule_sha256"]) == 64
+
+
+def test_registered_shot_schedule_is_nested_at_every_feasible_budget() -> None:
+    counts = {f"p{i}": 64 for i in range(60)} | {f"n{i}": 0 for i in range(60)}
+    schedule = registered.build_registered_shot_schedule(
+        task_name="building",
+        train_ids=list(counts),
+        fold=0,
+        seed=42,
+        label_sha256="labels",
+        split_sha256="split",
+        pixel_count=lambda patch_id: counts[patch_id],
+    )
+    assert not schedule["unavailable"]
+    for budget in (5, 10, 50):
+        entry = schedule["sets"][str(budget)]
+        assert len(entry["positive_patch_ids"]) == budget
+        assert len(entry["negative_patch_ids"]) == budget
+    assert (
+        set(schedule["sets"]["5"]["positive_patch_ids"])
+        <= set(schedule["sets"]["10"]["positive_patch_ids"])
+        <= set(schedule["sets"]["50"]["positive_patch_ids"])
+    )
+    assert (
+        set(schedule["sets"]["5"]["negative_patch_ids"])
+        <= set(schedule["sets"]["10"]["negative_patch_ids"])
+        <= set(schedule["sets"]["50"]["negative_patch_ids"])
+    )
+    assert (
+        set(schedule["sets"]["5"]["train_patch_ids"])
+        <= set(schedule["sets"]["10"]["train_patch_ids"])
+        <= set(schedule["sets"]["50"]["train_patch_ids"])
+    )
+
+    reversed_schedule = registered.build_registered_shot_schedule(
+        task_name="building",
+        train_ids=list(reversed(list(counts))),
+        fold=0,
+        seed=42,
+        label_sha256="labels",
+        split_sha256="split",
+        pixel_count=lambda patch_id: counts[patch_id],
+    )
+    assert schedule == reversed_schedule
+
+    with pytest.raises(ValueError, match="positive integers"):
+        registered.build_registered_shot_schedule(
+            task_name="building",
+            train_ids=list(counts),
+            fold=0,
+            seed=42,
+            label_sha256="labels",
+            split_sha256="split",
+            pixel_count=lambda patch_id: counts[patch_id],
+            budgets=(True,),
+        )
+
+
 def test_registered_embedding_index_rejects_tampered_feature_file(tmp_path: Path) -> None:
     root = tmp_path / "embeddings"
     feature = root / "haidian" / "patch_000001" / "202604_embedding_map.pt"

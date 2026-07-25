@@ -402,7 +402,7 @@ def build_shot_manifest(
     are prefixes of that ordering, so all representations consume identical
     examples and the 5/10/50-shot sets are genuinely nested.
     """
-    if not budgets or any(budget <= 0 for budget in budgets):
+    if not budgets or any(type(budget) is not int or budget <= 0 for budget in budgets):
         raise ValueError("Shot budgets must be non-empty positive integers")
     if tuple(sorted(set(budgets))) != budgets:
         raise ValueError("Shot budgets must be strictly increasing without duplicates")
@@ -410,7 +410,7 @@ def build_shot_manifest(
         raise ValueError("Training patch IDs must be unique for sampling without replacement")
     positive_ids: list[str] = []
     negative_ids: list[str] = []
-    for patch_id in train_ids:
+    for patch_id in sorted(train_ids):
         count = int(pixel_count(patch_id))
         if count >= min_positive_pixels:
             positive_ids.append(patch_id)
@@ -452,6 +452,80 @@ def build_shot_manifest(
         "eligible_positive_count": len(positive_ids),
         "eligible_negative_count": len(negative_ids),
         "sets": sets,
+    }
+
+
+def build_registered_shot_schedule(
+    task_name: str,
+    train_ids: list[str],
+    fold: int,
+    seed: int,
+    label_sha256: str,
+    split_sha256: str,
+    pixel_count: Callable[[str], int],
+    budgets: tuple[int, ...] = (5, 10, 50),
+    min_positive_pixels: int = 64,
+) -> dict[str, Any]:
+    """Freeze all feasible exact budgets and explicitly record infeasible cells as NA."""
+    if not budgets or any(type(budget) is not int or budget <= 0 for budget in budgets):
+        raise ValueError("Shot budgets must be non-empty positive integers")
+    if tuple(sorted(set(budgets))) != budgets:
+        raise ValueError("Shot budgets must be strictly increasing without duplicates")
+    if len(train_ids) != len(set(train_ids)):
+        raise ValueError("Training patch IDs must be unique for sampling without replacement")
+    positive_ids: list[str] = []
+    negative_ids: list[str] = []
+    for patch_id in sorted(train_ids):
+        count = int(pixel_count(patch_id))
+        if count >= min_positive_pixels:
+            positive_ids.append(patch_id)
+        elif count == 0:
+            negative_ids.append(patch_id)
+    rng = random.Random(seed + fold * 1009)
+    rng.shuffle(positive_ids)
+    rng.shuffle(negative_ids)
+    sets: dict[str, dict[str, list[str]]] = {}
+    unavailable: dict[str, dict[str, int | str]] = {}
+    for budget in budgets:
+        if len(positive_ids) < budget or len(negative_ids) < budget:
+            unavailable[str(budget)] = {
+                "status": "NA",
+                "reason": "insufficient_exact_positive_or_negative_patches",
+                "positive_available": len(positive_ids),
+                "negative_available": len(negative_ids),
+            }
+            continue
+        selected_pos = positive_ids[:budget]
+        selected_neg = negative_ids[:budget]
+        combined = selected_pos + selected_neg
+        level_rng = random.Random(seed + fold * 1009 + budget)
+        level_rng.shuffle(combined)
+        sets[str(budget)] = {
+            "positive_patch_ids": selected_pos,
+            "negative_patch_ids": selected_neg,
+            "train_patch_ids": combined,
+        }
+    rule = {
+        "min_positive_pixels": min_positive_pixels,
+        "negative_rule": "exactly_zero_positive_pixels",
+        "selection": "deterministic_nested_prefix",
+    }
+    rule_sha256 = hashlib.sha256(
+        json.dumps(rule, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {
+        "schema_version": 2,
+        "task": task_name,
+        "fold": fold,
+        "seed": seed,
+        "rule": rule,
+        "rule_sha256": rule_sha256,
+        "label_sha256": label_sha256,
+        "split_sha256": split_sha256,
+        "eligible_positive_count": len(positive_ids),
+        "eligible_negative_count": len(negative_ids),
+        "sets": sets,
+        "unavailable": unavailable,
     }
 
 
