@@ -481,6 +481,149 @@ def test_registered_embedding_index_sealing_writes_meta_binding(tmp_path: Path) 
     assert index["files"][0]["path"] == "haidian/patch_000001/202604_embedding_map.pt"
 
 
+def test_canonical_export_provenance_binds_all_shards_before_sealing(tmp_path: Path) -> None:
+    root = tmp_path / "export"
+    region = root / "haidian"
+    expected_ids = {"patch_000001", "patch_000002"}
+    for patch_id in expected_ids:
+        feature = region / patch_id / "202604_embedding_map.pt"
+        feature.parent.mkdir(parents=True, exist_ok=True)
+        feature.write_bytes(patch_id.encode("utf-8"))
+    (region / "produced_patch_ids_shard_0.json").write_text(
+        json.dumps(["patch_000001"]), encoding="utf-8"
+    )
+    (region / "produced_patch_ids_shard_1.json").write_text(
+        json.dumps(["patch_000002"]), encoding="utf-8"
+    )
+    (root / "meta.json").write_text("{}", encoding="utf-8")
+
+    proof = registered.canonicalize_embedding_export(
+        root,
+        "haidian",
+        "202604",
+        expected_patch_ids=expected_ids,
+        shard_commands={0: "export shard 0", 1: "export shard 1"},
+    )
+    meta = json.loads((root / "meta.json").read_text(encoding="utf-8"))
+    assert proof["shard_count"] == 2
+    assert meta["canonical_export_provenance_sha256"] == registered.sha256_file(
+        root / "canonical_export_provenance.json"
+    )
+    registered.verify_canonical_export_provenance(root, meta, "haidian", "202604", expected_ids)
+
+    (region / "produced_patch_ids_shard_1.json").write_text(
+        json.dumps(["patch_000001"]), encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="Shard patch union"):
+        registered.canonicalize_embedding_export(
+            root,
+            "haidian",
+            "202604",
+            expected_patch_ids=expected_ids,
+            shard_commands={0: "export shard 0", 1: "export shard 1"},
+        )
+
+
+def test_canonical_export_provenance_rejects_tampered_import_source(tmp_path: Path) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text("data: {}\n", encoding="utf-8")
+    checkpoint = tmp_path / "best.pt"
+    checkpoint.write_bytes(b"checkpoint")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("[]", encoding="utf-8")
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    for root in (source, target):
+        (root / "haidian" / "patch_000001").mkdir(parents=True, exist_ok=True)
+        (root / "haidian" / "patch_000001" / "202604_embedding_map.pt").write_bytes(b"source-map")
+        (root / "haidian" / "produced_patch_ids_shard_0.json").write_text(
+            json.dumps(["patch_000001"]), encoding="utf-8"
+        )
+        (root / "meta.json").write_text(
+            json.dumps(
+                {
+                    "checkpoint_sha256": registered.sha256_file(checkpoint),
+                    "config_path": str(config),
+                    "manifest": {"manifest_sha256": registered.sha256_file(manifest)},
+                }
+            ),
+            encoding="utf-8",
+        )
+    source_index = registered.build_embedding_file_index(source, "haidian", "202604")
+    imported = {
+        0: {
+            "source_embedding_root": str(source),
+            "source_meta_sha256": registered.sha256_file(source / "meta.json"),
+            "source_patch_list_sha256": registered.sha256_file(
+                source / "haidian" / "produced_patch_ids_shard_0.json"
+            ),
+            "source_embedding_map_index_sha256": source_index["index_sha256"],
+            "source_map_count": 1,
+            "copy_reason": "preflight",
+            "compatibility": {
+                "config_sha256": registered.sha256_file(config),
+                "checkpoint_sha256": registered.sha256_file(checkpoint),
+                "manifest_sha256": registered.sha256_file(manifest),
+                "region": "haidian",
+                "month": "202604",
+                "num_shards": 1,
+                "shard_id": 0,
+            },
+        }
+    }
+    registered.canonicalize_embedding_export(
+        target,
+        "haidian",
+        "202604",
+        expected_patch_ids={"patch_000001"},
+        shard_commands={0: "export shard 0"},
+        imported_shards=imported,
+    )
+    meta = json.loads((target / "meta.json").read_text(encoding="utf-8"))
+    registered.verify_canonical_export_provenance(
+        target, meta, "haidian", "202604", {"patch_000001"}
+    )
+    (source / "haidian" / "patch_000001" / "202604_embedding_map.pt").write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="source embedding map index"):
+        registered.verify_canonical_export_provenance(
+            target, meta, "haidian", "202604", {"patch_000001"}
+        )
+    (source / "haidian" / "patch_000001" / "202604_embedding_map.pt").write_bytes(b"source-map")
+
+    source_meta_path = source / "meta.json"
+    source_meta_text = source_meta_path.read_text(encoding="utf-8")
+    source_meta_path.write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="source metadata hash"):
+        registered.verify_canonical_export_provenance(
+            target, meta, "haidian", "202604", {"patch_000001"}
+        )
+    source_meta_path.write_text(source_meta_text, encoding="utf-8")
+
+    source_list = source / "haidian" / "produced_patch_ids_shard_0.json"
+    source_list_text = source_list.read_text(encoding="utf-8")
+    source_list.write_text(json.dumps([]), encoding="utf-8")
+    with pytest.raises(ValueError, match="source patch list hash"):
+        registered.verify_canonical_export_provenance(
+            target, meta, "haidian", "202604", {"patch_000001"}
+        )
+    source_list.write_text(source_list_text, encoding="utf-8")
+
+    target_map = target / "haidian" / "patch_000001" / "202604_embedding_map.pt"
+    target_map.write_bytes(b"tampered-target")
+    with pytest.raises(ValueError, match="Canonical export provenance differs"):
+        registered.verify_canonical_export_provenance(
+            target, meta, "haidian", "202604", {"patch_000001"}
+        )
+    target_map.write_bytes(b"source-map")
+
+    tampered_meta = dict(meta)
+    tampered_meta["canonical_export_provenance_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="does not match export metadata seal"):
+        registered.verify_canonical_export_provenance(
+            target, tampered_meta, "haidian", "202604", {"patch_000001"}
+        )
+
+
 def test_registered_embedding_registry_requires_external_index_hash(tmp_path: Path) -> None:
     registry_path = tmp_path / "embedding_registry.json"
     registry_path.write_text(
@@ -493,6 +636,7 @@ def test_registered_embedding_registry_requires_external_index_hash(tmp_path: Pa
                         "config_sha256": "config",
                         "manifest_sha256": "manifest",
                         "embedding_file_index_sha256": "index",
+                        "canonical_export_provenance_sha256": "canonical",
                         "region": "haidian",
                         "month": "202604",
                         "patch_count": 320,
@@ -508,6 +652,7 @@ def test_registered_embedding_registry_requires_external_index_hash(tmp_path: Pa
         config_sha256="config",
         manifest_sha256="manifest",
         index_sha256="index",
+        canonical_provenance_sha256="canonical",
         region="haidian",
         month="202604",
         patch_count=320,
@@ -520,6 +665,20 @@ def test_registered_embedding_registry_requires_external_index_hash(tmp_path: Pa
             config_sha256="config",
             manifest_sha256="manifest",
             index_sha256="tampered",
+            canonical_provenance_sha256="canonical",
+            region="haidian",
+            month="202604",
+            patch_count=320,
+        )
+
+    with pytest.raises(ValueError, match="does not contain the sealed export"):
+        registered.verify_embedding_registry(
+            registry_path,
+            checkpoint_sha256="checkpoint",
+            config_sha256="config",
+            manifest_sha256="manifest",
+            index_sha256="index",
+            canonical_provenance_sha256="tampered",
             region="haidian",
             month="202604",
             patch_count=320,
@@ -532,10 +691,40 @@ def test_registered_embedding_registry_requires_external_index_hash(tmp_path: Pa
             config_sha256="different-config",
             manifest_sha256="manifest",
             index_sha256="index",
+            canonical_provenance_sha256="canonical",
             region="haidian",
             month="202604",
             patch_count=320,
         )
+
+
+def test_registered_export_rejects_missing_canonical_shard_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = tmp_path / "manifest.json"
+    records = [{"patch_id": f"patch_{index:06d}"} for index in range(320)]
+    manifest.write_text(json.dumps(records), encoding="utf-8")
+    monkeypatch.setattr(
+        registered,
+        "FROZEN_EVAL_MANIFEST_SHA256",
+        registered.sha256_file(manifest),
+    )
+    root = tmp_path / "export"
+    root.mkdir()
+    (root / "meta.json").write_text(
+        json.dumps(
+            {
+                "checkpoint_sha256": "checkpoint",
+                "manifest": {
+                    "manifest_sha256": registered.sha256_file(manifest),
+                    "patch_count": 320,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="lacks canonical shard provenance"):
+        registered._verify_embedding_export(root, manifest, "checkpoint", "202604")
 
 
 def test_registered_external_registry_must_be_a_clean_head_tracked_file(tmp_path: Path) -> None:

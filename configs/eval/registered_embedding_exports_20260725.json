@@ -8,6 +8,7 @@
       "config_sha256": "ebc12f2c7e3b768d6e43248c35bd76b53868fe5bc0b8b53a8aa503bb070eef1e",
       "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
       "embedding_file_index_sha256": "274401bc52a151f7e44721ab557b76263fcae0450e1277878215eb30493e2afc",
+      "canonical_export_provenance_sha256": "b79759046ce0f57a82ad5bec000504ff19aa9d8dea3a72f32497fa75f3a8616e",
       "region": "haidian",
       "month": "202604",
       "patch_count": 320
@@ -18,6 +19,7 @@
       "config_sha256": "2eb9484f8122ee376a7f5564bbc6966fb5094eff1650bb0daccb45c7d3e21d04",
       "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
       "embedding_file_index_sha256": "3c2d3b6ce80659d345cdfce6050ce35128d0a2c21ec78ef604b7cce0974b7724",
+      "canonical_export_provenance_sha256": "60012484864d7db5055d1186723e86829ed3655f9398048d163d64d70f1d5681",
       "region": "haidian",
       "month": "202604",
       "patch_count": 320
@@ -28,6 +30,7 @@
       "config_sha256": "fbec8050ef537cbc68ee6712f3a370dce604a4de544ab1e5d0b54cc742bc227c",
       "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
       "embedding_file_index_sha256": "3026fc033d2116a6faf3cd54bad55ba88eebe2018206546926da10ad973359e0",
+      "canonical_export_provenance_sha256": "5e1f6f4c95fd61ba4b9d77a427b20d37f9e29ce7ac984398e665110f16de2d98",
       "region": "haidian",
       "month": "202604",
       "patch_count": 320
@@ -38,6 +41,7 @@
       "config_sha256": "d8e33faba70b39956dd851bd9413582f0892511529bd2b6546817e219a5278f6",
       "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
       "embedding_file_index_sha256": "f50bf0344971f411c76a58f767e9017b1f713d0748f0905841e358253f16b0c3",
+      "canonical_export_provenance_sha256": "394ad875c59cbf45073978621dc1e3e5ea871b841a124233feeb2b15a32c3857",
       "region": "haidian",
       "month": "202604",
       "patch_count": 320
@@ -48,6 +52,7 @@
       "config_sha256": "61c40949ba0042e856523632155e42fee2b322466339206fbdb8f0a4bcc9c6de",
       "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
       "embedding_file_index_sha256": "0154d6bd05322123e859943463502665be0dd130aacc737446fe06c2ca9cc730",
+      "canonical_export_provenance_sha256": "ce58dc839991250439000a0b03300271f78dcb4368638669da540cf1c8d6ead3",
       "region": "haidian",
       "month": "202604",
       "patch_count": 320
@@ -58,6 +63,7 @@
       "config_sha256": "fe648abc33dc56650549eefabab5308dcb08c28319dd885279605629e8307081",
       "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
       "embedding_file_index_sha256": "65f7d30d3616f8b9db204de395723635371b0c63107d2f75b45a406c0a168e88",
+      "canonical_export_provenance_sha256": "cb31f01a3115a5efa14a42c91508c73494ac9dbe4e99b96c5b4294f6ecb79cee",
       "region": "haidian",
       "month": "202604",
       "patch_count": 320
@@ -68,6 +74,7 @@
       "config_sha256": "36dfa3f6b06c92067f6db6a1294a13a08d5053bf8fd5cee9ad4047776fb051f2",
       "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
       "embedding_file_index_sha256": "62f267ba5e630ebac294a32590d8c7c1d2ec99e150efdbfa8382395d735d931f",
+      "canonical_export_provenance_sha256": "9278c6ffd0a01ddfffd72a4673d069b4e230f8e1aa8283ef36e366d362786da5",
       "region": "haidian",
       "month": "202604",
       "patch_count": 320
@@ -78,6 +85,7 @@
       "config_sha256": "f85e9576caf95ea65addd58ae303b63aefc7f8f3c8b0622fa71791a1f8c3df90",
       "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
       "embedding_file_index_sha256": "9c0a83ae4ce42d89f4b84c495e59430146a4c09775fa1139824ba4dc18e6d6a5",
+      "canonical_export_provenance_sha256": "c685c33eeb9df8e3efbbeb694c4e1a3f20c95f136d5f40ad737225a3808dd98e",
       "region": "haidian",
       "month": "202604",
       "patch_count": 320
@@ -88,6 +96,7 @@
       "config_sha256": "4225a4d6d3c97e584b52fb9a7ef84b6d37c16a85b86c7b2e06c523922a7558c0",
       "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
       "embedding_file_index_sha256": "b416992fce99f10675e5823a99f96ac2fa6de7b9a8ce5c25fbff2111424bcc80",
+      "canonical_export_provenance_sha256": "2eedbf57760cfb881b47b87f09d70e53bcae7a25c15b7fca0e2c0c52de38eaca",
       "region": "haidian",
       "month": "202604",
       "patch_count": 320
@@ -98,6 +107,18 @@
       "config_sha256": "b85ed4c866f7b4f0f139526e8e0b05560b352cd125639212bd1c68fbca8447ca",
       "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
       "embedding_file_index_sha256": "64c4e653486a8989a8052e38f9cfc6a80437322b69051a0b681474b245c97995",
+      "canonical_export_provenance_sha256": "f9ae6931d92b39089a642540a00ed4e2db8327920fb6ca6cc057bf3d92e7383e",
+      "region": "haidian",
+      "month": "202604",
+      "patch_count": 320
+    },
+    {
+      "id": "full_40_fold0_best_202604",
+      "checkpoint_sha256": "0f234b53686813e81706ad8498ed822954b3293276cb778540be13437cf761ca",
+      "config_sha256": "8810cca511c657bb138b20406cd5d7a036a26e02ef8db1233b6e6940a0e36775",
+      "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
+      "embedding_file_index_sha256": "78df0dcc1893cc90cef0567bba5127c5991ee2c572fd8bef3b14e5f9dfd8ad36",
+      "canonical_export_provenance_sha256": "97903aea36014a531723bc7134a1972637635114b1d7226e82f2a82bc3c90205",
       "region": "haidian",
       "month": "202604",
       "patch_count": 320

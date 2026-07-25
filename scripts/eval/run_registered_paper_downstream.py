@@ -129,6 +129,265 @@ def load_sealed_embedding_file_index(
     return index
 
 
+def _patch_id_set_sha256(patch_ids: set[str]) -> str:
+    return hashlib.sha256("\n".join(sorted(patch_ids)).encode("utf-8")).hexdigest()
+
+
+def _load_export_shard_records(
+    embedding_root: Path,
+    region: str,
+    month: str,
+    expected_patch_ids: set[str],
+    shard_commands: dict[int, str],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Validate each completed export shard before a whole-export provenance seal."""
+    region_root = embedding_root / region
+    expected_shards = set(shard_commands)
+    records: list[dict[str, Any]] = []
+    seen_patch_ids: set[str] = set()
+    for shard_id in sorted(expected_shards):
+        path = region_root / f"produced_patch_ids_shard_{shard_id}.json"
+        if not path.is_file():
+            raise FileNotFoundError(f"Missing produced patch list for shard {shard_id}: {path}")
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
+            raise ValueError(f"Shard {shard_id} patch list must be a JSON string list")
+        patch_ids = set(raw)
+        if len(patch_ids) != len(raw):
+            raise ValueError(f"Shard {shard_id} patch list contains duplicate patch IDs")
+        overlap = seen_patch_ids & patch_ids
+        if overlap:
+            raise ValueError(f"Shard patch union overlaps at {sorted(overlap)[:3]}")
+        missing_maps = [
+            patch_id
+            for patch_id in sorted(patch_ids)
+            if not (region_root / patch_id / f"{month}_embedding_map.pt").is_file()
+        ]
+        if missing_maps:
+            raise ValueError(f"Shard {shard_id} is missing embedding maps: {missing_maps[:3]}")
+        seen_patch_ids.update(patch_ids)
+        records.append(
+            {
+                "shard_id": shard_id,
+                "command": shard_commands[shard_id],
+                "produced_patch_ids_path": str(path.relative_to(embedding_root)),
+                "produced_patch_ids_sha256": sha256_file(path),
+                "patch_count": len(patch_ids),
+                "patch_ids_sha256": _patch_id_set_sha256(patch_ids),
+            }
+        )
+    if seen_patch_ids != expected_patch_ids:
+        raise ValueError("Shard patch union does not match the expected export patch IDs")
+    map_patch_ids = {path.parent.name for path in region_root.glob(f"*/{month}_embedding_map.pt")}
+    if map_patch_ids != expected_patch_ids:
+        raise ValueError("Exported embedding map set does not match the expected patch IDs")
+    return records, {
+        "expected_patch_count": len(expected_patch_ids),
+        "expected_patch_ids_sha256": _patch_id_set_sha256(expected_patch_ids),
+        "map_index_sha256": build_embedding_file_index(embedding_root, region, month)[
+            "index_sha256"
+        ],
+    }
+
+
+def _read_shard_patch_ids(region_root: Path, shard_id: int) -> set[str]:
+    path = region_root / f"produced_patch_ids_shard_{shard_id}.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
+        raise ValueError(f"Shard {shard_id} patch list must be a JSON string list")
+    patch_ids = set(raw)
+    if len(patch_ids) != len(raw):
+        raise ValueError(f"Shard {shard_id} patch list contains duplicate patch IDs")
+    return patch_ids
+
+
+def _verify_imported_shards(
+    embedding_root: Path,
+    target_meta: dict[str, Any],
+    region: str,
+    month: str,
+    shard_records: list[dict[str, Any]],
+    imported_shards: dict[int, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Verify a copied shard against its immutable source rather than trusting a note."""
+    required = {
+        "source_embedding_root",
+        "source_meta_sha256",
+        "source_patch_list_sha256",
+        "source_embedding_map_index_sha256",
+        "source_map_count",
+        "copy_reason",
+        "compatibility",
+    }
+    record_by_shard = {int(record["shard_id"]): record for record in shard_records}
+    if set(imported_shards) - set(record_by_shard):
+        raise ValueError("Import records refer to unknown export shards")
+    if not imported_shards:
+        return {}
+    config_path = Path(str(target_meta.get("config_path", "")))
+    if not config_path.is_file():
+        raise FileNotFoundError(f"Target export configuration is unavailable: {config_path}")
+    target_expected = {
+        "config_sha256": sha256_file(config_path),
+        "checkpoint_sha256": target_meta.get("checkpoint_sha256"),
+        "manifest_sha256": target_meta.get("manifest", {}).get("manifest_sha256"),
+    }
+    normalized: dict[str, dict[str, Any]] = {}
+    for shard_id, entry in sorted(imported_shards.items()):
+        if not isinstance(entry, dict) or set(entry) != required:
+            raise ValueError(
+                f"Imported shard {shard_id} does not match the required provenance schema"
+            )
+        if not isinstance(entry["copy_reason"], str) or not entry["copy_reason"].strip():
+            raise ValueError(f"Imported shard {shard_id} must include a nonempty copy_reason")
+        source_root = Path(str(entry["source_embedding_root"])).resolve()
+        source_meta_path = source_root / "meta.json"
+        source_region = source_root / region
+        source_list_path = source_region / f"produced_patch_ids_shard_{shard_id}.json"
+        if not source_meta_path.is_file() or not source_list_path.is_file():
+            raise FileNotFoundError(f"Imported shard {shard_id} source provenance is unavailable")
+        if sha256_file(source_meta_path) != entry["source_meta_sha256"]:
+            raise ValueError(f"Imported shard {shard_id} source metadata hash differs")
+        if sha256_file(source_list_path) != entry["source_patch_list_sha256"]:
+            raise ValueError(f"Imported shard {shard_id} source patch list hash differs")
+        source_meta = json.loads(source_meta_path.read_text(encoding="utf-8"))
+        compatibility = entry["compatibility"]
+        expected_compatibility = {
+            **target_expected,
+            "region": region,
+            "month": str(month),
+            "num_shards": len(record_by_shard),
+            "shard_id": shard_id,
+        }
+        if compatibility != expected_compatibility:
+            raise ValueError(f"Imported shard {shard_id} compatibility fields differ")
+        source_config = Path(str(source_meta.get("config_path", "")))
+        if (
+            not source_config.is_file()
+            or sha256_file(source_config) != compatibility["config_sha256"]
+        ):
+            raise ValueError(f"Imported shard {shard_id} source configuration differs")
+        if source_meta.get("checkpoint_sha256") != compatibility["checkpoint_sha256"]:
+            raise ValueError(f"Imported shard {shard_id} source checkpoint differs")
+        if (
+            source_meta.get("manifest", {}).get("manifest_sha256")
+            != compatibility["manifest_sha256"]
+        ):
+            raise ValueError(f"Imported shard {shard_id} source manifest differs")
+        source_ids = _read_shard_patch_ids(source_region, shard_id)
+        target_ids = _read_shard_patch_ids(embedding_root / region, shard_id)
+        if source_ids != target_ids:
+            raise ValueError(f"Imported shard {shard_id} source patch IDs differ")
+        source_index = build_embedding_file_index(source_root, region, month)
+        if len(source_index["files"]) != entry["source_map_count"]:
+            raise ValueError(f"Imported shard {shard_id} source map count differs")
+        if source_index["index_sha256"] != entry["source_embedding_map_index_sha256"]:
+            raise ValueError(f"Imported shard {shard_id} source embedding map index differs")
+        if {Path(item["path"]).parent.name for item in source_index["files"]} != source_ids:
+            raise ValueError(f"Imported shard {shard_id} source map patch IDs differ")
+        for item in source_index["files"]:
+            target_map = embedding_root / item["path"]
+            if not target_map.is_file() or sha256_file(target_map) != item["sha256"]:
+                raise ValueError(f"Imported shard {shard_id} target map differs from source")
+        normalized[str(shard_id)] = entry
+    return normalized
+
+
+def canonicalize_embedding_export(
+    embedding_root: Path,
+    region: str,
+    month: str,
+    *,
+    expected_patch_ids: set[str],
+    shard_commands: dict[int, str],
+    imported_shards: dict[int, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Write one canonical, content-bound provenance record after sharded export."""
+    embedding_root = embedding_root.resolve()
+    meta_path = embedding_root / "meta.json"
+    if not meta_path.is_file():
+        raise FileNotFoundError(f"Missing embedding export metadata: {meta_path}")
+    records, validation = _load_export_shard_records(
+        embedding_root, region, month, expected_patch_ids, shard_commands
+    )
+    imports = imported_shards or {}
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    normalized_imports = _verify_imported_shards(
+        embedding_root, meta, region, month, records, imports
+    )
+    proof = {
+        "schema_version": 1,
+        "region": region,
+        "month": str(month),
+        "shard_count": len(shard_commands),
+        "shards": records,
+        "imported_shards": normalized_imports,
+        "validation": validation,
+    }
+    proof_path = embedding_root / "canonical_export_provenance.json"
+    _write_json(proof_path, proof)
+    meta["canonical_export_provenance_sha256"] = sha256_file(proof_path)
+    meta["canonical_export_provenance"] = {
+        "path": proof_path.name,
+        "schema_version": proof["schema_version"],
+        "shard_count": proof["shard_count"],
+    }
+    _write_json(meta_path, meta)
+    return proof
+
+
+def verify_canonical_export_provenance(
+    embedding_root: Path,
+    export_meta: dict[str, Any],
+    region: str,
+    month: str,
+    expected_patch_ids: set[str],
+) -> dict[str, Any]:
+    """Fail closed unless one whole-export provenance proof matches the shard outputs."""
+    description = export_meta.get("canonical_export_provenance")
+    if not isinstance(description, dict):
+        raise ValueError("Embedding export lacks canonical shard provenance")
+    proof_path = embedding_root / str(description.get("path", ""))
+    if not proof_path.is_file():
+        raise FileNotFoundError(f"Missing canonical export provenance: {proof_path}")
+    if export_meta.get("canonical_export_provenance_sha256") != sha256_file(proof_path):
+        raise ValueError("Canonical export provenance does not match export metadata seal")
+    proof = json.loads(proof_path.read_text(encoding="utf-8"))
+    if proof.get("schema_version") != 1:
+        raise ValueError("Unsupported canonical export provenance schema")
+    if proof.get("region") != region or str(proof.get("month")) != str(month):
+        raise ValueError("Canonical export provenance region or month is inconsistent")
+    shards = proof.get("shards")
+    if not isinstance(shards, list) or not shards:
+        raise ValueError("Canonical export provenance has no shard records")
+    shard_commands = {
+        int(record["shard_id"]): str(record["command"])
+        for record in shards
+        if isinstance(record, dict) and isinstance(record.get("shard_id"), int)
+    }
+    if len(shard_commands) != len(shards) or len(shard_commands) != proof.get("shard_count"):
+        raise ValueError("Canonical export provenance shard records are inconsistent")
+    records, validation = _load_export_shard_records(
+        embedding_root, region, month, expected_patch_ids, shard_commands
+    )
+    if records != shards or validation != proof.get("validation"):
+        raise ValueError("Canonical export provenance differs from current shard outputs")
+    imports = proof.get("imported_shards")
+    if not isinstance(imports, dict):
+        raise ValueError("Canonical export provenance imported_shards is invalid")
+    normalized_imports = _verify_imported_shards(
+        embedding_root,
+        export_meta,
+        region,
+        month,
+        records,
+        {int(key): value for key, value in imports.items() if str(key).isdigit()},
+    )
+    if normalized_imports != imports:
+        raise ValueError("Canonical export provenance imported shard records are inconsistent")
+    return proof
+
+
 def seal_embedding_file_index(embedding_root: Path, region: str, month: str) -> dict[str, Any]:
     """Write a content index and bind it into an already-complete export's metadata."""
     meta_path = embedding_root / "meta.json"
@@ -167,6 +426,7 @@ def verify_embedding_registry(
     config_sha256: str,
     manifest_sha256: str,
     index_sha256: str,
+    canonical_provenance_sha256: str,
     region: str,
     month: str,
     patch_count: int,
@@ -183,6 +443,7 @@ def verify_embedding_registry(
         "config_sha256": config_sha256,
         "manifest_sha256": manifest_sha256,
         "embedding_file_index_sha256": index_sha256,
+        "canonical_export_provenance_sha256": canonical_provenance_sha256,
         "region": region,
         "month": str(month),
         "patch_count": patch_count,
@@ -328,6 +589,7 @@ def _verify_embedding_export(
     expected_patch_ids = {str(record["patch_id"]) for record in manifest_records}
     if len(expected_patch_ids) != 320:
         raise ValueError("Registered evaluation manifest must contain 320 unique patch IDs")
+    verify_canonical_export_provenance(embedding_root, meta, "haidian", month, expected_patch_ids)
     load_sealed_embedding_file_index(embedding_root, meta, "haidian", month, expected_patch_ids)
     return meta
 
@@ -895,6 +1157,7 @@ def main() -> None:
         config_sha256=str(provenance["config_sha256"]),
         manifest_sha256=FROZEN_EVAL_MANIFEST_SHA256,
         index_sha256=str(export_meta["embedding_file_index_sha256"]),
+        canonical_provenance_sha256=str(export_meta["canonical_export_provenance_sha256"]),
         region="haidian",
         month=args.month,
         patch_count=320,
