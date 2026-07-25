@@ -1,3 +1,10 @@
+# Historical JRS Planning Outline (Not the RSE Manuscript Source)
+
+> **Status:** retained only as historical planning material for the former JRS special-issue
+> route. The active RSE manuscript source is
+> `docs/paper/rse_2026/manuscript_outline_en.md`; do not reuse this file's journal-specific
+> declarations, reference-style instructions, or submission language for RSE.
+
 # XuannvEarth: Spatial Evaluation of Monthly-Indexed Multimodal Urban Embeddings
 
 > Target venue: *Journal of Remote Sensing*, Special Issue on Foundation Models based Multimodal Earth Observation Data Fusion and Applications  
