@@ -9,8 +9,11 @@ later release-admission steps can bind to an external archive.
 from __future__ import annotations
 
 import json
+import re
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
+from urllib.request import urlopen
 
 from scripts.eval import run_registered_paper_downstream as registered
 
@@ -22,6 +25,56 @@ def _load_json(path: Path, *, description: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"{description.capitalize()} must be a JSON object: {path}")
     return payload
+
+
+def verify_release_anchor(registry_path: Path, anchor_path: Path) -> dict[str, Any]:
+    """Verify a Git-sealed anchor against its versioned Zenodo registry bytes."""
+    registered.verify_git_head_file(anchor_path)
+    anchor = _load_json(anchor_path, description="release anchor")
+    expected_fields = {
+        "schema_version",
+        "protocol_id",
+        "registry_path",
+        "registry_sha256",
+        "zenodo_doi",
+        "registry_url",
+    }
+    unexpected_fields = set(anchor).difference(expected_fields)
+    if unexpected_fields:
+        raise ValueError(f"Release anchor contains unexpected fields: {sorted(unexpected_fields)}")
+    if anchor.get("schema_version") != 1 or anchor.get("protocol_id") != "v5_osm_assisted":
+        raise ValueError("Invalid V5 release-anchor schema")
+    if anchor.get("registry_path") != str(registry_path.resolve()):
+        raise ValueError("Release-anchor registry path does not match the requested registry")
+    registry_sha256 = registered.sha256_file(registry_path)
+    if anchor.get("registry_sha256") != registry_sha256:
+        raise ValueError("Release-anchor registry hash does not match the requested registry")
+    doi = anchor.get("zenodo_doi")
+    url = anchor.get("registry_url")
+    match = (
+        re.fullmatch(r"https://doi\.org/10\.5281/zenodo\.(\d+)", doi)
+        if isinstance(doi, str)
+        else None
+    )
+    if match is None:
+        raise ValueError("Release anchor requires a versioned Zenodo DOI")
+    record_id = match.group(1)
+    if not isinstance(url, str) or not re.fullmatch(
+        rf"https://zenodo\.org/records/{record_id}/files/[^?#]+(?:\?[^#]*)?", url
+    ):
+        raise ValueError("Release anchor URL is not a file in the DOI's Zenodo record")
+    try:
+        with urlopen(url, timeout=30) as response:  # noqa: S310 - DOI-bound archive URL.
+            archived_bytes = response.read()
+    except OSError as exc:
+        raise ValueError("Could not fetch the external registry archive") from exc
+    if sha256(archived_bytes).hexdigest() != registry_sha256:
+        raise ValueError("External registry archive hash does not match the release anchor")
+    return {
+        **anchor,
+        "path": str(anchor_path.resolve()),
+        "sha256": registered.sha256_file(anchor_path),
+    }
 
 
 def collect_sealed_result_identities(registry_path: Path) -> list[dict[str, str]]:

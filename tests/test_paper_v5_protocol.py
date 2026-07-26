@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -304,6 +305,141 @@ def test_release_admission_rejects_tampered_sealed_result(tmp_path: Path, tamper
 
     with pytest.raises(ValueError):
         admission.collect_sealed_result_identities(registry_path)
+
+
+def test_release_anchor_requires_doi_bound_registry_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Git anchor must bind the exact bytes published in its Zenodo record."""
+    registry_path = tmp_path / "results.jsonl"
+    registry_path.write_text('{"result_id":"sealed"}\n', encoding="utf-8")
+    anchor_path = tmp_path / "anchor.json"
+    anchor = {
+        "schema_version": 1,
+        "protocol_id": "v5_osm_assisted",
+        "registry_path": str(registry_path.resolve()),
+        "registry_sha256": _sha256(registry_path),
+        "zenodo_doi": "https://doi.org/10.5281/zenodo.1234567",
+        "registry_url": "https://zenodo.org/records/1234567/files/results.jsonl",
+    }
+    _write_json(anchor_path, anchor)
+    monkeypatch.setattr(registered, "verify_git_head_file", lambda path: None)
+    monkeypatch.setattr(
+        admission,
+        "urlopen",
+        lambda *args, **kwargs: io.BytesIO(registry_path.read_bytes()),
+        raising=False,
+    )
+
+    verified = admission.verify_release_anchor(registry_path, anchor_path)
+
+    assert verified["registry_sha256"] == _sha256(registry_path)
+    assert verified["sha256"] == _sha256(anchor_path)
+
+
+def test_release_anchor_rejects_wrong_external_registry_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A DOI-shaped URL is insufficient when the published registry bytes differ."""
+    registry_path = tmp_path / "results.jsonl"
+    registry_path.write_text('{"result_id":"sealed"}\n', encoding="utf-8")
+    anchor_path = tmp_path / "anchor.json"
+    _write_json(
+        anchor_path,
+        {
+            "schema_version": 1,
+            "protocol_id": "v5_osm_assisted",
+            "registry_path": str(registry_path.resolve()),
+            "registry_sha256": _sha256(registry_path),
+            "zenodo_doi": "https://doi.org/10.5281/zenodo.1234567",
+            "registry_url": "https://zenodo.org/records/1234567/files/results.jsonl",
+        },
+    )
+    monkeypatch.setattr(registered, "verify_git_head_file", lambda path: None)
+    monkeypatch.setattr(admission, "urlopen", lambda *args, **kwargs: io.BytesIO(b"wrong"))
+
+    with pytest.raises(ValueError, match="External registry archive hash"):
+        admission.verify_release_anchor(registry_path, anchor_path)
+
+
+def test_release_anchor_rejects_unexpected_hash_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Anchor-controlled fields must not override computed release identity hashes."""
+    registry_path = tmp_path / "results.jsonl"
+    registry_path.write_text('{"result_id":"sealed"}\n', encoding="utf-8")
+    anchor_path = tmp_path / "anchor.json"
+    _write_json(
+        anchor_path,
+        {
+            "schema_version": 1,
+            "protocol_id": "v5_osm_assisted",
+            "registry_path": str(registry_path.resolve()),
+            "registry_sha256": _sha256(registry_path),
+            "zenodo_doi": "https://doi.org/10.5281/zenodo.1234567",
+            "registry_url": "https://zenodo.org/records/1234567/files/results.jsonl",
+            "sha256": "forged",
+        },
+    )
+    monkeypatch.setattr(registered, "verify_git_head_file", lambda path: None)
+    monkeypatch.setattr(
+        admission, "urlopen", lambda *args, **kwargs: io.BytesIO(registry_path.read_bytes())
+    )
+
+    with pytest.raises(ValueError, match="unexpected fields"):
+        admission.verify_release_anchor(registry_path, anchor_path)
+
+
+def test_release_anchor_rejects_untracked_file_before_network_fetch(tmp_path: Path) -> None:
+    """A release anchor must be a tracked, byte-identical Git HEAD artifact."""
+    registry_path = tmp_path / "results.jsonl"
+    registry_path.write_text('{"result_id":"sealed"}\n', encoding="utf-8")
+    anchor_path = tmp_path / "anchor.json"
+    _write_json(anchor_path, {"schema_version": 1})
+
+    with pytest.raises(ValueError, match="Git repository"):
+        admission.verify_release_anchor(registry_path, anchor_path)
+
+
+def test_release_anchor_rejects_worktree_bytes_that_differ_from_git_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tracked anchor is still rejected after any uncommitted byte-level change."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for command in (
+        ("git", "init"),
+        ("git", "config", "user.email", "tests@example.invalid"),
+        ("git", "config", "user.name", "Tests"),
+    ):
+        subprocess.run(command, cwd=repo, check=True, capture_output=True, text=True)
+    registry_path = repo / "results.jsonl"
+    registry_path.write_text('{"result_id":"sealed"}\n', encoding="utf-8")
+    anchor_path = repo / "anchor.json"
+    _write_json(
+        anchor_path,
+        {
+            "schema_version": 1,
+            "protocol_id": "v5_osm_assisted",
+            "registry_path": str(registry_path.resolve()),
+            "registry_sha256": _sha256(registry_path),
+            "zenodo_doi": "https://doi.org/10.5281/zenodo.1234567",
+            "registry_url": "https://zenodo.org/records/1234567/files/results.jsonl",
+        },
+    )
+    subprocess.run(("git", "add", "."), cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ("git", "commit", "-m", "seal anchor"),
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    anchor_path.write_text(anchor_path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    monkeypatch.setattr(admission, "urlopen", lambda *args, **kwargs: io.BytesIO(b"unused"))
+
+    with pytest.raises(ValueError, match="current Git HEAD"):
+        admission.verify_release_anchor(registry_path, anchor_path)
 
 
 def _sha256(path: Path) -> str:
@@ -1667,7 +1803,7 @@ def test_v5_encoder_queue_resume_writes_immutable_resume_logs(tmp_path: Path) ->
     bin_dir.mkdir()
     fake_torchrun = bin_dir / "torchrun"
     fake_torchrun.write_text(
-        "#!/usr/bin/env bash\n" "echo fake resume failure >&2\n" "exit 1\n",
+        "#!/usr/bin/env bash\necho fake resume failure >&2\nexit 1\n",
         encoding="utf-8",
     )
     fake_torchrun.chmod(0o755)
