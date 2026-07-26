@@ -85,8 +85,8 @@ def collect_sealed_result_identities(
     """Read preliminary result identities without changing any sealed artifact.
 
     This narrow primitive deliberately accepts only the preliminary status.
-    The future release-admission writer will add archive, matrix-completeness,
-    and report-binding checks around these verified identities.
+    The release-admission writer adds archive, matrix-completeness, and
+    report-binding checks around these verified identities.
     """
     if not registry_path.is_file():
         raise FileNotFoundError(f"Missing result registry: {registry_path}")

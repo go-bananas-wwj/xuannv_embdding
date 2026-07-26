@@ -33,11 +33,13 @@ release-admission record binds their exact registry, metric, artifact, and repor
 - Registered exports must have a six-shard canonical provenance record, a content index, and
   a Git-anchored registry entry.
 - Downstream artifacts must pass `verify_artifact_registry_binding()` while retaining their
-  original preliminary state. **Pending implementation and execution of the release-admission
-  consumer**, a manuscript table or figure must not consume them. Once that gate exists, it will
-  require a Git-anchored release-admission record whose selected registry, metric, artifact, and
-  report hashes exactly match the sealed files. The admission overlay never rewrites probe
-  artifacts.
+  original preliminary state. The release-admission consumer is implemented in
+  `scripts/report/admit_registered_results.py`, but it has not yet been executed for V5 because
+  the required five-fold matrix, aggregate report, external versioned registry archive, and
+  Git-anchored release anchor do not yet exist. Until that gate executes successfully, a
+  manuscript table or figure must not consume the artifacts. The admission overlay requires the
+  selected registry, metric, artifact, and report hashes to match the sealed files, and it never
+  rewrites probe artifacts.
 - The paper aggregator is intentionally fail-closed by default. `--allow-preliminary` output
   is for internal diagnosis only and must be labelled preliminary.
 - OSM-overlap tasks are reported as OSM-assisted readout evidence. They do not by themselves
