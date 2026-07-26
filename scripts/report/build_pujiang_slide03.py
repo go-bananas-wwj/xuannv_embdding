@@ -47,11 +47,10 @@ BASE_NODES = [
 ]
 MONTHS = ["12月", "1月", "2月", "3月", "4月", "5月"]
 MASK_FACTS = [
-    ("月份", "65% 的训练样本启用月份遮挡；随机拿走 1–4 个月"),
-    ("空间", "65% 的训练样本启用空间遮挡；遮住约 32% 的图像块"),
-    ("重建目标", "答案仍是完整影像，不随输入一起被遮住"),
-    ("恢复依据", "从剩余月份、其他传感器和周边空间恢复"),
-    ("真实缺失", "availability mask 只记录原始数据是否真实存在"),
+    ("月份 65%", "每个训练样本有 65% 概率启动月份遮挡\n随机拿走 1–4 个月"),
+    ("空间 65%", "每个训练样本有 65% 概率启动空间遮挡\n遮住约 32% 的图像块"),
+    ("补回完整答案", "答案仍是完整影像\n从剩余月份、其他传感器和周边空间恢复"),
+    ("真实缺失不改", "availability mask 只记录原始数据是否真实存在"),
 ]
 
 
@@ -223,7 +222,7 @@ def add_monthly_card(slide) -> None:
         3.47,
         3.50,
         0.35,
-        13,
+        14,
         INK,
         True,
         PP_ALIGN.CENTER,
@@ -277,21 +276,21 @@ def add_masking_card(slide) -> None:
         True,
         PP_ALIGN.CENTER,
     )
-    y = 3.83
+    y = 3.84
     for index, (title, detail) in enumerate(MASK_FACTS):
-        row_y = y + index * 0.48
-        add_rect(slide, x + 0.24, row_y, 0.10, 0.40, CYAN, CYAN)
-        add_text(slide, title, x + 0.45, row_y, 0.83, 0.40, 12, CYAN, True)
-        add_text(slide, detail, x + 1.27, row_y, 2.43, 0.40, 12, INK, True)
-    add_rect(slide, x + 0.30, 6.28, 3.34, 0.23, WHITE, LINE)
+        row_y = y + index * 0.59
+        add_rect(slide, x + 0.24, row_y, 0.10, 0.51, CYAN, CYAN)
+        add_text(slide, title, x + 0.45, row_y, 1.06, 0.51, 15, CYAN, True)
+        add_text(slide, detail, x + 1.50, row_y, 2.20, 0.51, 13, INK, True)
+    add_rect(slide, x + 0.30, 6.25, 3.34, 0.26, WHITE, LINE)
     add_text(
         slide,
         "目的：学会在云雾、缺月或缺源时仍生成稳定嵌入",
         x + 0.38,
-        6.29,
+        6.27,
         3.18,
-        0.20,
-        12,
+        0.22,
+        13,
         DEEP_BLUE,
         True,
         PP_ALIGN.CENTER,
@@ -308,18 +307,19 @@ def add_semantic_card(slide) -> None:
         3.47,
         3.44,
         0.35,
-        13,
+        14,
         INK,
         True,
         PP_ALIGN.CENTER,
     )
     add_text(
         slide,
-        "13 类：建筑、主路、支路、铁路、水体、绿地、农业、居住、商业、工业、施工、步道、操场",
+        "13 项可重叠的 OSM 语义提示\n"
+        "建筑、主路、支路、铁路、水体、绿地、农业、居住、商业、工业、施工、步道、操场",
         x + 0.25,
         3.84,
         3.44,
-        0.64,
+        0.70,
         12,
         INK,
         True,
@@ -328,24 +328,25 @@ def add_semantic_card(slide) -> None:
     add_rect(slide, x + 0.27, 4.56, 3.40, 0.76, WHITE, LINE)
     add_text(
         slide,
-        "怎么进入模型？\n临时 1×1 线性探针从 64 维嵌入读类别；训练结束后丢弃",
+        "怎么进入模型？\n临时 1×1 线性探针分别判断每项语义是否存在；训练结束后丢弃",
         x + 0.38,
-        4.59,
+        4.65,
         3.18,
         0.69,
-        12,
+        13,
         DEEP_BLUE,
         True,
         PP_ALIGN.CENTER,
     )
     add_text(
         slide,
-        "0.14 是损失系数，不是准确率或数据占比",
+        "0.14 控制整组 OSM 提示对训练的影响力度\n"
+        "不是准确率、数据占比，也不代表总损失的 14%",
         x + 0.27,
-        5.41,
+        5.46,
         3.40,
-        0.34,
-        12,
+        0.52,
+        13,
         GREEN,
         True,
         PP_ALIGN.CENTER,
@@ -354,7 +355,7 @@ def add_semantic_card(slide) -> None:
         slide,
         "困难负样本：最难的 2% 背景像素，额外权重 0.35",
         x + 0.27,
-        5.78,
+        6.01,
         3.40,
         0.40,
         12,
@@ -364,11 +365,12 @@ def add_semantic_card(slide) -> None:
     )
     add_text(
         slide,
-        "uniformity 0.06｜高分光学重建 0.90\n配置权重，不代表损失贡献",
+        "最难的 2% 背景像素额外权重 0.35｜uniformity 0.06｜"
+        "高分光学重建 0.90｜配置权重，不代表损失贡献",
         x + 0.27,
-        6.17,
+        6.34,
         3.40,
-        0.36,
+        0.19,
         12,
         MUTED,
         True,
@@ -531,13 +533,19 @@ def build_preview(output: Path) -> None:
         pil_font(16, True),
         ink,
     )
-    row_y = 462
+    row_y = 458
     for title, detail in MASK_FACTS:
-        draw.rectangle((593, row_y, 607, row_y + 42), fill=cyan)
-        draw.text((621, row_y + 1), title, font=pil_font(14, True), fill=cyan)
-        draw.text((720, row_y + 1), detail, font=pil_font(11, True), fill=ink)
-        row_y += 52
-    draw.rectangle((600, 736, 1002, 776), fill="white", outline=line, width=2)
+        draw.rectangle((593, row_y, 607, row_y + 55), fill=cyan)
+        draw.text((621, row_y + 10), title, font=pil_font(15, True), fill=cyan)
+        draw.multiline_text(
+            (748, row_y + 2),
+            detail,
+            font=pil_font(11, True),
+            fill=ink,
+            spacing=2,
+        )
+        row_y += 68
+    draw.rectangle((600, 738, 1002, 776), fill="white", outline=line, width=2)
     draw_centered(
         draw,
         "目的：在云雾、缺月或缺源时仍生成稳定嵌入",
@@ -555,7 +563,8 @@ def build_preview(output: Path) -> None:
     )
     draw_centered(
         draw,
-        "建筑、主路、支路、铁路、水体、绿地、农业、居住\n商业、工业、施工、步道、操场",
+        "13 项可重叠的 OSM 语义提示\n建筑、主路、支路、铁路、水体、绿地、农业、居住\n"
+        "商业、工业、施工、步道、操场",
         (1095, 458, 1519, 526),
         pil_font(12, True),
         ink,
@@ -563,29 +572,30 @@ def build_preview(output: Path) -> None:
     draw.rectangle((1102, 535, 1510, 619), fill="white", outline=line, width=2)
     draw_centered(
         draw,
-        "临时 1×1 线性探针从 64 维嵌入读类别\n训练结束后丢弃",
+        "临时 1×1 线性探针分别判断每项语义是否存在\n训练结束后丢弃",
         (1108, 540, 1504, 614),
         pil_font(12, True),
         deep_blue,
     )
     draw_centered(
         draw,
-        "0.14 是损失系数，不是准确率或数据占比",
-        (1095, 626, 1519, 662),
+        "0.14 控制整组 OSM 提示对训练的影响力度\n"
+        "不是准确率、数据占比，也不代表总损失的 14%",
+        (1095, 626, 1519, 681),
         pil_font(12, True),
         green,
     )
     draw_centered(
         draw,
         "最难的 2% 背景像素，额外权重 0.35",
-        (1095, 663, 1519, 704),
+        (1095, 687, 1519, 724),
         pil_font(12, True),
         ink,
     )
     draw_centered(
         draw,
         "uniformity 0.06｜高分光学重建 0.90\n配置权重，不代表损失贡献",
-        (1095, 709, 1519, 778),
+        (1095, 730, 1519, 778),
         pil_font(11, True),
         muted,
     )
