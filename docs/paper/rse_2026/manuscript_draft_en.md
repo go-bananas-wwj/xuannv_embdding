@@ -74,7 +74,7 @@ regional scale, imperfect weak labels, and sparse higher-resolution observations
 ### 2.1 Dense geospatial representations and EO foundation models
 
 Large-scale Earth-observation encoders and embedding products motivate a stable feature interface
-rather than a separate end-to-end model per task (Brown et al., 2025; Herzog et al., 2026).
+rather than a separate end-to-end model per task (Brown et al., 2025; Herzog et al., 2025).
 XuannvEarth follows this interface at city scale and monthly cadence. It is not a global foundation
 model: its training extent, observation history, and label sources are narrower than those of
 globally trained products.
@@ -186,11 +186,24 @@ energy use will be reported only from final run records.
 
 ### 3.5 Registered downstream evaluation
 
-The primary reader is a frozen-feature 64-channel Conv3x3 segmentation probe. Every representation
-within a comparison cell uses the same spatial split, label source, shot schedule, reader,
-optimiser budget, random-seed policy, and validation-selected threshold. The protocol reports F1,
-average precision, IoU, ROC-AUC, precision, and recall, with uncertainty calculated from spatial
-blocks rather than independent pixels. A five-fold, three-probe-seed design is registered for the
+The primary reader is a frozen-feature 64-channel Conv3x3 segmentation probe. For each task, fold,
+and probe seed, the probe is trained from scratch for 80 epochs using AdamW (learning rate 0.001,
+weight decay 0.0001), cosine learning-rate decay, batch size eight, and pixelwise
+binary-cross-entropy logits loss with a training-set class-balance weight equal to the
+negative-to-positive pixel ratio, clipped at 50. No probe epoch is
+selected on test data: the final epoch is evaluated once. Feature standardisation is fit on the
+support patches only and then applied unchanged to validation and test patches.
+
+For each fold, the support set contains exactly five or ten deterministic, nested, mixed-class
+labeled patches. A valid support patch contains at least 64 foreground and 64 background pixels;
+where the requested budget cannot be met, the frozen shot schedule records that budget as
+unavailable rather than silently downsampling it. Probabilities are computed with a sigmoid. The decision threshold is selected
+on pooled validation pixels by exhaustive F1 search from 0.001 to 0.999 in increments of 0.001 and
+is fixed once for the held-out test fold; ties select the greatest threshold. The protocol reports F1, average precision, IoU,
+ROC-AUC, precision, and recall. Aggregated comparisons will use paired spatial-block uncertainty,
+not independent-pixel intervals. Every representation within a comparison cell uses the same
+spatial split, label source, shot schedule, reader, optimiser budget, random-seed policy, and
+validation-selected threshold. A five-fold, three-probe-seed design is registered for the
 `full_150` V5 family.
 
 The primary V5 task family is OSM-assisted and ontology-overlapping. It can diagnose whether frozen
@@ -260,10 +273,24 @@ plausible but unverified urban mapping product.
 
 ## Data and code availability
 
-Code, configurations, protocol manifests, and reproducibility documentation will be released at
-**[insert repository URL and release DOI]**. Model checkpoints, downstream-head weights, and
-reproducible embedding products will be released at **[insert ModelScope dataset URL and version]**.
-Raw and commercial/third-party imagery are subject to their access and redistribution terms.
+The archival release will contain: source code; exact self-contained encoder and probe
+configurations; frozen spatial split, buffer, subset and shot-schedule manifests; normalisation
+statistics; environment and command records; checkpoint/configuration hashes; embedding-export
+file indices and provenance; frozen probe weights; per-patch validation and test predictions;
+metrics, aggregation and spatial-bootstrap reports; and the release-admission registry that binds
+each reported result to these artifacts. The release DOI, version, licence, repository URL, and
+artifact manifest will be inserted here before submission. Checkpoints, embedding products, and
+downstream artifacts will additionally be versioned on ModelScope, with the exact version and
+content manifest cited here.
+
+The OSM-derived training and readout masks can be released as derived rasters and documented
+rasterisation rules where their source terms permit. Sentinel-1, Sentinel-2, and Landsat inputs
+will be provided through reproducible acquisition/preprocessing instructions rather than
+redistributed copies. Higher-resolution optical and SAR imagery are subject to third-party access
+and redistribution terms and will not be redistributed; the archival release will state the source,
+access condition, date window, preprocessing inputs, and a procedure for access requests. Any
+artifact that cannot be publicly shared will be listed in the release manifest with its reason and
+access route.
 
 ## CRediT authorship contribution statement
 
