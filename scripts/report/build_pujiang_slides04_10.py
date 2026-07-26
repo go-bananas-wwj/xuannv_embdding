@@ -29,6 +29,14 @@ RECON_EXAMPLE = Path(
 )
 WORKFLOW_IMAGE = ROOT / "docs/bp_deck/assets/remote_sensing_team_workflow.png"
 FEWSHOT_IMAGE = ROOT / "docs/production/assets/haidian_v1_20260708/fewshot_5shot_examples.png"
+PU_QUERY_ASSET_ROOT = (
+    ROOT
+    / "docs/production/assets/haidian_pu_query_3polygon_compare_20260726"
+)
+PU_QUERY_RESULTS = Path(
+    "/data/xuannv_embedding/experiments/production/"
+    "haidian_pu_query_3polygon_compare_20260726/results.json"
+)
 PCA_COMPARE = (
     ROOT
     / "docs/production/assets/nonbuilding_fewshot_semantic_20260705"
@@ -54,7 +62,7 @@ PAGE_TITLES = {
     5: "少量标注，快速形成区域级专题图",
     6: "嵌入底座进入遥感智能体工作流",
     7: "云遮挡或观测缺失时，生成指定时刻的遥感参考影像",
-    8: "海淀区同协议评测：64 维月度嵌入达到 AEF 同量级",
+    8: "海淀区 3 多边形同协议评测：道路与水体领先",
     9: "探索性结果：标注越少，月度嵌入优势越明显",
     10: "哈尔滨新区：从月度嵌入到城市治理专题",
 }
@@ -228,63 +236,40 @@ def page05() -> tuple[Image.Image, dict]:
     draw = draw_header(
         canvas,
         PAGE_TITLES[5],
-        "冻结月度嵌入，只训练轻量下游头；标注成本从全域描绘缩减为少量代表性样例",
+        "用户每类只圈 3 个目标多边形；玄女、AEF 与传统特征共享同一标注和 PU+Query 流程",
     )
-    steps = [
-        ("01", "选择月度嵌入", "2026年4月｜128×128×64"),
-        ("02", "标注少量样例", "平台提交目标多边形标注"),
-        ("03", "训练轻量任务头", "冻结底座｜PU / Binary Conv"),
-        ("04", "全域推理与复核", "320个patch形成专题初图"),
-    ]
-    for index, (number, title, detail) in enumerate(steps):
-        x = 55 + index * 382
-        draw.rounded_rectangle((x, 210, x + 345, 315), radius=6, fill=PALE_BLUE, outline=LINE, width=2)
-        draw.ellipse((x + 18, 231, x + 78, 291), fill=BLUE)
-        centered(draw, number, (x + 18, 231, x + 78, 291), font(18, True), WHITE)
-        draw.text((x + 92, 225), title, font=font(19, True), fill=DEEP_BLUE)
-        draw.text((x + 92, 262), detail, font=font(14), fill=MUTED)
-        if index < 3:
-            centered(draw, "→", (x + 345, 235, x + 382, 292), font(25, True), BLUE)
-    with Image.open(FEWSHOT_IMAGE) as source:
-        xuannv_case = source.convert("RGB").crop((0, 65, 2025, 690))
-    paste_panel_image(
-        canvas,
-        xuannv_case,
-        (55, 350, 1110, 806),
-        "5-shot建筑案例｜原始影像、GT、玄女概率与玄女掩膜",
-    )
-    draw.rounded_rectangle((1150, 350, 1545, 806), radius=6, fill=PALE_GRAY, outline=LINE, width=2)
-    centered(draw, "“5-shot”是什么意思？", (1175, 375, 1520, 425), font(23, True), DEEP_BLUE)
+    draw.rounded_rectangle((55, 198, 1545, 246), radius=5, fill=PALE_BLUE, outline=LINE, width=2)
     centered(
         draw,
-        "论文评测口径：\n5 个正样本 patch\n+ 5 个负样本 patch\n\n平台产品口径：\n提交目标多边形标注\n由 PU / Query 或 Binary Conv\n形成轻量任务头\n\n随后对海淀全域推理",
-        (1180, 440, 1515, 665),
-        font(19, True),
+        "PU：从未标区域中自动寻找可靠背景；Query：在新 patch 中用高置信目标轻量校准。"
+        "候选得分白色低、红色高；右侧为真实标签。",
+        (70, 200, 1530, 244),
+        font(16, True),
         INK,
     )
-    draw.rounded_rectangle((1190, 690, 1505, 770), radius=5, fill=WHITE, outline=LINE, width=2)
+    for index, task in enumerate(("building", "road", "water")):
+        source_path = PU_QUERY_ASSET_ROOT / f"{task}_3polygon_compare.png"
+        with Image.open(source_path) as source:
+            row = source.convert("RGB")
+        row = row.resize((1490, 190), Image.Resampling.LANCZOS)
+        y = 260 + index * 200
+        canvas.paste(row, (55, y))
+        draw.rounded_rectangle((55, y, 1545, y + 190), radius=4, outline=LINE, width=2)
+    draw.rounded_rectangle((55, 864, 1545, 892), radius=4, fill=PALE_GRAY)
     centered(
         draw,
-        "本页只说明业务流程\n模型公平对比见第8页：\n同标签｜同划分｜同头｜同阈值规则",
-        (1200, 692, 1495, 768),
-        font(15, True),
-        RED,
-    )
-    centered(
-        draw,
-        "业务价值：新增类别时无需重训嵌入底座，只需补少量样例并更新轻量任务头。",
-        (55, 826, 1545, 875),
-        font(18, True),
-        INK,
+        "三行依次为建筑物、道路、水体；本页显示候选排序，第 8 页报告独立测试集二值指标。",
+        (70, 864, 1530, 892),
+        font(14, True),
+        MUTED,
     )
     return canvas, {
         "slide": 5,
         "title": PAGE_TITLES[5],
-        "protocol": (
-            "Paper evaluation: 5-shot = 5 positive patches + 5 negative patches. "
-            "Platform: polygon labels with PU/query or binary conv."
-        ),
-        "fairness": ["same labels", "same split", "same head", "same threshold rule"],
+        "protocol": "每个任务 3 个目标多边形；PU + Query；64 个独立测试 patch",
+        "tasks": ["建筑物", "道路", "水体"],
+        "features": ["玄女 P10C 2026-04", "AEF 2025", "传统 2026-04 多源特征"],
+        "fairness": ["same polygons", "same test patches", "same PU+Query", "same threshold rule"],
     }
 
 
@@ -412,54 +397,79 @@ def page08() -> tuple[Image.Image, dict]:
     draw = draw_header(
         canvas,
         PAGE_TITLES[8],
-        "同标签/划分/conv3×3头/阈值规则；玄女为2026年4月月度产品，AEF为2025年度产品",
+        "每类同一组 3 个多边形、同一批 64 个测试 patch、同一 PU+Query 与阈值规则",
     )
-    tasks = ["建筑物", "道路", "水体"]
-    values = {
-        "玄女 P10C（64维）": [0.4840, 0.5198, 0.6229],
-        "Google AEF（64维）": [0.4855, 0.5165, 0.6520],
-        "DINOv3（1024维）": [0.4983, 0.5999, 0.6750],
-    }
-    colors = [RED, BLUE, (92, 112, 129)]
-    chart = (70, 245, 1000, 720)
-    x0, y0, x1, y1 = chart
-    draw.line((x0, y1, x1, y1), fill=INK, width=2)
-    for tick in range(0, 8):
-        value = tick / 10
-        y = y1 - int(value / 0.8 * (y1 - y0))
-        draw.line((x0, y, x1, y), fill=(225, 231, 235), width=1)
-        draw.text((20, y - 10), f"{value:.1f}", font=font(13), fill=MUTED)
-    group_w = (x1 - x0) / len(tasks)
-    bar_w = 48
-    for task_index, task in enumerate(tasks):
-        center_x = x0 + group_w * (task_index + 0.5)
-        for model_index, (_, model_values) in enumerate(values.items()):
-            value = model_values[task_index]
-            left = int(center_x - 84 + model_index * 60)
-            top = y1 - int(value / 0.8 * (y1 - y0))
-            draw.rectangle((left, top, left + bar_w, y1), fill=colors[model_index])
-            centered(draw, f"{value:.3f}", (left - 5, top - 30, left + bar_w + 5, top - 3), font(12, True), colors[model_index])
-        centered(draw, task, (int(center_x - 95), y1 + 12, int(center_x + 95), y1 + 52), font(16, True), INK)
-    for index, label in enumerate(values):
-        x = 100 + index * 280
-        draw.rectangle((x, 200, x + 24, 224), fill=colors[index])
-        draw.text((x + 34, 197), label, font=font(15, True), fill=INK)
-    paste_panel(canvas, PCA_COMPARE, (1050, 225, 1545, 690), "全域嵌入 PCA｜玄女与 AEF")
-    draw.rounded_rectangle((1045, 712, 1545, 830), radius=6, fill=PALE_GRAY)
+    paste_panel(
+        canvas,
+        PU_QUERY_ASSET_ROOT / "pu_query_3polygon_metrics.png",
+        (55, 210, 1085, 745),
+        "F1 与 AUC｜越高越好",
+    )
+    draw.rounded_rectangle((1125, 210, 1545, 435), radius=6, fill=PALE_BLUE, outline=LINE, width=2)
+    centered(draw, "主要结论", (1150, 226, 1520, 268), font(22, True), DEEP_BLUE)
     centered(
         draw,
-        "结论\n建筑基本持平，道路 F1 略高\n水体仍有明确差距\nDINOv3 为 1024 维高预算参照\n单 fold 探索性比较，不宣称统计显著",
-        (1065, 715, 1525, 827),
+        "道路：F1 0.368，较 AEF 提升 8.2%\n"
+        "水体：F1 0.111，较 AEF 提升 20.7%\n"
+        "建筑：F1 0.256，低于 AEF 17.6%\n\n"
+        "玄女在道路、水体的 F1 / AUC / AP 均领先；\n建筑假正例仍是下一步重点。",
+        (1150, 276, 1520, 420),
         font(16, True),
         INK,
     )
+    draw.rounded_rectangle((1125, 455, 1545, 650), radius=6, fill=WHITE, outline=LINE, width=2)
+    centered(draw, "AP（稀少目标高置信检出）", (1145, 470, 1525, 510), font(18, True), DEEP_BLUE)
+    rows = [
+        ("建筑物", "0.221", "0.234", "0.183"),
+        ("道路", "0.304", "0.257", "0.259"),
+        ("水体", "0.075", "0.057", "0.049"),
+    ]
+    headers = ("任务", "玄女", "AEF", "传统")
+    for column, value in enumerate(headers):
+        centered(
+            draw,
+            value,
+            (1140 + column * 95, 518, 1235 + column * 95, 548),
+            font(14, True),
+            RED if value == "玄女" else INK,
+        )
+    for row_index, row in enumerate(rows):
+        y = 550 + row_index * 30
+        for column, value in enumerate(row):
+            centered(
+                draw,
+                value,
+                (1140 + column * 95, y, 1235 + column * 95, y + 28),
+                font(13, column == 1),
+                RED if column == 1 else INK,
+            )
+    draw.rounded_rectangle((1125, 672, 1545, 790), radius=6, fill=PALE_GRAY)
+    centered(
+        draw,
+        "时间产品边界\n玄女：2026-04 月度嵌入\nAEF：2025 年度嵌入\n传统：2026-04 多源特征",
+        (1145, 678, 1525, 784),
+        font(15, True),
+        INK,
+    )
+    centered(
+        draw,
+        "结果边界：单 fold、单次随机 3 多边形实验；用于平台交互能力展示，"
+        "统计结论仍需多 fold、多随机种子复核。",
+        (55, 805, 1545, 868),
+        font(15, True),
+        MUTED,
+    )
+    tasks = ["建筑物", "道路", "水体"]
+    p10c = [0.2564693118, 0.3680430440, 0.1105819153]
     return canvas, {
         "slide": 8,
         "title": PAGE_TITLES[8],
-        "metric": "F1",
-        "p10c": dict(zip(tasks, values["玄女 P10C（64维）"])),
-        "building_f1": 0.4840,
-        "protocol": "same labels/split/conv3x3 head/threshold selection",
+        "metrics": ["F1", "AUC", "AP"],
+        "p10c": dict(zip(tasks, p10c)),
+        "building_f1": p10c[0],
+        "road_f1": p10c[1],
+        "water_f1": p10c[2],
+        "protocol": "same 3 polygons/test split/PU+Query/threshold selection",
     }
 
 

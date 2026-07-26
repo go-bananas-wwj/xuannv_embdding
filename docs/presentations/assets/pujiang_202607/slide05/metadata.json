@@ -1,11 +1,21 @@
 {
   "slide": 5,
   "title": "少量标注，快速形成区域级专题图",
-  "protocol": "Paper evaluation: 5-shot = 5 positive patches + 5 negative patches. Platform: polygon labels with PU/query or binary conv.",
+  "protocol": "每个任务 3 个目标多边形；PU + Query；64 个独立测试 patch",
+  "tasks": [
+    "建筑物",
+    "道路",
+    "水体"
+  ],
+  "features": [
+    "玄女 P10C 2026-04",
+    "AEF 2025",
+    "传统 2026-04 多源特征"
+  ],
   "fairness": [
-    "same labels",
-    "same split",
-    "same head",
+    "same polygons",
+    "same test patches",
+    "same PU+Query",
     "same threshold rule"
   ]
 }
