@@ -19,6 +19,16 @@ not a paper result.
 
 ## Current artifact gates
 
+- Every new registered downstream result records a `protocol_id`, `evidence_class`, and
+  `label_independence_status` in its metric payload, artifact sidecar, and registry entry.
+  Aggregation and paired bootstrap reject mixed protocol IDs.
+- `v5_osm_assisted` is an **OSM-assisted spatially held-out readout** with
+  `label_independence_status=osm_overlapping_not_independent`. It may appear only in explicitly
+  marked diagnostic or weak-supervision reports. It must never be presented in an
+  independent-transfer table or used as evidence of ontology-independent transfer.
+- An independent-transfer claim remains pending a frozen external or adjudicated independent-label
+  release and its separately sealed evidence record. This ledger entry is a protocol boundary, not
+  a release-admission decision.
 - Registered exports must have a six-shard canonical provenance record, a content index, and
   a Git-anchored registry entry.
 - Downstream artifacts must pass `verify_artifact_registry_binding()` and retain

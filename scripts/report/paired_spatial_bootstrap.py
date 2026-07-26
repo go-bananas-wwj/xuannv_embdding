@@ -425,10 +425,19 @@ def _paired_value(record: dict[str, Any], key: str) -> Any:
     return value
 
 
+def _protocol_id(record: dict[str, Any]) -> str:
+    """Read protocol identity, treating legacy pre-descriptor fixtures as v4 diagnostics."""
+    payload = aggregate._metric_payload(record)
+    protocol_id = payload.get("protocol_id", "v4_diagnostic")
+    if not isinstance(protocol_id, str):
+        raise ValueError("Result lacks required pairing provenance: protocol_id")
+    return protocol_id
+
+
 def verify_paired_record_provenance(
     baseline: Mapping[tuple[str, str, int, int], dict[str, Any]],
     candidate: Mapping[tuple[str, str, int, int], dict[str, Any]],
-) -> None:
+) -> str:
     """Fail closed unless paired runs used identical labels, split, and test patches."""
     if set(baseline) != set(candidate):
         raise ValueError("Paired bootstrap requires identical registered result cells")
@@ -441,6 +450,12 @@ def verify_paired_record_provenance(
         "shot_manifest_split_sha256",
     )
     for cell in sorted(baseline):
+        baseline_protocol = _protocol_id(baseline[cell])
+        candidate_protocol = _protocol_id(candidate[cell])
+        if baseline_protocol != candidate_protocol:
+            raise ValueError(
+                f"Paired bootstrap requires identical protocol_id for result cell {cell}"
+            )
         for key in provenance_keys:
             if _paired_value(baseline[cell], key) != _paired_value(candidate[cell], key):
                 raise ValueError(
@@ -454,6 +469,10 @@ def verify_paired_record_provenance(
             raise ValueError("Paired bootstrap requires per-patch test confusion provenance")
         if set(baseline_confusion) != set(candidate_confusion):
             raise ValueError(f"Paired bootstrap requires identical test patch IDs for {cell}")
+    protocol_ids = {_protocol_id(record) for record in [*baseline.values(), *candidate.values()]}
+    if len(protocol_ids) != 1:
+        raise ValueError("Paired bootstrap requires exactly one protocol_id")
+    return next(iter(protocol_ids))
 
 
 def result_identities(records: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -545,7 +564,7 @@ def compare_families(
     candidate_selected = select_records_for_matrix(candidate_records, tasks=tasks, shots=shots)
     baseline_record_cells = _record_cells(baseline_selected, tasks=tasks, shots=shots)
     candidate_record_cells = _record_cells(candidate_selected, tasks=tasks, shots=shots)
-    verify_paired_record_provenance(baseline_record_cells, candidate_record_cells)
+    protocol_id = verify_paired_record_provenance(baseline_record_cells, candidate_record_cells)
     baseline = _records_by_cell(baseline_selected, tasks=tasks, shots=shots)
     candidate = _records_by_cell(candidate_selected, tasks=tasks, shots=shots)
     baseline_identities = result_identities(baseline_selected)
@@ -587,6 +606,8 @@ def compare_families(
         "comparison_direction": "candidate_minus_baseline",
         "baseline_family": baseline_family,
         "candidate_family": candidate_family,
+        "protocol_id": protocol_id,
+        **aggregate.registered.result_evidence(protocol_id),
         "source_registry_path": str(registry_path.resolve()),
         "patch_metadata_path": str(patch_metadata_path.resolve()),
         "patch_metadata_sha256": aggregate.registered.sha256_file(patch_metadata_path),

@@ -31,6 +31,7 @@ ADMISSION_STATUSES = {
     False: {"registered_preliminary_pending_external_gates"},
     True: {"registered_paper_eligible"},
 }
+REPORT_KINDS = ("diagnostic", "weak_supervision", "independent_transfer")
 
 
 def _metric_payload(record: dict[str, Any]) -> dict[str, Any]:
@@ -64,6 +65,36 @@ def _family_from_record(record: dict[str, Any]) -> str:
     if int(match.group(2)) != int(payload["fold"]):
         raise ValueError("Encoder config fold differs from downstream-result fold")
     return match.group(1)
+
+
+def _record_evidence(record: dict[str, Any]) -> dict[str, str]:
+    """Read and validate the evidence descriptor sealed into a result payload."""
+    payload = _metric_payload(record)
+    if not any(field in payload for field in registered.result_evidence("v4_diagnostic")):
+        payload = {**payload, **registered.result_evidence("v4_diagnostic")}
+    return registered.validate_result_evidence(payload)
+
+
+def validate_report_evidence(records: Iterable[dict[str, Any]], report_kind: str) -> dict[str, str]:
+    """Allow one protocol only in report types that its evidence class permits."""
+    if report_kind not in REPORT_KINDS:
+        raise ValueError(f"Unknown report kind: {report_kind}")
+    evidence = [_record_evidence(record) for record in records]
+    if not evidence:
+        raise ValueError("Cannot classify an empty result set")
+    protocol_ids = {item["protocol_id"] for item in evidence}
+    if len(protocol_ids) != 1:
+        raise ValueError("Aggregation requires exactly one protocol_id")
+    expected = registered.result_evidence(next(iter(protocol_ids)))
+    if any(item != expected for item in evidence):
+        raise ValueError("Aggregation found inconsistent evidence for one protocol_id")
+    allowed = registered.PROTOCOL_DESCRIPTORS[expected["protocol_id"]]["allowed_report_kinds"]
+    if report_kind not in allowed:
+        human_kind = report_kind.replace("_", "-")
+        raise ValueError(
+            f"Protocol {expected['protocol_id']} cannot support an {human_kind} report"
+        )
+    return expected
 
 
 def load_verified_records(
@@ -178,10 +209,16 @@ def summarize_records(
     seeds: tuple[int, ...],
 ) -> dict[str, Any]:
     """Compute mean/std across seed-level means after requiring a full matrix."""
+    record_list = list(records)
+    protocol_ids = {
+        str(_metric_payload(record).get("protocol_id", "v4_diagnostic")) for record in record_list
+    }
+    if len(protocol_ids) != 1:
+        raise ValueError("Aggregation requires exactly one protocol_id")
     if len(set(folds)) != len(folds) or len(set(seeds)) != len(seeds):
         raise ValueError("Fold and seed lists must contain unique values")
     indexed: dict[tuple[str, str, int, int], dict[str, Any]] = {}
-    for record in records:
+    for record in record_list:
         payload = _metric_payload(record)
         key = (
             str(payload["task"]),
@@ -242,6 +279,10 @@ def _write_csv(path: Path, report: dict[str, Any]) -> None:
                 "family",
                 "preliminary",
                 "primary_matrix",
+                "report_kind",
+                "protocol_id",
+                "evidence_class",
+                "label_independence_status",
                 "registry_sha256",
                 "selected_results_sha256",
             ],
@@ -262,6 +303,10 @@ def _write_csv(path: Path, report: dict[str, Any]) -> None:
                         "family": report["family"],
                         "preliminary": report["preliminary"],
                         "primary_matrix": report["primary_matrix"],
+                        "report_kind": report["report_kind"],
+                        "protocol_id": report["protocol_id"],
+                        "evidence_class": report["evidence_class"],
+                        "label_independence_status": report["label_independence_status"],
                         "registry_sha256": report["registry_sha256"],
                         "selected_results_sha256": report["selected_results_sha256"],
                     }
@@ -279,6 +324,9 @@ def _write_markdown(path: Path, report: dict[str, Any]) -> None:
         "",
         f"**Status:** {status}.",
         f"**Family:** `{report['family']}`; **primary matrix:** `{report['primary_matrix']}`.",
+        f"**report_kind:** `{report['report_kind']}`; **protocol_id:** `{report['protocol_id']}`.",
+        f"**evidence_class:** `{report['evidence_class']}`; "
+        f"**label_independence_status:** `{report['label_independence_status']}`.",
         f"**Registry SHA-256:** `{report['registry_sha256']}`.",
         f"**Selected-result identity:** `{report['selected_results_sha256']}`.",
         "",
@@ -306,6 +354,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--folds", nargs="+", type=int, default=(0, 1, 2, 3, 4))
     parser.add_argument("--seeds", nargs="+", type=int, default=(42, 43, 44))
     parser.add_argument("--allow-preliminary", action="store_true")
+    parser.add_argument("--report-kind", choices=REPORT_KINDS, default="diagnostic")
     parser.add_argument(
         "--registry-anchor",
         type=Path,
@@ -339,12 +388,15 @@ def main() -> None:
     records = load_verified_records(
         args.registry, family=args.family, allow_preliminary=args.allow_preliminary
     )
+    evidence = validate_report_evidence(records, args.report_kind)
     report = {
         "schema_version": 1,
         "family": args.family,
         "registry": str(args.registry.resolve()),
         "preliminary": bool(args.allow_preliminary),
         "primary_matrix": primary_matrix,
+        "report_kind": args.report_kind,
+        **evidence,
         "record_count": len(records),
         "registry_sha256": registered.sha256_file(args.registry),
         "registry_anchor": anchor,

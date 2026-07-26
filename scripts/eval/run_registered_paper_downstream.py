@@ -36,6 +36,53 @@ FROZEN_SPLIT = Path("configs/eval/haidian_spatial_5fold_buffer1_seed42.json")
 FROZEN_SPLIT_SHA256 = "57989b0f1e6944f94e74721de7f56fae5040ef7622550cf6fb4160acd080ba4f"
 FROZEN_EVAL_MANIFEST_SHA256 = "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3"
 FROZEN_PROBE = {"epochs": 80, "batch_size": 8, "lr": 1e-3, "weight_decay": 1e-4}
+PROTOCOL_DESCRIPTORS = {
+    "v4_diagnostic": {
+        "evidence_class": "diagnostic_spatial_readout",
+        "label_independence_status": "not_independent_transfer_evidence",
+        "allowed_report_kinds": ("diagnostic",),
+    },
+    "v5_osm_assisted": {
+        "evidence_class": "osm_assisted_spatial_readout",
+        "label_independence_status": "osm_overlapping_not_independent",
+        "allowed_report_kinds": ("diagnostic", "weak_supervision"),
+    },
+}
+
+
+def result_evidence(protocol_id: str) -> dict[str, str]:
+    """Return the immutable evidence classification recorded with one result."""
+    descriptor = PROTOCOL_DESCRIPTORS.get(protocol_id)
+    if descriptor is None:
+        raise ValueError(f"Unknown registered protocol_id: {protocol_id}")
+    return {
+        "protocol_id": protocol_id,
+        "evidence_class": str(descriptor["evidence_class"]),
+        "label_independence_status": str(descriptor["label_independence_status"]),
+    }
+
+
+def validate_result_evidence(payload: dict[str, Any]) -> dict[str, str]:
+    """Reject missing or altered evidence classifications in a registered result."""
+    protocol_id = payload.get("protocol_id")
+    if not isinstance(protocol_id, str):
+        raise ValueError("Registered result lacks protocol_id")
+    expected = result_evidence(protocol_id)
+    observed = {key: payload.get(key) for key in expected}
+    if observed != expected:
+        raise ValueError(f"Registered result evidence does not match protocol_id: {protocol_id}")
+    return expected
+
+
+def _optional_result_evidence(payload: dict[str, Any]) -> dict[str, str] | None:
+    """Return complete evidence when present, retaining pre-descriptor records as legacy."""
+    fields = tuple(result_evidence("v4_diagnostic"))
+    present = {field for field in fields if field in payload}
+    if not present:
+        return None
+    if present != set(fields):
+        raise ValueError("Registered result evidence fields are incomplete")
+    return validate_result_evidence(payload)
 
 
 def sha256_file(path: Path) -> str:
@@ -1108,15 +1155,20 @@ def _canonical_sha256(payload: dict[str, Any]) -> str:
 
 def registry_entry_core_sha256(result_id: str, artifact: dict[str, Any]) -> str:
     """Hash the registry fields that can be known before the sidecar hash exists."""
-    return _canonical_sha256(
-        {
-            "result_id": result_id,
-            "paper_eligible": artifact["paper_eligible"],
-            "admission_status": artifact["admission_status"],
-            "metrics_sha256": artifact["metrics_sha256"],
-            "metric_provenance_sha256": _canonical_sha256(artifact["metric_provenance"]),
-        }
-    )
+    metric_evidence = _optional_result_evidence(artifact["metric_provenance"])
+    artifact_evidence = _optional_result_evidence(artifact)
+    if metric_evidence != artifact_evidence:
+        raise ValueError("Artifact evidence must match protocol-bearing metric provenance")
+    payload = {
+        "result_id": result_id,
+        "paper_eligible": artifact["paper_eligible"],
+        "admission_status": artifact["admission_status"],
+        "metrics_sha256": artifact["metrics_sha256"],
+        "metric_provenance_sha256": _canonical_sha256(artifact["metric_provenance"]),
+    }
+    if metric_evidence is not None:
+        payload.update(metric_evidence)
+    return _canonical_sha256(payload)
 
 
 def build_artifact_manifest(
@@ -1131,6 +1183,7 @@ def build_artifact_manifest(
     patch_count: int,
 ) -> dict[str, Any]:
     """Bind binary probe artifacts to their metric record and registry identity."""
+    metric_evidence = _optional_result_evidence(metric_payload)
     artifact = {
         "schema_version": 1,
         "paper_eligible": metric_payload["paper_eligible"],
@@ -1146,6 +1199,8 @@ def build_artifact_manifest(
         "label_sha256": label_sha256,
         "patch_count": patch_count,
     }
+    if metric_evidence is not None:
+        artifact.update(metric_evidence)
     if validation_predictions is not None:
         artifact["validation_predictions_sha256"] = sha256_file(validation_predictions)
     artifact["registry_entry_core_sha256"] = registry_entry_core_sha256(result_id, artifact)
@@ -1155,6 +1210,7 @@ def build_artifact_manifest(
 def verify_artifact_registry_binding(artifact_path: Path, registry_path: Path) -> None:
     """Reject a sidecar unless a unique registry record cryptographically binds it."""
     artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    evidence = _optional_result_evidence(artifact)
     output = artifact_path.parent
     metrics_path = output / "metrics.json"
     predictions_path = output / "predictions_test.npz"
@@ -1185,6 +1241,8 @@ def verify_artifact_registry_binding(artifact_path: Path, registry_path: Path) -
         raise ValueError("Artifact probe hash does not match final_probe.pt")
     if json.loads(metrics_path.read_text(encoding="utf-8")) != artifact.get("metric_provenance"):
         raise ValueError("Artifact metric provenance does not match metrics.json")
+    if _optional_result_evidence(artifact["metric_provenance"]) != evidence:
+        raise ValueError("Artifact evidence does not match metrics.json")
     if artifact.get("registry_path") != str(registry_path.resolve()):
         raise ValueError("Artifact registry path differs from the requested result registry")
     result_id = artifact.get("result_id")
@@ -1248,6 +1306,7 @@ def parse_args() -> argparse.Namespace:
         help="Shared frozen schedule for a task/fold/seed; required unless --shot full.",
     )
     parser.add_argument("--shot-seed", type=int, choices=[42, 43, 44], required=True)
+    parser.add_argument("--protocol", choices=tuple(PROTOCOL_DESCRIPTORS), default="v4_diagnostic")
     parser.add_argument("--device", default="npu:0")
     return parser.parse_args()
 
@@ -1386,6 +1445,7 @@ def main() -> None:
         **metrics,
         "paper_eligible": False,
         "admission_status": "registered_preliminary_pending_external_gates",
+        **result_evidence(args.protocol),
         "task": args.task,
         "fold": args.fold,
         "shot": args.shot,
@@ -1414,7 +1474,10 @@ def main() -> None:
     }
     _write_json(output / "metrics.json", metric_payload)
     result_id = hashlib.sha256(
-        f"{provenance['checkpoint_sha256']}|{args.task}|{args.fold}|{args.shot}|{args.shot_seed}".encode()
+        (
+            f"{args.protocol}|{provenance['checkpoint_sha256']}|{args.task}|{args.fold}|"
+            f"{args.shot}|{args.shot_seed}"
+        ).encode()
     ).hexdigest()
     artifact = build_artifact_manifest(
         metric_payload=metric_payload,
