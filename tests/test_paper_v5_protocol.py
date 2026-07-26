@@ -4117,6 +4117,49 @@ def test_v5_encoder_queue_recovery_rejects_checkpoint_path_traversal(tmp_path: P
     assert "snapshot filename" in result.stderr.lower()
 
 
+def test_v5_encoder_queue_recovery_dry_run_does_not_create_an_attempt(tmp_path: Path) -> None:
+    repo, queue = _sealed_v5_queue_repo(tmp_path)
+    output_root = tmp_path / "outputs"
+    parent = _write_verified_resume_attempt(output_root)
+    _bind_recovery_parent_to_registered_protocol(repo, parent)
+    checkpoint = next((parent / "verified_checkpoints").glob("*.pt"))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    torchrun_trace = tmp_path / "torchrun_trace.txt"
+    fake_torchrun = bin_dir / "torchrun"
+    fake_torchrun.write_text(
+        f"#!/usr/bin/env bash\nprintf called > {torchrun_trace}\n",
+        encoding="utf-8",
+    )
+    fake_torchrun.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            str(queue),
+            "--dry-run",
+            "--output-root",
+            str(output_root),
+            "--recover-fold",
+            "0",
+            "--recover-from-attempt",
+            "1",
+            "--recover-checkpoint",
+            checkpoint.name,
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "recovery_parent=1" in result.stdout
+    assert not (parent.parent / "attempt_2").exists()
+    assert not (repo / ".pytest_registered_v5_locks" / "lane_0.lock").exists()
+    assert not torchrun_trace.exists()
+
+
 def test_v5_encoder_queue_resume_writes_immutable_resume_logs(tmp_path: Path) -> None:
     repo, queue = _sealed_v5_queue_repo(tmp_path)
     output_root = tmp_path / "outputs"

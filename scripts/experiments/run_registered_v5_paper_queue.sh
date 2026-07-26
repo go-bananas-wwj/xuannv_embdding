@@ -814,6 +814,11 @@ PY
     return 1
   }
   attempt_number=$(next_attempt_number "$job_root")
+  if [[ "$DRY_RUN" == true ]]; then
+    printf 'ENCODER protocol=v5_osm_assisted family=full_150 lane=%s devices=%s fold=%s config=%s attempt=%s recovery_parent=%s resume=%s\n' \
+      "$lane" "$devices" "$fold" "$config" "$attempt_number" "$source_attempt_number" "$checkpoint"
+    return 0
+  fi
   attempt="$job_root/attempt_$attempt_number"
   mkdir "$attempt"
   write_attempt "$attempt" "$config" "$fold" "$source_attempt" "$checkpoint" \
@@ -877,8 +882,10 @@ fi
 
 if [[ -n "$RECOVER_FOLD" ]]; then
   read -r lane devices port <<< "$(lane_for_fold "$RECOVER_FOLD")"
-  assert_lane_is_idle "$lane"
-  acquire_lane_lease "$lane"
+  if [[ "$DRY_RUN" == false ]]; then
+    assert_lane_is_idle "$lane"
+    acquire_lane_lease "$lane"
+  fi
   recover_fold_from_snapshot "$lane" "$devices" "$port" "$RECOVER_FOLD" \
     "$RECOVER_FROM_ATTEMPT" "$RECOVER_CHECKPOINT"
   exit $?
