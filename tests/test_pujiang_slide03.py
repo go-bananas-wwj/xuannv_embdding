@@ -40,7 +40,6 @@ def test_slide03_states_p10c_adaptations_without_overclaiming(tmp_path: Path) ->
         "从剩余月份、其他传感器和周边空间恢复",
         "availability mask",
         "只记录原始数据是否真实存在",
-        "uniformity 0.06",
         "OSM 只做语义提示",
         "13 项可重叠的 OSM 语义提示",
         "建筑、主路、支路、铁路、水体、绿地、农业、居住、商业、工业、施工、步道、操场",
@@ -49,12 +48,9 @@ def test_slide03_states_p10c_adaptations_without_overclaiming(tmp_path: Path) ->
         "不代表总损失的 14%",
         "临时 1×1 线性探针",
         "训练结束后丢弃",
-        "最难的 2% 背景像素",
-        "额外权重 0.35",
-        "高分光学重建 0.90",
+        "前 80 轮逐步增加到 0.14",
         "人工变化监督 0",
         "时间对比损失 0",
-        "配置权重，不代表损失贡献",
     ]:
         assert expected in text
     font_sizes = [

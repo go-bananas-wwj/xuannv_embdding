@@ -353,14 +353,13 @@ def add_semantic_card(slide) -> None:
     )
     add_text(
         slide,
-        "困难负样本：最难的 2% 背景像素，额外权重 0.35\n"
-        "uniformity 0.06｜高分光学重建 0.90｜配置权重，不代表损失贡献",
+        "前 80 轮逐步增加到 0.14，避免训练刚开始时语义提示过强",
         x + 0.27,
-        5.99,
+        6.03,
         3.40,
-        0.52,
-        12,
-        INK,
+        0.34,
+        13,
+        MUTED,
         True,
         PP_ALIGN.CENTER,
     )
@@ -575,16 +574,9 @@ def build_preview(output: Path) -> None:
     )
     draw_centered(
         draw,
-        "最难的 2% 背景像素，额外权重 0.35",
-        (1095, 687, 1519, 724),
+        "前 80 轮逐步增加到 0.14，避免训练初期提示过强",
+        (1095, 690, 1519, 744),
         pil_font(12, True),
-        ink,
-    )
-    draw_centered(
-        draw,
-        "uniformity 0.06｜高分光学重建 0.90\n配置权重，不代表损失贡献",
-        (1095, 730, 1519, 778),
-        pil_font(11, True),
         muted,
     )
 
