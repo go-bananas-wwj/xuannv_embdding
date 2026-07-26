@@ -5,6 +5,9 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
+from PIL import Image
+
 
 SCRIPT = Path(__file__).parents[1] / "scripts/report/build_pu_query_3polygon_comparison.py"
 SPEC = importlib.util.spec_from_file_location("build_pu_query_3polygon_comparison", SCRIPT)
@@ -74,3 +77,16 @@ def test_build_metric_outputs_creates_figure_and_markdown(tmp_path: Path) -> Non
     assert "AEF 2025 年度嵌入" in text
     assert "传统 2026-04 多源特征" in text
     assert "F1" in text and "AUC" in text and "AP" in text
+
+
+def test_slide_row_has_stable_widescreen_strip_dimensions(tmp_path: Path) -> None:
+    panels = [
+        (np.full((128, 128, 3), index / 6, dtype=np.float32), f"panel-{index}")
+        for index in range(6)
+    ]
+    output = tmp_path / "row.png"
+
+    MODULE.save_slide_row("road", panels, output)
+
+    with Image.open(output) as image:
+        assert image.size == (1600, 190)

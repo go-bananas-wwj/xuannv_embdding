@@ -16,7 +16,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import font_manager
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 from scripts.eval import run_pu_query_sparse_eval as evaluation
 from scripts.report.visualize_osm_downstream_outputs import load_highres
@@ -105,6 +105,69 @@ def red_score(score: np.ndarray) -> np.ndarray:
     output[..., 1] = 1.0 - 0.84 * normalized
     output[..., 2] = 1.0 - 0.84 * normalized
     return output
+
+
+def pil_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
+    path = (
+        "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Bold.ttc"
+        if bold
+        else "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc"
+    )
+    return ImageFont.truetype(path, size)
+
+
+def fit_array(image: np.ndarray, size: tuple[int, int]) -> Image.Image:
+    array = np.asarray(image)
+    if np.issubdtype(array.dtype, np.floating):
+        array = np.uint8(np.clip(array, 0, 1) * 255)
+    else:
+        array = np.uint8(array)
+    source = Image.fromarray(array).convert("RGB")
+    ratio = min(size[0] / source.width, size[1] / source.height)
+    resized = source.resize(
+        (max(1, int(source.width * ratio)), max(1, int(source.height * ratio))),
+        Image.Resampling.LANCZOS,
+    )
+    panel = Image.new("RGB", size, "white")
+    panel.paste(resized, ((size[0] - resized.width) // 2, (size[1] - resized.height) // 2))
+    return panel
+
+
+def save_slide_row(
+    task: str,
+    panels: list[tuple[np.ndarray, str]],
+    output: Path,
+) -> None:
+    if len(panels) != 6:
+        raise ValueError("slide row requires exactly six panels")
+    canvas = Image.new("RGB", (1600, 190), "white")
+    draw = ImageDraw.Draw(canvas)
+    draw.rectangle((0, 0, 100, 190), fill=(0, 97, 170))
+    task_label = {"building": "建筑物", "road": "道路", "water": "水体"}[task]
+    draw.multiline_text(
+        (50, 95),
+        "\n".join(task_label),
+        font=pil_font(22, True),
+        fill="white",
+        anchor="mm",
+        align="center",
+        spacing=1,
+    )
+    panel_width, panel_height, gap = 235, 145, 8
+    for index, (image, title) in enumerate(panels):
+        x = 112 + index * (panel_width + gap)
+        bounds = draw.textbbox((0, 0), title, font=pil_font(17, True))
+        draw.text(
+            (x + (panel_width - (bounds[2] - bounds[0])) / 2, 5),
+            title,
+            font=pil_font(17, True),
+            fill=(0, 69, 122),
+        )
+        panel = fit_array(image, (panel_width, panel_height))
+        canvas.paste(panel, (x, 38))
+        draw.rectangle((x, 38, x + panel_width, 183), outline=(205, 215, 223), width=2)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(output, optimize=True)
 
 
 def metric_figure(payload: dict[str, Any], output: Path) -> None:
@@ -331,6 +394,12 @@ def build_task_visuals(payload: dict[str, Any], assets: Path) -> None:
                 )
             )
         panels.append((red_binary(gt), "真实标签 GT"))
+        slide_titles = ("3 个圈选", "测试影像", "玄女候选", "AEF 候选", "传统候选", "真实标签")
+        save_slide_row(
+            task,
+            [(image, title) for (image, _), title in zip(panels, slide_titles)],
+            assets / f"{task}_slide_row.png",
+        )
         figure, axes = plt.subplots(
             1,
             len(panels),
@@ -346,7 +415,7 @@ def build_task_visuals(payload: dict[str, Any], assets: Path) -> None:
             fontsize=14,
             fontweight="bold",
         )
-        figure.tight_layout()
+        figure.tight_layout(rect=(0, 0, 1, 0.86))
         figure.savefig(
             assets / f"{task}_3polygon_compare.png",
             dpi=190,

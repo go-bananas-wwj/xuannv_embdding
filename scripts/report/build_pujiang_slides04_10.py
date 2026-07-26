@@ -238,28 +238,27 @@ def page05() -> tuple[Image.Image, dict]:
         PAGE_TITLES[5],
         "用户每类只圈 3 个目标多边形；玄女、AEF 与传统特征共享同一标注和 PU+Query 流程",
     )
-    draw.rounded_rectangle((55, 198, 1545, 246), radius=5, fill=PALE_BLUE, outline=LINE, width=2)
+    draw.rounded_rectangle((55, 194, 1545, 254), radius=5, fill=PALE_BLUE, outline=LINE, width=2)
     centered(
         draw,
         "PU：从未标区域中自动寻找可靠背景；Query：在新 patch 中用高置信目标轻量校准。"
-        "候选得分白色低、红色高；右侧为真实标签。",
-        (70, 200, 1530, 244),
-        font(16, True),
+        "\n候选图仅做各方法单 patch 像素百分位显示：白低、红高；色深不可跨方法比较，"
+        "也不改变汇总指标或二值阈值。",
+        (70, 196, 1530, 252),
+        font(14, True),
         INK,
     )
     for index, task in enumerate(("building", "road", "water")):
-        source_path = PU_QUERY_ASSET_ROOT / f"{task}_3polygon_compare.png"
-        with Image.open(source_path) as source:
-            row = source.convert("RGB")
-        row = row.resize((1490, 190), Image.Resampling.LANCZOS)
-        y = 260 + index * 200
+        source_path = PU_QUERY_ASSET_ROOT / f"{task}_slide_row.png"
+        row = fit_image(source_path, (1490, 180))
+        y = 266 + index * 194
         canvas.paste(row, (55, y))
-        draw.rounded_rectangle((55, y, 1545, y + 190), radius=4, outline=LINE, width=2)
-    draw.rounded_rectangle((55, 864, 1545, 892), radius=4, fill=PALE_GRAY)
+        draw.rounded_rectangle((55, y, 1545, y + 180), radius=4, outline=LINE, width=2)
+    draw.rounded_rectangle((55, 856, 1545, 890), radius=4, fill=PALE_GRAY)
     centered(
         draw,
         "三行依次为建筑物、道路、水体；本页显示候选排序，第 8 页报告独立测试集二值指标。",
-        (70, 864, 1530, 892),
+        (70, 856, 1530, 890),
         font(14, True),
         MUTED,
     )
