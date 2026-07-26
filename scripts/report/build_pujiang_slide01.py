@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path(
             "/data/xuannv_embedding/embeddings/presentation_pujiang_202607/"
-            "harbin_e5_e800_202604/harbin"
+            "harbin_stage2_v1_202605/harbin"
         ),
     )
     parser.add_argument(
@@ -59,10 +59,19 @@ def parse_args() -> argparse.Namespace:
         default=Path("/data/xuannv_embedding/processed/harbin/labels/building_osm"),
     )
     parser.add_argument(
-        "--harbin-probe-root",
+        "--harbin-head-checkpoint",
         type=Path,
         default=Path(
-            "/data/xuannv_embedding/benchmarks/presentation_pujiang_202607/" "harbin_e5_p10c_e800"
+            "/data/xuannv_embedding/outputs/downstream/"
+            "stage2_harbin_construction_v1_frac1.0/fold_0/checkpoints/best.pt"
+        ),
+    )
+    parser.add_argument(
+        "--harbin-head-metrics",
+        type=Path,
+        default=Path(
+            "/data/xuannv_embedding/outputs/downstream/"
+            "stage2_harbin_construction_v1_frac1.0/fold_0/metrics.json"
         ),
     )
     parser.add_argument(
@@ -78,7 +87,8 @@ def parse_args() -> argparse.Namespace:
             "玄女月度地理嵌入_浦江交流_第01页_20260726.pptx"
         ),
     )
-    parser.add_argument("--month", default="202604")
+    parser.add_argument("--month", default="202605")
+    parser.add_argument("--haidian-month", default="202605")
     parser.add_argument("--pca-sample-pixels", type=int, default=220_000)
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
@@ -128,8 +138,7 @@ def load_layout(label_root: Path) -> tuple[list[PatchLayout], int, int, int, int
 
 
 def embedding_path(root: Path, patch_id: str, month: str) -> Path:
-    suffix = patch_id.removeprefix("patch_")
-    return root / f"harbin_patch_{suffix}" / f"{month}_embedding_map.pt"
+    return root / patch_id / f"{month}_embedding_map.pt"
 
 
 def load_embedding(root: Path, patch_id: str, month: str) -> np.ndarray:
@@ -224,17 +233,50 @@ def clean_harbin_task_map(source: Path, output: Path) -> None:
         save_slide_image(image, output)
 
 
-class PixelProbe(nn.Module):
-    def __init__(self, embed_dim: int, hidden_dim: int) -> None:
+class LegacyStage2UNetHead(nn.Module):
+    """Two-stage lightweight UNet head used by the original Harbin evaluation."""
+
+    def __init__(self, embed_dim: int = 64, num_classes: int = 2) -> None:
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(embed_dim, hidden_dim),
+        self.up1 = nn.ConvTranspose2d(embed_dim, embed_dim // 2, kernel_size=2, stride=2)
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(
+                embed_dim + embed_dim // 2,
+                embed_dim // 2,
+                kernel_size=3,
+                padding=1,
+            ),
+            nn.BatchNorm2d(embed_dim // 2),
             nn.ReLU(inplace=True),
-            nn.Linear(hidden_dim, 1),
         )
+        self.up2 = nn.ConvTranspose2d(embed_dim // 2, embed_dim // 4, kernel_size=2, stride=2)
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(
+                embed_dim + embed_dim // 4,
+                embed_dim // 4,
+                kernel_size=3,
+                padding=1,
+            ),
+            nn.BatchNorm2d(embed_dim // 4),
+            nn.ReLU(inplace=True),
+        )
+        self.final = nn.Conv2d(embed_dim // 4, num_classes, kernel_size=1)
 
     def forward(self, value: torch.Tensor) -> torch.Tensor:
-        return self.net(value).squeeze(-1)
+        first = self.up1(value)
+        first_skip = nn.functional.interpolate(
+            value, scale_factor=2, mode="bilinear", align_corners=False
+        )
+        first = self.conv1(torch.cat([first, first_skip], dim=1))
+        second = self.up2(first)
+        second_skip = nn.functional.interpolate(
+            value, scale_factor=4, mode="bilinear", align_corners=False
+        )
+        second = self.conv2(torch.cat([second, second_skip], dim=1))
+        logits = self.final(second)
+        return nn.functional.interpolate(
+            logits, size=value.shape[-2:], mode="bilinear", align_corners=False
+        )
 
 
 def build_harbin_prediction(
@@ -244,37 +286,42 @@ def build_harbin_prediction(
     checkpoint: Path,
     metrics_path: Path,
     output: Path,
-) -> dict[str, float | int | str]:
+) -> dict[str, float | int | str | None]:
     state = torch.load(checkpoint, map_location="cpu", weights_only=True)
-    embed_dim = int(state["net.0.weight"].shape[1])
-    hidden_dim = int(state["net.0.weight"].shape[0])
-    model = PixelProbe(embed_dim, hidden_dim)
+    model = LegacyStage2UNetHead()
     model.load_state_dict(state)
     model.eval()
     metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
-    threshold = float(metrics["val_threshold"])
+    threshold = float(metrics["best_threshold"])
     layouts, rows, cols, tile_h, tile_w = load_layout(label_root)
     canvas = np.full((rows * tile_h, cols * tile_w, 3), 240, dtype=np.uint8)
+    batch_size = 4
     with torch.no_grad():
-        for layout in layouts:
-            emb = torch.from_numpy(load_embedding(embedding_root, layout.patch_id, month))
-            flat = emb.permute(1, 2, 0).reshape(-1, embed_dim)
-            probability = torch.sigmoid(model(flat)).reshape(tile_h, tile_w).numpy()
-            prediction = probability >= threshold
-            tile = np.full((tile_h, tile_w, 3), 255, dtype=np.uint8)
-            tile[prediction] = (226, 38, 49)
-            y0, x0 = layout.row * tile_h, layout.col * tile_w
-            canvas[y0 : y0 + tile_h, x0 : x0 + tile_w] = tile
+        for start in range(0, len(layouts), batch_size):
+            batch_layouts = layouts[start : start + batch_size]
+            batch = torch.stack(
+                [
+                    torch.from_numpy(load_embedding(embedding_root, layout.patch_id, month))
+                    for layout in batch_layouts
+                ]
+            )
+            probabilities = torch.sigmoid(model(batch)[:, 1]).numpy()
+            for layout, probability in zip(batch_layouts, probabilities, strict=True):
+                prediction = probability >= threshold
+                tile = np.full((tile_h, tile_w, 3), 255, dtype=np.uint8)
+                tile[prediction] = (226, 38, 49)
+                y0, x0 = layout.row * tile_h, layout.col * tile_w
+                canvas[y0 : y0 + tile_h, x0 : x0 + tile_w] = tile
     save_slide_image(Image.fromarray(canvas), output)
     return {
         "checkpoint": str(checkpoint),
         "metrics": str(metrics_path),
         "threshold": threshold,
-        "head": "mlp",
+        "head": "legacy_stage2_lightweight_unet",
         "fold": int(metrics["fold"]),
         "best_epoch": int(metrics["best_epoch"]),
-        "f1": float(metrics["f1_at_threshold"]),
-        "auc": float(metrics["auc_roc"]),
+        "f1": float(metrics["f1_best"]),
+        "auc": float(metrics["auc_roc"]) if "auc_roc" in metrics else None,
     }
 
 
@@ -350,11 +397,12 @@ def add_region(
     pca_path: Path,
     tasks: list[tuple[str, Path]],
     footer: str,
+    pca_caption: str,
 ) -> None:
     add_text(slide, name, x, 1.60, 6.05, 0.34, 18, BLUE, True, PP_ALIGN.CENTER)
     add_text(
         slide,
-        "2026年4月全域 Embedding PCA",
+        pca_caption,
         x + 0.05,
         1.94,
         3.82,
@@ -365,8 +413,10 @@ def add_region(
     )
     add_rect(slide, x + 0.04, 2.20, 3.86, 3.93, WHITE, LINE)
     add_picture_contain(slide, pca_path, x + 0.10, 2.26, 3.74, 3.81)
+    single_task = len(tasks) == 1
     for index, (label, path) in enumerate(tasks):
         y = 2.20 + index * 1.31
+        image_height = 3.65 if single_task else 0.94
         add_text(
             slide,
             label,
@@ -379,8 +429,15 @@ def add_region(
             True,
             PP_ALIGN.CENTER,
         )
-        add_rect(slide, x + 4.08, y + 0.28, 1.78, 0.94, WHITE, LINE)
-        add_picture_contain(slide, path, x + 4.13, y + 0.33, 1.68, 0.84)
+        add_rect(slide, x + 4.08, y + 0.28, 1.78, image_height, WHITE, LINE)
+        add_picture_contain(
+            slide,
+            path,
+            x + 4.13,
+            y + 0.33,
+            1.68,
+            image_height - 0.10,
+        )
     add_text(
         slide,
         "■ 红=预测目标｜白=背景",
@@ -388,7 +445,7 @@ def add_region(
         6.10,
         1.92,
         0.32,
-        14,
+        9,
         RGBColor(180, 35, 45),
         True,
         PP_ALIGN.CENTER,
@@ -401,7 +458,7 @@ def add_region(
         6.44,
         5.66,
         0.46,
-        16,
+        10,
         MUTED,
         False,
         PP_ALIGN.CENTER,
@@ -455,18 +512,18 @@ def build_ppt(source: Path, output: Path, assets: dict[str, Path]) -> None:
             ("水体提取", assets["haidian_water"]),
         ],
         "320 patch｜月度：2025.12–2026.05｜128×128×64 / patch",
+        "2026年5月全域 Embedding PCA",
     )
     add_region(
         slide,
-        "哈尔滨新区｜P10C 配方从零训练",
+        "哈尔滨新区｜Stage 2 既有权重",
         7.16,
         assets["harbin_pca"],
         [
-            ("建筑提取", assets["harbin_building"]),
-            ("道路提取", assets["harbin_road"]),
-            ("水体提取", assets["harbin_water"]),
+            ("施工工地提取", assets["harbin_construction"]),
         ],
-        "424 patch｜月度：2025.12–2026.05｜同嵌入 + MLP 诊断预测",
+        "424 patch｜月度：2025.12–2026.05｜128×128×64 / patch",
+        "2026年5月全域 Embedding PCA",
     )
     add_text(
         slide,
@@ -527,20 +584,20 @@ def build_preview(output: Path, assets: dict[str, Path]) -> None:
                 ("水体提取", assets["haidian_water"]),
             ],
             "320 patch｜月度：2025.12–2026.05｜128×128×64 / patch",
+            "2026年5月全域 Embedding PCA",
         ),
         (
             857,
-            "哈尔滨新区｜P10C 配方从零训练",
+            "哈尔滨新区｜Stage 2 既有权重",
             assets["harbin_pca"],
             [
-                ("建筑提取", assets["harbin_building"]),
-                ("道路提取", assets["harbin_road"]),
-                ("水体提取", assets["harbin_water"]),
+                ("施工工地提取", assets["harbin_construction"]),
             ],
-            "424 patch｜月度：2025.12–2026.05｜同嵌入 + MLP 诊断预测",
+            "424 patch｜月度：2025.12–2026.05｜128×128×64 / patch",
+            "2026年5月全域 Embedding PCA",
         ),
     ]
-    for x, name, pca_path, tasks, footer in regions:
+    for x, name, pca_path, tasks, footer, pca_caption in regions:
         name_box = draw.textbbox((0, 0), name, font=font(23, True))
         draw.text(
             (x + (726 - (name_box[2] - name_box[0])) // 2, 189),
@@ -548,11 +605,13 @@ def build_preview(output: Path, assets: dict[str, Path]) -> None:
             font=font(23, True),
             fill=blue,
         )
-        draw.text((x + 7, 232), "2026年4月全域 Embedding PCA", font=font(16, True), fill=ink)
+        draw.text((x + 7, 232), pca_caption, font=font(16, True), fill=ink)
         draw.rectangle((x + 5, 264, x + 469, 736), outline=line, width=2)
         contain_pil(canvas, pca_path, (x + 12, 271, x + 462, 729))
+        single_task = len(tasks) == 1
         for index, (label, path) in enumerate(tasks):
             y = 264 + index * 157
+            image_bottom = y + 438 if single_task else y + 146
             label_box = draw.textbbox((0, 0), label, font=font(15, True))
             draw.text(
                 (x + 492 + (214 - (label_box[2] - label_box[0])) // 2, y),
@@ -560,22 +619,22 @@ def build_preview(output: Path, assets: dict[str, Path]) -> None:
                 font=font(15, True),
                 fill=ink,
             )
-            draw.rectangle((x + 491, y + 34, x + 706, y + 146), outline=line, width=2)
-            contain_pil(canvas, path, (x + 497, y + 40, x + 700, y + 140))
+            draw.rectangle((x + 491, y + 34, x + 706, image_bottom), outline=line, width=2)
+            contain_pil(canvas, path, (x + 497, y + 40, x + 700, image_bottom - 6))
         legend = "■ 红=预测目标｜白=背景"
-        legend_box = draw.textbbox((0, 0), legend, font=font(15, True))
+        legend_box = draw.textbbox((0, 0), legend, font=font(11, True))
         draw.text(
             (x + 491 + (215 - (legend_box[2] - legend_box[0])) // 2, 731),
             legend,
-            font=font(15, True),
+            font=font(11, True),
             fill=(180, 35, 45),
         )
         draw.rectangle((x + 5, 770, x + 706, 834), fill=pale)
-        footer_box = draw.textbbox((0, 0), footer, font=font(16))
+        footer_box = draw.textbbox((0, 0), footer, font=font(12))
         draw.text(
             (x + (711 - (footer_box[2] - footer_box[0])) // 2, 791),
             footer,
-            font=font(16),
+            font=font(12),
             fill=muted,
         )
 
@@ -596,21 +655,21 @@ def main() -> None:
     args.asset_root.mkdir(parents=True, exist_ok=True)
     sources = {
         "haidian_pca": Path(
-            "/data/xuannv_embedding/experiments/v2_202512_202605/benchmarks/"
-            "p10_epoch800_full_domain_visuals_20260705/P10C_embedding_pca_202604_geo.png"
+            "/data/xuannv_embedding/experiments/presentation_pujiang_202607/"
+            "haidian_p10c_epoch800_202605_full_domain/P10C_embedding_pca_202605_geo.png"
         ),
         "haidian_building": Path(
-            "/data/xuannv_embedding/experiments/v2_202512_202605/benchmarks/"
-            "p10_epoch800_full_domain_visuals_20260705/building/"
+            "/data/xuannv_embedding/experiments/presentation_pujiang_202607/"
+            "haidian_p10c_epoch800_202605_full_domain/building/"
             "P10C_building_prediction_geo.png"
         ),
         "haidian_road": Path(
-            "/data/xuannv_embedding/experiments/v2_202512_202605/benchmarks/"
-            "p10_epoch800_full_domain_visuals_20260705/road/P10C_road_prediction_geo.png"
+            "/data/xuannv_embedding/experiments/presentation_pujiang_202607/"
+            "haidian_p10c_epoch800_202605_full_domain/road/P10C_road_prediction_geo.png"
         ),
         "haidian_water": Path(
-            "/data/xuannv_embedding/experiments/v2_202512_202605/benchmarks/"
-            "p10_epoch800_full_domain_visuals_20260705/water/P10C_water_prediction_geo.png"
+            "/data/xuannv_embedding/experiments/presentation_pujiang_202607/"
+            "haidian_p10c_epoch800_202605_full_domain/water/P10C_water_prediction_geo.png"
         ),
     }
     assets = {
@@ -618,9 +677,7 @@ def main() -> None:
         for key in [
             *sources,
             "harbin_pca",
-            "harbin_building",
-            "harbin_road",
-            "harbin_water",
+            "harbin_construction",
         ]
     }
     for key, source in sources.items():
@@ -634,20 +691,16 @@ def main() -> None:
         args.pca_sample_pixels,
         args.seed,
     )
-    probe_meta = {}
-    for task, asset_key in [
-        ("building_osm", "harbin_building"),
-        ("road_osm", "harbin_road"),
-        ("osm_water", "harbin_water"),
-    ]:
-        probe_meta[task] = build_harbin_prediction(
+    probe_meta = {
+        "construction": build_harbin_prediction(
             args.embedding_root,
             args.layout_root,
             args.month,
-            args.harbin_probe_root / task / "fold_0" / "checkpoints" / "best.pt",
-            args.harbin_probe_root / task / "fold_0" / "metrics.json",
-            assets[asset_key],
+            args.harbin_head_checkpoint,
+            args.harbin_head_metrics,
+            assets["harbin_construction"],
         )
+    }
     build_ppt(args.source_pptx, args.output_pptx, assets)
     preview = args.asset_root / "slide01_preview.png"
     build_preview(preview, assets)
@@ -659,18 +712,15 @@ def main() -> None:
         "haidian_model": {
             "experiment": "P10C",
             "checkpoint": "epoch_800",
-            "month": args.month,
+            "month": args.haidian_month,
             "task_map_type": "fold_0 model prediction",
         },
         "harbin_model": {
-            "experiment": "paper_e5_p10c_recipe_harbin_scratch_20260714",
-            "checkpoint": (
-                "/data/xuannv_embedding/outputs/"
-                "paper_e5_p10c_recipe_harbin_scratch_20260714/epoch_800.pt"
-            ),
+            "experiment": "harbin_128_stage2_v1",
+            "checkpoint": "/data/xuannv_embedding/outputs/harbin_128_stage2_v1/best.pt",
             "month": args.month,
-            "training": "scratch",
-            "task_map_type": "fold_0 MLP diagnostic prediction",
+            "training": "existing_stage2_checkpoint",
+            "task_map_type": "original fold_0 lightweight UNet construction prediction",
         },
         "harbin_pca": pca_meta,
         "harbin_probes": probe_meta,
