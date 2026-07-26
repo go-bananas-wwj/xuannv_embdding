@@ -997,11 +997,39 @@ def test_v5_rejects_aef_family_before_task5(
         registered.validate_v5_matrix_comparator("matched_aef_v5", "full_150")
 
 
+def _sealed_v5_wrapper_repo(tmp_path: Path) -> Path:
+    """Create a minimal committed repository for V5 wrapper integration tests."""
+    source_root = Path(__file__).resolve().parents[1]
+    repo = tmp_path / "wrapper-repo"
+    for relative in (
+        Path("scripts/eval/export_registered_v5_paper_encoders.sh"),
+        Path("scripts/eval/launch_registered_v5_downstream.sh"),
+        Path("scripts/eval/registered_v5_matrix.py"),
+        Path("scripts/eval/run_registered_paper_downstream.py"),
+        Path("downstreams/scripts/precompute_embeddings.py"),
+        Path("downstreams/scripts/export_paths.py"),
+        Path("downstreams/downstreams/inference.py"),
+        Path("src/xuannv_embedding/models/model.py"),
+        Path("configs/eval/rse_v5_osm_assisted_matrix.json"),
+    ):
+        target = repo / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_root / relative, target)
+    for command in (
+        ["git", "init", "--quiet"],
+        ["git", "config", "user.email", "wrapper-test@example.invalid"],
+        ["git", "config", "user.name", "Wrapper Test"],
+        ["git", "add", "."],
+        ["git", "commit", "--quiet", "-m", "seal wrapper fixture"],
+    ):
+        subprocess.run(command, cwd=repo, check=True)
+    return repo
+
+
 def test_v5_export_and_launcher_dry_runs_admit_declared_family_only(tmp_path: Path) -> None:
-    root = Path(__file__).resolve().parents[1]
+    root = _sealed_v5_wrapper_repo(tmp_path)
     exporter = root / "scripts/eval/export_registered_v5_paper_encoders.sh"
     launcher = root / "scripts/eval/launch_registered_v5_downstream.sh"
-    matrix_path, _ = _sealed_v5_matrix(tmp_path)
     for script in (exporter, launcher):
         missing_protocol = subprocess.run(
             [str(script), "--family", "full_150", "--dry-run"],
@@ -1018,8 +1046,6 @@ def test_v5_export_and_launcher_dry_runs_admit_declared_family_only(tmp_path: Pa
                 "v5_osm_assisted",
                 "--family",
                 "full_150",
-                "--matrix",
-                str(matrix_path),
                 "--dry-run",
             ],
             cwd=root,
@@ -1039,8 +1065,6 @@ def test_v5_export_and_launcher_dry_runs_admit_declared_family_only(tmp_path: Pa
                     "v5_osm_assisted",
                     "--family",
                     rejected_family,
-                    "--matrix",
-                    str(matrix_path),
                     "--dry-run",
                 ],
                 cwd=root,
@@ -1049,6 +1073,221 @@ def test_v5_export_and_launcher_dry_runs_admit_declared_family_only(tmp_path: Pa
                 check=False,
             )
             assert rejected.returncode == 2
+
+
+def test_v5_export_and_launcher_dry_runs_work_from_outside_repository(tmp_path: Path) -> None:
+    """V5 wrappers must resolve their registered relative assets from the repository root."""
+    root = _sealed_v5_wrapper_repo(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    python_cwds = tmp_path / "python-cwds.txt"
+    python_wrapper = bin_dir / "python"
+    python_wrapper.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf \'%s\\n\' "$PWD" >> "$V5_TEST_PYTHON_CWDS"\n'
+        'exec "$V5_TEST_REAL_PYTHON" "$@"\n',
+        encoding="utf-8",
+    )
+    python_wrapper.chmod(0o755)
+    environment = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "V5_TEST_PYTHON_CWDS": str(python_cwds),
+        "V5_TEST_REAL_PYTHON": sys.executable,
+    }
+    for script in (
+        root / "scripts/eval/export_registered_v5_paper_encoders.sh",
+        root / "scripts/eval/launch_registered_v5_downstream.sh",
+    ):
+        result = subprocess.run(
+            [
+                str(script),
+                "--protocol",
+                "v5_osm_assisted",
+                "--family",
+                "full_150",
+                "--dry-run",
+            ],
+            cwd=outside,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=environment,
+        )
+        assert result.returncode == 0, result.stderr
+    assert python_cwds.read_text(encoding="utf-8").splitlines() == [str(root), str(root)]
+
+
+def test_v5_exporter_rejects_a_dirty_runtime_source(tmp_path: Path) -> None:
+    """A V5 export must not begin with modified feature-generation code."""
+    root = _sealed_v5_wrapper_repo(tmp_path)
+    precompute = root / "downstreams/scripts/precompute_embeddings.py"
+    precompute.write_text(precompute.read_text(encoding="utf-8") + "\n# dirty\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            str(root / "scripts/eval/export_registered_v5_paper_encoders.sh"),
+            "--protocol",
+            "v5_osm_assisted",
+            "--family",
+            "full_150",
+            "--dry-run",
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "runtime source tree differs from Git HEAD" in result.stderr
+
+
+def test_v5_exporter_rejects_a_dirty_model_dependency(tmp_path: Path) -> None:
+    """The export gate covers model/data code, not only the top-level exporter."""
+    root = _sealed_v5_wrapper_repo(tmp_path)
+    model = root / "src/xuannv_embedding/models/model.py"
+    model.write_text(model.read_text(encoding="utf-8") + "\n# dirty\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            str(root / "scripts/eval/export_registered_v5_paper_encoders.sh"),
+            "--protocol",
+            "v5_osm_assisted",
+            "--family",
+            "full_150",
+            "--dry-run",
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "runtime source tree differs from Git HEAD" in result.stderr
+
+
+def test_v5_exporter_rejects_an_untracked_runtime_source(tmp_path: Path) -> None:
+    """The runtime-tree gate also rejects untracked source files."""
+    root = _sealed_v5_wrapper_repo(tmp_path)
+    untracked = root / "src/xuannv_embedding/untracked_runtime.py"
+    untracked.write_text("VALUE = 'untracked'\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            str(root / "scripts/eval/export_registered_v5_paper_encoders.sh"),
+            "--protocol",
+            "v5_osm_assisted",
+            "--family",
+            "full_150",
+            "--dry-run",
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "runtime source tree differs from Git HEAD" in result.stderr
+
+
+def test_v5_launcher_rejects_a_dirty_runner_before_import(tmp_path: Path) -> None:
+    """The shell launcher rejects a dirty runner before it starts a Python probe process."""
+    root = _sealed_v5_wrapper_repo(tmp_path)
+    runner = root / "scripts/eval/run_registered_paper_downstream.py"
+    runner.write_text(runner.read_text(encoding="utf-8") + "\n# dirty\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            str(root / "scripts/eval/launch_registered_v5_downstream.sh"),
+            "--protocol",
+            "v5_osm_assisted",
+            "--family",
+            "full_150",
+            "--dry-run",
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "runtime source tree differs from Git HEAD" in result.stderr
+
+
+def test_v5_runtime_source_gate_covers_runner_and_matrix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A registered probe records and verifies every Python source it executes."""
+    seen: list[Path] = []
+    monkeypatch.setattr(registered, "verify_git_head_file", lambda path: seen.append(Path(path)))
+
+    sources = registered.verify_v5_runtime_sources()
+
+    assert set(sources) == {
+        "run_registered_paper_downstream.py",
+        "registered_v5_matrix.py",
+        "run_strong_downstream_benchmark.py",
+        "run_traditional_ml_benchmark.py",
+    }
+    assert {path.name for path in seen} == set(sources)
+    assert all(len(value) == 64 for value in sources.values())
+
+
+def test_precompute_embeddings_export_name_is_a_safe_child_directory(tmp_path: Path) -> None:
+    """The sharded exporter accepts only one literal child directory name."""
+    root = Path(__file__).resolve().parents[1]
+    export_paths_script = repr(str(root / "downstreams/scripts/export_paths.py"))
+    code = (
+        "import importlib.util, sys; from pathlib import Path; "
+        f"spec = importlib.util.spec_from_file_location('v5_export_paths', {export_paths_script}); "
+        "module = importlib.util.module_from_spec(spec); sys.modules[spec.name] = module; "
+        "spec.loader.exec_module(module); "
+        "print(module.resolve_export_root(Path(sys.argv[1]), sys.argv[2], 'fallback'))"
+    )
+    environment = {
+        **os.environ,
+        "PYTHONPATH": f"{root / 'downstreams'}:{os.environ.get('PYTHONPATH', '')}",
+    }
+    result = subprocess.run(
+        [sys.executable, "-c", f"import sys; {code}", str(tmp_path), "sealed-export"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=environment,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(tmp_path / "sealed-export")
+
+    traversal = subprocess.run(
+        [sys.executable, "-c", f"import sys; {code}", str(tmp_path), ".."],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=environment,
+    )
+    assert traversal.returncode != 0
+    assert "literal child directory" in traversal.stderr
+
+    link = tmp_path / "linked-export"
+    link.symlink_to(tmp_path.parent, target_is_directory=True)
+    symlink = subprocess.run(
+        [sys.executable, "-c", f"import sys; {code}", str(tmp_path), link.name],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=environment,
+    )
+    assert symlink.returncode != 0
+    assert "symbolic link" in symlink.stderr
 
 
 def test_v5_matrix_preflight_loader_avoids_training_runtime_imports() -> None:

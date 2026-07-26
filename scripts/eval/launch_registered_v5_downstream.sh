@@ -32,6 +32,40 @@ while (( $# > 0 )); do
 done
 
 [[ "$PROTOCOL" == "v5_osm_assisted" && -n "$FAMILY" ]] || { usage; exit 2; }
+cd "$ROOT"
+assert_script_at_head() {
+  local relative=$1
+  git ls-files --error-unmatch -- "$relative" >/dev/null 2>&1 || {
+    echo "v5 script is not Git tracked: $relative" >&2
+    exit 2
+  }
+  cmp -s "$ROOT/$relative" <(git show "HEAD:$relative") || {
+    echo "v5 script differs from Git HEAD: $relative" >&2
+    exit 2
+  }
+}
+assert_script_at_head "scripts/eval/launch_registered_v5_downstream.sh"
+assert_runtime_tree_at_head() {
+  local untracked
+  git diff --quiet HEAD -- \
+    src/xuannv_embedding \
+    downstreams/downstreams \
+    downstreams/scripts \
+    scripts/eval || {
+    echo "v5 runtime source tree differs from Git HEAD" >&2
+    exit 2
+  }
+  untracked="$(git ls-files --others --exclude-standard -- \
+    src/xuannv_embedding \
+    downstreams/downstreams \
+    downstreams/scripts \
+    scripts/eval | awk '/\.(py|sh)$/')"
+  [[ -z "$untracked" ]] || {
+    echo "v5 runtime source tree differs from Git HEAD" >&2
+    exit 2
+  }
+}
+assert_runtime_tree_at_head
 export PYTHONPATH="$ROOT:$ROOT/src:$ROOT/downstreams:${PYTHONPATH:-}"
 
 python - "$FAMILY" "$MATRIX" <<'PY'

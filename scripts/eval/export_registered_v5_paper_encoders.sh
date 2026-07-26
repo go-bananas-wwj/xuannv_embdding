@@ -30,6 +30,55 @@ while (( $# > 0 )); do
 done
 
 [[ "$PROTOCOL" == "v5_osm_assisted" && -n "$FAMILY" ]] || { usage; exit 2; }
+cd "$ROOT"
+assert_script_at_head() {
+  local relative=$1
+  git ls-files --error-unmatch -- "$relative" >/dev/null 2>&1 || {
+    echo "v5 script is not Git tracked: $relative" >&2
+    exit 2
+  }
+  cmp -s "$ROOT/$relative" <(git show "HEAD:$relative") || {
+    echo "v5 script differs from Git HEAD: $relative" >&2
+    exit 2
+  }
+}
+assert_script_at_head "scripts/eval/export_registered_v5_paper_encoders.sh"
+assert_runtime_tree_at_head() {
+  local untracked
+  git diff --quiet HEAD -- \
+    src/xuannv_embedding \
+    downstreams/downstreams \
+    downstreams/scripts \
+    scripts/eval || {
+    echo "v5 runtime source tree differs from Git HEAD" >&2
+    exit 2
+  }
+  untracked="$(git ls-files --others --exclude-standard -- \
+    src/xuannv_embedding \
+    downstreams/downstreams \
+    downstreams/scripts \
+    scripts/eval | awk '/\.(py|sh)$/')"
+  [[ -z "$untracked" ]] || {
+    echo "v5 runtime source tree differs from Git HEAD" >&2
+    exit 2
+  }
+}
+assert_runtime_tree_at_head
+for runtime_source in \
+  "downstreams/scripts/precompute_embeddings.py" \
+  "downstreams/scripts/export_paths.py" \
+  "downstreams/downstreams/inference.py" \
+  "scripts/eval/run_registered_paper_downstream.py" \
+  "scripts/eval/registered_v5_matrix.py"; do
+  git ls-files --error-unmatch -- "$runtime_source" >/dev/null 2>&1 || {
+    echo "v5 runtime source is not Git tracked: $runtime_source" >&2
+    exit 2
+  }
+  cmp -s "$ROOT/$runtime_source" <(git show "HEAD:$runtime_source") || {
+    echo "v5 runtime source differs from Git HEAD: $runtime_source" >&2
+    exit 2
+  }
+done
 export PYTHONPATH="$ROOT:$ROOT/src:$ROOT/downstreams:${PYTHONPATH:-}"
 
 python - "$FAMILY" "$MATRIX" <<'PY'
@@ -43,10 +92,11 @@ if family not in matrix["families"]:
     raise SystemExit(2)
 PY
 
+RUN_ID="$(date -u +%Y%m%dT%H%M%S%NZ)-$$"
 for fold in 0 1 2 3 4; do
   config="$ROOT/configs/paper_registered_v5_20260726/paper_registered_v5_${FAMILY}_fold${fold}_20260726.yaml"
   checkpoint="$OUTPUT_ROOT/paper_registered_v5_${FAMILY}_fold${fold}_20260726/best.pt"
-  suffix="${FAMILY}_fold${fold}"
+  suffix="${FAMILY}_fold${fold}_${RUN_ID}"
   declare -a commands=()
   for shard in 0 1 2 3 4 5; do
     printf 'EXPORT protocol=v5_osm_assisted family=%s fold=%s shard=%s device=npu:%s\n' \
@@ -62,11 +112,18 @@ for fold in 0 1 2 3 4; do
   }
   source /usr/local/Ascend/cann-9.0.0/set_env.sh
   mkdir -p "$LOG_ROOT"
+  export_name="$(date -u +%Y%m%d)_$(basename "${config%.yaml}")_best_${suffix}"
+  export_root="$EMBED_ROOT/$export_name"
+  mkdir "$export_root" || {
+    echo "refusing to reuse a registered v5 export root: $export_root" >&2
+    exit 4
+  }
   declare -a pids=()
   for shard in 0 1 2 3 4 5; do
     ASCEND_RT_VISIBLE_DEVICES="$shard" python "$ROOT/downstreams/scripts/precompute_embeddings.py" \
       --config "$config" --checkpoint "$checkpoint" --regions haidian --manifest-path "$MANIFEST" \
       --output-root "$EMBED_ROOT" --suffix "$suffix" --months "$MONTH" --center-crop-size 128 \
+      --export-name "$export_name" \
       --num-shards 6 --shard-id "$shard" --device npu:0 --skip-meta \
       >"$LOG_ROOT/${suffix}_shard${shard}.log" 2>&1 &
     pids+=("$!")
@@ -79,12 +136,6 @@ for fold in 0 1 2 3 4; do
     echo "one or more v5 export shards failed for ${suffix}" >&2
     exit 5
   }
-  mapfile -t produced < <(find "$EMBED_ROOT" -maxdepth 1 -type d -name "*_${suffix}" -printf '%p\n' | sort)
-  (( ${#produced[@]} == 1 )) || {
-    echo "expected one dated output root for ${suffix}, found ${#produced[@]}" >&2
-    exit 6
-  }
-  export_root="${produced[0]}"
   commands_json="$(python - "${commands[@]}" <<'PY'
 import hashlib
 import json

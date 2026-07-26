@@ -16,6 +16,8 @@ from downstreams.inference import (
     write_meta_json,
 )
 
+from scripts.export_paths import resolve_export_root
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -25,6 +27,11 @@ def main() -> None:
     p.add_argument("--config", type=Path, required=True)
     p.add_argument("--regions", nargs="+", required=True)
     p.add_argument("--output-root", type=Path, required=True)
+    p.add_argument(
+        "--export-name",
+        default=None,
+        help="Use this exact child directory name under --output-root for one sealed export.",
+    )
     p.add_argument(
         "--manifest-path",
         type=Path,
@@ -109,6 +116,11 @@ def main() -> None:
             p.error(str(exc))
     if (args.shard_id is None) != (args.num_shards is None):
         p.error("--shard-id and --num-shards must be provided together")
+    if args.export_name is not None:
+        try:
+            resolve_export_root(args.output_root, args.export_name, "default")
+        except ValueError as exc:
+            p.error(str(exc))
 
     model, cfg, device = load_model_for_inference(
         args.config,
@@ -122,7 +134,11 @@ def main() -> None:
     sha = args.checkpoint.stem[:8] if args.checkpoint else "random"
     init_tag = "_random_init" if args.random_init else ""
     suffix = f"_{args.suffix}" if args.suffix else ""
-    out_root = args.output_root / f"{date_str}_{exp_name}_{sha}{init_tag}{suffix}"
+    default_name = f"{date_str}_{exp_name}_{sha}{init_tag}{suffix}"
+    try:
+        out_root = resolve_export_root(args.output_root, args.export_name, default_name)
+    except ValueError as exc:
+        p.error(str(exc))
 
     for region in args.regions:
         logger.info("生成 %s embedding", region)

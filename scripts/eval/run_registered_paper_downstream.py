@@ -806,6 +806,22 @@ def verify_git_head_file(path: Path) -> None:
         raise ValueError("External registry must exactly match the current Git HEAD")
 
 
+def verify_v5_runtime_sources() -> dict[str, str]:
+    """Seal the Python sources that define a registered V5 probe execution."""
+    repo_root = Path(__file__).resolve().parents[2]
+    sources = (
+        repo_root / "scripts/eval/run_registered_paper_downstream.py",
+        repo_root / "scripts/eval/registered_v5_matrix.py",
+        repo_root / "scripts/eval/run_strong_downstream_benchmark.py",
+        repo_root / "scripts/eval/run_traditional_ml_benchmark.py",
+    )
+    verified: dict[str, str] = {}
+    for path in sources:
+        verify_git_head_file(path)
+        verified[path.name] = sha256_file(path)
+    return verified
+
+
 def verify_encoder_provenance(
     config_path: Path,
     checkpoint_path: Path,
@@ -1629,6 +1645,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    runtime_sources: dict[str, str] | None = None
+    if args.protocol == "v5_osm_assisted":
+        runtime_sources = verify_v5_runtime_sources()
     descriptor = resolve_registered_protocol(args.protocol)
     provenance = verify_encoder_provenance(
         args.encoder_config, args.encoder_checkpoint, args.fold, args.protocol
@@ -1831,6 +1850,7 @@ def main() -> None:
     if args.protocol == "v5_osm_assisted":
         metric_payload["family"] = provenance["family"]
         metric_payload["test_patch_ids_sha256"] = _patch_id_set_sha256(set(ordered_patch_ids))
+        metric_payload["runtime_sources"] = runtime_sources
     _write_json(output / "metrics.json", metric_payload)
     result_id = hashlib.sha256(
         (
