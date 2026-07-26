@@ -812,6 +812,7 @@ def verify_v5_runtime_sources() -> dict[str, str]:
     """Seal the Python sources that define a registered V5 probe execution."""
     repo_root = Path(__file__).resolve().parents[2]
     sources = (
+        repo_root / "scripts/eval/registered_v5_encoder_checkpoint.py",
         repo_root / "scripts/eval/run_registered_paper_downstream.py",
         repo_root / "scripts/eval/registered_v5_matrix.py",
         repo_root / "scripts/eval/run_strong_downstream_benchmark.py",
@@ -835,11 +836,6 @@ def verify_encoder_provenance(
         raise FileNotFoundError(f"Missing encoder config: {config_path}")
     if not checkpoint_path.is_file():
         raise FileNotFoundError(f"Missing encoder checkpoint: {checkpoint_path}")
-    if checkpoint_path.name != "best.pt":
-        raise ValueError(
-            "Registered evaluation requires the validation-selected encoder checkpoint "
-            "named best.pt"
-        )
     raw: dict[str, Any] = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     data = raw.get("data", {})
     configured_fold = data.get("paper_fold")
@@ -851,8 +847,16 @@ def verify_encoder_provenance(
             f"{configured_fold} does not match requested evaluation fold {expected_fold}"
         )
     experiment_name = raw.get("experiment", {}).get("name")
-    if experiment_name != checkpoint_path.parent.name:
-        raise ValueError("Checkpoint parent directory does not match config experiment.name")
+    if protocol_id == "v5_osm_assisted":
+        from scripts.eval.registered_v5_encoder_checkpoint import (
+            validate_registered_v5_checkpoint_path,
+        )
+
+        validate_registered_v5_checkpoint_path(
+            checkpoint_path, expected_job_name=str(experiment_name)
+        )
+    elif checkpoint_path.name != "best.pt" or experiment_name != checkpoint_path.parent.name:
+        raise ValueError("Checkpoint path does not match config experiment.name")
     descriptor = resolve_registered_protocol(protocol_id)
     split_path = Path(data.get("paper_spatial_split", ""))
     frozen_path = Path(descriptor["split_path"]).resolve()

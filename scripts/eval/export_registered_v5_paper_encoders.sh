@@ -7,6 +7,7 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 FAMILY=""
 PROTOCOL=""
 DRY_RUN=false
+REGISTER_PENDING=false
 MATRIX="$ROOT/configs/eval/rse_v5_osm_assisted_matrix.json"
 MONTH=202604
 MANIFEST=/data/xuannv_embedding/processed/haidian/manifest_p6a_202512_202605_pixelmask_clean_osm_landcover.json
@@ -16,7 +17,7 @@ REGISTRY="$ROOT/configs/eval/registered_embedding_exports_v5_20260726.json"
 LOG_ROOT=/data/xuannv_embedding/experiments/paper_registered_v5_20260726/logs/exports
 
 usage() {
-  echo "usage: $0 --protocol v5_osm_assisted --family <declared-v5-family> [--matrix path] [--dry-run]" >&2
+  echo "usage: $0 --protocol v5_osm_assisted --family <declared-v5-family> [--matrix path] [--register-pending] [--dry-run]" >&2
 }
 
 while (( $# > 0 )); do
@@ -24,6 +25,7 @@ while (( $# > 0 )); do
     --protocol) PROTOCOL=${2:-}; shift 2 ;;
     --family) FAMILY=${2:-}; shift 2 ;;
     --matrix) MATRIX=${2:-}; shift 2 ;;
+    --register-pending) REGISTER_PENDING=true; shift ;;
     --dry-run) DRY_RUN=true; shift ;;
     *) usage; exit 2 ;;
   esac
@@ -69,6 +71,7 @@ for runtime_source in \
   "downstreams/scripts/export_paths.py" \
   "downstreams/downstreams/inference.py" \
   "scripts/eval/run_registered_paper_downstream.py" \
+  "scripts/eval/registered_v5_encoder_checkpoint.py" \
   "scripts/eval/registered_v5_matrix.py"; do
   git ls-files --error-unmatch -- "$runtime_source" >/dev/null 2>&1 || {
     echo "v5 runtime source is not Git tracked: $runtime_source" >&2
@@ -93,9 +96,9 @@ if family not in matrix["families"]:
 PY
 
 RUN_ID="$(date -u +%Y%m%dT%H%M%S%NZ)-$$"
+declare -a PENDING_ENTRIES=()
 for fold in 0 1 2 3 4; do
   config="$ROOT/configs/paper_registered_v5_20260726/paper_registered_v5_${FAMILY}_fold${fold}_20260726.yaml"
-  checkpoint="$OUTPUT_ROOT/paper_registered_v5_${FAMILY}_fold${fold}_20260726/best.pt"
   suffix="${FAMILY}_fold${fold}_${RUN_ID}"
   declare -a commands=()
   for shard in 0 1 2 3 4 5; do
@@ -105,7 +108,11 @@ for fold in 0 1 2 3 4; do
   done
   printf 'EXPORT protocol=v5_osm_assisted family=%s fold=%s phase=finalize shards=6 registry=%s\n' \
     "$FAMILY" "$fold" "$REGISTRY"
-  [[ "$DRY_RUN" == true ]] && continue
+  if [[ "$DRY_RUN" == true ]]; then
+    continue
+  fi
+  checkpoint="$(python "$ROOT/scripts/eval/registered_v5_encoder_checkpoint.py" \
+    --output-root "$OUTPUT_ROOT" --family "$FAMILY" --fold "$fold")"
   [[ -f "$config" && -f "$checkpoint" ]] || {
     echo "missing registered v5 config or best checkpoint for ${FAMILY}/fold${fold}" >&2
     exit 3
@@ -136,7 +143,7 @@ for fold in 0 1 2 3 4; do
     echo "one or more v5 export shards failed for ${suffix}" >&2
     exit 5
   }
-  commands_json="$(python - "${commands[@]}" <<'PY'
+commands_json="$(python - "${commands[@]}" <<'PY'
 import hashlib
 import json
 import sys
@@ -145,6 +152,7 @@ PY
   )"
   python - "$export_root" "$config" "$checkpoint" "$MANIFEST" "$FAMILY" "$fold" "$MONTH" \
     "$commands_json" "$REGISTRY" <<'PY'
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -209,4 +217,13 @@ pending["entry_sha256"] = _canonical_sha256(pending["entry"])
 _write_json(export_root / "pending_registry_entry.json", pending)
 print(json.dumps({"pending_registry_entry": str(export_root / "pending_registry_entry.json")}, sort_keys=True))
 PY
+  PENDING_ENTRIES+=("$export_root/pending_registry_entry.json")
 done
+
+if [[ "$REGISTER_PENDING" == true ]]; then
+  printf 'REGISTER protocol=v5_osm_assisted family=%s entries=5 registry=%s\n' "$FAMILY" "$REGISTRY"
+  if [[ "$DRY_RUN" == false ]]; then
+    python "$ROOT/scripts/eval/register_registered_v5_embedding_export.py" \
+      --registry "$REGISTRY" --pending-entry "${PENDING_ENTRIES[@]}"
+  fi
+fi

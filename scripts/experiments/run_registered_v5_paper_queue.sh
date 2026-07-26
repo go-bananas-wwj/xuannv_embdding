@@ -117,6 +117,7 @@ require_queue_script_at_git_head() {
 
 validate_registered_inputs() {
   local path
+  require_git_head_file "$ROOT/scripts/eval/registered_v5_encoder_checkpoint.py"
   for path in "${CONFIG_NAMES[@]}"; do
     require_git_head_file "$CONFIG_ROOT/$path.yaml"
   done
@@ -428,25 +429,7 @@ PY
 canonical_is_verified() {
   local job_root=$1
   [[ -f "$job_root/canonical_attempt.json" ]] || return 1
-  python - "$job_root/canonical_attempt.json" <<'PY'
-import hashlib
-import json
-import sys
-from pathlib import Path
-
-pointer = Path(sys.argv[1])
-payload = json.loads(pointer.read_text(encoding="utf-8"))
-attempt = Path(payload["attempt_dir"])
-checkpoint = Path(payload["checkpoint_path"])
-if attempt.parent != pointer.parent or not checkpoint.is_file():
-    raise SystemExit("canonical attempt points outside its job or at a missing checkpoint")
-if hashlib.sha256(checkpoint.read_bytes()).hexdigest() != payload.get("checkpoint_sha256"):
-    raise SystemExit("canonical attempt checkpoint hash changed")
-if hashlib.sha256((attempt / "attempt_manifest.json").read_bytes()).hexdigest() != payload.get(
-    "attempt_manifest_sha256"
-):
-    raise SystemExit("canonical attempt manifest hash changed")
-PY
+  python "$ROOT/scripts/eval/registered_v5_encoder_checkpoint.py" --job-root "$job_root" >/dev/null
 }
 
 next_attempt_number() {

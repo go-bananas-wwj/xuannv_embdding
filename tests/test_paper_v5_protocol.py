@@ -2155,15 +2155,15 @@ def test_v5_embedding_registry_requires_versioned_protocol_and_bindings(tmp_path
         registered.validate_v5_embedding_registry(mismatched, bindings)
 
 
-def _sealed_v5_export_root(tmp_path: Path) -> tuple[Path, dict[str, object]]:
+def _sealed_v5_export_root(tmp_path: Path, *, fold: int = 0) -> tuple[Path, dict[str, object]]:
     root = Path(__file__).resolve().parents[1]
     config_path = (
         root
-        / "configs/paper_registered_v5_20260726/paper_registered_v5_full_150_fold0_20260726.yaml"
+        / f"configs/paper_registered_v5_20260726/paper_registered_v5_full_150_fold{fold}_20260726.yaml"
     )
-    checkpoint_path = tmp_path / "best.pt"
+    checkpoint_path = tmp_path / f"best_fold{fold}.pt"
     checkpoint_path.write_bytes(b"sealed checkpoint")
-    export_root = tmp_path / "export"
+    export_root = tmp_path / f"export_fold{fold}"
     region_root = export_root / "haidian"
     patch_ids = [f"patch_{index:06d}" for index in range(320)]
     for index, patch_id in enumerate(patch_ids):
@@ -2201,11 +2201,11 @@ def _sealed_v5_export_root(tmp_path: Path) -> tuple[Path, dict[str, object]]:
         shard_commands=commands,
     )
     registered.seal_embedding_file_index(export_root, "haidian", "202604")
-    return export_root, {"family": "full_150", "fold": 0, "region": "haidian", "month": "202604"}
+    return export_root, {"family": "full_150", "fold": fold, "region": "haidian", "month": "202604"}
 
 
 def test_v5_registrar_rebuilds_export_entry_and_rejects_forged_pending(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     matrix_path, matrix_sha256, registry_path = _sealed_v5_protocol_assets(tmp_path)
     monkeypatch.setattr(registered, "V5_MATRIX", matrix_path)
@@ -2230,8 +2230,6 @@ def test_v5_registrar_rebuilds_export_entry_and_rejects_forged_pending(
         "entry_sha256": registered._canonical_sha256(entry),
     }
     _write_json(pending_path, pending)
-    before = registry_path.read_bytes()
-
     monkeypatch.setattr(
         "sys.argv",
         [
@@ -2243,16 +2241,137 @@ def test_v5_registrar_rebuilds_export_entry_and_rejects_forged_pending(
             "--dry-run",
         ],
     )
-    registrar.main()
-    assert registry_path.read_bytes() == before
-    assert "commit required" in capsys.readouterr().out
+    with pytest.raises(ValueError, match="exactly folds 0 through 4"):
+        registrar.main()
 
     forged = dict(entry)
     forged["checkpoint_sha256"] = "forged"
     pending["entry"] = forged
     pending["entry_sha256"] = registered._canonical_sha256(forged)
-    _write_json(pending_path, pending)
     with pytest.raises(ValueError, match="does not match the sealed export"):
+        registrar.rebuild_entry_from_export(forged)
+
+
+def test_v5_registrar_appends_multiple_exports_from_one_registry_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Five fold exports created from one sealed registry must register atomically."""
+    matrix_path, matrix_sha256, registry_path = _sealed_v5_protocol_assets(tmp_path)
+    monkeypatch.setattr(registered, "V5_MATRIX", matrix_path)
+    monkeypatch.setattr(registered, "V5_MATRIX_SHA256", matrix_sha256)
+    pending_paths: list[Path] = []
+    for fold in range(5):
+        export_root, identity = _sealed_v5_export_root(tmp_path, fold=fold)
+        entry = {
+            **registered.build_v5_embedding_registry_entry(
+                export_root,
+                family=str(identity["family"]),
+                fold=int(identity["fold"]),
+                region=str(identity["region"]),
+                month=str(identity["month"]),
+            ),
+            "embedding_root": str(export_root.resolve()),
+        }
+        pending_path = tmp_path / f"pending_fold{fold}.json"
+        _write_json(
+            pending_path,
+            {
+                "schema_version": 1,
+                "registry_path": str(registry_path.resolve()),
+                "registry_sha256": _sha256(registry_path),
+                "entry": entry,
+                "entry_sha256": registered._canonical_sha256(entry),
+            },
+        )
+        pending_paths.append(pending_path)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "register_registered_v5_embedding_export.py",
+            "--registry",
+            str(registry_path),
+            "--pending-entry",
+            *(str(path) for path in pending_paths[:-1]),
+        ],
+    )
+    with pytest.raises(ValueError, match="exactly folds 0 through 4"):
+        registrar.main()
+
+    before = registry_path.read_bytes()
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "register_registered_v5_embedding_export.py",
+            "--registry",
+            str(registry_path),
+            "--pending-entry",
+            *(str(path) for path in pending_paths),
+            "--dry-run",
+        ],
+    )
+    registrar.main()
+    assert registry_path.read_bytes() == before
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "register_registered_v5_embedding_export.py",
+            "--registry",
+            str(registry_path),
+            "--pending-entry",
+            *(str(path) for path in pending_paths),
+        ],
+    )
+    registrar.main()
+
+    raw = json.loads(registry_path.read_text(encoding="utf-8"))
+    assert {entry["encoder_fold"] for entry in raw["exports"]} == set(range(5))
+
+
+def test_v5_registrar_rejects_pending_entries_from_mixed_registry_snapshots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A batch must not combine exports sealed against different registry bytes."""
+    _, _, registry_path = _sealed_v5_protocol_assets(tmp_path)
+    pending_paths = [tmp_path / f"pending_{fold}.json" for fold in range(5)]
+    entries = [
+        {
+            "id": f"v5-full_150-fold{fold}-haidian-202604",
+            "family": "full_150",
+            "encoder_fold": fold,
+            "protocol_id": "v5_osm_assisted",
+            "checkpoint_sha256": "checkpoint",
+            "config_sha256": "config",
+            "manifest_sha256": "manifest",
+            "embedding_file_index_sha256": "index",
+            "canonical_export_provenance_sha256": "provenance",
+            "region": "haidian",
+            "month": "202604",
+            "patch_count": 320,
+            "embedding_root": str(tmp_path / f"export_{fold}"),
+        }
+        for fold in range(5)
+    ]
+    snapshots = ["snapshot-a", "snapshot-a", "snapshot-b", "snapshot-a", "snapshot-a"]
+    monkeypatch.setattr(
+        registrar,
+        "load_pending_entry",
+        lambda path, registry: (entries[pending_paths.index(path)], snapshots[pending_paths.index(path)]),
+    )
+    monkeypatch.setattr(registrar, "rebuild_entry_from_export", lambda entry: entry)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "register_registered_v5_embedding_export.py",
+            "--registry",
+            str(registry_path),
+            "--pending-entry",
+            *(str(path) for path in pending_paths),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="same registry snapshot"):
         registrar.main()
 
 
@@ -2277,6 +2396,76 @@ def test_v5_rejects_aef_family_before_task5(
         registered.validate_v5_matrix_comparator("matched_aef_v5", "full_150")
 
 
+def test_v5_canonical_checkpoint_resolver_uses_the_queue_sealed_pointer(tmp_path: Path) -> None:
+    """Export and probe stages must consume the queue's verified checkpoint snapshot."""
+    from scripts.eval import registered_v5_encoder_checkpoint as checkpoint_resolver
+
+    job_root = tmp_path / "paper_registered_v5_full_150_fold2_20260726"
+    attempt = job_root / "attempt_1"
+    checkpoint = attempt / "verified_checkpoints" / "best_sealed.pt"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"sealed checkpoint")
+    manifest = attempt / "attempt_manifest.json"
+    _write_json(manifest, {"schema_version": 1, "attempt_dir": str(attempt.resolve())})
+    pointer = {
+        "schema_version": 1,
+        "attempt_dir": str(attempt.resolve()),
+        "attempt_manifest_sha256": _sha256(manifest),
+        "checkpoint_path": str(checkpoint.resolve()),
+        "checkpoint_sha256": _sha256(checkpoint),
+    }
+    pointer["sha256"] = hashlib.sha256(
+        json.dumps(pointer, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    pointer_path = job_root / "canonical_attempt.json"
+    _write_json(pointer_path, pointer)
+
+    with pytest.raises(ValueError, match="verification record"):
+        checkpoint_resolver.resolve_registered_v5_checkpoint(tmp_path, family="full_150", fold=2)
+    verification = attempt / "checkpoint_verifications" / f"{checkpoint.name}.json"
+    verification.parent.mkdir()
+    _write_json(
+        verification,
+        {
+            "schema_version": 1,
+            "attempt_dir": str(attempt.resolve()),
+            "checkpoint_path": str(checkpoint.resolve()),
+            "checkpoint_sha256": _sha256(checkpoint),
+        },
+    )
+    assert checkpoint_resolver.resolve_registered_v5_checkpoint(
+        tmp_path, family="full_150", fold=2
+    ) == checkpoint.resolve()
+    checkpoint_resolver.validate_registered_v5_checkpoint_path(
+        checkpoint.resolve(), expected_job_name=job_root.name
+    )
+    pointer["sha256"] = "forged"
+    _write_json(pointer_path, pointer)
+    with pytest.raises(ValueError, match="self-hash"):
+        checkpoint_resolver.resolve_registered_v5_checkpoint(tmp_path, family="full_150", fold=2)
+
+
+def test_v5_shot_schedule_generator_resolves_repo_imports_when_run_directly(tmp_path: Path) -> None:
+    """The schedule preparation command must not import the shadowing downstream package."""
+    root = Path(__file__).resolve().parents[1]
+    environment = {
+        **os.environ,
+        "PYTHONPATH": f"{root / 'src'}:{root / 'downstreams'}",
+    }
+
+    result = subprocess.run(
+        [sys.executable, str(root / "scripts/eval/prepare_registered_shot_manifests.py"), "--help"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=environment,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Generate immutable shared few-shot schedules" in result.stdout
+
+
 def _sealed_v5_wrapper_repo(tmp_path: Path) -> Path:
     """Create a minimal committed repository for V5 wrapper integration tests."""
     source_root = Path(__file__).resolve().parents[1]
@@ -2285,6 +2474,7 @@ def _sealed_v5_wrapper_repo(tmp_path: Path) -> Path:
         Path("scripts/__init__.py"),
         Path("scripts/eval/export_registered_v5_paper_encoders.sh"),
         Path("scripts/eval/launch_registered_v5_downstream.sh"),
+        Path("scripts/eval/registered_v5_encoder_checkpoint.py"),
         Path("scripts/eval/registered_v5_matrix.py"),
         Path("scripts/eval/run_registered_paper_downstream.py"),
         Path("downstreams/scripts/precompute_embeddings.py"),
@@ -2354,6 +2544,41 @@ def test_v5_export_and_launcher_dry_runs_admit_declared_family_only(tmp_path: Pa
                 check=False,
             )
             assert rejected.returncode == 2
+
+
+def test_v5_exporter_dry_run_can_plan_an_atomic_registry_batch(tmp_path: Path) -> None:
+    """All five export entries must be registered from their shared registry snapshot."""
+    root = _sealed_v5_wrapper_repo(tmp_path)
+    result = subprocess.run(
+        [
+            str(root / "scripts/eval/export_registered_v5_paper_encoders.sh"),
+            "--protocol",
+            "v5_osm_assisted",
+            "--family",
+            "full_150",
+            "--register-pending",
+            "--dry-run",
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count("REGISTER protocol=v5_osm_assisted") == 1
+
+
+def test_v5_exporter_finalization_heredoc_is_valid_python() -> None:
+    """The post-shard finalization program must compile before a long export is launched."""
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "scripts/eval/export_registered_v5_paper_encoders.sh").read_text(
+        encoding="utf-8"
+    )
+    finalizer = source.rsplit("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+
+    compile(finalizer, "registered_v5_export_finalizer", "exec")
+    assert "import hashlib" in finalizer
 
 
 def test_v5_export_and_launcher_dry_runs_work_from_outside_repository(tmp_path: Path) -> None:
@@ -2511,6 +2736,7 @@ def test_v5_runtime_source_gate_covers_runner_and_matrix(
     sources = registered.verify_v5_runtime_sources()
 
     assert set(sources) == {
+        "registered_v5_encoder_checkpoint.py",
         "run_registered_paper_downstream.py",
         "registered_v5_matrix.py",
         "run_strong_downstream_benchmark.py",
@@ -2599,6 +2825,7 @@ def _sealed_v5_queue_repo(tmp_path: Path) -> tuple[Path, Path]:
     repo = tmp_path / "queue-repo"
     required_paths = [
         Path("scripts/experiments/run_registered_v5_paper_queue.sh"),
+        Path("scripts/eval/registered_v5_encoder_checkpoint.py"),
         *(
             Path("configs/paper_registered_v5_20260726")
             / f"paper_registered_v5_full_150_fold{fold}_20260726.yaml"
@@ -2713,6 +2940,25 @@ def test_v5_encoder_queue_dry_run_requires_committed_queue_and_runs_from_root(
     )
     assert dirty.returncode != 0
     assert "queue script differs from Git HEAD" in dirty.stderr
+
+
+def test_v5_encoder_queue_rejects_a_dirty_canonical_checkpoint_helper(tmp_path: Path) -> None:
+    """Queue admission seals the helper that decides whether a fold is canonical."""
+    repo, queue = _sealed_v5_queue_repo(tmp_path)
+    helper = repo / "scripts/eval/registered_v5_encoder_checkpoint.py"
+    helper.write_text(helper.read_text(encoding="utf-8") + "\n# dirty helper\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [str(queue), "--dry-run"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "registered_v5_encoder_checkpoint.py" in result.stderr
+    assert "differs from Git HEAD" in result.stderr
 
 
 def test_v5_encoder_queue_rejects_an_untracked_queue_script(tmp_path: Path) -> None:

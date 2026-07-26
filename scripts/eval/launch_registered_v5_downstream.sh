@@ -186,7 +186,9 @@ run_job() {
   local attempt_root="$job_root/attempt_${attempt}"
   local log="$job_root/logs/attempt_${attempt}.log"
   local config="$ROOT/configs/paper_registered_v5_20260726/paper_registered_v5_${FAMILY}_fold${fold}_20260726.yaml"
-  local checkpoint="$ENCODER_ROOT/paper_registered_v5_${FAMILY}_fold${fold}_20260726/best.pt"
+  local checkpoint
+  checkpoint="$(python "$ROOT/scripts/eval/registered_v5_encoder_checkpoint.py" \
+    --output-root "$ENCODER_ROOT" --family "$FAMILY" --fold "$fold")"
   local schedule="$SCHEDULE_ROOT/${task}_fold${fold}_seed${seed}.json"
   local embedding_root
   embedding_root="$(embedding_root_for_fold "$fold")"

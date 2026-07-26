@@ -6,14 +6,16 @@
 - Encoder family: `full_150` only
 - Registered Xuannv encoders: **0 / 5 complete**
 - Registered Xuannv Conv3x3 probes: **0 / 90 complete**
-- Queue state: not launched
-- Git reference: record the exact HEAD before the first non-dry-run launch.
+- Queue state: launched; folds 0--2 are running and folds 3--4 remain queued.
+- Evidence rule: an in-progress attempt is not a paper result. A fold becomes admissible only
+  after its selected checkpoint, export, and downstream artifacts pass the registered
+  admission checks.
 
-| Fold | Registered encoder | Canonical attempt | Checkpoint SHA-256 | Export registry entry | Xuannv probes (of 18) | Status |
+| Fold | Registered encoder | Current attempt | Checkpoint SHA-256 | Export registry entry | Xuannv probes (of 18) | Status |
 | --- | --- | --- | --- | --- | ---: | --- |
-| 0 | `paper_registered_v5_full_150_fold0_20260726` | pending | pending | pending | 0 | not launched |
-| 1 | `paper_registered_v5_full_150_fold1_20260726` | pending | pending | pending | 0 | not launched |
-| 2 | `paper_registered_v5_full_150_fold2_20260726` | pending | pending | pending | 0 | not launched |
+| 0 | `paper_registered_v5_full_150_fold0_20260726` | running attempt 2 | pending | pending | 0 | training |
+| 1 | `paper_registered_v5_full_150_fold1_20260726` | running attempt 2 | pending | pending | 0 | training |
+| 2 | `paper_registered_v5_full_150_fold2_20260726` | attempt 1, recovery 2 | pending | pending | 0 | training |
 | 3 | `paper_registered_v5_full_150_fold3_20260726` | pending | pending | pending | 0 | not launched |
 | 4 | `paper_registered_v5_full_150_fold4_20260726` | pending | pending | pending | 0 | not launched |
 

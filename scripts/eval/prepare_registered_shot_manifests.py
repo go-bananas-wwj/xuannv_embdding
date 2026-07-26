@@ -6,8 +6,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import tempfile
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path[:0] = [str(REPO_ROOT), str(REPO_ROOT / "src"), str(REPO_ROOT / "downstreams")]
 
 from scripts.eval.run_registered_paper_downstream import (
     _assert_binary_label_roots,
