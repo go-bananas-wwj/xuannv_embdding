@@ -114,11 +114,11 @@ for each of six target months.
 
 ### 3.4 Training objective and corruption
 
-Define a single weighted objective comprising valid-pixel reconstruction, auxiliary coarse OSM
-semantics, fine OSM semantic probes, hard-negative terms, and within-rank uniformity. The
-registered P10C recipe gives weights 0.80, 0.25, 0.45, 0.90, 0.35, and 0.45 to Sentinel-2,
-Sentinel-1, Landsat, higher-resolution optical, higher-resolution SAR, and coarse OSM targets.
-The semantic probe weight ramps to 0.14 and the uniformity weight ramps to 0.06. Input
+Define a single weighted objective comprising valid-pixel reconstruction, a categorical WorldCover
+target, fine OSM semantic probes, hard-negative terms, and within-rank uniformity. The registered
+V5 recipe gives weights 0.80, 0.25, 0.45, 0.90, 0.35, and 0.45 to Sentinel-2, Sentinel-1,
+Landsat, higher-resolution optical, higher-resolution SAR, and WorldCover targets. The fine OSM
+semantic-probe weight ramps to 0.14 and the uniformity weight ramps to 0.06. Input
 corruption drops Sentinel-2/Sentinel-1/Landsat with probabilities 0.18/0.35/0.35, drops up to
 four months with probability 0.65, and applies spatial blocks with probability 0.65. State
 all masks, normalisation rules, optimiser settings, parameter count, training time, and energy
