@@ -31,6 +31,22 @@ def comparison_args(tmp_path: Path) -> SimpleNamespace:
     )
 
 
+def test_default_paths_target_p10c_epoch800_and_new_comparison_output(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT)])
+
+    args = MODULE.parse_args()
+
+    assert args.embedding_root == Path(
+        "/data/xuannv_embedding/embeddings/production/p10c_epoch800_202604/"
+        "artifacts/haidian-embedding-v1/embeddings/"
+        "haidian_202512_202605_p10c_epoch800"
+    )
+    assert args.output_root == Path(
+        "/data/xuannv_embedding/experiments/production/"
+        "haidian_pu_query_3polygon_compare_20260726"
+    )
+
+
 def write_embedding(root: Path, patch_id: str, month: str, channels: int) -> np.ndarray:
     feature = np.arange(channels * 16 * 16, dtype=np.float32).reshape(channels, 16, 16)
     feature += sum(map(ord, patch_id))

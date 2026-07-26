@@ -63,8 +63,15 @@ MANIFEST_CACHE: dict[tuple[Path, Path], dict[str, object]] = {}
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--embedding-root", type=Path, default=Path(
-        "/data/xuannv_embedding/embeddings/production/haidian_202512_202605_p10c_epoch800_202604"))
+    parser.add_argument(
+        "--embedding-root",
+        type=Path,
+        default=Path(
+            "/data/xuannv_embedding/embeddings/production/p10c_epoch800_202604/"
+            "artifacts/haidian-embedding-v1/embeddings/"
+            "haidian_202512_202605_p10c_epoch800"
+        ),
+    )
     parser.add_argument(
         "--aef-embedding-root",
         type=Path,
@@ -82,8 +89,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fold", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--tasks", nargs="+", choices=sorted(TASKS), default=sorted(TASKS))
-    parser.add_argument("--output-root", type=Path, default=Path(
-        "/data/xuannv_embedding/experiments/production/haidian_p10c_pu_query_strict_20260721"))
+    parser.add_argument(
+        "--output-root",
+        type=Path,
+        default=Path(
+            "/data/xuannv_embedding/experiments/production/"
+            "haidian_pu_query_3polygon_compare_20260726"
+        ),
+    )
     return parser.parse_args()
 
 
