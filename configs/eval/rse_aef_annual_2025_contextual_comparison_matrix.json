@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "comparison_id": "rse_aef_annual_2025_contextual_v1",
+  "baseline_id": "aef_annual_2025",
+  "baseline_protocol_id": "aef_annual_2025_contextual",
+  "candidate_family": "full_150",
+  "candidate_protocol_id": "v5_osm_assisted",
+  "baseline_output_identifier": "annual_2025",
+  "candidate_month": "202604",
+  "time_inequivalent_contextual": true,
+  "temporal_statement": "Annual AEF 2025 versus monthly Xuannv 2026-04 under an aligned spatial downstream protocol.",
+  "spatial_split": "configs/eval/haidian_spatial_5fold_complete2x2_v5_seed42.json",
+  "spatial_split_sha256": "9a6d98d6d6456ce0a791ef74ac725e4d360e7d4e0a17c9cb5edfceb850093c0b",
+  "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
+  "statistics_registry_path": "configs/eval/haidian_paper_v5_normalization_statistics.json",
+  "statistics_registry_sha256": "ba1fb10bc105a29286750367dff2ab45e02f89c32f69725ab89da994d0c56929",
+  "aef_official_inputs": {
+    "coverage_inventory": {
+      "path": "configs/eval/haidian_aef_annual_2025_coverage_inventory.json",
+      "sha256": "c0d2465ec53b7ce0c11b4a20c3fb143389c52bdeee2e01ef3afb59bad32c9f6b"
+    },
+    "cog_lock": {
+      "path": "configs/eval/aef_annual_2025_cog_lock.json",
+      "sha256": "e45e80db21f68fbd191424f57295d8f41eb7dac806ac98dbdacb75a4f896e3ac"
+    }
+  },
+  "label_root": "/data/xuannv_embedding/processed/haidian/labels",
+  "labels": {
+    "building": {"tree_sha256": "d7e7524c806a0dcb7290f1e708d9d2ee66ec73530733a44693ec0076418d8a10"},
+    "road": {"tree_sha256": "24c8a122b86aba861d18cee96ff0407cf276d479ccf7bdcc46c67d7108cd24f2"},
+    "water": {"tree_sha256": "602375b136aed0c9eccab7933dac623009de5569cd5a886b5a7912f59ed0c851"}
+  },
+  "probe": {
+    "head": "conv3x3_64_128_64",
+    "embedding_channels": 64,
+    "epochs": 80,
+    "batch_size": 8,
+    "optimizer": "AdamW",
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "scheduler": "cosine",
+    "standardization": "support_only",
+    "epoch_selection": "final_epoch_only",
+    "loss": {"name": "BCEWithLogitsLoss", "pos_weight": "min(50, negatives / max(1, positives))"},
+    "threshold": {
+      "split": "validation_only",
+      "metric": "f1",
+      "start": 0.001,
+      "stop_exclusive": 1.0,
+      "step": 0.001,
+      "candidate_count": 999,
+      "tie_break": "greatest_threshold"
+    },
+    "reader_sources": {
+      "scripts/eval/registered_aef_contextual.py": "0fedd80d40806c39da0eef38ad1236dc92f0495f20c87b89d1e16583fbae036d",
+      "scripts/eval/run_registered_aef_contextual_downstream.py": "7e46ffd3818a648e93c33810604a46e838757ada0804b560df960342c715fa42",
+      "scripts/eval/export_aef_v5_embeddings.py": "9e2af2e7a85a36ca92520c2a5f52203051a8e10c8d7550f41f52409b91c9c1b8",
+      "scripts/eval/run_registered_paper_downstream.py": "801a2336fd2f78ee902499a479060770f22f3bc3d61e81b289afeba3f942e9f6",
+      "scripts/eval/run_strong_downstream_benchmark.py": "2950aa68bb36cad60b7be634901c740e66affe1d5876247477b88657cb1b5ce5",
+      "scripts/eval/run_traditional_ml_benchmark.py": "fff112cabdb88738d9cb22a68d3cb63c7c01d6a79daa023dbb4dbd0756fb0baf"
+    }
+  },
+  "tasks": ["building", "road", "water"],
+  "shots": ["5", "10"],
+  "folds": [0, 1, 2, 3, 4],
+  "seeds": [42, 43, 44],
+  "shot_schedule": {
+    "root": "/data/xuannv_embedding/experiments/paper_registered_v5_20260726/shared_shot_schedules",
+    "index_file": "index.json",
+    "index_sha256": "afcdfaf8b6ea54ebd16a2b044f0671b8cae7d998eaec362f8409b7ca042a21cd",
+    "schedule_file_count": 45,
+    "ordered_filename_sha256_set_sha256": "269af838861e9b3d5152435158f1d819f91bd4bb72e4eefd3b75b64cc1f8ee78",
+    "protocol_id": "v5_osm_assisted",
+    "generator": "scripts/eval/prepare_registered_shot_manifests.py",
+    "generator_sha256": "e220260770b30b1fe8dff4718cdffcfa8b9638500d17a6a0e6d9d1975196edf0",
+    "selection": "registered_mixed_positive_background_patch_schedule"
+  },
+  "expected_job_count": 90,
+  "paired_bootstrap": {"resamples": 10000, "seed": 20260725, "hierarchy": ["fold", "complete_2x2_cluster", "probe_seed"], "patch_metadata_sha256": "17137cc379a874949a3eb460d48d8ad7c7698b63dbaaf5b4d3c1b40f84f69d97"},
+  "evidence_scope": "osm_assisted_spatial_readout",
+  "prohibited_claims": ["matched_temporal_information", "matched_inputs", "labelled_patch_efficiency_against_information_matched_baseline", "independent_transfer", "geographically_unseen_pretraining", "contemporaneous_ground_truth", "monthly_change_evidence", "global_superiority"]
+}

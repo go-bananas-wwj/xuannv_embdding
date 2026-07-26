@@ -69,6 +69,17 @@ PROTOCOL_DESCRIPTORS = {
         "statistics_registry_sha256": V5_STATISTICS_REGISTRY_SHA256,
         "matrix_path": V5_MATRIX,
     },
+    "aef_annual_2025_contextual": {
+        "evidence_class": "osm_assisted_spatial_readout",
+        "label_independence_status": "contextual_time_inequivalent_not_independent",
+        "allowed_report_kinds": ("contextual",),
+        "split_path": V5_SPLIT,
+        "split_sha256": V5_SPLIT_SHA256,
+        "manifest_path": V5_EVAL_MANIFEST,
+        "manifest_sha256": FROZEN_EVAL_MANIFEST_SHA256,
+        "statistics_registry_path": V5_STATISTICS_REGISTRY,
+        "statistics_registry_sha256": V5_STATISTICS_REGISTRY_SHA256,
+    },
 }
 
 
@@ -236,12 +247,8 @@ def validate_v5_full_150_matrix_readiness(
     registry = validate_v5_embedding_registry(registry_path, matrix)
     for fold in range(5):
         config = config_root / f"paper_registered_v5_full_150_fold{fold}_20260726.yaml"
-        checkpoint = resolve_registered_v5_checkpoint(
-            encoder_root, family="full_150", fold=fold
-        )
-        provenance = verify_encoder_provenance(
-            config, checkpoint, fold, "v5_osm_assisted"
-        )
+        checkpoint = resolve_registered_v5_checkpoint(encoder_root, family="full_150", fold=fold)
+        provenance = verify_encoder_provenance(config, checkpoint, fold, "v5_osm_assisted")
         entries = [
             entry
             for entry in registry["exports"]
