@@ -99,8 +99,9 @@ robustness; it does not by itself prove a causal contribution until matched abla
 Masked reconstruction can encourage a representation to encode information shared across inputs,
 but reconstruction targets must respect invalid pixels and source availability. OpenStreetMap is a
 collaboratively maintained geographic database (Haklay and Weber, 2008); it can add weak semantic
-structure while being incomplete, temporally uncertain, and ontology-overlapping with downstream
-labels. XuannvEarth therefore treats OSM as auxiliary weak supervision and separates OSM-assisted
+structure while being incomplete, temporally uncertain, ontology-overlapping with downstream
+labels, and spatially heterogeneous in quality (Barron et al., 2014). XuannvEarth therefore treats
+OSM as auxiliary weak supervision and separates OSM-assisted
 diagnostic evaluation from independent-label evidence.
 
 ### 2.4 Label-efficient and spatially valid evaluation
@@ -109,7 +110,8 @@ EO foundation-model evaluations commonly contrast limited-label adaptation with 
 learners, including linear-probe and segmentation settings (Dionelis et al., 2024; Szwarcman et
 al., 2026). Such comparisons are only interpretable when the representation, support budget,
 reader capacity, split, and decision rule are held fixed. They are particularly sensitive in spatial
-data because nearby pixels and neighbouring patches are correlated. We therefore use
+data because nearby pixels and neighbouring patches are correlated (Roberts et al., 2017). We
+therefore use
 geographically separated folds, fixed support-patch schedules, training-only feature
 standardisation, and validation-only threshold selection. These safeguards constrain the scope of
 our conclusions; they do not replace independent labels or a cross-city replication.
@@ -380,6 +382,9 @@ current Elsevier policy.]**
 
 ## References
 
+Barron, C., Neis, P., and Zipf, A., 2014. A Comprehensive Framework for Intrinsic OpenStreetMap
+Quality Analysis. Transactions in GIS 18, 877-895. https://doi.org/10.1111/tgis.12073.
+
 Brown, C.F., Kazmierski, M.R., Pasquarella, V.J., Rucklidge, W.J., Samsikova, M., Zhang, C.,
 Shelhamer, E., Lahera, E., Wiles, O., Ilyushchenko, S., Gorelick, N., Zhang, L.L., Alj, S.,
 Schechter, E., Askay, S., Guinan, O., Moore, R., Boukouvalas, A., and Kohli, P., 2025.
@@ -411,6 +416,11 @@ Buraczynski, A., Farley, K., Hansen, J., Howe, A., Johnson, P.A., Otterlee, M., 
 Pitelka, H., Daspit, S., Ratner, R., Wilhelm, C., Wood, S., Jacobi, M., Kerner, H., Shelhamer, E.,
 Farhadi, A., Krishna, R., and Beukema, P., 2025. OlmoEarth: Stable Latent Image Modeling for
 Multimodal Earth Observation. arXiv:2511.13655. https://doi.org/10.48550/arXiv.2511.13655.
+
+Roberts, D.R., Bahn, V., Ciuti, S., Boyce, M.S., Elith, J., Guillera-Arroita, G., Hauenstein, S.,
+Lahoz-Monfort, J.J., Schröder, B., Thuiller, W., Warton, D.I., Wintle, B.A., Hartig, F., and
+Dormann, C.F., 2017. Cross-validation strategies for data with temporal, spatial, hierarchical,
+or phylogenetic structure. Ecography 40, 913-929. https://doi.org/10.1111/ecog.02881.
 
 Szwarcman, D., Roy, S., Fraccaro, P., Gislason, T.E., Blumenstiel, B., Ghosal, R., de Oliveira,
 P.H., de Sousa Almeida, J.L., Sedona, R., Kang, Y., Chakraborty, S., Wang, S., Gomes, C., Kumar,
