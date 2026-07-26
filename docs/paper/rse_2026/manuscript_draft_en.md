@@ -32,6 +32,18 @@ semantic transfer.
 **Keywords:** geospatial embedding; multimodal Earth observation; time series; weak supervision;
 few-shot mapping; urban remote sensing.
 
+## Highlights
+
+- A monthly dense embedding interface for urban mapping readouts
+- Heterogeneous EO observations are fused with availability awareness
+- Structured corruption targets missing sources and monthly observations
+- Spatially held-out probes use frozen supports and validation-only thresholds
+- OSM-overlapping results are scoped as weak-label diagnostic evidence
+
+> These draft highlights are intentionally result-free. Elsevier guidance describes highlights as
+> three to five short bullet points and limits each bullet to 85 characters; final wording must be
+> rechecked against the current RSE Guide for Authors before submission.
+
 ## 1. Introduction
 
 Urban mapping is not a one-time prediction problem. Municipal and scientific workflows repeatedly
@@ -282,6 +294,41 @@ with the same task, budget, fold, seed, test-patch IDs, labels, split, and proto
 
 ## 4. Results
 
+### Planned tables and figures
+
+**Table 1. Observation sources and preprocessing.** Rows will list source, channels, native and
+working resolution, temporal coverage, quality screening, monthly compositing rule, alignment
+procedure, and encoder role. Values are populated only from source QA audits.
+
+**Table 2. Registered encoder and optimisation configuration.** Rows will list encoder dimensions,
+target losses, corruption schedules, optimiser, effective batch size, stopping/checkpoint policy,
+and realised computational resources. The current V5 configuration is described in Section 3.4;
+realised values remain blank until the registered runs finish.
+
+**Table 3. Spatially held-out OSM-assisted readout.** Columns will show task, labelled-patch
+budget, F1, IoU, AP, ROC-AUC, precision, recall, paired uncertainty, and the evidence-admission
+identifier. Rows remain blank until all five folds and three registered reader conditions are
+complete.
+
+**Table 4. Contextual annual-AEF comparison.** This table will use the same columns as Table 3,
+plus a paired difference. Its caption will state that AEF annual-2025 and XuannvEarth monthly-2026
+inputs are time-inequivalent and that the OSM-assisted readout is not independent-transfer evidence.
+
+**Figure 1. Study design and data provenance.** Map the 320 patches, geographic folds and buffers,
+then show one quality-controlled multi-source observation sheet and the audit chain from imagery to
+the registered manifest.
+
+**Figure 2. XuannvEarth learning and readout pipeline.** Show sensor-specific inputs, validity
+masks, temporal fusion, high-resolution pathways, bottleneck, reconstruction/weak-semantic heads,
+and the frozen Conv3x3 downstream reader.
+
+**Figure 3. Held-out readout examples.** For each admitted task, show high-resolution imagery,
+reference mask, probability, and validation-thresholded prediction for the same held-out patch.
+Every panel will identify the task, support budget, fold, and evidence-admission identifier.
+
+**Figure 4. Aggregate label-efficiency comparison.** Plot only admitted fold/seed aggregates with
+spatial-block uncertainty. Any contextual AEF panel will retain its time-inequivalence qualifier.
+
 ### 4.1 Spatially held-out OSM-assisted diagnostic readout
 
 **[Populate only after all five encoder folds, embedding exports, 90 registered probe jobs,
@@ -370,6 +417,15 @@ and redistribution terms and will not be redistributed; the archival release wil
 access condition, date window, preprocessing inputs, and a procedure for access requests. Any
 artifact that cannot be publicly shared will be listed in the release manifest with its reason and
 access route.
+
+## Submission-package files
+
+The submission package will contain the main manuscript, a separate title page if requested by the
+submission system, a highlights file, figure files with captions, supplementary material, and a
+graphical abstract only if required by the current RSE Guide for Authors. The graphical abstract
+will communicate the input-to-embedding-to-lightweight-readout workflow without displaying
+unadmitted quantitative claims. The final package will also include a data-availability statement
+that distinguishes public code and derived artifacts from third-party higher-resolution imagery.
 
 ## Supplementary material
 
