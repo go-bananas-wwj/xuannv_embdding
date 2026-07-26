@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import geopandas as gpd
 from shapely.geometry import box
 
 MODULE_PATH = Path(__file__).parents[1] / "scripts/data/materialize_china_sampling_shapes.py"
@@ -144,3 +145,20 @@ def test_sqrt_group_allocation_is_exact_and_lifts_small_groups() -> None:
     allocation = MODULE.allocate_sqrt_by_group(12, groups)
     assert sum(allocation.values()) == 12
     assert allocation == {"large": 10, "small": 2}
+
+
+def test_assign_admin1_recomputes_existing_values(tmp_path: Path) -> None:
+    admin_path = tmp_path / "admin.geojson"
+    gpd.GeoDataFrame(
+        {"shapeName": ["correct"]},
+        geometry=[box(115.0, 38.0, 117.0, 40.0)],
+        crs="EPSG:4326",
+    ).to_file(admin_path, driver="GeoJSON")
+    records = [
+        {"longitude": 116.0, "latitude": 39.0, "admin1": "stale"},
+        {"longitude": 120.0, "latitude": 39.0, "admin1": "stale"},
+    ]
+    assigned = MODULE.assign_admin1(records, admin_path)
+    assert assigned == 1
+    assert records[0]["admin1"] == "correct"
+    assert records[1]["admin1"] == "ADM1_NOT_COVERED_BY_FROZEN_SOURCE"

@@ -535,20 +535,16 @@ def assign_admin1(
     records: list[dict[str, Any]],
     admin1_path: Path,
 ) -> int:
-    """Fill missing province names from the frozen ADM1 polygons."""
-    missing_indices = [
-        index
-        for index, item in enumerate(records)
-        if not item.get("admin1") or item.get("admin1") == "unknown"
-    ]
-    if not missing_indices:
+    """Recompute every province name from the final center coordinates."""
+    record_indices = list(range(len(records)))
+    if not record_indices:
         return 0
     admin1 = gpd.read_file(admin1_path).to_crs("EPSG:4326")
     points = gpd.GeoDataFrame(
-        {"record_index": missing_indices},
+        {"record_index": record_indices},
         geometry=[
             Point(records[index]["longitude"], records[index]["latitude"])
-            for index in missing_indices
+            for index in record_indices
         ],
         crs="EPSG:4326",
     )
@@ -559,13 +555,12 @@ def assign_admin1(
         predicate="intersects",
     )
     assigned = 0
+    for index in record_indices:
+        records[index]["admin1"] = "ADM1_NOT_COVERED_BY_FROZEN_SOURCE"
     for row in joined.itertuples():
         if isinstance(row.shapeName, str) and row.shapeName:
             records[int(row.record_index)]["admin1"] = row.shapeName
             assigned += 1
-    for index in missing_indices:
-        if not records[index].get("admin1") or records[index].get("admin1") == "unknown":
-            records[index]["admin1"] = "ADM1_NOT_COVERED_BY_FROZEN_SOURCE"
     return assigned
 
 
