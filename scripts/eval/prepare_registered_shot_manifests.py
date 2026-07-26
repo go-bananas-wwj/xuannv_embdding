@@ -25,6 +25,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--label-root", type=Path, required=True)
     parser.add_argument("--spatial-split", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument(
+        "--protocol",
+        choices=("v4_diagnostic", "v5_osm_assisted"),
+        default="v4_diagnostic",
+    )
     parser.add_argument("--tasks", nargs="+", default=["building", "road", "water"])
     parser.add_argument("--seeds", nargs="+", type=int, default=[42, 43, 44])
     return parser.parse_args()
@@ -63,7 +68,7 @@ def main() -> None:
     split = json.loads(args.spatial_split.read_text(encoding="utf-8"))
     split_hash = sha256_file(args.spatial_split)
     for fold_data in split["folds"]:
-        _verify_frozen_split(args.spatial_split, int(fold_data["fold"]))
+        _verify_frozen_split(args.spatial_split, int(fold_data["fold"]), args.protocol)
     index: list[dict[str, object]] = []
     for task_name in args.tasks:
         task = task_spec(task_name, args.label_root)
@@ -83,6 +88,7 @@ def main() -> None:
                     pixel_counts=lambda patch_id, spec=task: _positive_background_pixel_counts(
                         spec, patch_id
                     ),
+                    protocol_id=args.protocol,
                 )
                 path = args.output_root / f"{task_name}_fold{fold}_seed{seed}.json"
                 write_or_verify(path, schedule)
@@ -97,10 +103,14 @@ def main() -> None:
                         "unavailable_budgets": sorted(schedule["unavailable"]),
                     }
                 )
-    write_or_verify(
-        args.output_root / "index.json",
-        {"schema_version": 1, "split_sha256": split_hash, "schedules": index},
-    )
+    index_payload: dict[str, object] = {
+        "schema_version": 1,
+        "split_sha256": split_hash,
+        "schedules": index,
+    }
+    if args.protocol == "v5_osm_assisted":
+        index_payload["protocol_id"] = args.protocol
+    write_or_verify(args.output_root / "index.json", index_payload)
 
 
 if __name__ == "__main__":

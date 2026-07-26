@@ -59,12 +59,19 @@ def _family_from_record(record: dict[str, Any]) -> str:
         raise ValueError("Attested encoder config lacks data.paper_fold")
     if int(config_data["data"].get("paper_fold", -1)) != int(payload["fold"]):
         raise ValueError("Attested encoder config fold differs from downstream-result fold")
-    match = re.fullmatch(r"paper_registered_(.+)_fold(\d+)_\d{8}", Path(export["config_path"]).stem)
-    if match is None:
-        raise ValueError(f"Could not infer encoder family from config: {export['config_path']}")
-    if int(match.group(2)) != int(payload["fold"]):
-        raise ValueError("Encoder config fold differs from downstream-result fold")
-    return match.group(1)
+    if payload.get("protocol_id") == "v5_osm_assisted":
+        registered.validate_v5_encoder_config_provenance(
+            config_path, str(provenance["config_sha256"])
+        )
+    family = registered.registered_family_from_experiment(
+        Path(export["config_path"]).stem, int(payload["fold"])
+    )
+    if payload.get("protocol_id") == "v5_osm_assisted" and payload.get("family") not in (
+        None,
+        family,
+    ):
+        raise ValueError("V5 result family differs from the attested encoder config")
+    return family
 
 
 def _record_evidence(record: dict[str, Any]) -> dict[str, str]:
@@ -95,6 +102,30 @@ def validate_report_evidence(records: Iterable[dict[str, Any]], report_kind: str
             f"Protocol {expected['protocol_id']} cannot support an {human_kind} report"
         )
     return expected
+
+
+def validate_registered_v5_matrix_records(records: Iterable[dict[str, Any]], family: str) -> None:
+    """Reject v5 result records that do not map to one committed probe cell."""
+    for record in records:
+        payload = _metric_payload(record)
+        if payload.get("protocol_id") != "v5_osm_assisted":
+            continue
+        if payload.get("family") != family:
+            raise ValueError("V5 result family does not match the requested aggregation family")
+        probe = payload.get("probe")
+        if not isinstance(probe, dict):
+            raise ValueError("V5 result lacks probe provenance")
+        registered.validate_registered_matrix_cell(
+            "v5_osm_assisted",
+            {
+                "family": family,
+                "head": probe.get("head"),
+                "task": payload.get("task"),
+                "shot": payload.get("shot"),
+                "fold": payload.get("fold"),
+                "seed": payload.get("shot_seed"),
+            },
+        )
 
 
 def load_verified_records(
@@ -354,6 +385,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--folds", nargs="+", type=int, default=(0, 1, 2, 3, 4))
     parser.add_argument("--seeds", nargs="+", type=int, default=(42, 43, 44))
     parser.add_argument("--allow-preliminary", action="store_true")
+    parser.add_argument("--protocol", choices=tuple(registered.PROTOCOL_DESCRIPTORS), default=None)
     parser.add_argument("--report-kind", choices=REPORT_KINDS, default="diagnostic")
     parser.add_argument(
         "--registry-anchor",
@@ -389,6 +421,12 @@ def main() -> None:
         args.registry, family=args.family, allow_preliminary=args.allow_preliminary
     )
     evidence = validate_report_evidence(records, args.report_kind)
+    if evidence["protocol_id"] == "v5_osm_assisted" and args.protocol != "v5_osm_assisted":
+        raise ValueError("V5 aggregation requires --protocol v5_osm_assisted")
+    if args.protocol is not None and evidence["protocol_id"] != args.protocol:
+        raise ValueError("Aggregation --protocol does not match the result records")
+    if args.protocol == "v5_osm_assisted":
+        validate_registered_v5_matrix_records(records, args.family)
     report = {
         "schema_version": 1,
         "family": args.family,

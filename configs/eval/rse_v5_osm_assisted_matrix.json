@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "protocol_id": "v5_osm_assisted",
+  "scientific_status": "predeclared_osm_assisted_spatial_readout_preliminary",
+  "spatial_split": "configs/eval/haidian_spatial_5fold_complete2x2_v5_seed42.json",
+  "spatial_split_sha256": "9a6d98d6d6456ce0a791ef74ac725e4d360e7d4e0a17c9cb5edfceb850093c0b",
+  "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
+  "statistics_registry_sha256": "ba1fb10bc105a29286750367dff2ab45e02f89c32f69725ab89da994d0c56929",
+  "families": {
+    "full_150": {"encoder_fold_count": 5},
+    "full_80": {"encoder_fold_count": 5, "comparator": "full_150"},
+    "full_40": {"encoder_fold_count": 5, "comparator": "full_150"},
+    "no_osm_150": {"encoder_fold_count": 5, "comparator": "full_150"},
+    "coarse_osm_only_150": {"encoder_fold_count": 5, "comparator": "full_150"},
+    "probe_nohardneg_150": {"encoder_fold_count": 5, "comparator": "full_150"},
+    "no_highres_path_150": {"encoder_fold_count": 5, "comparator": "full_150"},
+    "no_masking_150": {"encoder_fold_count": 5, "comparator": "full_150"}
+  },
+  "probe": {
+    "head": "conv3x3_64_128_64",
+    "tasks": ["building", "road", "water"],
+    "shots": ["5", "10"],
+    "folds": [0, 1, 2, 3, 4],
+    "seeds": [42, 43, 44],
+    "expected_job_count": 90
+  }
+}

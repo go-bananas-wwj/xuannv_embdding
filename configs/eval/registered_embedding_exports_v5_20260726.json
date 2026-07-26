@@ -1,0 +1,11 @@
+{
+  "schema_version": 2,
+  "protocol_id": "v5_osm_assisted",
+  "purpose": "Git-anchored v5 embedding export registry; entries are added only after six-shard verification.",
+  "scientific_status": "predeclared_osm_assisted_spatial_readout_preliminary",
+  "spatial_split": "configs/eval/haidian_spatial_5fold_complete2x2_v5_seed42.json",
+  "spatial_split_sha256": "9a6d98d6d6456ce0a791ef74ac725e4d360e7d4e0a17c9cb5edfceb850093c0b",
+  "manifest_sha256": "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3",
+  "statistics_registry_sha256": "ba1fb10bc105a29286750367dff2ab45e02f89c32f69725ab89da994d0c56929",
+  "exports": []
+}
