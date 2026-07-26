@@ -3408,6 +3408,40 @@ def _write_verified_resume_attempt(output_root: Path) -> Path:
     return attempt
 
 
+def _bind_recovery_parent_to_registered_protocol(repo: Path, attempt: Path, fold: int = 0) -> None:
+    config = (
+        repo
+        / "configs/paper_registered_v5_20260726"
+        / f"paper_registered_v5_full_150_fold{fold}_20260726.yaml"
+    )
+    assets = {
+        "matrix": repo / "configs/eval/rse_v5_osm_assisted_matrix.json",
+        "spatial_split": repo / "configs/eval/haidian_spatial_5fold_complete2x2_v5_seed42.json",
+        "subset_registry": repo / "configs/eval/haidian_paper_subsets_40_80_150_complete2x2_v5_seed42.json",
+        "statistics_registry": repo / "configs/eval/haidian_paper_v5_normalization_statistics.json",
+        "embedding_export_registry": repo / "configs/eval/registered_embedding_exports_v5_20260726.json",
+    }
+    manifest_path = attempt / "attempt_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    source = yaml.safe_load(config.read_text(encoding="utf-8"))
+    manifest["source_config"] = {"path": str(config.resolve()), "sha256": _sha256(config)}
+    launch = source
+    launch["experiment"]["output_dir"] = str(attempt.resolve())
+    launch["experiment"]["wandb_run_name"] = f"{launch['experiment']['wandb_run_name']}__{attempt.name}"
+    launch_path = attempt / "launch_config.yaml"
+    launch_path.write_text(yaml.safe_dump(launch, sort_keys=False), encoding="utf-8")
+    manifest["launch_config"] = {"path": str(launch_path.resolve()), "sha256": _sha256(launch_path)}
+    manifest["protocol_assets"] = {
+        name: {"path": str(path.resolve()), "sha256": _sha256(path)} for name, path in assets.items()
+    }
+    sidecar = Path(source["data"]["paper_manifest_audit"])
+    manifest["manifest_sidecar"] = {
+        "path": str(sidecar.resolve()),
+        "sha256": _sha256(sidecar),
+    }
+    _write_json(manifest_path, manifest)
+
+
 def test_v5_encoder_queue_dry_run_requires_committed_queue_and_runs_from_root(
     tmp_path: Path,
 ) -> None:
@@ -3835,6 +3869,252 @@ def test_v5_encoder_queue_rejects_a_verified_record_without_creation_time(tmp_pa
 
     assert result.returncode != 0
     assert "creation timestamp" in result.stderr
+
+
+def test_v5_encoder_queue_recovers_new_attempt_from_named_valid_parent_snapshot(
+    tmp_path: Path,
+) -> None:
+    """A malformed sibling record cannot erase an earlier, fully verified snapshot."""
+    repo, queue = _sealed_v5_queue_repo(tmp_path)
+    output_root = tmp_path / "outputs"
+    parent = _write_verified_resume_attempt(output_root)
+    _bind_recovery_parent_to_registered_protocol(repo, parent)
+    checkpoint = next((parent / "verified_checkpoints").glob("*.pt"))
+    _write_json(
+        parent / "checkpoint_verifications" / "malformed.pt.json",
+        {
+            "schema_version": 1,
+            "attempt_dir": str(parent.resolve()),
+            "checkpoint_path": str(checkpoint.resolve()),
+            "checkpoint_sha256": _sha256(checkpoint),
+            "source_checkpoint_path": str(parent / "recovery.pt"),
+        },
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_torchrun = bin_dir / "torchrun"
+    fake_torchrun.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -eu\n"
+        "config=\n"
+        "previous=\n"
+        "for arg in \"$@\"; do\n"
+        "  if [[ \"$previous\" == --config ]]; then config=\"$arg\"; fi\n"
+        "  previous=\"$arg\"\n"
+        "done\n"
+        "printf recovered > \"$(dirname \"$config\")/best.pt\"\n",
+        encoding="utf-8",
+    )
+    fake_torchrun.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            str(queue),
+            "--output-root",
+            str(output_root),
+            "--recover-fold",
+            "0",
+            "--recover-from-attempt",
+            "1",
+            "--recover-checkpoint",
+            checkpoint.name,
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    recovered = output_root / "paper_registered_v5_full_150_fold0_20260726" / "attempt_2"
+    manifest = json.loads((recovered / "attempt_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["parent_attempt"] == str(parent.resolve())
+    assert manifest["recovery_parent"]["checkpoint_path"] == str(checkpoint.resolve())
+    assert manifest["recovery_parent"]["checkpoint_sha256"] == _sha256(checkpoint)
+    record_path = parent / "checkpoint_verifications" / f"{checkpoint.name}.json"
+    assert manifest["recovery_parent"]["verification_record_sha256"] == _sha256(record_path)
+    assert manifest["recovery_parent"]["attempt_manifest_sha256"] == _sha256(
+        parent / "attempt_manifest.json"
+    )
+    assert manifest["recovery_parent"]["launch_config_sha256"] == _sha256(
+        parent / "launch_config.yaml"
+    )
+    assert manifest["recovery_parent"]["manifest_sidecar_sha256"] == _sha256(
+        Path(manifest["recovery_parent"]["manifest_sidecar_path"])
+    )
+    assert (recovered.parent / "canonical_attempt.json").is_file()
+
+
+def test_v5_encoder_queue_recovery_rejects_parent_with_wrong_registered_config(
+    tmp_path: Path,
+) -> None:
+    repo, queue = _sealed_v5_queue_repo(tmp_path)
+    output_root = tmp_path / "outputs"
+    parent = _write_verified_resume_attempt(output_root)
+    _bind_recovery_parent_to_registered_protocol(repo, parent)
+    checkpoint = next((parent / "verified_checkpoints").glob("*.pt"))
+    manifest_path = parent / "attempt_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["source_config"] = {
+        "path": str(repo / "configs/paper_registered_v5_20260726/paper_registered_v5_full_150_fold0_20260726.yaml"),
+        "sha256": "0" * 64,
+    }
+    _write_json(manifest_path, manifest)
+
+    result = subprocess.run(
+        [
+            str(queue),
+            "--output-root",
+            str(output_root),
+            "--recover-fold",
+            "0",
+            "--recover-from-attempt",
+            "1",
+            "--recover-checkpoint",
+            checkpoint.name,
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "source config" in result.stderr.lower()
+    assert not (parent.parent / "attempt_2").exists()
+
+
+def test_v5_encoder_queue_recovery_rejects_parent_with_changed_launch_config(tmp_path: Path) -> None:
+    repo, queue = _sealed_v5_queue_repo(tmp_path)
+    output_root = tmp_path / "outputs"
+    parent = _write_verified_resume_attempt(output_root)
+    _bind_recovery_parent_to_registered_protocol(repo, parent)
+    checkpoint = next((parent / "verified_checkpoints").glob("*.pt"))
+    launch_path = parent / "launch_config.yaml"
+    launch = yaml.safe_load(launch_path.read_text(encoding="utf-8"))
+    launch["data"]["batch_size"] = 99
+    launch_path.write_text(yaml.safe_dump(launch, sort_keys=False), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            str(queue),
+            "--output-root",
+            str(output_root),
+            "--recover-fold",
+            "0",
+            "--recover-from-attempt",
+            "1",
+            "--recover-checkpoint",
+            checkpoint.name,
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "launch config" in result.stderr.lower()
+
+
+def test_v5_encoder_queue_recovery_rejects_parent_with_changed_data_sidecar(tmp_path: Path) -> None:
+    repo, queue = _sealed_v5_queue_repo(tmp_path)
+    output_root = tmp_path / "outputs"
+    parent = _write_verified_resume_attempt(output_root)
+    _bind_recovery_parent_to_registered_protocol(repo, parent)
+    checkpoint = next((parent / "verified_checkpoints").glob("*.pt"))
+    manifest_path = parent / "attempt_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["manifest_sidecar"]["sha256"] = "0" * 64
+    _write_json(manifest_path, manifest)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_torchrun = bin_dir / "torchrun"
+    fake_torchrun.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_torchrun.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            str(queue),
+            "--output-root",
+            str(output_root),
+            "--recover-fold",
+            "0",
+            "--recover-from-attempt",
+            "1",
+            "--recover-checkpoint",
+            checkpoint.name,
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+    )
+
+    assert result.returncode != 0
+    assert "manifest sidecar" in result.stderr.lower()
+
+
+def test_v5_encoder_queue_recovery_rejects_symlinked_parent_attempt(tmp_path: Path) -> None:
+    repo, queue = _sealed_v5_queue_repo(tmp_path)
+    output_root = tmp_path / "outputs"
+    parent = _write_verified_resume_attempt(output_root)
+    _bind_recovery_parent_to_registered_protocol(repo, parent)
+    checkpoint_name = next((parent / "verified_checkpoints").glob("*.pt")).name
+    external = tmp_path / "external_attempt"
+    parent.rename(external)
+    parent.symlink_to(external, target_is_directory=True)
+
+    result = subprocess.run(
+        [
+            str(queue),
+            "--output-root",
+            str(output_root),
+            "--recover-fold",
+            "0",
+            "--recover-from-attempt",
+            "1",
+            "--recover-checkpoint",
+            checkpoint_name,
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "symlink" in result.stderr.lower()
+
+
+def test_v5_encoder_queue_recovery_rejects_checkpoint_path_traversal(tmp_path: Path) -> None:
+    repo, queue = _sealed_v5_queue_repo(tmp_path)
+    output_root = tmp_path / "outputs"
+    parent = _write_verified_resume_attempt(output_root)
+    _bind_recovery_parent_to_registered_protocol(repo, parent)
+
+    result = subprocess.run(
+        [
+            str(queue),
+            "--output-root",
+            str(output_root),
+            "--recover-fold",
+            "0",
+            "--recover-from-attempt",
+            "1",
+            "--recover-checkpoint",
+            "../recovery.pt",
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "snapshot filename" in result.stderr.lower()
 
 
 def test_v5_encoder_queue_resume_writes_immutable_resume_logs(tmp_path: Path) -> None:

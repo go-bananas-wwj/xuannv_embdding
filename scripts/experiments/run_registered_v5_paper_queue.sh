@@ -19,6 +19,9 @@ fi
 DRY_RUN=false
 RESUME_FOLD=""
 RESUME_ATTEMPT=""
+RECOVER_FOLD=""
+RECOVER_FROM_ATTEMPT=""
+RECOVER_CHECKPOINT=""
 ONLY_FOLD=""
 VERIFY_ATTEMPT=""
 MAX_JOB_ATTEMPTS="${MAX_JOB_ATTEMPTS:-3}"
@@ -35,6 +38,7 @@ usage() {
   cat >&2 <<'EOF'
 usage: run_registered_v5_paper_queue.sh [--dry-run] [--output-root PATH]
        run_registered_v5_paper_queue.sh --resume-fold FOLD --resume-attempt N [--dry-run]
+       run_registered_v5_paper_queue.sh --recover-fold FOLD --recover-from-attempt N --recover-checkpoint FILE
        run_registered_v5_paper_queue.sh --only-fold FOLD [--dry-run] [--output-root PATH]
        run_registered_v5_paper_queue.sh --verify-attempt PATH
 
@@ -48,6 +52,9 @@ while (( $# > 0 )); do
     --output-root) OUTPUT_ROOT=${2:-}; shift 2 ;;
     --resume-fold) RESUME_FOLD=${2:-}; shift 2 ;;
     --resume-attempt) RESUME_ATTEMPT=${2:-}; shift 2 ;;
+    --recover-fold) RECOVER_FOLD=${2:-}; shift 2 ;;
+    --recover-from-attempt) RECOVER_FROM_ATTEMPT=${2:-}; shift 2 ;;
+    --recover-checkpoint) RECOVER_CHECKPOINT=${2:-}; shift 2 ;;
     --only-fold) ONLY_FOLD=${2:-}; shift 2 ;;
     --verify-attempt) VERIFY_ATTEMPT=${2:-}; shift 2 ;;
     *) usage; exit 2 ;;
@@ -169,7 +176,8 @@ PY
 verified_resume_checkpoint() {
   local attempt=$1
   local expected_fold=${2:-}
-  python - "$attempt" "$expected_fold" <<'PY'
+  local checkpoint_name=${3:-}
+  python - "$attempt" "$expected_fold" "$checkpoint_name" <<'PY'
 import hashlib
 import json
 import sys
@@ -178,6 +186,7 @@ from pathlib import Path
 
 attempt = Path(sys.argv[1]).resolve()
 expected_fold_text = sys.argv[2]
+checkpoint_name = sys.argv[3]
 expected_fold = None if not expected_fold_text else int(expected_fold_text)
 manifest_path = attempt / "attempt_manifest.json"
 if attempt.name.startswith("attempt_") is False or not manifest_path.is_file():
@@ -191,10 +200,25 @@ if expected_fold is not None and manifest.get("fold") != expected_fold:
     )
 if Path(str(manifest.get("attempt_dir", ""))).resolve() != attempt:
     raise SystemExit("attempt manifest does not bind this same attempt")
-records = sorted((attempt / "checkpoint_verifications").glob("*.json"))
+if checkpoint_name:
+    if Path(checkpoint_name).name != checkpoint_name or not checkpoint_name.endswith(".pt"):
+        raise SystemExit("recovery checkpoint name must be a snapshot filename")
+    verification_dir = attempt / "checkpoint_verifications"
+    record_path = verification_dir / f"{checkpoint_name}.json"
+    if verification_dir.is_symlink() or record_path.is_symlink():
+        raise SystemExit("recovery verification record must not be a symlink")
+    if record_path.resolve().parent != verification_dir.resolve():
+        raise SystemExit("recovery verification record is outside its expected directory")
+    records = [record_path]
+else:
+    records = sorted((attempt / "checkpoint_verifications").glob("*.json"))
 valid = []
 snapshot_dir = attempt / "verified_checkpoints"
+if snapshot_dir.is_symlink():
+    raise SystemExit("verified checkpoint directory must not be a symlink")
 for record_path in records:
+    if record_path.is_symlink() or record_path.resolve().parent != (attempt / "checkpoint_verifications").resolve():
+        raise SystemExit("checkpoint verification record must remain inside its expected directory")
     record = json.loads(record_path.read_text(encoding="utf-8"))
     if record.get("schema_version") != 1:
         raise SystemExit("checkpoint verification has an unsupported schema version")
@@ -217,6 +241,8 @@ for record_path in records:
     )
     if checkpoint.name != expected_snapshot_name:
         raise SystemExit("verified resume checkpoint is not a content-addressed snapshot")
+    if checkpoint.is_symlink() or checkpoint.resolve().parent != snapshot_dir.resolve():
+        raise SystemExit("verified resume checkpoint must remain inside its snapshot directory")
     if not checkpoint.is_file():
         raise SystemExit("verified resume checkpoint is missing")
     actual = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
@@ -238,7 +264,7 @@ PY
 require_queue_script_at_git_head
 cd "$ROOT"
 
-[[ -z "$VERIFY_ATTEMPT" || ( -z "$RESUME_FOLD" && -z "$RESUME_ATTEMPT" && -z "$ONLY_FOLD" ) ]] || {
+[[ -z "$VERIFY_ATTEMPT" || ( -z "$RESUME_FOLD" && -z "$RESUME_ATTEMPT" && -z "$RECOVER_FOLD" && -z "$RECOVER_FROM_ATTEMPT" && -z "$RECOVER_CHECKPOINT" && -z "$ONLY_FOLD" ) ]] || {
   usage
   exit 2
 }
@@ -255,8 +281,13 @@ fi
 }
 [[ -z "$RESUME_FOLD" || "$RESUME_FOLD" =~ ^[0-4]$ ]] || { usage; exit 2; }
 [[ -z "$RESUME_ATTEMPT" || "$RESUME_ATTEMPT" =~ ^[1-9][0-9]*$ ]] || { usage; exit 2; }
+[[ -z "$RECOVER_FOLD" && -z "$RECOVER_FROM_ATTEMPT" && -z "$RECOVER_CHECKPOINT" ]] || \
+  [[ -n "$RECOVER_FOLD" && -n "$RECOVER_FROM_ATTEMPT" && -n "$RECOVER_CHECKPOINT" ]] || { usage; exit 2; }
+[[ -z "$RECOVER_FOLD" || "$RECOVER_FOLD" =~ ^[0-4]$ ]] || { usage; exit 2; }
+[[ -z "$RECOVER_FROM_ATTEMPT" || "$RECOVER_FROM_ATTEMPT" =~ ^[1-9][0-9]*$ ]] || { usage; exit 2; }
 [[ -z "$ONLY_FOLD" || "$ONLY_FOLD" =~ ^[0-4]$ ]] || { usage; exit 2; }
-[[ -z "$ONLY_FOLD" || -z "$RESUME_FOLD" ]] || { usage; exit 2; }
+[[ -z "$ONLY_FOLD" || ( -z "$RESUME_FOLD" && -z "$RECOVER_FOLD" ) ]] || { usage; exit 2; }
+[[ -z "$RECOVER_FOLD" || -z "$RESUME_FOLD" ]] || { usage; exit 2; }
 [[ "$MAX_JOB_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] || { echo "MAX_JOB_ATTEMPTS must be positive" >&2; exit 2; }
 
 validate_registered_inputs
@@ -304,8 +335,10 @@ write_attempt() {
   local config=$2
   local fold=$3
   local parent_attempt=$4
+  local recovery_checkpoint=${5:-}
+  local recovery_record=${6:-}
   python - "$attempt" "$config" "$fold" "$parent_attempt" "$MATRIX" "$SPLIT" "$SUBSETS" "$STATISTICS" \
-    "$EXPORT_REGISTRY" "$(git -C "$ROOT" rev-parse HEAD)" <<'PY'
+    "$EXPORT_REGISTRY" "$(git -C "$ROOT" rev-parse HEAD)" "$recovery_checkpoint" "$recovery_record" <<'PY'
 import hashlib
 import json
 import os
@@ -325,6 +358,8 @@ import yaml
     statistics_text,
     exports_text,
     git_head,
+    recovery_checkpoint_text,
+    recovery_record_text,
 ) = sys.argv[1:]
 attempt = Path(attempt_text).resolve()
 config = Path(config_text).resolve()
@@ -334,6 +369,26 @@ raw["experiment"]["wandb_run_name"] = f"{raw['experiment']['wandb_run_name']}__{
 
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+recovery_parent = None
+if recovery_checkpoint_text:
+    parent = Path(parent_text).resolve()
+    parent_manifest_path = parent / "attempt_manifest.json"
+    parent_manifest = json.loads(parent_manifest_path.read_text(encoding="utf-8"))
+    parent_launch_path = parent / "launch_config.yaml"
+    parent_sidecar_path = Path(str(parent_manifest["manifest_sidecar"]["path"])).resolve()
+    recovery_parent = {
+        "checkpoint_path": str(Path(recovery_checkpoint_text).resolve()),
+        "checkpoint_sha256": digest(Path(recovery_checkpoint_text)),
+        "verification_record_path": str(Path(recovery_record_text).resolve()),
+        "verification_record_sha256": digest(Path(recovery_record_text)),
+        "attempt_manifest_path": str(parent_manifest_path.resolve()),
+        "attempt_manifest_sha256": digest(parent_manifest_path),
+        "launch_config_path": str(parent_launch_path.resolve()),
+        "launch_config_sha256": digest(parent_launch_path),
+        "manifest_sidecar_path": str(parent_sidecar_path),
+        "manifest_sidecar_sha256": digest(parent_sidecar_path),
+    }
 
 def write_exclusive(path: Path, text: str) -> None:
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
@@ -369,6 +424,7 @@ manifest = {
         "sha256": str(raw["data"]["paper_manifest_audit_sha256"]),
     },
     "parent_attempt": None if not parent_text else parent_text,
+    "recovery_parent": recovery_parent,
     # Concrete hashes are sealed into write-once checkpoint-verification records.
     "checkpoint_hashes": {},
 }
@@ -657,6 +713,116 @@ run_fold() {
   return 1
 }
 
+recover_fold_from_snapshot() {
+  local lane=$1 devices=$2 port=$3 fold=$4 source_attempt_number=$5 checkpoint_name=$6
+  local name=${CONFIG_NAMES[$fold]}
+  local job_root="$OUTPUT_ROOT/$name"
+  local config source_attempt checkpoint attempt_number attempt
+  config=$(config_for_fold "$fold")
+  source_attempt="$job_root/attempt_$source_attempt_number"
+  python - "$job_root" "$source_attempt" "$config" "$MATRIX" "$SPLIT" "$SUBSETS" "$STATISTICS" \
+    "$EXPORT_REGISTRY" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+import yaml
+
+(
+    job_root_text,
+    source_attempt_text,
+    config_text,
+    matrix_text,
+    split_text,
+    subsets_text,
+    statistics_text,
+    exports_text,
+) = sys.argv[1:]
+job_root = Path(job_root_text).resolve()
+source_attempt = Path(source_attempt_text)
+if source_attempt.is_symlink():
+    raise SystemExit("recovery parent attempt must not be a symlink")
+resolved_attempt = source_attempt.resolve()
+if resolved_attempt.parent != job_root or resolved_attempt.name != source_attempt.name:
+    raise SystemExit("recovery parent attempt is outside the expected fold job root")
+manifest_path = resolved_attempt / "attempt_manifest.json"
+if manifest_path.is_symlink() or not manifest_path.is_file():
+    raise SystemExit("recovery parent attempt manifest is missing")
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+def digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+config = Path(config_text).resolve()
+source_config = manifest.get("source_config")
+if not isinstance(source_config, dict):
+    raise SystemExit("recovery parent source config is missing")
+if Path(str(source_config.get("path", ""))).resolve() != config:
+    raise SystemExit("recovery parent source config path differs from the registered config")
+if source_config.get("sha256") != digest(config):
+    raise SystemExit("recovery parent source config hash differs from the registered config")
+launch_config = manifest.get("launch_config")
+expected_launch_path = resolved_attempt / "launch_config.yaml"
+if not isinstance(launch_config, dict):
+    raise SystemExit("recovery parent launch config is missing")
+recorded_launch_path = Path(str(launch_config.get("path", "")))
+if recorded_launch_path.is_symlink() or recorded_launch_path.resolve() != expected_launch_path:
+    raise SystemExit("recovery parent launch config must remain inside the parent attempt")
+if not expected_launch_path.is_file() or digest(expected_launch_path) != launch_config.get("sha256"):
+    raise SystemExit("recovery parent launch config hash differs from its manifest")
+registered_config = yaml.safe_load(config.read_text(encoding="utf-8"))
+expected_launch = json.loads(json.dumps(registered_config))
+expected_launch["experiment"]["output_dir"] = str(resolved_attempt)
+expected_launch["experiment"]["wandb_run_name"] = (
+    f"{expected_launch['experiment']['wandb_run_name']}__{resolved_attempt.name}"
+)
+if yaml.safe_load(expected_launch_path.read_text(encoding="utf-8")) != expected_launch:
+    raise SystemExit("recovery parent launch config differs from the registered config")
+expected_sidecar = Path(str(registered_config["data"]["paper_manifest_audit"])).resolve()
+sidecar = manifest.get("manifest_sidecar")
+if not isinstance(sidecar, dict) or Path(str(sidecar.get("path", ""))).resolve() != expected_sidecar:
+    raise SystemExit("recovery parent manifest sidecar path differs from the registered config")
+if (
+    sidecar.get("sha256") != registered_config["data"]["paper_manifest_audit_sha256"]
+    or not expected_sidecar.is_file()
+    or digest(expected_sidecar) != sidecar.get("sha256")
+):
+    raise SystemExit("recovery parent manifest sidecar hash differs from the registered config")
+expected_assets = {
+    "matrix": Path(matrix_text),
+    "spatial_split": Path(split_text),
+    "subset_registry": Path(subsets_text),
+    "statistics_registry": Path(statistics_text),
+    "embedding_export_registry": Path(exports_text),
+}
+assets = manifest.get("protocol_assets")
+if not isinstance(assets, dict):
+    raise SystemExit("recovery parent protocol assets are missing")
+for name, path in expected_assets.items():
+    recorded = assets.get(name)
+    if (
+        not isinstance(recorded, dict)
+        or Path(str(recorded.get("path", ""))).resolve() != path.resolve()
+        or recorded.get("sha256") != digest(path)
+    ):
+        raise SystemExit(f"recovery parent protocol asset differs: {name}")
+PY
+  checkpoint=$(verified_resume_checkpoint "$source_attempt" "$fold" "$checkpoint_name") || return $?
+  [[ ! -f "$job_root/canonical_attempt.json" ]] || {
+    echo "cannot recover Fold $fold: canonical attempt already exists" >&2
+    return 1
+  }
+  attempt_number=$(next_attempt_number "$job_root")
+  attempt="$job_root/attempt_$attempt_number"
+  mkdir "$attempt"
+  write_attempt "$attempt" "$config" "$fold" "$source_attempt" "$checkpoint" \
+    "$source_attempt/checkpoint_verifications/$checkpoint_name.json"
+  printf 'ENCODER protocol=v5_osm_assisted family=full_150 lane=%s devices=%s fold=%s config=%s attempt=%s recovery_parent=%s resume=%s\n' \
+    "$lane" "$devices" "$fold" "$config" "$attempt_number" "$source_attempt_number" "$checkpoint"
+  run_attempt "$lane" "$devices" "$port" "$fold" "$attempt" "$checkpoint"
+}
+
 run_lane() {
   local lane=$1 devices=$2 port=$3
   shift 3
@@ -706,6 +872,15 @@ fi
 if [[ -n "$RESUME_FOLD" ]]; then
   read -r lane devices port <<< "$(lane_for_fold "$RESUME_FOLD")"
   run_lane "$lane" "$devices" "$port" "$RESUME_FOLD"
+  exit $?
+fi
+
+if [[ -n "$RECOVER_FOLD" ]]; then
+  read -r lane devices port <<< "$(lane_for_fold "$RECOVER_FOLD")"
+  assert_lane_is_idle "$lane"
+  acquire_lane_lease "$lane"
+  recover_fold_from_snapshot "$lane" "$devices" "$port" "$RECOVER_FOLD" \
+    "$RECOVER_FROM_ATTEMPT" "$RECOVER_CHECKPOINT"
   exit $?
 fi
 
