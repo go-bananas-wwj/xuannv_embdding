@@ -3,15 +3,16 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
+import geopandas as gpd
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from docx import Document
-from docx.enum.section import WD_SECTION
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
@@ -23,6 +24,12 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "docs/plans/china_quarterly_2020_2021_sampling_plan_20260726_zh.md"
 ASSET_DIR = ROOT / "docs/plans/assets/china_quarterly_sampling_20260726"
 FIGURE = ASSET_DIR / "sampling_composition_and_workflow.png"
+BASE_PREVIEW = ASSET_DIR / "national_base_candidate_preview_internal.png"
+BASE_POINTS = (
+    Path("/data/xuannv_embedding/raw/china_v1/national_static_1pct_preview_points.jsonl")
+)
+COUNTRY = Path("/data/xuannv_embedding/raw/china_v1/geoboundaries/geoBoundaries-CHN-ADM0.geojson")
+ADM1 = Path("/data/xuannv_embedding/raw/china_v1/geoboundaries/geoBoundaries-CHN-ADM1.geojson")
 OUTPUT = (
     ROOT
     / "docs/plans/word/中国版AlphaEarth全国采样方案_2020_2021季度版_20260726.docx"
@@ -77,20 +84,36 @@ def _add_page_number(section) -> None:
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = paragraph.add_run("第 ")
     _set_run_font(run, 9)
-    field = OxmlElement("w:fldSimple")
-    field.set(qn("w:instr"), "PAGE")
-    paragraph._p.append(field)
+    begin = OxmlElement("w:fldChar")
+    begin.set(qn("w:fldCharType"), "begin")
+    instruction = OxmlElement("w:instrText")
+    instruction.set(qn("xml:space"), "preserve")
+    instruction.text = " PAGE "
+    separate = OxmlElement("w:fldChar")
+    separate.set(qn("w:fldCharType"), "separate")
+    number = OxmlElement("w:t")
+    number.text = "1"
+    end = OxmlElement("w:fldChar")
+    end.set(qn("w:fldCharType"), "end")
+    field_run = OxmlElement("w:r")
+    field_run.extend([begin, instruction, separate, number, end])
+    paragraph._p.append(field_run)
     run = paragraph.add_run(" 页")
     _set_run_font(run, 9)
 
 
 def _configure_document(document: Document) -> None:
     section = document.sections[0]
+    section.page_width = Cm(21.0)
+    section.page_height = Cm(29.7)
     section.top_margin = Cm(2.2)
     section.bottom_margin = Cm(2.0)
     section.left_margin = Cm(2.5)
     section.right_margin = Cm(2.5)
     _add_page_number(section)
+    header = section.header.paragraphs[0]
+    header.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _set_run_font(header.add_run("中国版 Alpha Earth 全国目标采样方案"), 9)
 
     normal = document.styles["Normal"]
     normal.font.name = "Times New Roman"
@@ -120,6 +143,9 @@ def _configure_document(document: Document) -> None:
     document.core_properties.title = "中国版 Alpha Earth 全国采样方案"
     document.core_properties.subject = "2020 年和 2021 年季度 10 米全国地理嵌入"
     document.core_properties.author = "玄女 Embedding 项目组"
+    update_fields = OxmlElement("w:updateFields")
+    update_fields.set(qn("w:val"), "true")
+    document.settings._element.append(update_fields)
 
 
 def _add_inline(paragraph, text: str, size: float = 12) -> None:
@@ -152,6 +178,13 @@ def _add_table(document: Document, rows: list[list[str]]) -> None:
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
     table.autofit = True
     for row_index, row in enumerate(rows):
+        row_properties = table.rows[row_index]._tr.get_or_add_trPr()
+        cant_split = OxmlElement("w:cantSplit")
+        row_properties.append(cant_split)
+        if row_index == 0:
+            repeat_header = OxmlElement("w:tblHeader")
+            repeat_header.set(qn("w:val"), "true")
+            row_properties.append(repeat_header)
         for column_index in range(columns):
             cell = table.cell(row_index, column_index)
             cell.text = ""
@@ -222,7 +255,7 @@ def _render_figure() -> None:
         ["0", "1万", "2万", "3万", "4万", "5万", "6.2万"],
         fontproperties=chinese_font,
     )
-    axis.set_title("最终 62,000 个训练 patch 的组成", fontproperties=chinese_font, fontsize=15)
+    axis.set_title("目标 62,000 个训练 patch 的组成", fontproperties=chinese_font, fontsize=15)
     for side in ("top", "right", "left"):
         axis.spines[side].set_visible(False)
     axis.spines["bottom"].set_color("#777777")
@@ -236,7 +269,7 @@ def _render_figure() -> None:
         ("真实海岸补样", "+500"),
         ("语义与困难补样", "+1,500"),
         ("季度质量审计", "2020Q1—2021Q4"),
-        ("冻结注册表", "62,000"),
+        ("验收后冻结", "62,000"),
     ]
     x_positions = [0.075, 0.22, 0.365, 0.51, 0.655, 0.80, 0.94]
     for index, ((title, subtitle), x) in enumerate(zip(steps, x_positions, strict=True)):
@@ -265,7 +298,7 @@ def _render_figure() -> None:
     flow.text(
         0.5,
         0.1,
-        "固定空间骨架；补样只增加、不替换；季度影像质量不合格进入补片队列",
+        "候选完成几何与季度质量验收后冻结；冻结后不再换点",
         ha="center",
         va="center",
         fontsize=10,
@@ -274,6 +307,81 @@ def _render_figure() -> None:
     )
     figure.savefig(FIGURE, bbox_inches="tight", facecolor="white")
     plt.close(figure)
+
+
+def _render_base_preview() -> None:
+    if not all(path.exists() for path in (BASE_POINTS, COUNTRY, ADM1)):
+        if BASE_PREVIEW.exists():
+            return
+        missing = [str(path) for path in (BASE_POINTS, COUNTRY, ADM1) if not path.exists()]
+        raise FileNotFoundError(f"missing base-preview inputs: {missing}")
+    font_manager.fontManager.addfont(SONG_FONT)
+    chinese_font = font_manager.FontProperties(fname=SONG_FONT)
+    points = [
+        json.loads(line)
+        for line in BASE_POINTS.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    country = gpd.read_file(COUNTRY).to_crs("EPSG:4326")
+    adm1 = gpd.read_file(ADM1).to_crs("EPSG:4326")
+    frame = gpd.GeoDataFrame(
+        points,
+        geometry=gpd.points_from_xy(
+            [point["longitude"] for point in points],
+            [point["latitude"] for point in points],
+        ),
+        crs="EPSG:4326",
+    )
+    figure, axis = plt.subplots(figsize=(12.5, 8.2), dpi=220, facecolor="white")
+    country.plot(ax=axis, color="#F2F1ED", edgecolor="#333333", linewidth=0.7, zorder=1)
+    adm1.boundary.plot(ax=axis, color="#A4A4A4", linewidth=0.22, zorder=2)
+    frame.plot(ax=axis, color="#B43E32", markersize=0.42, alpha=0.72, zorder=3)
+    min_x, min_y, max_x, max_y = country.total_bounds
+    axis.set_xlim(min_x - 1.3, max_x + 1.3)
+    axis.set_ylim(min_y - 1.3, max_y + 1.3)
+    axis.set_aspect("equal")
+    axis.set_axis_off()
+    axis.set_title(
+        "全国基础 1% 中心点候选（内部技术预览）",
+        fontsize=15,
+        pad=12,
+        fontproperties=chinese_font,
+    )
+    axis.text(
+        0.01,
+        0.015,
+        "57,405 个中心点候选；尚未完成 footprint、跨 UTM 重叠和季度质量验收；禁止对外发布",
+        transform=axis.transAxes,
+        fontsize=8.5,
+        color="#303030",
+        fontproperties=chinese_font,
+        bbox={"facecolor": "white", "edgecolor": "#777777", "pad": 4.0},
+    )
+    figure.tight_layout()
+    ASSET_DIR.mkdir(parents=True, exist_ok=True)
+    figure.savefig(BASE_PREVIEW, bbox_inches="tight", facecolor="white")
+    plt.close(figure)
+
+
+def _add_toc(document: Document) -> None:
+    title = document.add_paragraph()
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _set_run_font(title.add_run("目录"), 14, True)
+    paragraph = document.add_paragraph()
+    begin = OxmlElement("w:fldChar")
+    begin.set(qn("w:fldCharType"), "begin")
+    instruction = OxmlElement("w:instrText")
+    instruction.set(qn("xml:space"), "preserve")
+    instruction.text = ' TOC \\o "1-3" \\h \\z \\u '
+    separate = OxmlElement("w:fldChar")
+    separate.set(qn("w:fldCharType"), "separate")
+    placeholder = OxmlElement("w:t")
+    placeholder.text = "请在 Word/WPS 中更新目录"
+    end = OxmlElement("w:fldChar")
+    end.set(qn("w:fldCharType"), "end")
+    run = OxmlElement("w:r")
+    run.extend([begin, instruction, separate, placeholder, end])
+    paragraph._p.append(run)
 
 
 def _build_docx() -> None:
@@ -323,6 +431,11 @@ def _build_docx() -> None:
         heading = re.match(r"^(#{1,3})\s+(.+)$", stripped)
         if heading:
             level = len(heading.group(1))
+            if level == 2 and not getattr(document, "_xuannv_toc_added", False):
+                document.add_page_break()
+                _add_toc(document)
+                document.add_page_break()
+                document._xuannv_toc_added = True
             style = "Title" if level == 1 else f"Heading {level - 1}"
             paragraph = document.add_paragraph(style=style)
             paragraph.alignment = (
@@ -366,14 +479,13 @@ def _build_docx() -> None:
             paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
         _add_inline(paragraph, " ".join(paragraph_lines))
 
-    # Force a new section only when a downstream editor appends appendices.
-    document.add_section(WD_SECTION.CONTINUOUS)
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     document.save(OUTPUT)
 
 
 def main() -> None:
     _render_figure()
+    _render_base_preview()
     _build_docx()
     print(FIGURE)
     print(OUTPUT)

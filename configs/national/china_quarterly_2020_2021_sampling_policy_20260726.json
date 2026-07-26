@@ -1,12 +1,21 @@
 {
+  "schema_version": "xuannv_china_quarterly_sampling_policy_v1",
   "name": "xuannv_china_quarterly_2020_2021_sampling",
   "version": "2026-07-26",
   "purpose": "Build the frozen nationwide spatial registry shared by 2020Q1 through 2021Q4 embedding products.",
+  "implementation_status": {
+    "policy": "review_baseline_not_execution_frozen",
+    "end_to_end_materialization": "not_implemented",
+    "legacy_build_national_sampling_registry_compatible": false,
+    "reason": "The legacy registry builder uses the 2025-2026 monthly policy schema and must not be run with this policy."
+  },
   "boundary": {
     "study_area": "China land area and included islands under the project-approved boundary",
     "boundary_version_must_be_frozen": true,
-    "full_patch_must_intersect_study_area": true,
-    "center_must_be_inside_study_area": true
+    "candidate_predicate": "patch center is inside the frozen study boundary",
+    "center_must_be_inside_study_area": true,
+    "utm_owner_rule": "assign the center longitude to exactly one half-open UTM zone; reject candidates outside their owner zone",
+    "cross_zone_overlap_check": "reject or deterministically replenish any pair with footprint intersection over 1 percent of either patch area"
   },
   "patch": {
     "side_meters": 1280,
@@ -33,39 +42,43 @@
     "output_shape_per_patch": [128, 128, 64]
   },
   "sampling": {
-    "sampling_seed": 20260726,
+    "sampling_seed": 20260717,
     "hash_algorithm": "SHA-256",
     "target_total": 62000,
     "base_count": 57405,
-    "estimated_full_grid_patches": 5859375,
+    "base_count_status": "realized provisional center-point count for seed 20260717; not an exact equal-probability quota",
+    "area_based_full_grid_estimate": 5859375,
+    "current_macro_inventory_equivalent_patch_estimate": 5740830.875,
     "base_inclusion_probability": 0.01,
+    "base_inclusion_probability_status": "initial design probability; fixed-size cross-zone reconciliation changes boundary probabilities slightly",
     "final_land_fraction": 0.0106,
-    "base_rule": "Within each 10 x 10 patch macrocell, choose the deterministic SHA-256 winner. For a boundary macrocell with n valid candidates, accept the macrocell with probability n / 100 before choosing its winner.",
+    "final_land_fraction_status": "area-based planning estimate; exact fraction is recomputed after cross-zone de-overlap and integer candidate enumeration",
+    "base_rule": "Within each 10 x 10 patch macrocell, enumerate the exact number n of owner-zone candidate centers inside the frozen boundary. Map a domain-separated SHA-256 hash of seed, boundary version and macrocell id to [0,1); accept when u < n / 100. After acceptance choose the domain-separated patch hash winner. Then resolve cross-zone overlap and deterministically replenish from the ranked base reserve until the fixed planning count 57,405 is restored.",
     "layers": [
       {
         "id": "base_expected_1pct",
         "count": 57405,
-        "replacement": false,
+        "replacement_after_final_freeze": false,
         "selection": "deterministic macrocell hash with boundary acceptance correction"
       },
       {
         "id": "utm_spatial_balance_supplement",
         "count": 2595,
-        "replacement": false,
-        "selection": "allocate by square root of eligible UTM-zone area; deterministic selection; at most one supplemental patch per macrocell"
+        "replacement_after_final_freeze": false,
+        "selection": "draw from all unselected patch candidates, including macrocells already containing a base point; allocate by square root of exact eligible owner-zone patch count; deterministic selection; at most one supplemental point across all supplement layers per macrocell"
       },
       {
         "id": "coastal_supplement",
         "count": 500,
-        "replacement": false,
-        "selection": "ocean-adjacent land-water interfaces identified with an independent ocean polygon; allocate across coastal UTM zones",
+        "replacement_after_final_freeze": false,
+        "selection": "patch footprints that intersect both the frozen land polygon and an independent frozen ocean polygon; compute distance and area in a local metric CRS; allocate across coastal UTM zones and audit provinces",
         "exclude_false_coasts": ["river banks", "lake shores", "province borders", "international land borders"]
       },
       {
         "id": "semantic_and_difficult_supplement",
         "count": 1500,
-        "replacement": false,
-        "selection": "rank independent candidate pools using broad land-cover, OSM, DEM and source-quality summaries; do not use final downstream manual labels",
+        "replacement_after_final_freeze": false,
+        "selection": "jointly allocate unique patches from four ranked pools using broad land-cover, historical OSM, DEM and source-quality summaries; a patch has one primary quota class and may retain multiple secondary reasons; do not use final downstream manual labels",
         "subquotas": {
           "urban_and_built_up": 500,
           "rare_natural_surfaces": 400,
@@ -75,17 +88,26 @@
       }
     ],
     "deduplication": {
-      "unique_keys": ["patch_id", "geometry_hash"],
+      "unique_keys": ["patch_id", "identity_hash", "canonical_wgs84_footprint_hash"],
       "supplement_max_per_macrocell": 1,
-      "no_replacement_of_existing_layers": true
+      "primary_candidates_not_silently_replaced": true,
+      "cross_zone_spatial_index_check": true,
+      "maximum_pairwise_overlap_fraction": 0.01
     },
     "regional_balance": {
       "stratification_fields": ["utm_zone", "admin1", "ecoregion"],
       "max_fraction_per_regional_group_within_semantic_subquota": 0.4
+    },
+    "reserve_pool": {
+      "minimum_fraction_per_layer": 0.1,
+      "ordered_by_same_deterministic_rules": true,
+      "replacement_allowed_only_before_final_registry_freeze": true,
+      "replacement_must_match": ["sampling_layer", "utm_zone", "admin1", "ecoregion"],
+      "all_replacements_are_versioned": true
     }
   },
   "quality_gate": {
-    "required_core_sources": ["sentinel_2", "sentinel_1", "landsat_8"],
+    "preferred_core_sources": ["sentinel_2", "sentinel_1", "landsat_8"],
     "optional_sources": [
       "landsat_9_2021Q4",
       "gf_series",
@@ -94,29 +116,57 @@
       "jilin_1",
       "hi_glass"
     ],
+    "quarter_intervals": "half-open calendar quarters; do not borrow observations across quarter boundaries",
     "evaluate_each_quarter": true,
-    "optical_selection": "retain the best quality observations in each quarter and composite only valid pixels",
-    "pixel_masks": ["cloud", "cloud_shadow", "snow", "nodata", "saturation", "invalid_geometry"],
+    "optical_selection": "quality-screen observations, then build a medoid composite from valid pixels within the same quarter",
+    "invalid_pixel_masks": ["cloud", "cloud_shadow", "nodata", "saturation", "invalid_geometry"],
+    "preserved_surface_state_masks": ["snow"],
     "fail_closed_on_missing_quality_mask": true,
     "do_not_treat_cloud_as_surface": true,
     "do_not_silently_replace_failed_patches": true,
-    "failed_patch_action": "record in a repair queue with source, period and reason"
+    "numeric_thresholds": {
+      "sentinel_2_min_valid_pixel_fraction": 0.6,
+      "sentinel_2_min_valid_observations": 2,
+      "landsat_8_min_valid_pixel_fraction": 0.5,
+      "landsat_8_min_valid_observations": 1,
+      "sentinel_1_min_spatial_coverage_fraction": 0.9,
+      "sentinel_1_min_acquisitions": 2,
+      "minimum_passing_modalities_per_quarter": 2,
+      "minimum_passing_optical_modalities_per_quarter": 1,
+      "registration_median_error_pixels_max": 0.5,
+      "registration_p95_error_pixels_max": 1.0
+    },
+    "status_levels": {
+      "accepted": "all numeric thresholds pass",
+      "partial": "at least one optical source and one additional modality pass; missing targets are masked",
+      "quarantined": "quarter does not meet partial thresholds or registration fails"
+    },
+    "trainable_statuses": ["accepted", "partial"],
+    "maximum_partial_fraction_per_quarter": 0.25,
+    "failed_patch_action": "record source, quarter and reason in the image-data repair queue; use the frozen same-stratum reserve only before final registry freeze",
+    "sentinel_1_product_contract": "RTC, IW mode, VV and VH, fixed orbit-direction policy, fixed DEM and fixed linear-or-dB units"
   },
   "weak_semantics": {
     "sources": [
-      "ESA WorldCover 2020 and 2021",
-      "Dynamic World 2020 and 2021",
+      "ESA WorldCover 2020 and 2021 as annual broad-class supervision only",
+      "Dynamic World 2020 and 2021 as confidence-masked same-source pseudo labels only",
       "GlobeLand30 2020",
       "GLC_FCS30D 2020 and 2021",
       "CLCD 2020",
       "WorldCereal 2021",
       "JRC Global Surface Water 2020 and 2021",
-      "historical OSM snapshots",
+      "OSM full-history extracts reconstructed at each quarter end from 2020-03-31 through 2021-12-31",
       "Copernicus DEM GLO-30"
     ],
     "blank_means": "unknown",
     "uses_final_downstream_manual_labels": false,
-    "roles": ["sampling strata", "masked weak auxiliary targets", "coverage audit"]
+    "roles": ["sampling strata", "masked weak auxiliary targets", "coverage audit"],
+    "temporal_guardrails": {
+      "annual_products_do_not_supervise_quarterly_change": true,
+      "dynamic_world_is_not_independent_validation": true,
+      "osm_edit_time_is_not_construction_time": true,
+      "every_source_records_support_start_end_algorithm_version_and_checksum": true
+    }
   },
   "training_use": {
     "development_split": {
@@ -126,20 +176,25 @@
         "test": 0.05
       },
       "spatial_blocked": true,
+      "block_grid": "50 km parent blocks in EPSG:6933",
+      "minimum_cross_split_buffer_meters": 25600,
       "stratify_by": ["admin1", "ecoregion", "sampling_layer"],
       "adjacent_patches_must_share_split": true,
+      "target_fraction_tolerance": 0.01,
       "test_is_never_used_for_model_selection": true
     },
     "final_fit": {
-      "uses_all_accepted_patches": true,
+      "uses_all_accepted_or_partial_patches": true,
       "allowed_after_protocol_freeze": true,
-      "evaluation_uses_external_or_pre_frozen_labels": true
+      "evaluation_uses_external_or_pre_frozen_labels": true,
+      "external_space_or_time_holdout_required_for_inductive_claims": true
     }
   },
   "registry": {
     "required_fields": [
       "patch_id",
-      "geometry_hash",
+      "identity_hash",
+      "canonical_wgs84_footprint_hash",
       "grid_id",
       "grid_epsg",
       "grid_row",
@@ -153,6 +208,9 @@
       "ecoregion",
       "sampling_layer",
       "sampling_reasons",
+      "sampling_design_type",
+      "nominal_inclusion_probability",
+      "design_weight_nullable",
       "sampling_seed",
       "boundary_version",
       "source_coverage_by_quarter",
@@ -166,9 +224,16 @@
   "acceptance": {
     "exact_total": 62000,
     "no_duplicate_patch_id": true,
-    "no_duplicate_geometry_hash": true,
+    "no_duplicate_identity_hash": true,
+    "no_duplicate_canonical_footprint_hash": true,
+    "no_cross_zone_overlap_over_fraction": 0.01,
     "all_centers_inside_frozen_boundary": true,
     "all_layers_meet_quota": true,
+    "all_quality_checks_are_numeric": true,
+    "no_quarantined_quarter_in_final_registry": true,
+    "maximum_partial_fraction_per_quarter": 0.25,
+    "all_required_registry_fields_are_complete": true,
+    "no_cross_split_pair_within_buffer_meters": 25600,
     "deterministic_rerun_checksum_match": true,
     "manual_visual_audit_required": true
   }
