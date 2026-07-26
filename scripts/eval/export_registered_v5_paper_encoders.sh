@@ -35,7 +35,7 @@ export PYTHONPATH="$ROOT:$ROOT/src:$ROOT/downstreams:${PYTHONPATH:-}"
 python - "$FAMILY" "$MATRIX" <<'PY'
 import sys
 from pathlib import Path
-from scripts.eval.run_registered_paper_downstream import load_registered_v5_matrix
+from scripts.eval.registered_v5_matrix import load_registered_v5_matrix
 
 family = sys.argv[1]
 matrix = load_registered_v5_matrix(Path(sys.argv[2]))

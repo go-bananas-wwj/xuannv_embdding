@@ -1051,6 +1051,28 @@ def test_v5_export_and_launcher_dry_runs_admit_declared_family_only(tmp_path: Pa
             assert rejected.returncode == 2
 
 
+def test_v5_matrix_preflight_loader_avoids_training_runtime_imports() -> None:
+    """Dry-run admission must not import torch, rasterio, or sklearn training dependencies."""
+    root = Path(__file__).resolve().parents[1]
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import sys; "
+            "from scripts.eval.registered_v5_matrix import load_registered_v5_matrix; "
+            "from pathlib import Path; "
+            "matrix = load_registered_v5_matrix("
+            "Path('configs/eval/rse_v5_osm_assisted_matrix.json')); "
+            "assert 'full_150' in matrix['families']; "
+            "assert not {'torch', 'rasterio', 'sklearn'} & set(sys.modules)"
+        ),
+    ]
+
+    result = subprocess.run(command, cwd=root, capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stderr
+
+
 def _sealed_v5_queue_repo(tmp_path: Path) -> tuple[Path, Path]:
     """Create the small committed repository needed to exercise the queue's Git gate."""
     source_root = Path(__file__).resolve().parents[1]
