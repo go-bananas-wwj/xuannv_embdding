@@ -37,38 +37,85 @@ def build_complete_blocks(records: list[dict[str, Any]]) -> tuple[list[dict[str,
     return blocks, sorted(set(bounds) - used)
 
 
-def build_split(records: list[dict[str, Any]], axis: tuple[float, float]) -> dict[str, Any]:
-    """Create contiguous test/validation bands with one complete-block buffer at each edge."""
-    bounds = {str(record["patch_id"]): record["bounds"] for record in records}
+def build_split(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Create compact test clusters with a full 2D complete-block buffer."""
     blocks, excluded = build_complete_blocks(records)
-    for block in blocks:
-        centers = [bounds[patch_id] for patch_id in block["patch_ids"]]
-        center_x = sum(item[0] + item[2] for item in centers) / 8.0
-        center_y = sum(item[1] + item[3] for item in centers) / 8.0
-        block["projection"] = center_x * axis[0] + center_y * axis[1]
-    blocks.sort(key=lambda item: (item["projection"], item["row"], item["col"]))
+    blocks.sort(key=lambda item: (item["row"], item["col"]))
     blocks_by_cell = {(block["row"], block["col"]): block for block in blocks}
-    folds = []
     all_ids = {patch_id for block in blocks for patch_id in block["patch_ids"]}
     count = len(blocks)
-    if count < 50:
-        raise ValueError("Five-fold block split requires at least 50 complete 2 x 2 blocks")
-    for fold in range(5):
-        start, stop = fold * 10, fold * 10 + 10
-        test_indices = set(range(start, stop))
-        block_count = stop - start
-        if stop + 1 + block_count <= count:
-            val_indices = set(range(stop + 1, stop + 1 + block_count))
+    test_block_count, validation_block_count = 10, 5
+    if count < 5 * test_block_count + validation_block_count:
+        raise ValueError("Five-fold block split requires at least 55 complete 2 x 2 blocks")
+    remaining_indices = set(range(count))
+    selected_cells: set[tuple[int, int]] = set()
+    test_groups: list[set[int]] = []
+    for _fold in range(5):
+        if selected_cells:
+            anchor_index = max(
+                remaining_indices,
+                key=lambda index: (
+                    min(
+                        (blocks[index]["row"] - row) ** 2 + (blocks[index]["col"] - col) ** 2
+                        for row, col in selected_cells
+                    ),
+                    blocks[index]["row"],
+                    blocks[index]["col"],
+                ),
+            )
         else:
-            val_indices = set(range(start - block_count - 1, start - 1))
+            anchor_index = min(
+                remaining_indices, key=lambda index: (blocks[index]["row"], blocks[index]["col"])
+            )
+        anchor = (blocks[anchor_index]["row"], blocks[anchor_index]["col"])
+        test_indices = set(
+            sorted(
+                remaining_indices,
+                key=lambda index: (
+                    (blocks[index]["row"] - anchor[0]) ** 2
+                    + (blocks[index]["col"] - anchor[1]) ** 2,
+                    blocks[index]["row"],
+                    blocks[index]["col"],
+                ),
+            )[:test_block_count]
+        )
+        test_groups.append(test_indices)
+        remaining_indices -= test_indices
+        selected_cells.update(
+            (blocks[index]["row"], blocks[index]["col"]) for index in test_indices
+        )
+    all_test_indices = set().union(*test_groups)
+    folds = []
+    for fold in range(5):
+        test_indices = test_groups[fold]
         test_cells = {(blocks[index]["row"], blocks[index]["col"]) for index in test_indices}
-        val_cells = {(blocks[index]["row"], blocks[index]["col"]) for index in val_indices}
         buffer_cells = {
             cell
             for cell in blocks_by_cell
-            if cell not in test_cells | val_cells
+            if cell not in test_cells
             and any(max(abs(cell[0] - test[0]), abs(cell[1] - test[1])) <= 2 for test in test_cells)
         }
+        center_row = sum(row for row, _ in test_cells) / len(test_cells)
+        center_col = sum(col for _, col in test_cells) / len(test_cells)
+        candidates = [
+            index
+            for index, block in enumerate(blocks)
+            if index not in all_test_indices
+            and (block["row"], block["col"]) not in buffer_cells
+        ]
+        if len(candidates) < validation_block_count:
+            raise ValueError(f"Fold {fold} cannot place a validation band outside the test buffer")
+        val_indices = set(
+            sorted(
+                candidates,
+                key=lambda index: (
+                    (blocks[index]["row"] - center_row) ** 2
+                    + (blocks[index]["col"] - center_col) ** 2,
+                    blocks[index]["row"],
+                    blocks[index]["col"],
+                ),
+            )[:validation_block_count]
+        )
         groups = {
             "test": test_indices,
             "val": val_indices,
@@ -89,15 +136,18 @@ def build_split(records: list[dict[str, Any]], axis: tuple[float, float]) -> dic
         }
         train = sorted(all_ids - set().union(*map(set, grouped_ids.values())))
         if len(train) < 150:
-            raise ValueError(f"Fold {fold} leaves only {len(train)} training patches; need at least 150")
+            raise ValueError(
+                f"Fold {fold} leaves only {len(train)} training patches; need at least 150"
+            )
         folds.append({"fold": fold, "train": train, **grouped_ids})
     return {
         "schema_version": 1,
-        "strategy": "complete_2x2_blocks_contiguous_dominant_axis_bands",
-        "validation_strategy": "next_complete_block_band",
+        "strategy": "complete_2x2_blocks_compact_farthest_point_test_clusters",
+        "validation_strategy": "nearest_non_test_blocks_outside_complete_buffer",
         "buffer": "one_complete_block_at_each_test_edge",
         "n_folds": 5,
-        "dominant_axis": list(axis),
+        "test_blocks_per_fold": test_block_count,
+        "validation_blocks_per_fold": validation_block_count,
         "complete_block_count": len(blocks),
         "excluded_boundary_patch_ids": excluded,
         "folds": folds,
@@ -108,10 +158,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--patch-metadata", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--axis", nargs=2, type=float, required=True)
     args = parser.parse_args()
     records = json.loads(args.patch_metadata.read_text(encoding="utf-8"))
-    result = build_split(records, (args.axis[0], args.axis[1]))
+    result = build_split(records)
     first = records[0]["bounds"]
     result["patch_metadata_path"] = str(args.patch_metadata.resolve())
     result["patch_metadata_sha256"] = hashlib.sha256(args.patch_metadata.read_bytes()).hexdigest()
@@ -121,7 +170,7 @@ def main() -> None:
     ]
     result["patch_lattice_spacing"] = [first[2] - first[0], first[3] - first[1]]
     result["generation"] = {
-        "command": "complete_2x2_blocks + contiguous_projection_bands + chebyshev_one_block_buffer",
+        "command": "complete_2x2_blocks + compact_farthest_clusters + chebyshev_one_block_buffer",
         "seed": None,
         "seed_note": (
             "The v5_seed42 filename preserves paper experiment lineage; no random split is used."
