@@ -1,0 +1,326 @@
+# XuannvEarth: Reusable monthly geospatial embeddings from heterogeneous Earth observations for urban mapping
+
+> **Working RSE manuscript.** Bracketed slots must be filled only with metrics, tables, and figures
+> admitted by `docs/paper/rse_2026/evidence_ledger.md`; they are not claims.
+
+## Title page
+
+**Weijie Wu**\(^1\), **Xinyi Fan**\(^2\), and **Long Zhao**\(^1\)
+
+\(^1\) Aerospace Information Research Institute, Chinese Academy of Sciences, Beijing, China<br>
+\(^2\) Institute of Geographic Sciences and Natural Resources Research, Chinese Academy of Sciences, Beijing, China<br>
+Corresponding author: Long Zhao (`zhaolong@aircas.ac.cn`)
+
+> Author order, affiliations, ORCIDs, corresponding-author details, funding, and CRediT roles
+> are provisional and require author confirmation before submission.
+
+## Abstract
+
+Urban land-surface mapping is recurrent: buildings, roads, water, vegetation, and public
+facilities must be updated repeatedly, yet task-specific segmentation models repeatedly consume
+labels and computation. We present XuannvEarth, a city-scale framework that encodes six monthly
+slots of heterogeneous Earth observations into frozen, dense 64-dimensional embedding fields on a
+10 m grid. The encoder combines sensor-specific stems, availability-aware spatiotemporal fusion,
+higher-resolution feature pathways, a hyperspherical bottleneck, valid-target reconstruction under
+structured source corruption, and OpenStreetMap-derived auxiliary semantics. We evaluate whether a
+frozen field can be read by the same lightweight spatial probe under geographically separated
+folds and fixed labelled-patch budgets. **[Insert the strongest verified, evidence-ledger-admitted
+V5 result, comparison, uncertainty, and limitation here.]** The study is limited to a single
+urban region and OSM-overlapping diagnostic readouts do not establish ontology-independent
+semantic transfer.
+
+**Keywords:** geospatial embedding; multimodal Earth observation; time series; weak supervision;
+few-shot mapping; urban remote sensing.
+
+## 1. Introduction
+
+Urban mapping is not a one-time prediction problem. Municipal and scientific workflows repeatedly
+request maps of buildings, roads, water, green space, facilities, and land-use proxies as new
+imagery arrives. Training a separate high-capacity segmentation model for every category and date
+duplicates upstream feature learning and ties each request to a new annotation campaign. Dense
+geospatial embedding products offer a different interface: an encoder is trained once, frozen, and
+read by small task-specific heads for subsequent mapping questions.
+
+Recent Earth-observation representation learners motivate reusable spatial features across sensors,
+regions, and tasks. A monthly urban setting is materially different from an annual composite or a
+globally aggregated product: a monthly slot can contain cloud and haze, missing optical
+acquisitions, radar speckle, sparse higher-resolution imagery, and residual cross-sensor
+registration error. It is therefore insufficient to show only an attractive embedding mosaic or
+an in-region map. The representation must be evaluated with geographic separation, matched
+downstream readers, and a threshold protocol that never observes test labels.
+
+XuannvEarth produces monthly-indexed dense geospatial embeddings from heterogeneous observations.
+Each output is associated with one target month but may use six-month context through full temporal
+attention; it is not a causal, month-local representation. For each 1.28 km by 1.28 km patch, the
+model produces a 128 by 128 map of 64-dimensional unit-norm vectors, corresponding to a 10 m grid.
+The representation is learned from multi-sensor reconstruction, a merged OSM land-cover target,
+fine OSM-derived auxiliary probes, structured source corruption, and within-rank uniformity.
+
+This paper asks a bounded question: under geographically separated folds, can a frozen monthly
+embedding field support label-efficient urban mapping through the same lightweight reader and fixed
+labelled-patch budgets? The fail-closed protocol binds the encoder checkpoint, exported feature
+files, frozen shot schedules, validation-only thresholds, and downstream artifacts. OSM-overlapping
+labels are treated as OSM-assisted diagnostic readouts, not evidence of ontology-independent
+transfer.
+
+The contributions are threefold. First, we specify a reusable dense monthly representation for
+heterogeneous urban Earth observations. Second, we provide a provenance-bound spatial evaluation
+protocol that separates weak-supervision diagnostics from independent-transfer claims. Third, we
+report only conditions supported by released, admitted evidence and state the limitations of
+regional scale, imperfect weak labels, and sparse higher-resolution observations.
+
+## 2. Related work
+
+### 2.1 Dense geospatial representations and EO foundation models
+
+Large-scale Earth-observation encoders and embedding products motivate a stable feature interface
+rather than a separate end-to-end model per task (Brown et al., 2025; Herzog et al., 2026).
+XuannvEarth follows this interface at city scale and monthly cadence. It is not a global foundation
+model: its training extent, observation history, and label sources are narrower than those of
+globally trained products.
+
+### 2.2 Multimodal and temporal Earth observation learning
+
+Optical, radar, and Landsat observations offer complementary strengths but differ in noise,
+availability, radiometry, and spatial resolution. Multimodal temporal models therefore require
+availability-aware fusion and explicit treatment of missing sources. Masked reconstruction offers a
+general self-supervised precedent for learning from partially observed visual inputs (He et al.,
+2022). XuannvEarth uses independent sensor stems and full temporal attention, while structured
+source corruption exposes the encoder to missing modalities, months, and spatial blocks during
+training. This design targets robustness; it does not by itself prove a causal contribution until
+matched ablations are admitted.
+
+### 2.3 Reconstruction and weak geographic supervision
+
+Masked reconstruction can encourage a representation to encode information shared across inputs,
+but reconstruction targets must respect invalid pixels and source availability. OpenStreetMap is a
+collaboratively maintained geographic database (Haklay and Weber, 2008); it can add weak semantic
+structure while being incomplete, temporally uncertain, and ontology-overlapping with downstream
+labels. XuannvEarth therefore treats OSM as auxiliary weak supervision and separates OSM-assisted
+diagnostic evaluation from independent-label evidence.
+
+## 3. Materials and methods
+
+### 3.1 Study area and spatial units
+
+The study area is Haidian District, Beijing, China. The registered protocol partitions 320
+georeferenced patches, each covering 1.28 km by 1.28 km, into geographically separated folds with
+train, validation, test, and one-patch buffer regions. The observation window spans December 2025
+through May 2026. A full-region P10C product is retained separately as a transductive qualitative
+case study and is not used as spatial-generalisation evidence.
+
+**[Insert Figure 1: study area, 320-patch layout, fold allocation, and representative observations
+only after provenance admission.]**
+
+### 3.2 Observations and auxiliary labels
+
+Temporal inputs are Sentinel-2 optical imagery with 12 channels (Drusch et al., 2012), Sentinel-1
+SAR with two channels (Torres et al., 2012), and Landsat with seven channels. The model also
+receives availability-masked higher-resolution optical imagery with three channels and
+higher-resolution SAR imagery with one channel.
+Higher-resolution observations are aggregated from available acquisitions and fused into every
+target-month output; they are not assumed to be unique monthly acquisitions.
+
+The target-only categorical layer is an OSM-derived merged land-cover raster stored under the
+legacy manifest key `worldcover`; it is removed before encoder input. Its 11 IDs comprise ignored
+background (0) plus residential, commercial, industrial, agriculture, green, recreation,
+construction, water, building, and transport. The configured decoder has 11 output channels and
+the loss ignores class 0. Fine auxiliary semantic supervision separately uses 13 cleaned OSM
+layers: building, major road, minor road, rail, water, green space, agriculture, residential,
+commercial, industrial, construction, path/walk, and playground. OSM masks are not contemporaneous
+ground truth for monthly change claims. Native resolutions, acquisition coverage, quality masks,
+mosaicking, reprojection, alignment statistics, normalisation, source missingness, and OSM
+provenance will be reported only from their corresponding quality-control audits.
+
+**[Insert Table 1: source, channels, native resolution, coverage, preprocessing, quality control,
+and role after audit admission.]**
+
+### 3.3 XuannvEarth encoder
+
+Each temporal sensor enters an independent 3 by 3 convolution, GroupNorm, and ReLU stem with 32
+output channels. A learned source-aware gated-sum fusion combines available temporal stems. The
+space-time-precision encoder has six blocks and eight attention heads. Its spatial, temporal, and
+precision paths have dimensions 8 by 8 by 512, 16 by 16 by 256, and 128 by 128 by 128. Each block
+performs spatial self-attention, per-pixel temporal self-attention with sinusoidal time encoding,
+local precision convolutions, and cross-scale exchange.
+
+Higher-resolution optical and SAR features are resized to the output grid, encoded by three 3 by 3
+convolutional layers with 32, 64, and 64 channels, and fused before the bottleneck. A learned 1 by
+1 projection feeds a vMF-style hyperspherical bottleneck. The implementation L2-normalises each
+embedding vector and, during training, adds isotropic Gaussian noise scaled by a learned
+concentration before re-normalisation. Thus, *vMF-style* denotes an implemented approximation, not
+a claim of exact vMF sampling.
+
+The encoder returns six dense maps per sample, one for each target month, with shape 64 by 128 by
+128. Per-month scene embeddings are spatial means followed by L2 normalisation. Continuous targets
+are decoded by two-layer 1 by 1 convolutional heads; categorical targets use one 1 by 1
+convolution.
+
+**[Insert Figure 2: sensor stems, spatiotemporal processor, high-resolution pathway, bottleneck,
+and frozen downstream readout.]**
+
+### 3.4 Objective and structured source corruption
+
+Continuous reconstructions use masked L1 loss; the merged OSM land-cover target uses masked
+cross-entropy with background ID 0 ignored. The registered V5 weights are 0.80 for Sentinel-2,
+0.25 for Sentinel-1, 0.45 for Landsat, 0.45 for merged OSM land cover, 0.90 for higher-resolution
+optical, and 0.35 for higher-resolution SAR. Fine OSM semantic-probe loss ramps to 0.14 over 80
+epochs. Its hard-negative component uses a ratio of 0.02, weight 0.35, and 120-epoch warmup. The
+within-rank uniformity term uses temperature 2.0 and ramps to 0.06 over 60 epochs. Temporal-
+endpoint, temporal-contrast, and supervised-change terms are disabled.
+
+Corruption is applied during training after targets are prepared. Sentinel-2, Sentinel-1, and
+Landsat are dropped independently with probabilities 0.18, 0.35, and 0.35. With probability 0.65,
+one to four months are zeroed across temporal inputs. With probability 0.65, 16 by 16 spatial
+blocks are selected and each is dropped with probability 0.32; this also masks higher-resolution
+inputs. Availability masks are retained during configured corruptions, and reconstruction is
+evaluated on originally valid targets.
+
+The registered configuration uses AdamW with learning rate 2e-6, weight decay 0.05, 30 epochs of
+linear warmup, and cosine decay over 800 epochs. It uses batch size 3 per process, gradient
+accumulation of six, mixed precision, gradient checkpointing, validation every 20 epochs, and a
+checkpoint interval of 200 epochs. Realised wall-clock time, effective global batch size, and
+energy use will be reported only from final run records.
+
+**[Insert Table 2: model configuration, losses, schedules, and realised training resources.]**
+
+### 3.5 Registered downstream evaluation
+
+The primary reader is a frozen-feature 64-channel Conv3x3 segmentation probe. Every representation
+within a comparison cell uses the same spatial split, label source, shot schedule, reader,
+optimiser budget, random-seed policy, and validation-selected threshold. The protocol reports F1,
+average precision, IoU, ROC-AUC, precision, and recall, with uncertainty calculated from spatial
+blocks rather than independent pixels. A five-fold, three-probe-seed design is registered for the
+`full_150` V5 family.
+
+The primary V5 task family is OSM-assisted and ontology-overlapping. It can diagnose whether frozen
+fields are readable under spatial holdout, but it cannot establish ontology-independent semantic
+transfer. Independent-label evidence must be sealed and reported separately. The manuscript policy
+prohibits preliminary outputs from entering tables or figures; this policy is enforced through the
+evidence-ledger admission workflow, whose release-admission consumer must complete before any V5
+result is used.
+
+## 4. Results
+
+### 4.1 Spatially held-out OSM-assisted diagnostic readout
+
+**[Populate only after all five encoder folds, embedding exports, 90 registered probe jobs,
+aggregation, spatial bootstrap, and release admission complete.]** Report this section as
+“OSM-assisted, ontology-overlapping diagnostic readout.” Do not use it as independent transfer or
+general semantic generalisation evidence.
+
+**[Insert Table 3: admitted five-fold/three-seed metrics.]**<br>
+**[Insert Figure 3: admitted held-out imagery, label, probability, and prediction examples.]**
+
+### 4.2 Scale and recipe ablations
+
+**[Omit unless every requested comparator is trained, evaluated, and admitted.]** Strictly nested
+40/80/150 scale and matched recipe ablations can be reported only as registered foldwise
+comparisons. One-encoder-seed ablations must be described as exploratory. A combined
+higher-resolution pathway effect cannot be attributed separately to fusion or reconstruction
+without factorial evidence.
+
+### 4.3 Quality, temporal, and geographic robustness
+
+**[Omit unless information-matched experiments are complete and admitted.]** A test-time source
+deletion or month shuffling experiment is a distribution-shift diagnosis, not a causal temporal
+ablation. Claims about temporal context require independently trained 1/3/6-month encoders with
+matched information budgets. A second-city result requires clean-from-scratch training and the
+same registered protocol.
+
+### 4.4 Full-region product case study
+
+**[Omit unless P10C provenance is bound and admitted.]** Full-region PCA mosaics, retrieval
+examples, and product maps may be shown only as transductive qualitative illustrations. They cannot
+support the spatial-generalisation result table or an independent-transfer claim.
+
+## 5. Discussion
+
+The central interpretation will be limited to admitted comparisons. If the registered diagnostics
+show utility, they support the narrower claim that a frozen monthly field can be read by a
+lightweight spatial probe in the measured OSM-assisted setting. They do not demonstrate a universal
+land-surface ontology, transfer independent of OSM, or parity with globally trained products.
+
+The design has several limitations. The present protocol is based on one urban region; spatial
+holdout within Haidian is not second-city validation. OSM labels are incomplete, temporally
+uncertain, and semantically related to downstream categories. Monthly observations have limited
+temporal redundancy and can retain cloud, haze, source-missingness, radar speckle, and registration
+artifacts. Sparse higher-resolution inputs are availability-masked and may be reused across target
+months. Finally, a hyperspherical bottleneck does not guarantee uniformly distributed or linearly
+separable semantic categories.
+
+## 6. Conclusion
+
+XuannvEarth is a reusable monthly embedding framework for heterogeneous urban Earth observations.
+It produces a 64-dimensional dense field at a 10 m grid and is designed for frozen-feature,
+label-efficient readout. **[Insert one verified and evidence-ledger-admitted conclusion after V5
+release admission.]** Until then, the supported conclusion is methodological: provenance-bound
+spatial evaluation is necessary to distinguish a useful reusable representation from a visually
+plausible but unverified urban mapping product.
+
+## Data and code availability
+
+Code, configurations, protocol manifests, and reproducibility documentation will be released at
+**[insert repository URL and release DOI]**. Model checkpoints, downstream-head weights, and
+reproducible embedding products will be released at **[insert ModelScope dataset URL and version]**.
+Raw and commercial/third-party imagery are subject to their access and redistribution terms.
+
+## CRediT authorship contribution statement
+
+**[Author-confirmed roles required before submission.]**
+
+## Funding
+
+**[Author-confirmed funding information required before submission.]**
+
+## Declaration of competing interests
+
+**[Author-confirmed declaration required before submission.]**
+
+## Acknowledgements
+
+**[Author-confirmed acknowledgements required before submission.]**
+
+## Prior dissemination statement
+
+An earlier APGARSS conference abstract described the project direction and preliminary internal
+experiments. This manuscript is a substantially expanded journal study with a separate registered
+spatial evaluation protocol, provenance-bound results, and a full methods and limitations analysis.
+The authors will provide the exact conference citation and ensure compliance with final publisher
+policy before submission.
+
+## Declaration of generative AI and AI-assisted technologies in the writing process
+
+**[Author-confirmed disclosure required immediately before references if applicable under the
+current Elsevier policy.]**
+
+## References
+
+Brown, C.F., Kazmierski, M.R., Pasquarella, V.J., Rucklidge, W.J., Samsikova, M., Zhang, C.,
+Shelhamer, E., Lahera, E., Wiles, O., Ilyushchenko, S., Gorelick, N., Zhang, L.L., Alj, S.,
+Schechter, E., Askay, S., Guinan, O., Moore, R., Boukouvalas, A., and Kohli, P., 2025.
+AlphaEarth Foundations: An embedding field model for accurate and efficient global mapping from
+sparse label data. arXiv:2507.22291. https://doi.org/10.48550/arXiv.2507.22291.
+
+Drusch, M., Del Bello, U., Carlier, S., Colin, O., Fernandez, V., Gascon, F., Hoersch, B., Isola,
+C., Laberinti, P., Martimort, P., Meygret, A., Spoto, F., Sy, O., Marchese, F., and Bargellini,
+P., 2012. Sentinel-2: ESA's Optical High-Resolution Mission for GMES Operational Services. Remote
+Sensing of Environment 120, 25-36. https://doi.org/10.1016/j.rse.2011.11.026.
+
+Haklay, M., and Weber, P., 2008. OpenStreetMap: User-Generated Street Maps. IEEE Pervasive
+Computing 7, 12-18. https://doi.org/10.1109/MPRV.2008.80.
+
+He, K., Chen, X., Xie, S., Li, Y., Dollar, P., and Girshick, R., 2022. Masked Autoencoders Are
+Scalable Vision Learners. Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition, 16000-16009. https://doi.org/10.1109/CVPR52688.2022.01553.
+
+Herzog, H., Bastani, F., Zhang, Y., Tseng, G., Redmon, J., Sablon, H., Park, R., Morrison, J.,
+Buraczynski, A., Farley, K., Hansen, J., Howe, A., Johnson, P.A., Otterlee, M., Schmitt, T.,
+Pitelka, H., Daspit, S., Ratner, R., Wilhelm, C., Wood, S., Jacobi, M., Kerner, H., Shelhamer, E.,
+Farhadi, A., Krishna, R., and Beukema, P., 2025. OlmoEarth: Stable Latent Image Modeling for
+Multimodal Earth Observation. arXiv:2511.13655. https://doi.org/10.48550/arXiv.2511.13655.
+
+Torres, R., Snoeij, P., Geudtner, D., Bibby, D., Davidson, M., Attema, E., Potin, P., Rommen, B.,
+Floury, N., Brown, M., Traver, I.N., Deghaye, P., Duesmann, B., Rosich, B., Miranda, N., Bruno,
+C., L'Abbate, M., Croci, R., Pietropaolo, A., Huchler, M., and Rostan, F., 2012. GMES Sentinel-1
+mission. Remote Sensing of Environment 120, 9-24. https://doi.org/10.1016/j.rse.2011.05.028.

@@ -21,8 +21,8 @@ completed encoders.
 | Family | Folds | Scientific role |
 | --- | --- | --- |
 | `full_40`, `full_80`, `full_150` | 0--4 | Nested data-scale experiment |
-| `no_osm_150` | 0--4 | Remove-all-semantic-supervision ablation (OSM and WorldCover) |
-| `coarse_osm_only_150` | 0--4 | WorldCover-only coarse land-cover semantic ablation |
+| `no_osm_150` | 0--4 | Remove-all-OSM-semantic-supervision ablation (merged land cover and fine probes) |
+| `coarse_osm_only_150` | 0--4 | Merged-OSM-land-cover-only coarse semantic ablation |
 | `probe_nohardneg_150` | 0--4 | Hard-negative ablation |
 | `no_highres_path_150` | 0--4 | Joint high-resolution path ablation |
 | `no_masking_150` | 0--4 | Structured-masking ablation |
@@ -89,12 +89,12 @@ until all remaining admission gates are implemented and independently audited.
 - OSM-derived building, road, and water probes overlap with encoder weak
   supervision.  These results measure label efficiency under OSM auxiliary
   semantics, not fully task-independent transfer.
-- `no_osm_150` is not an OSM-only removal: it also removes WorldCover.  It may
+- `no_osm_150` is not a fine-probe-only removal: it also removes the merged OSM land-cover target. It may
   support a remove-all-semantic-supervision comparison only.  A pure OSM
-  contribution claim requires a new run retaining WorldCover while disabling
+  contribution claim requires a new run retaining merged OSM land cover while disabling
   the OSM semantic probe and OSM-weighted sampling.
 - Despite its historical name, `coarse_osm_only_150` contains no OSM probe; it
-  is referred to as `WorldCover-only` in all manuscript text and figures.
+  is referred to as `merged-OSM-land-cover-only` in all manuscript text and figures.
 - One encoder initialization exists per family and fold.  Fold and downstream
   seed variation quantify evaluation uncertainty; they are not independent
   pretraining repeats.
