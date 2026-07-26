@@ -34,7 +34,7 @@ def test_slides05_to10_build_with_required_evidence(tmp_path: Path) -> None:
         6: ("嵌入底座进入遥感智能体工作流", "embedding_tool"),
         7: ("云遮挡或观测缺失时，生成指定时刻的遥感参考影像", "参考影像"),
         8: ("海淀区 3 多边形同协议评测：道路与水体领先", 0.368),
-        9: ("探索性结果：标注越少，月度嵌入优势越明显", 41.5),
+        9: ("嵌入结构与任务表现：优势、边界和下一步", "建筑假正例"),
         10: ("哈尔滨新区：从月度嵌入到城市治理专题", "V5/v2 API"),
     }
     for page, (title, evidence) in expectations.items():

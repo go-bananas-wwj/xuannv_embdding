@@ -1,23 +1,12 @@
 {
   "slide": 9,
-  "title": "探索性结果：标注越少，月度嵌入优势越明显",
-  "metric": "relative F1 gain (%)",
-  "water_5shot_gain_percent": 41.5,
-  "gains": {
-    "建筑物": [
-      9.8,
-      3.5,
-      5.0
-    ],
-    "道路": [
-      18.3,
-      11.8,
-      3.3
-    ],
-    "水体": [
-      41.5,
-      25.6,
-      0.0
-    ]
-  }
+  "title": "嵌入结构与任务表现：优势、边界和下一步",
+  "protocol": "same three-polygon PU+Query evidence as slide 8",
+  "strength": "道路 F1/AUC/AP 均领先",
+  "boundary": "水体 F1 仍低；建筑假正例仍偏多",
+  "next": [
+    "5-fold multi-seed",
+    "independent manual labels",
+    "threshold calibration"
+  ]
 }

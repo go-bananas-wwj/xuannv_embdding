@@ -276,12 +276,24 @@ def add_masking_card(slide) -> None:
         True,
         PP_ALIGN.CENTER,
     )
-    y = 3.84
+    add_text(
+        slide,
+        "整源模态遮挡｜S2 18%｜S1 / Landsat 35%",
+        x + 0.24,
+        3.79,
+        3.46,
+        0.30,
+        13,
+        CYAN,
+        True,
+        PP_ALIGN.CENTER,
+    )
+    y = 4.12
     for index, (title, detail) in enumerate(MASK_FACTS):
-        row_y = y + index * 0.59
-        add_rect(slide, x + 0.24, row_y, 0.10, 0.51, CYAN, CYAN)
-        add_text(slide, title, x + 0.45, row_y, 1.06, 0.51, 15, CYAN, True)
-        add_text(slide, detail, x + 1.50, row_y, 2.20, 0.51, 13, INK, True)
+        row_y = y + index * 0.53
+        add_rect(slide, x + 0.24, row_y, 0.10, 0.46, CYAN, CYAN)
+        add_text(slide, title, x + 0.45, row_y, 1.06, 0.46, 14, CYAN, True)
+        add_text(slide, detail, x + 1.50, row_y, 2.20, 0.46, 12, INK, True)
     add_rect(slide, x + 0.30, 6.25, 3.34, 0.26, WHITE, LINE)
     add_text(
         slide,
@@ -328,7 +340,8 @@ def add_semantic_card(slide) -> None:
     add_rect(slide, x + 0.27, 4.56, 3.40, 0.76, WHITE, LINE)
     add_text(
         slide,
-        "怎么进入模型？\n临时 1×1 线性探针分别判断每项语义是否存在；训练结束后丢弃",
+        "怎么进入模型？\n临时 1×1 线性探针对每个像素分别判断是否属于各项可重叠语义；"
+        "训练结束后丢弃",
         x + 0.38,
         4.65,
         3.18,
@@ -520,18 +533,25 @@ def build_preview(output: Path) -> None:
         pil_font(16, True),
         ink,
     )
-    row_y = 458
+    draw_centered(
+        draw,
+        "整源模态遮挡｜S2 18%｜S1 / Landsat 35%",
+        (590, 452, 1005, 486),
+        pil_font(13, True),
+        cyan,
+    )
+    row_y = 490
     for title, detail in MASK_FACTS:
-        draw.rectangle((593, row_y, 607, row_y + 55), fill=cyan)
-        draw.text((621, row_y + 10), title, font=pil_font(15, True), fill=cyan)
+        draw.rectangle((593, row_y, 607, row_y + 48), fill=cyan)
+        draw.text((621, row_y + 8), title, font=pil_font(14, True), fill=cyan)
         draw.multiline_text(
-            (748, row_y + 2),
+            (748, row_y + 1),
             detail,
-            font=pil_font(11, True),
+            font=pil_font(10, True),
             fill=ink,
             spacing=2,
         )
-        row_y += 68
+        row_y += 58
     draw.rectangle((600, 738, 1002, 776), fill="white", outline=line, width=2)
     draw_centered(
         draw,
@@ -559,7 +579,7 @@ def build_preview(output: Path) -> None:
     draw.rectangle((1102, 535, 1510, 619), fill="white", outline=line, width=2)
     draw_centered(
         draw,
-        "临时 1×1 线性探针分别判断每项语义是否存在\n训练结束后丢弃",
+        "临时 1×1 线性探针对每个像素分别判断\n是否属于各项可重叠语义；训练结束后丢弃",
         (1108, 540, 1504, 614),
         pil_font(12, True),
         deep_blue,

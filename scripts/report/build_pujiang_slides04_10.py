@@ -63,7 +63,7 @@ PAGE_TITLES = {
     6: "嵌入底座进入遥感智能体工作流",
     7: "云遮挡或观测缺失时，生成指定时刻的遥感参考影像",
     8: "海淀区 3 多边形同协议评测：道路与水体领先",
-    9: "探索性结果：标注越少，月度嵌入优势越明显",
+    9: "嵌入结构与任务表现：优势、边界和下一步",
     10: "哈尔滨新区：从月度嵌入到城市治理专题",
 }
 
@@ -477,59 +477,74 @@ def page09() -> tuple[Image.Image, dict]:
     draw = draw_header(
         canvas,
         PAGE_TITLES[9],
-        "与原始多源影像相比，玄女在 5-shot 和 10-shot 条件下的优势最稳定",
+        "PCA 展示空间结构，第 8 页严格指标说明哪些任务已受益、哪些问题仍需解决",
     )
-    shots = [5, 10, 50]
-    gains = {
-        "建筑物": [9.8, 3.5, 5.0],
-        "道路": [18.3, 11.8, 3.3],
-        "水体": [41.5, 25.6, 0.0],
-    }
-    colors = [RED, BLUE, GREEN]
-    x0, y0, x1, y1 = 75, 260, 980, 725
-    draw.line((x0, y1, x1, y1), fill=INK, width=2)
-    for tick in range(0, 6):
-        value = tick * 10
-        y = y1 - int(value / 50 * (y1 - y0))
-        draw.line((x0, y, x1, y), fill=(225, 231, 235), width=1)
-        draw.text((22, y - 10), f"{value}%", font=font(14), fill=MUTED)
-    group_w = (x1 - x0) / 3
-    for shot_index, shot in enumerate(shots):
-        center_x = x0 + group_w * (shot_index + 0.5)
-        for task_index, (_, task_values) in enumerate(gains.items()):
-            value = task_values[shot_index]
-            left = int(center_x - 95 + task_index * 65)
-            top = y1 - int(value / 50 * (y1 - y0))
-            draw.rectangle((left, top, left + 52, y1), fill=colors[task_index])
-            centered(draw, f"+{value:.1f}%" if value else "持平", (left - 8, top - 32, left + 60, top - 3), font(13, True), colors[task_index])
-        centered(draw, f"{shot}-shot", (int(center_x - 85), y1 + 12, int(center_x + 85), y1 + 55), font(18, True), INK)
-    for index, task in enumerate(gains):
-        x = 115 + index * 250
-        draw.rectangle((x, 205, x + 24, 229), fill=colors[index])
-        draw.text((x + 34, 202), task, font=font(16, True), fill=INK)
-    paste_panel(canvas, FEWSHOT_IMAGE, (1030, 235, 1545, 650), "少样本预测案例")
-    draw.rounded_rectangle((1030, 675, 1545, 820), radius=6, fill=PALE_GRAY)
+    paste_panel(
+        canvas,
+        PCA_COMPARE,
+        (55, 215, 1015, 790),
+        "海淀全域嵌入 PCA｜玄女月度嵌入与 AEF 年度嵌入",
+    )
+    cards = [
+        (
+            "道路｜当前优势最稳定",
+            "玄女 F1 0.368、AUC 0.745、AP 0.304\n三项均高于 AEF 与传统特征",
+            (237, 247, 242),
+            GREEN,
+        ),
+        (
+            "水体｜排序能力领先",
+            "AUC 0.692、AP 0.075 均领先\n但 F1 仅 0.111，适合候选发现而非直接交付",
+            PALE_BLUE,
+            BLUE,
+        ),
+        (
+            "建筑｜建筑假正例仍偏多",
+            "玄女 F1 0.256，低于 AEF 0.311\n需提升语义分离与跨 patch 阈值稳定性",
+            PALE_GRAY,
+            RED,
+        ),
+    ]
+    for index, (title, detail, fill, accent) in enumerate(cards):
+        y = 215 + index * 166
+        draw.rounded_rectangle(
+            (1050, y, 1545, y + 142),
+            radius=6,
+            fill=fill,
+            outline=LINE,
+            width=2,
+        )
+        draw.rectangle((1050, y, 1062, y + 142), fill=accent)
+        draw.text((1082, y + 18), title, font=font(19, True), fill=accent)
+        draw.multiline_text(
+            (1082, y + 58),
+            detail,
+            font=font(15, True),
+            fill=INK,
+            spacing=6,
+        )
+    draw.rounded_rectangle((1050, 713, 1545, 808), radius=6, fill=WHITE, outline=LINE, width=2)
     centered(
         draw,
-        "shot 定义\nN 个正样本 patch + N 个负样本 patch\n\nfold-0、seed 42 探索性结果\n每种输入取五类候选头中的最佳值\n全量标签 + 重型 UNet 仍是原始影像强上限",
-        (1050, 680, 1525, 815),
-        font(16, True),
+        "下一步验证\n5-fold × 多随机种子复核｜独立人工标签验证｜建筑阈值校准",
+        (1070, 718, 1525, 803),
+        font(15, True),
         INK,
     )
     centered(
         draw,
-        "纵轴为 F1 相对提升百分比：（玄女 F1 − 原始影像 F1）÷ 原始影像 F1；"
-        "原始影像允许使用更强任务头。",
-        (60, 832, 1540, 875),
+        "本页不引入新的评测协议；全部任务结论均引用第 8 页同一 3 多边形 PU+Query 实验。",
+        (60, 830, 1540, 875),
         font(16, True),
         MUTED,
     )
     return canvas, {
         "slide": 9,
         "title": PAGE_TITLES[9],
-        "metric": "relative F1 gain (%)",
-        "water_5shot_gain_percent": 41.5,
-        "gains": gains,
+        "protocol": "same three-polygon PU+Query evidence as slide 8",
+        "strength": "道路 F1/AUC/AP 均领先",
+        "boundary": "水体 F1 仍低；建筑假正例仍偏多",
+        "next": ["5-fold multi-seed", "independent manual labels", "threshold calibration"],
     }
 
 
