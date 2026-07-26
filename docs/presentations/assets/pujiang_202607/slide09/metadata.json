@@ -1,6 +1,6 @@
 {
   "slide": 9,
-  "title": "标注越少，月度嵌入的复用价值越明显",
+  "title": "探索性结果：标注越少，月度嵌入优势越明显",
   "metric": "relative F1 gain (%)",
   "water_5shot_gain_percent": 41.5,
   "gains": {
