@@ -2949,6 +2949,112 @@ def test_v5_encoder_queue_dry_run_requires_committed_queue_and_runs_from_root(
     assert "queue script differs from Git HEAD" in dirty.stderr
 
 
+def test_v5_encoder_queue_only_fold_dry_run_isolates_the_selected_lane(tmp_path: Path) -> None:
+    """A recovery follow-up can schedule Fold 3 without touching the other active lanes."""
+    repo, queue = _sealed_v5_queue_repo(tmp_path)
+
+    result = subprocess.run(
+        [str(queue), "--only-fold", "3", "--dry-run", "--output-root", str(tmp_path / "outputs")],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    jobs = [line for line in result.stdout.splitlines() if line.startswith("ENCODER ")]
+    assert jobs == [
+        "ENCODER protocol=v5_osm_assisted family=full_150 lane=0 devices=0,1 fold=3 "
+        "config="
+        f"{repo}/configs/paper_registered_v5_20260726/"
+        "paper_registered_v5_full_150_fold3_20260726.yaml attempt=1 resume=fresh"
+    ]
+
+
+def test_v5_encoder_queue_only_fold_refuses_an_active_shared_lane(tmp_path: Path) -> None:
+    """Fold 3 must not launch while Fold 0 still owns its NPU pair and rendezvous port."""
+    repo, queue = _sealed_v5_queue_repo(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    pgrep = bin_dir / "pgrep"
+    pgrep.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    pgrep.chmod(0o755)
+
+    result = subprocess.run(
+        [str(queue), "--only-fold", "3"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+    )
+
+    assert result.returncode != 0
+    assert "active" in result.stderr.lower()
+    assert "fold 0" in result.stderr.lower()
+
+
+def test_v5_encoder_queue_only_fold_refuses_an_existing_lane_lease(tmp_path: Path) -> None:
+    """The lane lease closes the race between an idle check and torchrun launch."""
+    repo, queue = _sealed_v5_queue_repo(tmp_path)
+    output_root = tmp_path / "outputs"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, content in {
+        "pgrep": "#!/usr/bin/env bash\nexit 1\n",
+        "torchrun": "#!/usr/bin/env bash\necho unexpected-launch >&2\nexit 1\n",
+    }.items():
+        executable = bin_dir / name
+        executable.write_text(content, encoding="utf-8")
+        executable.chmod(0o755)
+
+    lock_root = repo / ".pytest_registered_v5_locks"
+    lock_path = lock_root / "lane_0.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    ready = tmp_path / "lane-lock-ready"
+    holder = subprocess.Popen(
+        ["flock", "--no-fork", "-n", str(lock_path), "sh", "-c", f"touch {ready}; sleep 30"]
+    )
+    try:
+        for _ in range(100):
+            if ready.is_file():
+                break
+            time.sleep(0.01)
+        assert ready.is_file(), "lane-lease holder did not acquire its lock"
+        result = subprocess.run(
+            [str(queue), "--only-fold", "3", "--output-root", str(output_root)],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+        )
+    finally:
+        holder.terminate()
+        holder.wait(timeout=10)
+
+    assert result.returncode != 0
+    assert "lease" in result.stderr.lower()
+    assert "unexpected-launch" not in result.stderr
+
+
+def test_v5_encoder_queue_rejects_only_fold_with_verification_mode(tmp_path: Path) -> None:
+    """Verification is read-only and must not silently discard a scheduling argument."""
+    repo, queue = _sealed_v5_queue_repo(tmp_path)
+    attempt = _write_verified_resume_attempt(tmp_path / "outputs")
+
+    result = subprocess.run(
+        [str(queue), "--only-fold", "3", "--verify-attempt", str(attempt)],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "usage:" in result.stderr
+
+
 def test_v5_encoder_queue_rejects_a_dirty_canonical_checkpoint_helper(tmp_path: Path) -> None:
     """Queue admission seals the helper that decides whether a fold is canonical."""
     repo, queue = _sealed_v5_queue_repo(tmp_path)
@@ -3365,6 +3471,7 @@ def test_v5_encoder_queue_concurrent_resumes_share_one_new_verified_snapshot(
 ) -> None:
     """Two failed resume workers can seal the same newly-written recovery without corruption."""
     repo, queue = _sealed_v5_queue_repo(tmp_path)
+    second_repo, second_queue = _sealed_v5_queue_repo(tmp_path / "second")
     output_root = tmp_path / "outputs"
     attempt = _write_verified_resume_attempt(output_root)
     bin_dir = tmp_path / "bin"
@@ -3387,6 +3494,26 @@ def test_v5_encoder_queue_concurrent_resumes_share_one_new_verified_snapshot(
         "dd if=/dev/zero of=\"$attempt/recovery.pt\" bs=1M count=32 conv=fsync status=none\n"
         "touch \"$barrier/sealed.$RANDOM.$RANDOM\"\n"
         "while (( $(find \"$barrier\" -type f -name 'sealed.*' | wc -l) < 2 )); do sleep 0.01; done\n"
+        "if mkdir \"$barrier/prewriter\" 2>/dev/null; then\n"
+        "  (\n"
+        "  digest=$(sha256sum \"$attempt/recovery.pt\" | awk '{print $1}')\n"
+        "  snapshot=\"$attempt/verified_checkpoints/recovery_${digest}.pt\"\n"
+        "  mkdir -p \"$(dirname \"$snapshot\")\"\n"
+        "  : > \"$snapshot\"\n"
+        "  record=\"$attempt/checkpoint_verifications/$(basename \"$snapshot\").json\"\n"
+        "  mkdir -p \"$(dirname \"$record\")\"\n"
+        "  printf '{' > \"$record\"\n"
+        "  touch \"$barrier/prewriter_ready\"\n"
+        "  sleep 3\n"
+        "  cat \"$attempt/recovery.pt\" > \"$snapshot\"\n"
+        "  sleep 3\n"
+        "  created_at_ns=$(date +%s%N)\n"
+        "  printf '{\"schema_version\":1,\"attempt_dir\":\"%s\",\"checkpoint_path\":\"%s\","
+        "\"checkpoint_sha256\":\"%s\",\"source_checkpoint_path\":\"%s\",\"created_at_ns\":%s}\n' "
+        "\"$attempt\" \"$snapshot\" \"$digest\" \"$attempt/recovery.pt\" \"$created_at_ns\" > \"$record\"\n"
+        "  ) &\n"
+        "fi\n"
+        "while [[ ! -f \"$barrier/prewriter_ready\" ]]; do sleep 0.01; done\n"
         "exit 1\n",
         encoding="utf-8",
     )
@@ -3409,9 +3536,10 @@ def test_v5_encoder_queue_concurrent_resumes_share_one_new_verified_snapshot(
         text=True,
         env=environment,
     )
+    second_command = [str(second_queue), *command[1:]]
     second = subprocess.Popen(
-        command,
-        cwd=repo,
+        second_command,
+        cwd=second_repo,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

@@ -12,9 +12,14 @@ SPLIT="$ROOT/configs/eval/haidian_spatial_5fold_complete2x2_v5_seed42.json"
 SUBSETS="$ROOT/configs/eval/haidian_paper_subsets_40_80_150_complete2x2_v5_seed42.json"
 STATISTICS="$ROOT/configs/eval/haidian_paper_v5_normalization_statistics.json"
 EXPORT_REGISTRY="$ROOT/configs/eval/registered_embedding_exports_v5_20260726.json"
+LANE_LOCK_ROOT=/data/xuannv_embedding/locks/registered_v5
+if [[ -n "${PYTEST_CURRENT_TEST:-}" && "$ROOT" == /tmp/pytest-of-* ]]; then
+  LANE_LOCK_ROOT="$ROOT/.pytest_registered_v5_locks"
+fi
 DRY_RUN=false
 RESUME_FOLD=""
 RESUME_ATTEMPT=""
+ONLY_FOLD=""
 VERIFY_ATTEMPT=""
 MAX_JOB_ATTEMPTS="${MAX_JOB_ATTEMPTS:-3}"
 
@@ -30,6 +35,7 @@ usage() {
   cat >&2 <<'EOF'
 usage: run_registered_v5_paper_queue.sh [--dry-run] [--output-root PATH]
        run_registered_v5_paper_queue.sh --resume-fold FOLD --resume-attempt N [--dry-run]
+       run_registered_v5_paper_queue.sh --only-fold FOLD [--dry-run] [--output-root PATH]
        run_registered_v5_paper_queue.sh --verify-attempt PATH
 
 The queue is intentionally limited to the five registered v5 full_150 folds.
@@ -42,6 +48,7 @@ while (( $# > 0 )); do
     --output-root) OUTPUT_ROOT=${2:-}; shift 2 ;;
     --resume-fold) RESUME_FOLD=${2:-}; shift 2 ;;
     --resume-attempt) RESUME_ATTEMPT=${2:-}; shift 2 ;;
+    --only-fold) ONLY_FOLD=${2:-}; shift 2 ;;
     --verify-attempt) VERIFY_ATTEMPT=${2:-}; shift 2 ;;
     *) usage; exit 2 ;;
   esac
@@ -231,6 +238,11 @@ PY
 require_queue_script_at_git_head
 cd "$ROOT"
 
+[[ -z "$VERIFY_ATTEMPT" || ( -z "$RESUME_FOLD" && -z "$RESUME_ATTEMPT" && -z "$ONLY_FOLD" ) ]] || {
+  usage
+  exit 2
+}
+
 if [[ -n "$VERIFY_ATTEMPT" ]]; then
   checkpoint=$(verified_resume_checkpoint "$VERIFY_ATTEMPT") || exit $?
   printf 'VERIFIED_RESUME attempt=%s checkpoint=%s\n' "$VERIFY_ATTEMPT" "$checkpoint"
@@ -243,6 +255,8 @@ fi
 }
 [[ -z "$RESUME_FOLD" || "$RESUME_FOLD" =~ ^[0-4]$ ]] || { usage; exit 2; }
 [[ -z "$RESUME_ATTEMPT" || "$RESUME_ATTEMPT" =~ ^[1-9][0-9]*$ ]] || { usage; exit 2; }
+[[ -z "$ONLY_FOLD" || "$ONLY_FOLD" =~ ^[0-4]$ ]] || { usage; exit 2; }
+[[ -z "$ONLY_FOLD" || -z "$RESUME_FOLD" ]] || { usage; exit 2; }
 [[ "$MAX_JOB_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] || { echo "MAX_JOB_ATTEMPTS must be positive" >&2; exit 2; }
 
 validate_registered_inputs
@@ -387,20 +401,26 @@ snapshot_dir = attempt / "verified_checkpoints"
 snapshot_dir.mkdir(exist_ok=True)
 snapshot = snapshot_dir / f"{checkpoint.stem}_{digest}{checkpoint.suffix}"
 def wait_for_snapshot() -> None:
-    for _ in range(40):
+    deadline = time.monotonic() + 300.0
+    while True:
         try:
             if hashlib.sha256(snapshot.read_bytes()).hexdigest() == digest:
                 return
         except FileNotFoundError:
             pass
+        if time.monotonic() >= deadline:
+            break
         time.sleep(0.05)
     raise SystemExit("verified checkpoint snapshot hash mismatch")
 
 def read_stable_record(path: Path) -> dict:
-    for _ in range(40):
+    deadline = time.monotonic() + 300.0
+    while True:
         try:
             return json.loads(path.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError):
+            if time.monotonic() >= deadline:
+                break
             time.sleep(0.05)
     raise SystemExit("checkpoint verification record was not written atomically")
 
@@ -640,11 +660,42 @@ run_fold() {
 run_lane() {
   local lane=$1 devices=$2 port=$3
   shift 3
+  if [[ "$DRY_RUN" == false ]]; then
+    assert_lane_is_idle "$lane"
+    acquire_lane_lease "$lane"
+  fi
   local fold failed=0
   for fold in "$@"; do
     if ! run_fold "$lane" "$devices" "$port" "$fold"; then failed=1; fi
   done
   return "$failed"
+}
+
+assert_lane_is_idle() {
+  local lane=$1 occupant
+  local -a occupants=()
+  case "$lane" in
+    0) occupants=(0 3) ;;
+    1) occupants=(1 4) ;;
+    2) occupants=(2) ;;
+    *) echo "unknown registered lane: $lane" >&2; return 2 ;;
+  esac
+  for occupant in "${occupants[@]}"; do
+    if pgrep -f "${ROOT}/scripts/train/train.py.*paper_registered_v5_full_150_fold${occupant}_" >/dev/null; then
+      echo "cannot start lane $lane: Fold $occupant is active" >&2
+      return 1
+    fi
+  done
+}
+
+acquire_lane_lease() {
+  local lane=$1
+  mkdir -p "$LANE_LOCK_ROOT"
+  exec {REGISTERED_V5_LANE_LEASE_FD}>"$LANE_LOCK_ROOT/lane_${lane}.lock"
+  if ! flock -n "$REGISTERED_V5_LANE_LEASE_FD"; then
+    echo "cannot start registered lane $lane: lane lease is active" >&2
+    return 1
+  fi
 }
 
 if [[ "$DRY_RUN" == false ]]; then
@@ -655,6 +706,12 @@ fi
 if [[ -n "$RESUME_FOLD" ]]; then
   read -r lane devices port <<< "$(lane_for_fold "$RESUME_FOLD")"
   run_lane "$lane" "$devices" "$port" "$RESUME_FOLD"
+  exit $?
+fi
+
+if [[ -n "$ONLY_FOLD" ]]; then
+  read -r lane devices port <<< "$(lane_for_fold "$ONLY_FOLD")"
+  run_lane "$lane" "$devices" "$port" "$ONLY_FOLD"
   exit $?
 fi
 
