@@ -2974,6 +2974,7 @@ def test_v5_encoder_queue_only_fold_dry_run_isolates_the_selected_lane(tmp_path:
 def test_v5_encoder_queue_only_fold_refuses_an_active_shared_lane(tmp_path: Path) -> None:
     """Fold 3 must not launch while Fold 0 still owns its NPU pair and rendezvous port."""
     repo, queue = _sealed_v5_queue_repo(tmp_path)
+    output_root = tmp_path / "outputs"
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     pgrep = bin_dir / "pgrep"
@@ -2981,7 +2982,7 @@ def test_v5_encoder_queue_only_fold_refuses_an_active_shared_lane(tmp_path: Path
     pgrep.chmod(0o755)
 
     result = subprocess.run(
-        [str(queue), "--only-fold", "3"],
+        [str(queue), "--only-fold", "3", "--output-root", str(output_root)],
         cwd=repo,
         capture_output=True,
         text=True,
@@ -2992,6 +2993,7 @@ def test_v5_encoder_queue_only_fold_refuses_an_active_shared_lane(tmp_path: Path
     assert result.returncode != 0
     assert "active" in result.stderr.lower()
     assert "fold 0" in result.stderr.lower()
+    assert not output_root.exists()
 
 
 def test_v5_encoder_queue_only_fold_refuses_an_existing_lane_lease(tmp_path: Path) -> None:
