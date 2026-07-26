@@ -10,6 +10,7 @@ import json
 import os
 import platform
 import random
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -36,18 +37,208 @@ FROZEN_SPLIT = Path("configs/eval/haidian_spatial_5fold_buffer1_seed42.json")
 FROZEN_SPLIT_SHA256 = "57989b0f1e6944f94e74721de7f56fae5040ef7622550cf6fb4160acd080ba4f"
 FROZEN_EVAL_MANIFEST_SHA256 = "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3"
 FROZEN_PROBE = {"epochs": 80, "batch_size": 8, "lr": 1e-3, "weight_decay": 1e-4}
+V5_SPLIT = Path("configs/eval/haidian_spatial_5fold_complete2x2_v5_seed42.json")
+V5_SPLIT_SHA256 = "9a6d98d6d6456ce0a791ef74ac725e4d360e7d4e0a17c9cb5edfceb850093c0b"
+V5_EVAL_MANIFEST = Path(
+    "/data/xuannv_embedding/processed/haidian/"
+    "manifest_p6a_202512_202605_pixelmask_clean_osm_landcover.json"
+)
+V5_STATISTICS_REGISTRY = Path("configs/eval/haidian_paper_v5_normalization_statistics.json")
+V5_STATISTICS_REGISTRY_SHA256 = "ba1fb10bc105a29286750367dff2ab45e02f89c32f69725ab89da994d0c56929"
+V5_MATRIX = Path("configs/eval/rse_v5_osm_assisted_matrix.json")
+V5_MATRIX_SHA256 = "b9f243c9583a35f36a0792ab0c21fb08334553ba02db17b78fad766ad4ad20ca"
+V5_CONFIG_ROOT = Path("configs/paper_registered_v5_20260726")
 PROTOCOL_DESCRIPTORS = {
     "v4_diagnostic": {
         "evidence_class": "diagnostic_spatial_readout",
         "label_independence_status": "not_independent_transfer_evidence",
         "allowed_report_kinds": ("diagnostic",),
+        "split_path": FROZEN_SPLIT,
+        "split_sha256": FROZEN_SPLIT_SHA256,
+        "manifest_sha256": FROZEN_EVAL_MANIFEST_SHA256,
     },
     "v5_osm_assisted": {
         "evidence_class": "osm_assisted_spatial_readout",
         "label_independence_status": "osm_overlapping_not_independent",
         "allowed_report_kinds": ("diagnostic", "weak_supervision"),
+        "split_path": V5_SPLIT,
+        "split_sha256": V5_SPLIT_SHA256,
+        "manifest_path": V5_EVAL_MANIFEST,
+        "manifest_sha256": FROZEN_EVAL_MANIFEST_SHA256,
+        "statistics_registry_path": V5_STATISTICS_REGISTRY,
+        "statistics_registry_sha256": V5_STATISTICS_REGISTRY_SHA256,
+        "matrix_path": V5_MATRIX,
     },
 }
+
+
+def resolve_registered_protocol(protocol_id: str) -> dict[str, Any]:
+    """Resolve only the immutable registered-protocol descriptors."""
+    descriptor = PROTOCOL_DESCRIPTORS.get(protocol_id)
+    if descriptor is None:
+        raise ValueError(f"Unknown registered protocol_id: {protocol_id}")
+    if protocol_id == "v4_diagnostic":
+        # Keep legacy test/config overrides effective for diagnostic-only v4 code paths.
+        descriptor = {
+            **descriptor,
+            "split_path": FROZEN_SPLIT,
+            "split_sha256": FROZEN_SPLIT_SHA256,
+            "manifest_sha256": FROZEN_EVAL_MANIFEST_SHA256,
+        }
+    return {"protocol_id": protocol_id, **descriptor}
+
+
+def _same_path(left: str | Path, right: str | Path) -> bool:
+    return Path(left).resolve() == Path(right).resolve()
+
+
+def validate_protocol_bindings(protocol_id: str, bindings: dict[str, Any]) -> dict[str, Any]:
+    """Reject provenance that is not exactly the immutable protocol input set."""
+    descriptor = resolve_registered_protocol(protocol_id)
+    required = ("spatial_split", "spatial_split_sha256", "manifest_sha256")
+    if protocol_id == "v5_osm_assisted":
+        required += ("statistics_registry_sha256",)
+    missing = [key for key in required if not isinstance(bindings.get(key), str)]
+    if missing:
+        raise ValueError(f"Protocol bindings are missing: {', '.join(missing)}")
+    if not _same_path(bindings["spatial_split"], descriptor["split_path"]):
+        raise ValueError("Protocol spatial split does not match the registered descriptor")
+    expected = {
+        "spatial_split_sha256": descriptor["split_sha256"],
+        "manifest_sha256": descriptor["manifest_sha256"],
+    }
+    if protocol_id == "v5_osm_assisted":
+        expected["statistics_registry_sha256"] = descriptor["statistics_registry_sha256"]
+    for key, value in expected.items():
+        if bindings[key] != value:
+            human = key.replace("_", " ")
+            raise ValueError(f"Protocol {human} does not match the registered descriptor")
+    return descriptor
+
+
+def load_registered_v5_matrix(
+    matrix_path: Path | None = None, expected_sha256: str | None = None
+) -> dict[str, Any]:
+    """Load the committed v5 probe matrix after checking its root provenance."""
+    path = matrix_path or V5_MATRIX
+    expected_sha = expected_sha256 or V5_MATRIX_SHA256
+    if not path.is_file():
+        raise FileNotFoundError(f"Missing registered v5 matrix: {path}")
+    verify_git_head_file(path)
+    if sha256_file(path) != expected_sha:
+        raise ValueError("Registered v5 matrix hash does not match the pinned SHA-256")
+    matrix = json.loads(path.read_text(encoding="utf-8"))
+    if matrix.get("schema_version") != 1 or matrix.get("protocol_id") != "v5_osm_assisted":
+        raise ValueError("Registered v5 matrix has an invalid schema or protocol")
+    validate_protocol_bindings("v5_osm_assisted", matrix)
+    if not isinstance(matrix.get("families"), dict) or not isinstance(matrix.get("probe"), dict):
+        raise ValueError("Registered v5 matrix lacks family or probe declarations")
+    return matrix
+
+
+def registered_family_from_experiment(experiment_name: str, expected_fold: int) -> str:
+    """Return one canonical family name from either registered experiment version."""
+    match = re.fullmatch(r"paper_registered_(?:v5_)?(.+)_fold(\d+)_\d{8}", experiment_name)
+    if match is None or int(match.group(2)) != expected_fold:
+        raise ValueError("Registered encoder name does not encode its family/fold")
+    return match.group(1)
+
+
+def validate_v5_encoder_config_namespace(config_path: Path) -> None:
+    """Require v5 probes to consume only the self-contained v5 encoder configs."""
+    repo_root = Path(__file__).resolve().parents[2]
+    expected_root = (repo_root / V5_CONFIG_ROOT).resolve()
+    if config_path.resolve().parent != expected_root:
+        raise ValueError(
+            "V5 encoder config is outside configs/paper_registered_v5_20260726 namespace"
+        )
+
+
+def validate_v5_encoder_config_provenance(config_path: Path, config_sha256: str) -> None:
+    """Require an exact Git-HEAD v5 config whose bytes match its recorded hash."""
+    validate_v5_encoder_config_namespace(config_path)
+    verify_git_head_file(config_path)
+    if config_sha256 != sha256_file(config_path):
+        raise ValueError("V5 encoder config hash does not match the exact Git-HEAD config")
+
+
+def validate_registered_matrix_cell(protocol_id: str, cell: dict[str, Any]) -> None:
+    """Admit only an exact family/task/shot/fold/seed cell from the v5 matrix."""
+    if protocol_id != "v5_osm_assisted":
+        return
+    matrix = load_registered_v5_matrix()
+    family = cell.get("family")
+    family_spec = matrix["families"].get(family)
+    if not isinstance(family_spec, dict):
+        raise ValueError("Result cell family is outside the registered v5 matrix")
+    probe = matrix["probe"]
+    expected = {
+        "head": probe["head"],
+        "task": probe["tasks"],
+        "shot": probe["shots"],
+        "fold": probe["folds"],
+        "seed": probe["seeds"],
+    }
+    for key, allowed in expected.items():
+        if cell.get(key) not in allowed:
+            raise ValueError(f"Result cell {key} is outside the registered v5 matrix")
+
+
+def validate_registered_shot_schedule(schedule: dict[str, Any], protocol_id: str) -> None:
+    """Require v5 schedules to carry the exact v5 split and protocol identity."""
+    if protocol_id != "v5_osm_assisted":
+        return
+    if schedule.get("protocol_id") != protocol_id:
+        raise ValueError("Registered v5 shot schedule protocol_id does not match the probe")
+    descriptor = resolve_registered_protocol(protocol_id)
+    if schedule.get("split_sha256") != descriptor["split_sha256"]:
+        raise ValueError("Registered v5 shot schedule split hash does not match the protocol")
+
+
+def validate_v5_probe_request(
+    *, protocol_id: str, bindings: dict[str, Any], cell: dict[str, Any]
+) -> None:
+    """Validate the v5-only inputs before any model, NPU, or filesystem work begins."""
+    if protocol_id != "v5_osm_assisted":
+        raise ValueError("Registered v5 probe requests require protocol_id v5_osm_assisted")
+    validate_protocol_bindings(protocol_id, bindings)
+    validate_registered_matrix_cell(protocol_id, cell)
+
+
+def validate_v5_embedding_registry(registry_path: Path, bindings: dict[str, Any]) -> dict[str, Any]:
+    """Require a versioned registry whose root is sealed to the v5 descriptor."""
+    raw = json.loads(registry_path.read_text(encoding="utf-8"))
+    if raw.get("schema_version") != 2:
+        raise ValueError("V5 embedding registry requires schema_version 2")
+    if raw.get("protocol_id") != "v5_osm_assisted":
+        raise ValueError("V5 embedding registry protocol_id does not match")
+    validate_protocol_bindings("v5_osm_assisted", raw)
+    validate_protocol_bindings("v5_osm_assisted", bindings)
+    if not isinstance(raw.get("exports"), list):
+        raise ValueError("V5 embedding registry requires an exports list")
+    verify_git_head_file(registry_path)
+    return raw
+
+
+def validate_v5_protocol_assets_for_commit(
+    matrix_path: Path, matrix_sha256: str, registry_path: Path
+) -> None:
+    """Validate the two Git-tracked v5 protocol assets before an integration commit."""
+    matrix = load_registered_v5_matrix(matrix_path, matrix_sha256)
+    validate_v5_embedding_registry(registry_path, matrix)
+
+
+def validate_v5_matrix_comparator(baseline_family: str, candidate_family: str) -> None:
+    """Allow a v5 bootstrap only against the candidate family\'s declared comparator."""
+    matrix = load_registered_v5_matrix()
+    baseline = matrix["families"].get(baseline_family)
+    if not isinstance(baseline, dict):
+        raise ValueError("V5 bootstrap baseline is outside the registered matrix")
+    family = matrix["families"].get(candidate_family)
+    if not isinstance(family, dict) or not isinstance(family.get("comparator"), str):
+        raise ValueError("V5 bootstrap candidate is outside the registered matrix")
+    if baseline_family != family["comparator"]:
+        raise ValueError("V5 bootstrap baseline is not the candidate family's declared comparator")
 
 
 def result_evidence(protocol_id: str) -> dict[str, str]:
@@ -454,6 +645,73 @@ def seal_embedding_file_index(embedding_root: Path, region: str, month: str) -> 
     return index
 
 
+def build_v5_embedding_registry_entry(
+    embedding_root: Path,
+    *,
+    family: str,
+    fold: int,
+    region: str,
+    month: str,
+) -> dict[str, Any]:
+    """Build one validated v5 registry entry after a sealed six-shard export."""
+    meta_path = embedding_root / "meta.json"
+    if not meta_path.is_file():
+        raise FileNotFoundError(f"Missing v5 export metadata: {meta_path}")
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    descriptor = resolve_registered_protocol("v5_osm_assisted")
+    validate_protocol_bindings("v5_osm_assisted", meta)
+    if meta.get("protocol_id") != "v5_osm_assisted":
+        raise ValueError("V5 export metadata lacks protocol_id")
+    matrix = load_registered_v5_matrix()
+    family_spec = matrix["families"].get(family)
+    if not isinstance(family_spec, dict) or fold not in matrix["probe"]["folds"]:
+        raise ValueError("V5 export family or fold is outside the registered matrix")
+    config_path = Path(str(meta.get("config_path", "")))
+    checkpoint_path = Path(str(meta.get("checkpoint_path", "")))
+    config_sha256 = meta.get("config_sha256")
+    if not isinstance(config_sha256, str):
+        raise ValueError("V5 export metadata lacks config_sha256")
+    validate_v5_encoder_config_provenance(config_path, config_sha256)
+    if registered_family_from_experiment(config_path.stem, fold) != family:
+        raise ValueError("V5 export config family does not match the registry entry family")
+    if not checkpoint_path.is_file() or not config_path.is_file():
+        raise FileNotFoundError("V5 export metadata references a missing config or checkpoint")
+    manifest = meta.get("manifest")
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("manifest_sha256") != descriptor["manifest_sha256"]
+    ):
+        raise ValueError("V5 export manifest provenance does not match the protocol")
+    expected = {
+        "checkpoint_sha256": sha256_file(checkpoint_path),
+        "config_sha256": sha256_file(config_path),
+        "manifest_sha256": descriptor["manifest_sha256"],
+        "embedding_file_index_sha256": meta.get("embedding_file_index_sha256"),
+        "canonical_export_provenance_sha256": meta.get("canonical_export_provenance_sha256"),
+        "region": region,
+        "month": str(month),
+        "patch_count": manifest.get("patch_count"),
+        "protocol_id": "v5_osm_assisted",
+    }
+    if not all(
+        isinstance(value, str) and value for key, value in expected.items() if key != "patch_count"
+    ):
+        raise ValueError("V5 export metadata lacks a sealed registry hash")
+    if expected["patch_count"] != 320:
+        raise ValueError("V5 export registry entry requires exactly 320 patches")
+    index = load_sealed_embedding_file_index(embedding_root, meta, region, month)
+    patch_ids = {Path(str(item["path"])).parent.name for item in index["files"]}
+    if len(patch_ids) != 320:
+        raise ValueError("V5 export registry entry requires 320 indexed embedding patches")
+    verify_canonical_export_provenance(embedding_root, meta, region, month, patch_ids)
+    return {
+        "id": f"{family}_fold{fold}_best_{month}",
+        "family": family,
+        "encoder_fold": fold,
+        **expected,
+    }
+
+
 def prepare_result_output(output: Path) -> None:
     """Atomically claim a fresh output directory for exactly one probe run."""
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -476,13 +734,14 @@ def verify_embedding_registry(
     region: str,
     month: str,
     patch_count: int,
+    protocol_id: str = "v4_diagnostic",
 ) -> dict[str, Any]:
     """Require an external frozen record for the exact exported feature set."""
     if not registry_path.is_file():
         raise FileNotFoundError(f"Missing external embedding registry: {registry_path}")
     raw = json.loads(registry_path.read_text(encoding="utf-8"))
     entries = raw.get("exports")
-    if raw.get("schema_version") != 1 or not isinstance(entries, list):
+    if raw.get("schema_version") not in (1, 2) or not isinstance(entries, list):
         raise ValueError("Invalid external embedding registry schema")
     expected = {
         "checkpoint_sha256": checkpoint_sha256,
@@ -494,6 +753,8 @@ def verify_embedding_registry(
         "month": str(month),
         "patch_count": patch_count,
     }
+    if protocol_id == "v5_osm_assisted":
+        expected["protocol_id"] = protocol_id
     matches = [
         entry
         for entry in entries
@@ -501,17 +762,26 @@ def verify_embedding_registry(
     ]
     if len(matches) != 1:
         raise ValueError("External embedding registry does not contain the sealed export")
-    return {
+    result = {
         "path": str(registry_path.resolve()),
         "sha256": sha256_file(registry_path),
         **matches[0],
     }
+    return result
 
 
 def verify_git_head_file(path: Path) -> None:
     """Require that an external registry is a clean, Git-tracked HEAD artifact."""
-    repo_root = Path(__file__).resolve().parents[2]
     resolved = path.resolve()
+    root = subprocess.run(
+        ["git", "-C", str(resolved.parent), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if root.returncode != 0 or not root.stdout.strip():
+        raise ValueError("External registry must be inside a Git repository")
+    repo_root = Path(root.stdout.strip()).resolve()
     try:
         relative = resolved.relative_to(repo_root)
     except ValueError as exc:
@@ -540,6 +810,7 @@ def verify_encoder_provenance(
     config_path: Path,
     checkpoint_path: Path,
     expected_fold: int,
+    protocol_id: str = "v4_diagnostic",
 ) -> dict[str, str | int]:
     """Reject an encoder checkpoint if its registered fold differs."""
     if not config_path.is_file():
@@ -564,12 +835,24 @@ def verify_encoder_provenance(
     experiment_name = raw.get("experiment", {}).get("name")
     if experiment_name != checkpoint_path.parent.name:
         raise ValueError("Checkpoint parent directory does not match config experiment.name")
+    descriptor = resolve_registered_protocol(protocol_id)
     split_path = Path(data.get("paper_spatial_split", ""))
-    frozen_path = FROZEN_SPLIT.resolve()
+    frozen_path = Path(descriptor["split_path"]).resolve()
     if split_path.resolve() != frozen_path:
         raise ValueError("Encoder config does not use the frozen registered spatial split")
-    if sha256_file(split_path) != FROZEN_SPLIT_SHA256:
+    if sha256_file(split_path) != descriptor["split_sha256"]:
         raise ValueError("Encoder split hash differs from frozen registered spatial split")
+    if protocol_id == "v5_osm_assisted":
+        validate_v5_encoder_config_provenance(config_path, sha256_file(config_path))
+        validate_protocol_bindings(
+            protocol_id,
+            {
+                "spatial_split": str(split_path),
+                "spatial_split_sha256": data.get("paper_spatial_split_sha256"),
+                "manifest_sha256": descriptor["manifest_sha256"],
+                "statistics_registry_sha256": data.get("paper_normalization_statistics_sha256"),
+            },
+        )
     split = json.loads(frozen_path.read_text(encoding="utf-8"))["folds"][expected_fold]
     train_manifest = Path(data.get("train_manifest_path", ""))
     val_manifest = Path(data.get("val_manifest_path", ""))
@@ -584,11 +867,16 @@ def verify_encoder_provenance(
     trainer_state = checkpoint.get("trainer_state", {})
     if checkpoint.get("epoch") != trainer_state.get("best_epoch"):
         raise ValueError("best.pt checkpoint epoch does not match recorded best_epoch")
-    return {
+    result: dict[str, str | int] = {
         "encoder_fold": int(configured_fold),
         "config_sha256": sha256_file(config_path),
         "checkpoint_sha256": sha256_file(checkpoint_path),
     }
+    if protocol_id == "v5_osm_assisted":
+        if not str(experiment_name).startswith("paper_registered_v5_"):
+            raise ValueError("V5 encoder config name does not encode its registered family/fold")
+        result["family"] = registered_family_from_experiment(str(experiment_name), expected_fold)
+    return result
 
 
 def _manifest_ids(path: Path) -> set[str]:
@@ -601,8 +889,12 @@ def _manifest_ids(path: Path) -> set[str]:
     return set(ids)
 
 
-def _verify_frozen_split(path: Path, fold: int) -> dict[str, list[str]]:
-    if path.resolve() != FROZEN_SPLIT.resolve() or sha256_file(path) != FROZEN_SPLIT_SHA256:
+def _verify_frozen_split(
+    path: Path, fold: int, protocol_id: str = "v4_diagnostic"
+) -> dict[str, list[str]]:
+    descriptor = resolve_registered_protocol(protocol_id)
+    split_path = Path(descriptor["split_path"])
+    if path.resolve() != split_path.resolve() or sha256_file(path) != descriptor["split_sha256"]:
         raise ValueError("Evaluation must use the frozen registered spatial split")
     folds = json.loads(path.read_text(encoding="utf-8"))["folds"]
     if fold < 0 or fold >= len(folds):
@@ -616,21 +908,33 @@ def _verify_frozen_split(path: Path, fold: int) -> dict[str, list[str]]:
 
 
 def _verify_embedding_export(
-    embedding_root: Path, manifest_path: Path, checkpoint_sha256: str, month: str
+    embedding_root: Path,
+    manifest_path: Path,
+    checkpoint_sha256: str,
+    month: str,
+    protocol_id: str = "v4_diagnostic",
+    config_sha256: str | None = None,
 ) -> dict[str, Any]:
-    if sha256_file(manifest_path) != FROZEN_EVAL_MANIFEST_SHA256:
+    descriptor = resolve_registered_protocol(protocol_id)
+    if sha256_file(manifest_path) != descriptor["manifest_sha256"]:
         raise ValueError("Evaluation must use the registered 320-patch manifest")
     meta_path = embedding_root / "meta.json"
     if not meta_path.is_file():
         raise FileNotFoundError(f"Missing embedding export provenance: {meta_path}")
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     export_manifest = meta.get("manifest", {})
-    if export_manifest.get("manifest_sha256") != FROZEN_EVAL_MANIFEST_SHA256:
+    if export_manifest.get("manifest_sha256") != descriptor["manifest_sha256"]:
         raise ValueError("Embedding export manifest is not the registered 320-patch manifest")
     if export_manifest.get("patch_count") != 320:
         raise ValueError("Embedding export provenance does not contain 320 patches")
     if meta.get("checkpoint_sha256") != checkpoint_sha256:
         raise ValueError("Embedding export checkpoint hash does not match the evaluated encoder")
+    if protocol_id == "v5_osm_assisted":
+        validate_protocol_bindings(protocol_id, meta)
+        if meta.get("protocol_id") != protocol_id:
+            raise ValueError("Embedding export protocol_id does not match the v5 probe")
+        if config_sha256 is None or meta.get("config_sha256") != config_sha256:
+            raise ValueError("Embedding export config hash does not match the evaluated v5 encoder")
     manifest_records = json.loads(manifest_path.read_text(encoding="utf-8"))
     expected_patch_ids = {str(record["patch_id"]) for record in manifest_records}
     if len(expected_patch_ids) != 320:
@@ -911,6 +1215,7 @@ def build_registered_mixed_shot_schedule(
     budgets: tuple[int, ...] = (5, 10, 50),
     min_positive_pixels: int = 64,
     min_background_pixels: int = 64,
+    protocol_id: str = "v4_diagnostic",
 ) -> dict[str, Any]:
     """Freeze a nested schedule of pixelwise mixed-class support patches.
 
@@ -966,7 +1271,7 @@ def build_registered_mixed_shot_schedule(
     rule_sha256 = hashlib.sha256(
         json.dumps(rule, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-    return {
+    schedule = {
         "schema_version": 3,
         "task": task_name,
         "fold": fold,
@@ -979,15 +1284,26 @@ def build_registered_mixed_shot_schedule(
         "sets": sets,
         "unavailable": unavailable,
     }
+    if protocol_id == "v5_osm_assisted":
+        descriptor = resolve_registered_protocol(protocol_id)
+        if split_sha256 != descriptor["split_sha256"]:
+            raise ValueError("V5 shot schedule split hash does not match the registered protocol")
+        schedule["protocol_id"] = protocol_id
+    return schedule
 
 
 def load_registered_shot_ids(
-    path: Path, *, expected_schedule: dict[str, Any], shot: str
+    path: Path,
+    *,
+    expected_schedule: dict[str, Any],
+    shot: str,
+    protocol_id: str = "v4_diagnostic",
 ) -> tuple[list[str], dict[str, Any]]:
     """Load a shared schedule only when it exactly matches the registered selection rule."""
     if not path.is_file():
         raise FileNotFoundError(f"Missing shared shot schedule: {path}")
     loaded = json.loads(path.read_text(encoding="utf-8"))
+    validate_registered_shot_schedule(loaded, protocol_id)
     if loaded != expected_schedule:
         raise ValueError("Shared shot schedule does not match the registered selection rule")
     if shot in loaded.get("unavailable", {}):
@@ -1313,22 +1629,58 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    provenance = verify_encoder_provenance(args.encoder_config, args.encoder_checkpoint, args.fold)
-    split = _verify_frozen_split(args.spatial_split, args.fold)
-    export_meta = _verify_embedding_export(
-        args.embedding_root, args.manifest, str(provenance["checkpoint_sha256"]), args.month
+    descriptor = resolve_registered_protocol(args.protocol)
+    provenance = verify_encoder_provenance(
+        args.encoder_config, args.encoder_checkpoint, args.fold, args.protocol
     )
+    split = _verify_frozen_split(args.spatial_split, args.fold, args.protocol)
+    export_meta = _verify_embedding_export(
+        args.embedding_root,
+        args.manifest,
+        str(provenance["checkpoint_sha256"]),
+        args.month,
+        args.protocol,
+        str(provenance["config_sha256"]),
+    )
+    if args.protocol == "v5_osm_assisted":
+        validate_v5_probe_request(
+            protocol_id=args.protocol,
+            bindings={
+                "spatial_split": str(args.spatial_split),
+                "spatial_split_sha256": sha256_file(args.spatial_split),
+                "manifest_sha256": sha256_file(args.manifest),
+                "statistics_registry_sha256": descriptor["statistics_registry_sha256"],
+            },
+            cell={
+                "family": provenance["family"],
+                "head": "conv3x3_64_128_64",
+                "task": args.task,
+                "shot": args.shot,
+                "fold": args.fold,
+                "seed": args.shot_seed,
+            },
+        )
+        validate_v5_embedding_registry(
+            args.embedding_registry,
+            {
+                "spatial_split": str(args.spatial_split),
+                "spatial_split_sha256": sha256_file(args.spatial_split),
+                "manifest_sha256": sha256_file(args.manifest),
+                "statistics_registry_sha256": descriptor["statistics_registry_sha256"],
+            },
+        )
     verify_git_head_file(args.embedding_registry)
     embedding_registry = verify_embedding_registry(
         args.embedding_registry,
         checkpoint_sha256=str(provenance["checkpoint_sha256"]),
         config_sha256=str(provenance["config_sha256"]),
-        manifest_sha256=FROZEN_EVAL_MANIFEST_SHA256,
+        manifest_sha256=str(descriptor["manifest_sha256"]),
         index_sha256=str(export_meta["embedding_file_index_sha256"]),
         canonical_provenance_sha256=str(export_meta["canonical_export_provenance_sha256"]),
         region="haidian",
         month=args.month,
         patch_count=320,
+        protocol_id=args.protocol,
     )
     probe_seed = int.from_bytes(
         hashlib.sha256(f"{args.fold}|{args.task}|{args.shot_seed}".encode()).digest()[:4],
@@ -1357,9 +1709,13 @@ def main() -> None:
             split_sha,
             lambda patch_id: _positive_background_pixel_counts(task, patch_id),
             budgets=(5, 10, 50),
+            protocol_id=args.protocol,
         )
         train_ids, shot_manifest = load_registered_shot_ids(
-            args.shot_manifest, expected_schedule=expected, shot=args.shot
+            args.shot_manifest,
+            expected_schedule=expected,
+            shot=args.shot,
+            protocol_id=args.protocol,
         )
         shot_manifest_path = args.shot_manifest
     train_items = load_patch_list(
@@ -1472,6 +1828,9 @@ def main() -> None:
         "shot_manifest_sha256": sha256_file(shot_manifest_path) if shot_manifest_path else None,
         "per_patch_confusion": per_patch,
     }
+    if args.protocol == "v5_osm_assisted":
+        metric_payload["family"] = provenance["family"]
+        metric_payload["test_patch_ids_sha256"] = _patch_id_set_sha256(set(ordered_patch_ids))
     _write_json(output / "metrics.json", metric_payload)
     result_id = hashlib.sha256(
         (

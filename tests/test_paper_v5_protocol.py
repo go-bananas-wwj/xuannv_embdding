@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,6 +10,7 @@ import pytest
 import yaml
 
 from scripts.data import build_paper_manifests, compute_statistics
+from scripts.eval import register_registered_v5_embedding_export as registrar
 from scripts.eval import run_registered_paper_downstream as registered
 from scripts.experiments import build_clean_paper_configs, build_paper_subset_registry
 from scripts.report import aggregate_registered_paper_results as aggregate
@@ -656,3 +658,391 @@ def test_v5_generated_config_binds_sealed_sidecars_and_excludes_held_out_geograp
         for record in json.loads(Path(config["data"]["train_manifest_path"]).read_text())
     }
     assert not train_ids & held_out
+
+
+def _v5_protocol_bindings() -> dict[str, str]:
+    descriptor = registered.resolve_registered_protocol("v5_osm_assisted")
+    return {
+        "spatial_split": str(descriptor["split_path"]),
+        "spatial_split_sha256": str(descriptor["split_sha256"]),
+        "manifest_sha256": str(descriptor["manifest_sha256"]),
+        "statistics_registry_sha256": str(descriptor["statistics_registry_sha256"]),
+    }
+
+
+def _sealed_v5_matrix(tmp_path: Path) -> tuple[Path, str]:
+    repo = tmp_path / "sealed-matrix-repo"
+    matrix_path = repo / "configs/eval/rse_v5_osm_assisted_matrix.json"
+    matrix_path.parent.mkdir(parents=True)
+    matrix_path.write_text(
+        (
+            Path(__file__).resolve().parents[1] / "configs/eval/rse_v5_osm_assisted_matrix.json"
+        ).read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    for command in (
+        ["git", "init", "-q"],
+        ["git", "config", "user.email", "test@example.com"],
+        ["git", "config", "user.name", "Protocol Test"],
+        ["git", "add", "configs/eval/rse_v5_osm_assisted_matrix.json"],
+        ["git", "commit", "-qm", "seal matrix"],
+    ):
+        subprocess.run(command, cwd=repo, check=True)
+    return matrix_path, _sha256(matrix_path)
+
+
+def _sealed_v5_protocol_assets(tmp_path: Path) -> tuple[Path, str, Path]:
+    matrix_path, matrix_sha256 = _sealed_v5_matrix(tmp_path)
+    registry_path = matrix_path.with_name("registered_embedding_exports_v5_20260726.json")
+    registry_path.write_text(
+        (
+            Path(__file__).resolve().parents[1]
+            / "configs/eval/registered_embedding_exports_v5_20260726.json"
+        ).read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    subprocess.run(
+        ["git", "add", str(registry_path.relative_to(matrix_path.parents[2]))],
+        cwd=matrix_path.parents[2],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-qm", "seal registry"], cwd=matrix_path.parents[2], check=True
+    )
+    return matrix_path, matrix_sha256, registry_path
+
+
+def test_v5_protocol_resolver_rejects_v4_split_and_mismatched_hashes() -> None:
+    bindings = _v5_protocol_bindings()
+
+    with pytest.raises(ValueError, match="spatial split"):
+        registered.validate_protocol_bindings(
+            "v5_osm_assisted",
+            {**bindings, "spatial_split": str(registered.FROZEN_SPLIT)},
+        )
+    with pytest.raises(ValueError, match="statistics registry"):
+        registered.validate_protocol_bindings(
+            "v5_osm_assisted",
+            {**bindings, "statistics_registry_sha256": "mismatch"},
+        )
+
+
+def test_v5_schedule_and_probe_reject_another_protocol() -> None:
+    bindings = _v5_protocol_bindings()
+    schedule = {
+        "protocol_id": "v4_diagnostic",
+        "split_sha256": bindings["spatial_split_sha256"],
+    }
+
+    with pytest.raises(ValueError, match="shot schedule"):
+        registered.validate_registered_shot_schedule(schedule, "v5_osm_assisted")
+    with pytest.raises(ValueError, match="protocol_id"):
+        registered.validate_v5_probe_request(
+            protocol_id="v4_diagnostic",
+            bindings=bindings,
+            cell={
+                "family": "full_150",
+                "head": "conv3x3_64_128_64",
+                "task": "building",
+                "shot": "5",
+                "fold": 0,
+                "seed": 42,
+            },
+        )
+
+
+def test_v5_matrix_rejects_undeclared_result_cell_and_bootstrap_support(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    matrix_path, matrix_sha256 = _sealed_v5_matrix(tmp_path)
+    monkeypatch.setattr(registered, "V5_MATRIX", matrix_path)
+    monkeypatch.setattr(registered, "V5_MATRIX_SHA256", matrix_sha256)
+    cell = {
+        "family": "full_150",
+        "head": "conv3x3_64_128_64",
+        "task": "building",
+        "shot": "5",
+        "fold": 0,
+        "seed": 42,
+    }
+    registered.validate_registered_matrix_cell("v5_osm_assisted", cell)
+    with pytest.raises(ValueError, match="matrix"):
+        registered.validate_registered_matrix_cell("v5_osm_assisted", {**cell, "seed": 999})
+    baseline = {("building", "5", 0, 42): _result("v5_osm_assisted")}
+    candidate = {("building", "5", 0, 42): _result("v5_osm_assisted")}
+    candidate[("building", "5", 0, 42)]["metric_provenance"]["test_patch_ids_sha256"] = "other"
+    with pytest.raises(ValueError, match="test_patch_ids_sha256"):
+        bootstrap.verify_paired_record_provenance(baseline, candidate)
+
+
+def test_v5_matrix_rejects_uncommitted_working_copy(tmp_path: Path) -> None:
+    matrix_path, matrix_sha256 = _sealed_v5_matrix(tmp_path)
+    matrix_path.write_text(matrix_path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="current Git HEAD"):
+        registered.load_registered_v5_matrix(matrix_path, matrix_sha256)
+
+
+def test_v5_protocol_assets_are_commit_ready_only_at_git_head(tmp_path: Path) -> None:
+    matrix_path, matrix_sha256, registry_path = _sealed_v5_protocol_assets(tmp_path)
+
+    registered.validate_v5_protocol_assets_for_commit(matrix_path, matrix_sha256, registry_path)
+    registry_path.write_text(registry_path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="current Git HEAD"):
+        registered.validate_v5_protocol_assets_for_commit(matrix_path, matrix_sha256, registry_path)
+
+
+def test_v5_encoder_config_requires_head_bytes_and_matching_hash() -> None:
+    root = Path(__file__).resolve().parents[1]
+    config_path = (
+        root
+        / "configs/paper_registered_v5_20260726/paper_registered_v5_full_150_fold0_20260726.yaml"
+    )
+    config_sha256 = _sha256(config_path)
+
+    registered.validate_v5_encoder_config_provenance(config_path, config_sha256)
+    with pytest.raises(ValueError, match="hash"):
+        registered.validate_v5_encoder_config_provenance(config_path, "mismatch")
+
+
+def test_v5_family_name_matches_probe_and_aggregation_provenance(tmp_path: Path) -> None:
+    root = Path(__file__).resolve().parents[1]
+    config_path = (
+        root
+        / "configs/paper_registered_v5_20260726/paper_registered_v5_full_150_fold0_20260726.yaml"
+    )
+    record = {
+        "metric_provenance": {
+            "protocol_id": "v5_osm_assisted",
+            "fold": 0,
+            "embedding_export": {"config_path": str(config_path)},
+            "provenance": {"config_sha256": _sha256(config_path)},
+        }
+    }
+
+    assert registered.registered_family_from_experiment(config_path.stem, 0) == "full_150"
+    assert aggregate._family_from_record(record) == "full_150"
+    legacy_config = tmp_path / "paper_registered_full_150_fold0_20260716.yaml"
+    legacy_config.write_text(
+        yaml.safe_dump({"experiment": {"name": legacy_config.stem}, "data": {"paper_fold": 0}}),
+        encoding="utf-8",
+    )
+    legacy_record = {
+        "metric_provenance": {
+            "protocol_id": "v5_osm_assisted",
+            "fold": 0,
+            "embedding_export": {"config_path": str(legacy_config)},
+            "provenance": {"config_sha256": _sha256(legacy_config)},
+        }
+    }
+    with pytest.raises(ValueError, match="namespace"):
+        aggregate._family_from_record(legacy_record)
+
+
+def test_v5_bootstrap_requires_the_matrix_declared_comparator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    matrix_path, matrix_sha256 = _sealed_v5_matrix(tmp_path)
+    monkeypatch.setattr(registered, "V5_MATRIX", matrix_path)
+    monkeypatch.setattr(registered, "V5_MATRIX_SHA256", matrix_sha256)
+
+    registered.validate_v5_matrix_comparator("full_150", "full_40")
+    with pytest.raises(ValueError, match="declared comparator"):
+        registered.validate_v5_matrix_comparator("no_osm_150", "full_40")
+
+
+def test_v5_embedding_registry_requires_versioned_protocol_and_bindings(tmp_path: Path) -> None:
+    bindings = _v5_protocol_bindings()
+    unversioned = tmp_path / "registry.json"
+    _write_json(unversioned, {"exports": []})
+    with pytest.raises(ValueError, match="schema_version"):
+        registered.validate_v5_embedding_registry(unversioned, bindings)
+
+    mismatched = tmp_path / "mismatched.json"
+    _write_json(
+        mismatched,
+        {
+            "schema_version": 2,
+            "protocol_id": "v5_osm_assisted",
+            **{**bindings, "manifest_sha256": "mismatch"},
+            "exports": [],
+        },
+    )
+    with pytest.raises(ValueError, match="manifest"):
+        registered.validate_v5_embedding_registry(mismatched, bindings)
+
+
+def _sealed_v5_export_root(tmp_path: Path) -> tuple[Path, dict[str, object]]:
+    root = Path(__file__).resolve().parents[1]
+    config_path = (
+        root
+        / "configs/paper_registered_v5_20260726/paper_registered_v5_full_150_fold0_20260726.yaml"
+    )
+    checkpoint_path = tmp_path / "best.pt"
+    checkpoint_path.write_bytes(b"sealed checkpoint")
+    export_root = tmp_path / "export"
+    region_root = export_root / "haidian"
+    patch_ids = [f"patch_{index:06d}" for index in range(320)]
+    for index, patch_id in enumerate(patch_ids):
+        feature = region_root / patch_id / "202604_embedding_map.pt"
+        feature.parent.mkdir(parents=True, exist_ok=True)
+        feature.write_bytes(f"embedding-{index}".encode("utf-8"))
+    commands = {shard: f"export shard {shard}" for shard in range(6)}
+    for shard in commands:
+        shard_ids = patch_ids[shard::6]
+        (region_root / f"produced_patch_ids_shard_{shard}.json").write_text(
+            json.dumps(shard_ids), encoding="utf-8"
+        )
+    _write_json(
+        export_root / "meta.json",
+        {
+            "protocol_id": "v5_osm_assisted",
+            **_v5_protocol_bindings(),
+            "config_path": str(config_path),
+            "config_sha256": _sha256(config_path),
+            "checkpoint_path": str(checkpoint_path),
+            "checkpoint_sha256": _sha256(checkpoint_path),
+            "manifest": {
+                "manifest_sha256": registered.resolve_registered_protocol("v5_osm_assisted")[
+                    "manifest_sha256"
+                ],
+                "patch_count": 320,
+            },
+        },
+    )
+    registered.canonicalize_embedding_export(
+        export_root,
+        "haidian",
+        "202604",
+        expected_patch_ids=set(patch_ids),
+        shard_commands=commands,
+    )
+    registered.seal_embedding_file_index(export_root, "haidian", "202604")
+    return export_root, {"family": "full_150", "fold": 0, "region": "haidian", "month": "202604"}
+
+
+def test_v5_registrar_rebuilds_export_entry_and_rejects_forged_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    matrix_path, matrix_sha256, registry_path = _sealed_v5_protocol_assets(tmp_path)
+    monkeypatch.setattr(registered, "V5_MATRIX", matrix_path)
+    monkeypatch.setattr(registered, "V5_MATRIX_SHA256", matrix_sha256)
+    export_root, identity = _sealed_v5_export_root(tmp_path)
+    entry = {
+        **registered.build_v5_embedding_registry_entry(
+            export_root,
+            family=str(identity["family"]),
+            fold=int(identity["fold"]),
+            region=str(identity["region"]),
+            month=str(identity["month"]),
+        ),
+        "embedding_root": str(export_root.resolve()),
+    }
+    pending_path = tmp_path / "pending_registry_entry.json"
+    pending = {
+        "schema_version": 1,
+        "registry_path": str(registry_path.resolve()),
+        "registry_sha256": _sha256(registry_path),
+        "entry": entry,
+        "entry_sha256": registered._canonical_sha256(entry),
+    }
+    _write_json(pending_path, pending)
+    before = registry_path.read_bytes()
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "register_registered_v5_embedding_export.py",
+            "--registry",
+            str(registry_path),
+            "--pending-entry",
+            str(pending_path),
+            "--dry-run",
+        ],
+    )
+    registrar.main()
+    assert registry_path.read_bytes() == before
+    assert "commit required" in capsys.readouterr().out
+
+    forged = dict(entry)
+    forged["checkpoint_sha256"] = "forged"
+    pending["entry"] = forged
+    pending["entry_sha256"] = registered._canonical_sha256(forged)
+    _write_json(pending_path, pending)
+    with pytest.raises(ValueError, match="does not match the sealed export"):
+        registrar.main()
+
+
+def test_v5_rejects_aef_family_before_task5(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    matrix_path, matrix_sha256 = _sealed_v5_matrix(tmp_path)
+    monkeypatch.setattr(registered, "V5_MATRIX", matrix_path)
+    monkeypatch.setattr(registered, "V5_MATRIX_SHA256", matrix_sha256)
+    aef_cell = {
+        "family": "matched_aef_v5",
+        "head": "conv3x3_64_128_64",
+        "task": "building",
+        "shot": "5",
+        "fold": 0,
+        "seed": 42,
+    }
+
+    with pytest.raises(ValueError, match="outside the registered v5 matrix"):
+        registered.validate_registered_matrix_cell("v5_osm_assisted", aef_cell)
+    with pytest.raises(ValueError, match="baseline is outside"):
+        registered.validate_v5_matrix_comparator("matched_aef_v5", "full_150")
+
+
+def test_v5_export_and_launcher_dry_runs_admit_declared_family_only(tmp_path: Path) -> None:
+    root = Path(__file__).resolve().parents[1]
+    exporter = root / "scripts/eval/export_registered_v5_paper_encoders.sh"
+    launcher = root / "scripts/eval/launch_registered_v5_downstream.sh"
+    matrix_path, _ = _sealed_v5_matrix(tmp_path)
+    for script in (exporter, launcher):
+        missing_protocol = subprocess.run(
+            [str(script), "--family", "full_150", "--dry-run"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert missing_protocol.returncode == 2
+        accepted = subprocess.run(
+            [
+                str(script),
+                "--protocol",
+                "v5_osm_assisted",
+                "--family",
+                "full_150",
+                "--matrix",
+                str(matrix_path),
+                "--dry-run",
+            ],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert accepted.returncode == 0, accepted.stderr
+        assert all(line.startswith(("EXPORT ", "PROBE ")) for line in accepted.stdout.splitlines())
+        if script == exporter:
+            assert sum("phase=finalize" in line for line in accepted.stdout.splitlines()) == 5
+        for rejected_family in ("not_declared", "matched_aef_v5"):
+            rejected = subprocess.run(
+                [
+                    str(script),
+                    "--protocol",
+                    "v5_osm_assisted",
+                    "--family",
+                    rejected_family,
+                    "--matrix",
+                    str(matrix_path),
+                    "--dry-run",
+                ],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert rejected.returncode == 2

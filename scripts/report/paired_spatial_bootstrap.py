@@ -456,7 +456,10 @@ def verify_paired_record_provenance(
             raise ValueError(
                 f"Paired bootstrap requires identical protocol_id for result cell {cell}"
             )
-        for key in provenance_keys:
+        cell_provenance_keys = provenance_keys
+        if baseline_protocol == "v5_osm_assisted":
+            cell_provenance_keys = (*provenance_keys, "test_patch_ids_sha256")
+        for key in cell_provenance_keys:
             if _paired_value(baseline[cell], key) != _paired_value(candidate[cell], key):
                 raise ValueError(
                     f"Paired bootstrap requires identical {key} for result cell {cell}"
@@ -549,6 +552,7 @@ def compare_families(
     n_resamples: int,
     seed: int,
     patch_metadata_path: Path,
+    protocol: str | None = None,
 ) -> dict[str, Any]:
     """Load sealed records and compute one paired hierarchical interval per task/shot."""
     validate_matrix_dimensions(tasks=tasks, shots=shots)
@@ -565,6 +569,14 @@ def compare_families(
     baseline_record_cells = _record_cells(baseline_selected, tasks=tasks, shots=shots)
     candidate_record_cells = _record_cells(candidate_selected, tasks=tasks, shots=shots)
     protocol_id = verify_paired_record_provenance(baseline_record_cells, candidate_record_cells)
+    if protocol_id == "v5_osm_assisted" and protocol != "v5_osm_assisted":
+        raise ValueError("V5 bootstrap requires --protocol v5_osm_assisted")
+    if protocol is not None and protocol_id != protocol:
+        raise ValueError("Bootstrap --protocol does not match the result records")
+    if protocol == "v5_osm_assisted":
+        aggregate.registered.validate_v5_matrix_comparator(baseline_family, candidate_family)
+        aggregate.validate_registered_v5_matrix_records(baseline_selected, baseline_family)
+        aggregate.validate_registered_v5_matrix_records(candidate_selected, candidate_family)
     baseline = _records_by_cell(baseline_selected, tasks=tasks, shots=shots)
     candidate = _records_by_cell(candidate_selected, tasks=tasks, shots=shots)
     baseline_identities = result_identities(baseline_selected)
@@ -636,6 +648,11 @@ def parse_args() -> argparse.Namespace:
         help="Projected patch metadata used to form 2 x 2 geographic bootstrap clusters.",
     )
     parser.add_argument("--allow-preliminary", action="store_true")
+    parser.add_argument(
+        "--protocol",
+        choices=tuple(aggregate.registered.PROTOCOL_DESCRIPTORS),
+        default=None,
+    )
     return parser.parse_args()
 
 
@@ -651,6 +668,7 @@ def main() -> None:
         n_resamples=args.n_resamples,
         seed=args.seed,
         patch_metadata_path=args.patch_metadata,
+        protocol=args.protocol,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     snapshot = result.pop("input_identity_snapshot")
