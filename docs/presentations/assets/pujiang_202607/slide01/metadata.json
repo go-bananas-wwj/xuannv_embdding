@@ -9,10 +9,10 @@
     "checkpoint": "epoch_800",
     "embedding_version": "v1",
     "month": "202605",
-    "building_head": "binary_conv3x3",
-    "building_threshold": 0.978237,
-    "building_task_map_type": "API numeric prediction thresholded with registered threshold",
-    "building_source": "http://60.31.21.42:22065/regions/haidian/patches/{patch_id}/tasks/building_extraction/prediction?version=v1&period=202605",
+    "building_head": "API configured result",
+    "building_task_map_type": "direct API result PNG",
+    "building_semantics": "Pre-generated API building region tile; not presented as the P10C binary_conv3x3 probability-threshold result.",
+    "building_source": "http://60.31.21.42:22065/regions/haidian/patches/{patch_id}/tasks/building_extraction/result?format=png&version=v1&month=202605",
     "road_head": "binary_conv3x3",
     "road_threshold": 0.5,
     "road_source": "http://60.31.21.42:22065/regions/haidian/patches/{patch_id}/tasks/road_extraction/prediction?version=v1&period=202605",
@@ -26,8 +26,49 @@
     "month": "202605",
     "training": "deployed embedding-api asset",
     "embedding_source": "http://60.31.21.42:22065/regions/harbin/mosaic?date=202605&sensor_type=embedding&version=v2&format=png",
-    "task_map_type": "API construction-mapped numeric prediction",
-    "task_label": "建设区域监测"
+    "task_map_type": "API V5/v2 system model inference",
+    "tasks": [
+      "building_extraction",
+      "water_extraction",
+      "land_cover_classification"
+    ],
+    "landcover_classes": [
+      {
+        "id": "sys_land_cover_classification_0",
+        "name": "Tree",
+        "color": "#419bdf"
+      },
+      {
+        "id": "sys_land_cover_classification_1",
+        "name": "Grassland",
+        "color": "#88b053"
+      },
+      {
+        "id": "sys_land_cover_classification_2",
+        "name": "Cropland",
+        "color": "#ffbb22"
+      },
+      {
+        "id": "sys_land_cover_classification_3",
+        "name": "Built-up",
+        "color": "#ffff4c"
+      },
+      {
+        "id": "sys_land_cover_classification_4",
+        "name": "Bare",
+        "color": "#bb551d"
+      },
+      {
+        "id": "sys_land_cover_classification_5",
+        "name": "Water",
+        "color": "#aaaaaa"
+      },
+      {
+        "id": "sys_land_cover_classification_6",
+        "name": "Wetland",
+        "color": "#785014"
+      }
+    ]
   },
   "harbin_pca": {
     "patches": 424,
@@ -40,16 +81,15 @@
   "api_task_maps": {
     "haidian_building": {
       "patches": 320,
-      "threshold": 0.978237,
-      "positive_pixel_ratio": 0.007831001281738281,
       "region": "haidian",
       "task": "building_extraction",
       "version": "v1",
       "month": "202605",
-      "head": "binary_conv3x3",
-      "feature_source": "P10C 64D embedding",
-      "api_summary": "http://60.31.21.42:22065/regions/haidian/tasks/building_extraction/summary?version=v1&month=202605",
-      "api_prediction_template": "http://60.31.21.42:22065/regions/haidian/patches/{patch_id}/tasks/building_extraction/prediction?version=v1&period=202605"
+      "source_type": "direct_api_result_png",
+      "cache_root": "/data/xuannv_embedding/experiments/presentation_pujiang_202607/api_assets/haidian/v1/building_extraction/202605/result_png",
+      "cache_sha256": "b671a6ec46f7f4106ffb09475050a92fbad53b16e3882a3fff550a54646b6d62",
+      "recorded_at": "2026-07-26T09:29:25.563770+00:00",
+      "api_result_template": "http://60.31.21.42:22065/regions/haidian/patches/{patch_id}/tasks/building_extraction/result?format=png&version=v1&month=202605"
     },
     "haidian_road": {
       "patches": 320,
@@ -79,16 +119,39 @@
     },
     "harbin_building": {
       "patches": 424,
-      "threshold": 0.5,
-      "positive_pixel_ratio": 0.21961600825471697,
       "region": "harbin",
       "task": "building_extraction",
       "version": "v2",
       "month": "202605",
-      "head": "configured_system_head",
-      "feature_source": "Xuannv v2 embedding",
-      "api_summary": "http://60.31.21.42:22065/regions/harbin/tasks/building_extraction/summary?version=v2&month=202605",
-      "api_prediction_template": "http://60.31.21.42:22065/regions/harbin/patches/{patch_id}/tasks/building_extraction/prediction?version=v2&period=202605"
+      "source_type": "api_system_model_inference",
+      "cache_root": "/data/xuannv_embedding/experiments/presentation_pujiang_202607/api_assets/harbin/v2/system_models/building_extraction/202605",
+      "cache_sha256": "24d47553a66feec8d805470e0ddd38f367736bb81e5c15ce5668327e4904551d",
+      "recorded_at": "2026-07-26T09:29:58.345253+00:00",
+      "api_infer": "http://60.31.21.42:22065/system-models/building_extraction/infer?region_id=harbin&patch_id=%7Bpatch_id%7D&month=202605&version=v2"
+    },
+    "harbin_water": {
+      "patches": 424,
+      "region": "harbin",
+      "task": "water_extraction",
+      "version": "v2",
+      "month": "202605",
+      "source_type": "api_system_model_inference",
+      "cache_root": "/data/xuannv_embedding/experiments/presentation_pujiang_202607/api_assets/harbin/v2/system_models/water_extraction/202605",
+      "cache_sha256": "d4c92709b6786ad72c947c58c171347989bd8b2de3f783ee2111926f72b8a4fc",
+      "recorded_at": "2026-07-26T09:30:09.883671+00:00",
+      "api_infer": "http://60.31.21.42:22065/system-models/water_extraction/infer?region_id=harbin&patch_id=%7Bpatch_id%7D&month=202605&version=v2"
+    },
+    "harbin_landcover": {
+      "patches": 424,
+      "region": "harbin",
+      "task": "land_cover_classification",
+      "version": "v2",
+      "month": "202605",
+      "source_type": "api_system_model_inference",
+      "cache_root": "/data/xuannv_embedding/experiments/presentation_pujiang_202607/api_assets/harbin/v2/system_models/land_cover_classification/202605",
+      "cache_sha256": "5381977fa67bdea6fdad678fce2c6769bcf59a4013214ac92e128aa0ff54e585",
+      "recorded_at": "2026-07-26T09:30:20.145508+00:00",
+      "api_infer": "http://60.31.21.42:22065/system-models/land_cover_classification/infer?region_id=harbin&patch_id=%7Bpatch_id%7D&month=202605&version=v2"
     }
   },
   "assets": {
@@ -97,6 +160,8 @@
     "haidian_road": "/root/workspace/xuannv/docs/presentations/assets/pujiang_202607/slide01/haidian_road.png",
     "haidian_water": "/root/workspace/xuannv/docs/presentations/assets/pujiang_202607/slide01/haidian_water.png",
     "harbin_pca": "/root/workspace/xuannv/docs/presentations/assets/pujiang_202607/slide01/harbin_pca.png",
-    "harbin_building": "/root/workspace/xuannv/docs/presentations/assets/pujiang_202607/slide01/harbin_building.png"
+    "harbin_building": "/root/workspace/xuannv/docs/presentations/assets/pujiang_202607/slide01/harbin_building.png",
+    "harbin_water": "/root/workspace/xuannv/docs/presentations/assets/pujiang_202607/slide01/harbin_water.png",
+    "harbin_landcover": "/root/workspace/xuannv/docs/presentations/assets/pujiang_202607/slide01/harbin_landcover.png"
   }
 }

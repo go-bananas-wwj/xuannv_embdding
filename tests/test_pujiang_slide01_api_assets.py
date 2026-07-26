@@ -94,3 +94,55 @@ def test_read_url_stops_after_retry_budget() -> None:
             opener=opener,
             sleep=lambda _: None,
         )
+
+
+def test_rgb_result_mosaic_preserves_api_tiles() -> None:
+    layouts = [
+        MODULE.PatchLayout("patch_000000", 0, 0),
+        MODULE.PatchLayout("patch_000001", 0, 1),
+    ]
+    images = {
+        "patch_000000": np.full((2, 2, 3), (230, 0, 0), dtype=np.uint8),
+        "patch_000001": np.full((2, 2, 3), (0, 100, 200), dtype=np.uint8),
+    }
+
+    mosaic = MODULE.rgb_result_mosaic(layouts, 1, 2, images)
+
+    assert mosaic.shape == (2, 4, 3)
+    assert np.all(mosaic[:, :2] == (230, 0, 0))
+    assert np.all(mosaic[:, 2:] == (0, 100, 200))
+
+
+def test_binary_api_result_can_normalize_red_or_nonblack_foreground() -> None:
+    red_white = np.array(
+        [[[255, 255, 255], [230, 0, 0]]],
+        dtype=np.uint8,
+    )
+    black_blue = np.array(
+        [[[0, 0, 0], [0, 100, 200]]],
+        dtype=np.uint8,
+    )
+    gray_blue = np.array(
+        [[[180, 180, 180], [0, 100, 200]]],
+        dtype=np.uint8,
+    )
+
+    normalized_red = MODULE.normalize_binary_api_result(red_white, "red")
+    normalized_nonblack = MODULE.normalize_binary_api_result(black_blue, "nonblack")
+    normalized_chromatic = MODULE.normalize_binary_api_result(gray_blue, "chromatic")
+
+    expected = np.array([[[255, 255, 255], [230, 0, 0]]], dtype=np.uint8)
+    assert np.array_equal(normalized_red, expected)
+    assert np.array_equal(normalized_nonblack, expected)
+    assert np.array_equal(normalized_chromatic, expected)
+
+
+def test_tree_sha256_changes_when_cached_api_asset_changes(tmp_path: Path) -> None:
+    (tmp_path / "a.png").write_bytes(b"first")
+    initial = MODULE.tree_sha256(tmp_path)
+
+    (tmp_path / "a.png").write_bytes(b"second")
+    changed = MODULE.tree_sha256(tmp_path)
+
+    assert len(initial) == 64
+    assert initial != changed

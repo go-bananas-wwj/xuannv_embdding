@@ -5,14 +5,15 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
-import io
+from datetime import datetime, timezone
+import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
 import time
 from typing import Callable
 from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import numpy as np
 import rasterio
@@ -181,6 +182,178 @@ def binary_prediction_mosaic(
         "patches": len(layouts),
         "threshold": threshold,
         "positive_pixel_ratio": positive / total,
+    }
+
+
+def rgb_result_mosaic(
+    layouts: list[PatchLayout],
+    rows: int,
+    cols: int,
+    images: dict[str, np.ndarray],
+) -> np.ndarray:
+    first = np.asarray(images[layouts[0].patch_id])
+    if first.ndim != 3 or first.shape[2] != 3:
+        raise ValueError(f"Expected RGB result, got {first.shape}")
+    tile_h, tile_w = first.shape[:2]
+    canvas = np.full((rows * tile_h, cols * tile_w, 3), 255, dtype=np.uint8)
+    for layout in layouts:
+        image = np.asarray(images[layout.patch_id], dtype=np.uint8)
+        if image.shape != (tile_h, tile_w, 3):
+            raise ValueError(f"Inconsistent result shape for {layout.patch_id}")
+        y0, x0 = layout.row * tile_h, layout.col * tile_w
+        canvas[y0 : y0 + tile_h, x0 : x0 + tile_w] = image
+    return canvas
+
+
+def normalize_binary_api_result(image: np.ndarray, foreground_rule: str) -> np.ndarray:
+    image = np.asarray(image, dtype=np.uint8)
+    if foreground_rule == "red":
+        foreground = (
+            (image[..., 0] >= 180)
+            & (image[..., 1] <= 100)
+            & (image[..., 2] <= 100)
+        )
+    elif foreground_rule == "nonblack":
+        foreground = np.max(image, axis=-1) >= 32
+    elif foreground_rule == "chromatic":
+        signed = image.astype(np.int16)
+        foreground = (
+            np.max(signed, axis=-1) - np.min(signed, axis=-1)
+        ) >= 48
+    else:
+        raise ValueError(f"Unknown foreground rule: {foreground_rule}")
+    result = np.full(image.shape, 255, dtype=np.uint8)
+    result[foreground] = (230, 0, 0)
+    return result
+
+
+def load_rgb_image(path: Path) -> np.ndarray:
+    with Image.open(path) as image:
+        return np.asarray(image.convert("RGB"))
+
+
+def tree_sha256(root: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(item for item in root.rglob("*") if item.is_file()):
+        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def api_post_json(base: str, path: str, **query: str | int) -> dict:
+    request = Request(api_url(base, path, **query), method="POST")
+    return json.loads(read_url_with_retry(request))
+
+
+def build_api_result_task_mosaic(
+    base: str,
+    region: str,
+    task: str,
+    version: str,
+    month: str,
+    cache_root: Path,
+    output: Path,
+    foreground_rule: str | None = None,
+) -> dict[str, int | str]:
+    patches = api_patches(base, region)
+    layouts, rows, cols = api_patch_layout(patches)
+    result_root = cache_root / region / version / task / month / "result_png"
+    result_root.mkdir(parents=True, exist_ok=True)
+
+    def fetch(patch_id: str) -> tuple[str, np.ndarray]:
+        target = result_root / f"{patch_id}.png"
+        url = api_url(
+            base,
+            f"regions/{region}/patches/{patch_id}/tasks/{task}/result",
+            format="png",
+            version=version,
+            month=month,
+        )
+        if not target.exists():
+            target.write_bytes(read_url_with_retry(url))
+        image = load_rgb_image(target)
+        if foreground_rule:
+            image = normalize_binary_api_result(image, foreground_rule)
+        return patch_id, image
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        images = dict(pool.map(fetch, [item.patch_id for item in layouts]))
+    canvas = rgb_result_mosaic(layouts, rows, cols, images)
+    save_slide_image(Image.fromarray(canvas), output)
+    return {
+        "patches": len(layouts),
+        "region": region,
+        "task": task,
+        "version": version,
+        "month": month,
+        "source_type": "direct_api_result_png",
+        "cache_root": str(result_root),
+        "cache_sha256": tree_sha256(result_root),
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "api_result_template": api_url(
+            base,
+            f"regions/{region}/patches/{{patch_id}}/tasks/{task}/result",
+            format="png",
+            version=version,
+            month=month,
+        ),
+    }
+
+
+def build_system_model_task_mosaic(
+    base: str,
+    region: str,
+    task: str,
+    version: str,
+    month: str,
+    cache_root: Path,
+    output: Path,
+    foreground_rule: str | None = None,
+) -> dict[str, int | str]:
+    patches = api_patches(base, region)
+    layouts, rows, cols = api_patch_layout(patches)
+    result_root = cache_root / region / version / "system_models" / task / month
+    result_root.mkdir(parents=True, exist_ok=True)
+
+    def fetch(patch_id: str) -> tuple[str, np.ndarray]:
+        target = result_root / f"{patch_id}.png"
+        if not target.exists():
+            payload = api_post_json(
+                base,
+                f"system-models/{task}/infer",
+                region_id=region,
+                patch_id=patch_id,
+                month=month,
+                version=version,
+            )
+            target.write_bytes(read_url_with_retry(f"{base.rstrip('/')}{payload['result_url']}"))
+        image = load_rgb_image(target)
+        if foreground_rule:
+            image = normalize_binary_api_result(image, foreground_rule)
+        return patch_id, image
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        images = dict(pool.map(fetch, [item.patch_id for item in layouts]))
+    canvas = rgb_result_mosaic(layouts, rows, cols, images)
+    save_slide_image(Image.fromarray(canvas), output)
+    return {
+        "patches": len(layouts),
+        "region": region,
+        "task": task,
+        "version": version,
+        "month": month,
+        "source_type": "api_system_model_inference",
+        "cache_root": str(result_root),
+        "cache_sha256": tree_sha256(result_root),
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "api_infer": api_url(
+            base,
+            f"system-models/{task}/infer",
+            region_id=region,
+            patch_id="{patch_id}",
+            month=month,
+            version=version,
+        ),
     }
 
 
@@ -554,6 +727,7 @@ def add_region(
     tasks: list[tuple[str, Path]],
     footer: str,
     pca_caption: str,
+    legend_text: str = "■ 红=预测目标｜白=背景",
 ) -> None:
     add_text(slide, name, x, 1.60, 6.05, 0.34, 18, BLUE, True, PP_ALIGN.CENTER)
     add_text(
@@ -596,7 +770,7 @@ def add_region(
         )
     add_text(
         slide,
-        "■ 红=预测目标｜白=背景",
+        legend_text,
         x + 4.02,
         6.10,
         1.92,
@@ -646,7 +820,7 @@ def build_ppt(source: Path, output: Path, assets: dict[str, Path]) -> None:
     )
     add_text(
         slide,
-        "两个区域已形成月度、稠密、可复用的地理嵌入，同一份嵌入支持多类地物制图任务",
+        "两个区域已形成月度地理嵌入，并接入多类 API 地物制图服务",
         0.45,
         1.18,
         12.43,
@@ -663,12 +837,13 @@ def build_ppt(source: Path, output: Path, assets: dict[str, Path]) -> None:
         0.31,
         assets["haidian_pca"],
         [
-            ("建筑提取", assets["haidian_building"]),
+            ("API建筑结果", assets["haidian_building"]),
             ("道路提取", assets["haidian_road"]),
             ("水体提取", assets["haidian_water"]),
         ],
         "320 patch｜月度：2025.12–2026.05｜128×128×64 / patch",
         "2026年5月全域 Embedding PCA",
+        "建筑：红=API返回区域｜其余：红=模型目标",
     )
     add_region(
         slide,
@@ -676,10 +851,13 @@ def build_ppt(source: Path, output: Path, assets: dict[str, Path]) -> None:
         7.16,
         assets["harbin_pca"],
         [
-            ("建设区域监测", assets["harbin_building"]),
+            ("建筑物提取", assets["harbin_building"]),
+            ("水体提取", assets["harbin_water"]),
+            ("土地覆盖分类", assets["harbin_landcover"]),
         ],
         "424 patch｜10期：2025.04–2026.05｜64维月度嵌入",
         "2026年5月全域 Embedding PCA",
+        "红=目标｜蓝林 绿草 橙耕 黄建 灰水",
     )
     add_text(
         slide,
@@ -724,7 +902,7 @@ def build_preview(output: Path, assets: dict[str, Path]) -> None:
     draw.text(
         ((1600 - (title_box[2] - title_box[0])) // 2, 77), title, font=font(36, True), fill="white"
     )
-    conclusion = "两个区域已形成月度、稠密、可复用的地理嵌入，同一份嵌入支持多类地物制图任务"
+    conclusion = "两个区域已形成月度地理嵌入，并接入多类 API 地物制图服务"
     box = draw.textbbox((0, 0), conclusion, font=font(19, True))
     draw.text(((1600 - (box[2] - box[0])) // 2, 147), conclusion, font=font(19, True), fill=ink)
     draw.line((798, 194, 798, 829), fill=line, width=2)
@@ -735,25 +913,29 @@ def build_preview(output: Path, assets: dict[str, Path]) -> None:
             "海淀区｜P10C epoch 800",
             assets["haidian_pca"],
             [
-                ("建筑提取", assets["haidian_building"]),
+                ("API建筑结果", assets["haidian_building"]),
                 ("道路提取", assets["haidian_road"]),
                 ("水体提取", assets["haidian_water"]),
             ],
             "320 patch｜月度：2025.12–2026.05｜128×128×64 / patch",
             "2026年5月全域 Embedding PCA",
+            "建筑：红=API返回区域｜其余：红=模型目标",
         ),
         (
             857,
             "哈尔滨新区｜V5（API v2）",
             assets["harbin_pca"],
             [
-                ("建设区域监测", assets["harbin_building"]),
+                ("建筑物提取", assets["harbin_building"]),
+                ("水体提取", assets["harbin_water"]),
+                ("土地覆盖分类", assets["harbin_landcover"]),
             ],
             "424 patch｜10期：2025.04–2026.05｜64维月度嵌入",
             "2026年5月全域 Embedding PCA",
+            "红=目标｜蓝林 绿草 橙耕 黄建 灰水",
         ),
     ]
-    for x, name, pca_path, tasks, footer, pca_caption in regions:
+    for x, name, pca_path, tasks, footer, pca_caption, legend in regions:
         name_box = draw.textbbox((0, 0), name, font=font(23, True))
         draw.text(
             (x + (726 - (name_box[2] - name_box[0])) // 2, 189),
@@ -777,7 +959,6 @@ def build_preview(output: Path, assets: dict[str, Path]) -> None:
             )
             draw.rectangle((x + 491, y + 34, x + 706, image_bottom), outline=line, width=2)
             contain_pil(canvas, path, (x + 497, y + 40, x + 700, image_bottom - 6))
-        legend = "■ 红=预测目标｜白=背景"
         legend_box = draw.textbbox((0, 0), legend, font=font(11, True))
         draw.text(
             (x + 491 + (215 - (legend_box[2] - legend_box[0])) // 2, 731),
@@ -834,6 +1015,8 @@ def main() -> None:
             *sources,
             "harbin_pca",
             "harbin_building",
+            "harbin_water",
+            "harbin_landcover",
         ]
     }
     for key, source in sources.items():
@@ -854,7 +1037,7 @@ def main() -> None:
         format="png",
     )
     clean_existing_asset(harbin_pca_cache, assets["harbin_pca"], header_pixels=0)
-    haidian_building_meta = build_api_binary_task_mosaic(
+    haidian_building_meta = build_api_result_task_mosaic(
         args.api_base,
         "haidian",
         "building_extraction",
@@ -862,6 +1045,7 @@ def main() -> None:
         args.haidian_month,
         args.api_cache_root,
         assets["haidian_building"],
+        foreground_rule="red",
     )
     haidian_road_meta = build_api_binary_task_mosaic(
         args.api_base,
@@ -881,7 +1065,7 @@ def main() -> None:
         args.api_cache_root,
         assets["haidian_water"],
     )
-    harbin_building_meta = build_api_binary_task_mosaic(
+    harbin_building_meta = build_system_model_task_mosaic(
         args.api_base,
         "harbin",
         "building_extraction",
@@ -889,6 +1073,32 @@ def main() -> None:
         args.month,
         args.api_cache_root,
         assets["harbin_building"],
+        foreground_rule="chromatic",
+    )
+    harbin_water_meta = build_system_model_task_mosaic(
+        args.api_base,
+        "harbin",
+        "water_extraction",
+        "v2",
+        args.month,
+        args.api_cache_root,
+        assets["harbin_water"],
+        foreground_rule="chromatic",
+    )
+    harbin_landcover_meta = build_system_model_task_mosaic(
+        args.api_base,
+        "harbin",
+        "land_cover_classification",
+        "v2",
+        args.month,
+        args.api_cache_root,
+        assets["harbin_landcover"],
+    )
+    harbin_landcover_classes = api_get_json(
+        args.api_base,
+        "system-models/land_cover_classification/classes",
+        region_id="harbin",
+        version="v2",
     )
     pca_meta = {
         "patches": 424,
@@ -903,6 +1113,8 @@ def main() -> None:
         "haidian_road": haidian_road_meta,
         "haidian_water": haidian_water_meta,
         "harbin_building": harbin_building_meta,
+        "harbin_water": harbin_water_meta,
+        "harbin_landcover": harbin_landcover_meta,
     }
     build_ppt(args.source_pptx, args.output_pptx, assets)
     preview = args.asset_root / "slide01_preview.png"
@@ -918,10 +1130,13 @@ def main() -> None:
             "checkpoint": "epoch_800",
             "embedding_version": "v1",
             "month": args.haidian_month,
-            "building_head": "binary_conv3x3",
-            "building_threshold": haidian_building_meta["threshold"],
-            "building_task_map_type": "API numeric prediction thresholded with registered threshold",
-            "building_source": haidian_building_meta["api_prediction_template"],
+            "building_head": "API configured result",
+            "building_task_map_type": "direct API result PNG",
+            "building_semantics": (
+                "Pre-generated API building region tile; not presented as the "
+                "P10C binary_conv3x3 probability-threshold result."
+            ),
+            "building_source": haidian_building_meta["api_result_template"],
             "road_head": haidian_road_meta["head"],
             "road_threshold": haidian_road_meta["threshold"],
             "road_source": haidian_road_meta["api_prediction_template"],
@@ -935,8 +1150,13 @@ def main() -> None:
             "month": args.month,
             "training": "deployed embedding-api asset",
             "embedding_source": harbin_pca_url,
-            "task_map_type": "API construction-mapped numeric prediction",
-            "task_label": "建设区域监测",
+            "task_map_type": "API V5/v2 system model inference",
+            "tasks": [
+                "building_extraction",
+                "water_extraction",
+                "land_cover_classification",
+            ],
+            "landcover_classes": harbin_landcover_classes,
         },
         "harbin_pca": pca_meta,
         "api_task_maps": probe_meta,
