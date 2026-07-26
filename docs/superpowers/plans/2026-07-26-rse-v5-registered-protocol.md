@@ -122,8 +122,15 @@
 - Uses the same task labels, fold-specific train/test patch support, 5/10-shot schedules, Conv3x3 hyperparameters, threshold rule, result schema, and bootstrap pairing keys as Xuannv.
 
 - [ ] Write failing tests rejecting AEF exports with a mismatched release/manifest/split/schedule, a learned or non-recorded resolution adapter, a missing source temporal/grid mapping, or a result whose task support differs from the paired Xuannv result.
-- [ ] Implement the AEF source loader plus explicit spatial adapter and export provenance; generate one v5 registry only after the exact per-map checksums are verified, then commit and push it.
+- [ ] Re-export the cached annual-2025 AEF COGs onto every committed local reference grid using a deterministic non-learned reprojection/mosaic rule; the old locally window-resampled maps remain diagnostic-only and cannot enter V5 results.
+- [ ] Seal one source manifest before probing: mirror and source URIs, temporal coverage, COG/index hashes, per-patch COG/mosaic choice, reference-grid CRS/transform/bounds/hash, resampling parameters, nodata fraction, per-map checksum, and a validity-mask checksum. The V5 adapter must reject incomplete coverage, a learned adapter, or nonidentical valid evaluation support.
+- [ ] Implement the AEF source loader plus explicit spatial adapter and export provenance; generate one v5 registry only after the exact per-map and validity-mask checksums are verified, then commit and push it.
 - [ ] Implement the matched six-NPU 90-job AEF launcher and run dry-run/provenance tests; commit `feat: add matched AEF v5 baseline protocol`.
+
+**Interpretation boundary:** the resulting comparison is an annual global AEF baseline versus a monthly
+city-scale representation under static OSM-assisted spatial readout. It must not be reported as a
+same-date temporal comparison, a change-detection comparison, or evidence that one model has a
+temporally superior representation.
 
 ### Task 6: Run v5 probes, admission, and statistical analysis
 
