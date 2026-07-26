@@ -227,8 +227,8 @@ def build_page06(prs: Presentation):
         "现有数据与推理 API 可封装为智能体工具；嵌入底座负责提供可复用地理表示",
     )
     _add_panel_frame(slide, 0.5, 1.35, 7.15, 4.85)
-    add_text(slide, "自然语言需求到地图结果的协同流程", 0.73, 1.52, 4.5, 0.25, 16, DEEP_BLUE, True)
-    add_text(slide, "概念流程示意（非真实系统界面）", 5.05, 1.55, 2.2, 0.18, 11, RED, True)
+    add_text(slide, "自然语言需求到地图结果的协同流程", 0.73, 1.52, 3.85, 0.25, 16, DEEP_BLUE, True)
+    add_text(slide, "概念流程示意（非真实系统界面）", 4.78, 1.53, 2.55, 0.24, 10, RED, True)
     add_picture(slide, WORKFLOW_IMAGE, 0.7, 1.88, 6.75, 4.02, "contain")
 
     tool_rows = [
@@ -242,7 +242,7 @@ def build_page06(prs: Presentation):
         y = 1.35 + (index - 1) * 0.84
         add_rect(slide, 8.0, y, 4.78, 0.76, PALE_BLUE, LINE, MSO_SHAPE.ROUNDED_RECTANGLE)
         _add_number_badge(slide, index, 8.2, y + 0.19)
-        add_text(slide, title, 8.75, y + 0.11, 3.5, 0.18, 14, DEEP_BLUE, True)
+        add_text(slide, title, 8.75, y + 0.11, 3.5, 0.22, 14, DEEP_BLUE, True)
         add_text(slide, detail, 8.75, y + 0.41, 3.7, 0.18, 11, MUTED)
 
     add_rect(slide, 8.0, 5.64, 4.78, 0.58, PALE_GRAY, PALE_GRAY, MSO_SHAPE.ROUNDED_RECTANGLE)

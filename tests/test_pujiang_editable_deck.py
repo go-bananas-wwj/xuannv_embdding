@@ -204,6 +204,29 @@ def test_page06_marks_the_workflow_as_a_conceptual_diagram() -> None:
     assert "概念流程示意（非真实系统界面）" in _slide_text(presentation.slides[2])
 
 
+def test_page06_workflow_text_boxes_have_sufficient_height_and_spacing() -> None:
+    presentation = _editable_pages04_07()
+    slide = presentation.slides[2]
+    text_shapes = {shape.text: shape for shape in slide.shapes if hasattr(shape, "text")}
+
+    concept_label = text_shapes["概念流程示意（非真实系统界面）"]
+    assert concept_label.width >= Inches(2.5)
+    assert concept_label.height >= Inches(0.24)
+
+    rows = (
+        ("理解任务", "区域、月份、目标类别与输出形式"),
+        ("读取嵌入", "embedding_tool：加载月度 64 维嵌入"),
+        ("选择工具", "系统任务头、变化分析、任务摘要"),
+        ("空间计算", "全域推理、统计汇总与质量检查"),
+        ("交付结果", "地图图层、案例图与结构化报告"),
+    )
+    for title, detail in rows:
+        title_shape = text_shapes[title]
+        detail_shape = text_shapes[detail]
+        assert title_shape.height >= Inches(0.22)
+        assert title_shape.top + title_shape.height <= detail_shape.top
+
+
 def _picture_dimensions(shape) -> tuple[int, int]:
     with Image.open(BytesIO(shape.image.blob)) as image:
         return image.size
