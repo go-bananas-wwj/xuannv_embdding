@@ -9,7 +9,9 @@ labels, support schedule, and held-out patch identities in every paired cell.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
+from statistics import mean, stdev
 from typing import Any, Mapping
 
 from scripts.eval.run_registered_paper_downstream import (
@@ -60,6 +62,7 @@ FROZEN_THRESHOLD_GRID = {
     "grid_step": 0.001,
     "candidate_count": 999,
 }
+METRICS = ("f1_at_threshold", "ap", "auc_roc", "miou", "precision", "recall")
 
 
 def contextual_matrix_sha256() -> str:
@@ -188,3 +191,47 @@ def verify_contextual_pairing(
                 raise ValueError(
                     f"Contextual comparison requires the registered validation threshold grid for {cell}"
                 )
+
+
+def summarize_contextual_records(
+    records: Mapping[CellKey, Mapping[str, object]],
+) -> dict[str, dict[str, object]]:
+    """Summarize the complete 90-cell matrix by seed-level five-fold means."""
+    if set(records) != EXPECTED_CELLS:
+        raise ValueError("Contextual summary requires the complete registered 90-cell matrix")
+    summary: dict[str, dict[str, object]] = {}
+    for task in ("building", "road", "water"):
+        for shot in ("5", "10"):
+            metric_summary: dict[str, object] = {}
+            for metric in METRICS:
+                per_seed: dict[str, float] = {}
+                pooled: list[float] = []
+                for seed in (42, 43, 44):
+                    values: list[float] = []
+                    for fold in range(5):
+                        value = _payload(records[(task, shot, fold, seed)]).get(metric)
+                        if (
+                            isinstance(value, bool)
+                            or not isinstance(value, (int, float))
+                            or not math.isfinite(value)
+                        ):
+                            raise ValueError(f"Contextual result lacks a finite numeric {metric}")
+                        values.append(float(value))
+                    per_seed[str(seed)] = mean(values)
+                    pooled.extend(values)
+                seed_values = list(per_seed.values())
+                metric_summary[metric] = {
+                    "per_seed_fold_means": per_seed,
+                    "mean": mean(seed_values),
+                    "std": stdev(seed_values),
+                    "n_seeds": len(seed_values),
+                    "pooled_fold_mean": mean(pooled),
+                    "pooled_fold_std": stdev(pooled),
+                    "n_fold_seed_runs": len(pooled),
+                }
+            summary[f"{task}|{shot}"] = {
+                "task": task,
+                "shot": shot,
+                "metrics": metric_summary,
+            }
+    return summary

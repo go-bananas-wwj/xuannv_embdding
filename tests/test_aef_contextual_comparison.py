@@ -35,6 +35,12 @@ def _record(protocol: str, *, cell: tuple[str, str, int, int], test_ids: str = "
                 "grid_step": 0.001,
                 "candidate_count": 999,
             },
+            "f1_at_threshold": 0.5,
+            "ap": 0.6,
+            "auc_roc": 0.7,
+            "miou": 0.4,
+            "precision": 0.55,
+            "recall": 0.45,
         },
     }
 
@@ -131,3 +137,29 @@ def test_contextual_matrix_identity_requires_git_head(monkeypatch: pytest.Monkey
     contextual.contextual_matrix_sha256()
 
     assert calls == [contextual.AEF_MATRIX_PATH]
+
+
+def test_contextual_summary_uses_seed_level_fold_means() -> None:
+    records = _matrix("aef_annual_2025_contextual")
+    for cell, record in records.items():
+        payload = record["metric_provenance"]
+        assert isinstance(payload, dict)
+        payload["f1_at_threshold"] = 0.4 + 0.01 * cell[2] + 0.02 * (cell[3] - 42)
+
+    summary = contextual.summarize_contextual_records(records)
+
+    f1 = summary["building|5"]["metrics"]["f1_at_threshold"]
+    assert f1["n_fold_seed_runs"] == 15
+    assert f1["n_seeds"] == 3
+    assert f1["mean"] == pytest.approx(0.44)
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), True])
+def test_contextual_summary_rejects_non_finite_metrics(invalid: object) -> None:
+    records = _matrix("aef_annual_2025_contextual")
+    payload = records[("building", "5", 0, 42)]["metric_provenance"]
+    assert isinstance(payload, dict)
+    payload["ap"] = invalid
+
+    with pytest.raises(ValueError, match="finite"):
+        contextual.summarize_contextual_records(records)
