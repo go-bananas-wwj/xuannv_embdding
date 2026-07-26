@@ -53,9 +53,9 @@
     },
     "reader_sources": {
       "scripts/eval/registered_aef_contextual.py": "0fedd80d40806c39da0eef38ad1236dc92f0495f20c87b89d1e16583fbae036d",
-      "scripts/eval/run_registered_aef_contextual_downstream.py": "7e46ffd3818a648e93c33810604a46e838757ada0804b560df960342c715fa42",
+      "scripts/eval/run_registered_aef_contextual_downstream.py": "f4595ded8329233d53deef74c82a444e8e464a09d2d2c31dc9275ef34124c928",
       "scripts/eval/export_aef_v5_embeddings.py": "9e2af2e7a85a36ca92520c2a5f52203051a8e10c8d7550f41f52409b91c9c1b8",
-      "scripts/eval/run_registered_paper_downstream.py": "801a2336fd2f78ee902499a479060770f22f3bc3d61e81b289afeba3f942e9f6",
+      "scripts/eval/run_registered_paper_downstream.py": "1b23e31ebda0d304c784384d3d65a40f2a98766ae9b08fd1760b97f585c06054",
       "scripts/eval/run_strong_downstream_benchmark.py": "2950aa68bb36cad60b7be634901c740e66affe1d5876247477b88657cb1b5ce5",
       "scripts/eval/run_traditional_ml_benchmark.py": "fff112cabdb88738d9cb22a68d3cb63c7c01d6a79daa023dbb4dbd0756fb0baf"
     }
@@ -76,7 +76,7 @@
     "selection": "registered_mixed_positive_background_patch_schedule"
   },
   "expected_job_count": 90,
-  "paired_bootstrap": {"resamples": 10000, "seed": 20260725, "hierarchy": ["fold", "complete_2x2_cluster", "probe_seed"], "patch_metadata_sha256": "17137cc379a874949a3eb460d48d8ad7c7698b63dbaaf5b4d3c1b40f84f69d97"},
+  "paired_bootstrap": {"resamples": 10000, "seed": 20260725, "hierarchy": ["fold", "complete_2x2_geographic_cluster", "support_schedule_seed"], "patch_metadata_sha256": "17137cc379a874949a3eb460d48d8ad7c7698b63dbaaf5b4d3c1b40f84f69d97"},
   "evidence_scope": "osm_assisted_spatial_readout",
   "prohibited_claims": ["matched_temporal_information", "matched_inputs", "labelled_patch_efficiency_against_information_matched_baseline", "independent_transfer", "geographically_unseen_pretraining", "contemporaneous_ground_truth", "monthly_change_evidence", "global_superiority"]
 }

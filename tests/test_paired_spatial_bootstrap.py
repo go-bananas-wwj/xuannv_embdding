@@ -104,7 +104,7 @@ def test_hierarchical_bootstrap_resamples_spatial_folds_with_nested_seeds() -> N
     )
 
     assert summary["n_spatial_folds"] == 2
-    assert summary["probe_seeds_per_fold"] == [42, 43, 44]
+    assert summary["support_schedule_seeds_per_fold"] == [42, 43, 44]
     assert summary["candidate_minus_baseline"]["f1"]["ci95_low"] > 0
 
 
@@ -139,12 +139,12 @@ def test_hierarchical_bootstrap_exposes_non_degenerate_seed_uncertainty() -> Non
     f1 = summary["candidate_minus_baseline"]["f1"]
     descriptive = summary["descriptive_candidate_minus_baseline_standard_deviation"]["f1"]
     assert summary["resampling_hierarchy"] == [
-        "spatial_fold",
-        "2x2_geographic_cluster",
-        "probe_seed",
+        "fold",
+        "complete_2x2_geographic_cluster",
+        "support_schedule_seed",
     ]
     assert descriptive["across_spatial_folds"] > 0.0
-    assert descriptive["across_probe_seeds"] > 0.0
+    assert descriptive["across_support_schedule_seeds"] > 0.0
     assert f1["ci95_low"] < f1["ci95_high"]
 
 
@@ -171,7 +171,7 @@ def test_internal_resampler_exposes_cluster_only_uncertainty() -> None:
 
     f1 = summary["candidate_minus_baseline"]["f1"]
     descriptive = summary["descriptive_candidate_minus_baseline_standard_deviation"]["f1"]
-    assert descriptive == {"across_spatial_folds": 0.0, "across_probe_seeds": 0.0}
+    assert descriptive == {"across_spatial_folds": 0.0, "across_support_schedule_seeds": 0.0}
     assert f1["ci95_low"] < f1["ci95_high"]
 
 
@@ -196,7 +196,7 @@ def test_internal_resampler_exposes_fold_only_uncertainty() -> None:
     f1 = summary["candidate_minus_baseline"]["f1"]
     descriptive = summary["descriptive_candidate_minus_baseline_standard_deviation"]["f1"]
     assert descriptive["across_spatial_folds"] > 0.0
-    assert descriptive["across_probe_seeds"] == 0.0
+    assert descriptive["across_support_schedule_seeds"] == 0.0
     assert f1["ci95_low"] < f1["ci95_high"]
 
 
@@ -223,7 +223,7 @@ def test_internal_resampler_exposes_seed_only_uncertainty() -> None:
     f1 = summary["candidate_minus_baseline"]["f1"]
     descriptive = summary["descriptive_candidate_minus_baseline_standard_deviation"]["f1"]
     assert descriptive["across_spatial_folds"] == 0.0
-    assert descriptive["across_probe_seeds"] > 0.0
+    assert descriptive["across_support_schedule_seeds"] > 0.0
     assert f1["ci95_low"] < f1["ci95_high"]
 
 
@@ -607,7 +607,7 @@ def test_compare_snapshot_excludes_unrelated_family_records_and_stays_preliminar
     assert report["comparisons"]["building|5"]["geographic_cluster_membership_by_fold"]
     assert report["comparisons"]["building|5"][
         "descriptive_candidate_minus_baseline_standard_deviation"
-    ]["f1"] == {"across_spatial_folds": 0.0, "across_probe_seeds": 0.0}
+    ]["f1"] == {"across_spatial_folds": 0.0, "across_support_schedule_seeds": 0.0}
 
 
 @pytest.mark.parametrize(

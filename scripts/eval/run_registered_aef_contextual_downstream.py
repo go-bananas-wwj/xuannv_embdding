@@ -40,6 +40,7 @@ from scripts.eval.run_registered_paper_downstream import (
     load_registered_shot_ids,
     prepare_result_output,
     sigmoid_probabilities,
+    target_support_sha256,
     verify_artifact_registry_binding,
     write_prediction_archive,
 )
@@ -397,6 +398,10 @@ def main() -> None:
         "test_patch_ids_sha256": hashlib.sha256("\n".join(test_ids).encode()).hexdigest(),
         "per_patch_confusion": {
             patch_id: _confusion(test_targets[index], test_probs[index], threshold)
+            for index, patch_id in enumerate(test_ids)
+        },
+        "per_patch_target_support_sha256": {
+            patch_id: target_support_sha256(test_targets[index])
             for index, patch_id in enumerate(test_ids)
         },
         "python": platform.python_version(),

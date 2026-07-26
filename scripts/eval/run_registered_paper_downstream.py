@@ -437,6 +437,15 @@ def _patch_id_set_sha256(patch_ids: set[str]) -> str:
     return hashlib.sha256("\n".join(sorted(patch_ids)).encode("utf-8")).hexdigest()
 
 
+def target_support_sha256(target_map: np.ndarray) -> str:
+    """Bind the canonical uint8 target representation sealed in prediction archives."""
+    target = np.ascontiguousarray(np.asarray(target_map, dtype=np.uint8))
+    header = f"target-support-v1|{target.dtype.str}|{','.join(str(size) for size in target.shape)}|".encode(
+        "utf-8"
+    )
+    return hashlib.sha256(header + target.tobytes()).hexdigest()
+
+
 def _load_export_shard_records(
     embedding_root: Path,
     region: str,
@@ -1926,6 +1935,10 @@ def main() -> None:
         "shot_manifest_path": str(shot_manifest_path) if shot_manifest_path else None,
         "shot_manifest_sha256": sha256_file(shot_manifest_path) if shot_manifest_path else None,
         "per_patch_confusion": per_patch,
+        "per_patch_target_support_sha256": {
+            patch_id: target_support_sha256(target_maps[index])
+            for index, patch_id in enumerate(ordered_patch_ids)
+        },
     }
     if args.protocol == "v5_osm_assisted":
         metric_payload["family"] = provenance["family"]

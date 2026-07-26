@@ -334,7 +334,7 @@ def _hierarchical_paired_resample(
             samples[metric][index] = metrics_b[metric] - metrics_a[metric]
     return {
         "n_spatial_folds": len(folds),
-        "probe_seeds_per_fold": list(first_seed_set),
+        "support_schedule_seeds_per_fold": list(first_seed_set),
         "n_patches_per_fold": {f"fold{fold}": len(patch_ids_by_fold[fold]) for fold in folds},
         "n_geographic_clusters_per_fold": {
             f"fold{fold}": len(resolved_clusters[fold]) for fold in folds
@@ -342,11 +342,17 @@ def _hierarchical_paired_resample(
         "geographic_cluster_membership_by_fold": {
             f"fold{fold}": [list(cluster) for cluster in resolved_clusters[fold]] for fold in folds
         },
-        "resampling_hierarchy": ["spatial_fold", "2x2_geographic_cluster", "probe_seed"],
+        "resampling_hierarchy": [
+            "fold",
+            "complete_2x2_geographic_cluster",
+            "support_schedule_seed",
+        ],
         "descriptive_candidate_minus_baseline_standard_deviation": {
             metric: {
                 "across_spatial_folds": _sample_standard_deviation(fold_differences[metric]),
-                "across_probe_seeds": _sample_standard_deviation(seed_differences[metric]),
+                "across_support_schedule_seeds": _sample_standard_deviation(
+                    seed_differences[metric]
+                ),
             }
             for metric in METRICS
         },
