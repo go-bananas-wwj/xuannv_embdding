@@ -1,0 +1,45 @@
+{
+  "slide": 3,
+  "title": "从 AEF 思路到城市尺度月度嵌入",
+  "evidence": {
+    "config": "configs/v2_p10c_haidian_202512_202605_osm_semantic_hardneg_20260704.yaml",
+    "model": "P10C epoch 800",
+    "embed_shape": [
+      128,
+      128,
+      64
+    ],
+    "months": 6,
+    "masking": {
+      "modality_dropout": {
+        "s2": 0.18,
+        "s1": 0.35,
+        "landsat": 0.35
+      },
+      "month_dropout": 0.65,
+      "max_months_per_sample": 4,
+      "spatial_block_probability": 0.65,
+      "spatial_block_ratio": 0.32,
+      "drop_availability_masks": false,
+      "availability_mask_role": "source-month availability for masking and attention",
+      "pixel_mask_role": "valid pixels for aggregation, reconstruction and high-res fusion"
+    },
+    "highres_fusion": "aggregate observations to one frame, then inject into each month",
+    "loss_weights": {
+      "uniformity": 0.06,
+      "osm_semantic_probe": 0.14,
+      "osm_hard_negative_ratio": 0.02,
+      "osm_hard_negative_weight": 0.35,
+      "highres_optical_reconstruction": 0.9,
+      "s1_reconstruction": 0.25,
+      "highres_sar_reconstruction": 0.35,
+      "supervised_change": 0.0,
+      "temporal_contrast": 0.0
+    }
+  },
+  "claim_boundary": [
+    "AEF-inspired embedding field paradigm, not a complete AEF reproduction.",
+    "OSM is auxiliary weak semantics, not manual ground truth.",
+    "No national or cross-region zero-shot generalization claim."
+  ]
+}
