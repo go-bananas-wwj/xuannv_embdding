@@ -1,0 +1,69 @@
+{
+  "slide": 1,
+  "title": "玄女月度地理嵌入：海淀区与哈尔滨新区实践",
+  "pptx": "/root/workspace/xuannv/docs/presentations/pujiang_202607/玄女月度地理嵌入_浦江交流_第01页_20260726.pptx",
+  "preview": "/root/workspace/xuannv/docs/presentations/assets/pujiang_202607/slide01/slide01_preview.png",
+  "haidian_model": {
+    "experiment": "P10C",
+    "checkpoint": "epoch_800",
+    "month": "202604",
+    "task_map_type": "fold_0 model prediction"
+  },
+  "harbin_model": {
+    "experiment": "paper_e5_p10c_recipe_harbin_scratch_20260714",
+    "checkpoint": "/data/xuannv_embedding/outputs/paper_e5_p10c_recipe_harbin_scratch_20260714/epoch_800.pt",
+    "month": "202604",
+    "training": "scratch",
+    "task_map_type": "fold_0 MLP diagnostic prediction"
+  },
+  "harbin_pca": {
+    "patches": 424,
+    "rows": 24,
+    "cols": 26,
+    "tile_height": 128,
+    "tile_width": 128,
+    "month": "202604"
+  },
+  "harbin_probes": {
+    "building_osm": {
+      "checkpoint": "/data/xuannv_embedding/benchmarks/presentation_pujiang_202607/harbin_e5_p10c_e800/building_osm/fold_0/checkpoints/best.pt",
+      "metrics": "/data/xuannv_embedding/benchmarks/presentation_pujiang_202607/harbin_e5_p10c_e800/building_osm/fold_0/metrics.json",
+      "threshold": 0.26743069291114807,
+      "head": "mlp",
+      "fold": 0,
+      "best_epoch": 49,
+      "f1": 0.36684340988558195,
+      "auc": 0.9429299535410797
+    },
+    "road_osm": {
+      "checkpoint": "/data/xuannv_embedding/benchmarks/presentation_pujiang_202607/harbin_e5_p10c_e800/road_osm/fold_0/checkpoints/best.pt",
+      "metrics": "/data/xuannv_embedding/benchmarks/presentation_pujiang_202607/harbin_e5_p10c_e800/road_osm/fold_0/metrics.json",
+      "threshold": 0.4237881302833557,
+      "head": "mlp",
+      "fold": 0,
+      "best_epoch": 49,
+      "f1": 0.29050714852505116,
+      "auc": 0.7979181565178529
+    },
+    "osm_water": {
+      "checkpoint": "/data/xuannv_embedding/benchmarks/presentation_pujiang_202607/harbin_e5_p10c_e800/osm_water/fold_0/checkpoints/best.pt",
+      "metrics": "/data/xuannv_embedding/benchmarks/presentation_pujiang_202607/harbin_e5_p10c_e800/osm_water/fold_0/metrics.json",
+      "threshold": 0.4749285578727722,
+      "head": "mlp",
+      "fold": 0,
+      "best_epoch": 49,
+      "f1": 0.558261403713157,
+      "auc": 0.8727278248943092
+    }
+  },
+  "assets": {
+    "haidian_pca": "/root/workspace/xuannv/docs/presentations/assets/pujiang_202607/slide01/haidian_pca.png",
+    "haidian_building": "/root/workspace/xuannv/docs/presentations/assets/pujiang_202607/slide01/haidian_building.png",
+    "haidian_road": "/root/workspace/xuannv/docs/presentations/assets/pujiang_202607/slide01/haidian_road.png",
+    "haidian_water": "/root/workspace/xuannv/docs/presentations/assets/pujiang_202607/slide01/haidian_water.png",
+    "harbin_pca": "/root/workspace/xuannv/docs/presentations/assets/pujiang_202607/slide01/harbin_pca.png",
+    "harbin_building": "/root/workspace/xuannv/docs/presentations/assets/pujiang_202607/slide01/harbin_building.png",
+    "harbin_road": "/root/workspace/xuannv/docs/presentations/assets/pujiang_202607/slide01/harbin_road.png",
+    "harbin_water": "/root/workspace/xuannv/docs/presentations/assets/pujiang_202607/slide01/harbin_water.png"
+  }
+}
