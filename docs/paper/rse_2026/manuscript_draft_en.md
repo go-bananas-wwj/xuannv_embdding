@@ -232,7 +232,24 @@ prohibits preliminary outputs from entering tables or figures; this policy is en
 evidence-ledger admission workflow, whose release-admission consumer must complete before any V5
 result is used.
 
-### 3.6 Registered assets, aggregation, and reproducibility
+### 3.6 Annual-AEF contextual comparator
+
+We pre-register a contextual comparison using the official AlphaEarth Foundations (AEF)
+annual-2025 embedding for the same 320 Haidian patches. This comparator is intentionally classified as a *contextual*,
+time-inequivalent comparison: it contrasts an annual 2025 AEF product with the XuannvEarth
+2026-04 monthly product. It does not match observation dates or sensor inputs, and it does not
+control for or establish pretraining extent, geographic overlap, or weak-supervision history. The
+planned AEF export is label-free; its official annual index, source COGs, patch coverage, output
+index, and valid-pixel masks must be hash-locked before probe training.
+
+For each of the three tasks, five folds, two support budgets, and three probe seeds, we apply the
+identical frozen Conv3x3 reader, support-only standardisation, optimizer schedule, deterministic
+support schedule, validation-only threshold rule, and held-out test metrics described above. The
+90-cell AEF matrix is therefore useful for a controlled spatial-readout context, but not for
+claims of matched temporal information, independent transfer, or global superiority. Tables,
+captions, and discussion retain this qualifier wherever the comparator appears.
+
+### 3.7 Registered assets, aggregation, and reproducibility
 
 The registered protocol is identified as `rse_v5_registered_20260726`. Its immutable five-fold
 split is `haidian_spatial_5fold_complete2x2_v5_seed42.json`
@@ -272,7 +289,19 @@ general semantic generalisation evidence.
 **[Insert Table 3: admitted five-fold/three-seed metrics.]**<br>
 **[Insert Figure 3: admitted held-out imagery, label, probability, and prediction examples.]**
 
-### 4.2 Scale and recipe ablations
+### 4.2 Annual-AEF contextual comparison
+
+**[Populate only after all 90 AEF probe cells, paired aggregation, bootstrap analysis, and
+evidence-ledger admission complete.]** This section will report the annual-2025 AEF versus
+monthly-2026-04 XuannvEarth comparison exclusively as a time-inequivalent, OSM-assisted spatial
+readout. It will use the same 15 fold-seed observations per task and support budget as Section
+4.1, retain the fixed caveat in every table and caption, and omit any interpretation as an
+information-matched or independent-transfer benchmark.
+
+**[Insert Table 4: admitted contextual AEF comparison with F1, IoU, AP, ROC-AUC, and paired
+uncertainty where applicable.]**
+
+### 4.3 Scale and recipe ablations
 
 **[Omit unless every requested comparator is trained, evaluated, and admitted.]** Strictly nested
 40/80/150 scale and matched recipe ablations can be reported only as registered foldwise
@@ -280,7 +309,7 @@ comparisons. One-encoder-seed ablations must be described as exploratory. A comb
 higher-resolution pathway effect cannot be attributed separately to fusion or reconstruction
 without factorial evidence.
 
-### 4.3 Quality, temporal, and geographic robustness
+### 4.4 Quality, temporal, and geographic robustness
 
 **[Omit unless information-matched experiments are complete and admitted.]** A test-time source
 deletion or month shuffling experiment is a distribution-shift diagnosis, not a causal temporal
@@ -288,7 +317,7 @@ ablation. Claims about temporal context require independently trained 1/3/6-mont
 matched information budgets. A second-city result requires clean-from-scratch training and the
 same registered protocol.
 
-### 4.4 Full-region product case study
+### 4.5 Full-region product case study
 
 **[Omit unless P10C provenance is bound and admitted.]** Full-region PCA mosaics, retrieval
 examples, and product maps may be shown only as transductive qualitative illustrations. They cannot
