@@ -15,7 +15,6 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import rasterio
 import torch
@@ -43,9 +42,6 @@ QUERY_MIN_PIXELS, QUERY_MAX_PIXELS = 4, 128
 QUERY_MIN_MARGIN = 0.05
 QUERY_MAX_GROWTH, QUERY_MIN_AREA_CAP = 1.35, 64
 
-PLOT_NAMES = {"building": "Building", "road": "Road", "water": "Water"}
-
-
 @dataclass(frozen=True)
 class PolygonSupport:
     patch_id: str
@@ -59,9 +55,10 @@ class FeatureSpec:
     root: Path
     month: str
     channels: int
+    data_root: Path | None = None
 
 
-MANIFEST_CACHE: dict[Path, dict[str, object]] = {}
+MANIFEST_CACHE: dict[tuple[Path, Path], dict[str, object]] = {}
 
 
 def parse_args() -> argparse.Namespace:
@@ -108,6 +105,7 @@ def feature_specs(args: argparse.Namespace) -> dict[str, FeatureSpec]:
             args.manifest,
             "202604",
             42,
+            args.data_root,
         ),
     }
 
@@ -117,10 +115,13 @@ def load_feature(spec: FeatureSpec, patch_id: str) -> np.ndarray:
         path = emb_path(spec.root, patch_id, spec.month)
         feature = torch.load(path, map_location="cpu", weights_only=True).float().numpy()
     elif spec.kind == "fixed_highres_feature_map":
-        records = MANIFEST_CACHE.get(spec.root)
+        if spec.data_root is None:
+            raise ValueError("Traditional FeatureSpec requires data_root")
+        cache_key = (spec.root, spec.data_root)
+        records = MANIFEST_CACHE.get(cache_key)
         if records is None:
-            records = load_manifest(spec.root, spec.root.parent)
-            MANIFEST_CACHE[spec.root] = records
+            records = load_manifest(spec.root, spec.data_root)
+            MANIFEST_CACHE[cache_key] = records
         feature = fixed_highres_feature_map(records[patch_id], spec.month)
     else:
         raise KeyError(f"Unsupported feature kind: {spec.kind}")
@@ -241,70 +242,6 @@ def metrics(scores: np.ndarray, labels: np.ndarray, threshold: float) -> dict[st
     tp, fp, fn = int((prediction & (y == 1)).sum()), int((prediction & (y == 0)).sum()), int((~prediction & (y == 1)).sum())
     precision, recall = tp / max(tp + fp, 1), tp / max(tp + fn, 1)
     return {"precision": precision, "recall": recall, "f1": 2 * precision * recall / max(precision + recall, 1e-8), "iou": tp / max(tp + fp + fn, 1), "auc": float(roc_auc_score(y, s)), "ap": float(average_precision_score(y, s))}
-
-
-def binary_rgb(mask: np.ndarray, color: tuple[int, int, int] = (226, 42, 42)) -> np.ndarray:
-    output = np.full((*mask.shape, 3), 255, dtype=np.uint8)
-    output[mask] = color
-    return output
-
-
-def make_visual(root: Path, spec: FeatureSpec, task: str, label_root: Path, supports: list[PolygonSupport], model: dict[str, np.ndarray | float | int], test_ids: list[str]) -> Path:
-    # Select a representative only after the aggregate test calculation; it never affects the score.
-    candidates: list[tuple[float, str, np.ndarray, np.ndarray, np.ndarray]] = []
-    for patch_id in test_ids:
-        score, _ = score_pu_query(load_feature(spec, patch_id), model)
-        gt = load_mask(label_root, patch_id)
-        value = metrics(score, gt, float(model["threshold"]))["f1"] if gt.any() else -1.0
-        candidates.append((value, patch_id, score, gt, load_feature(spec, patch_id)))
-    _, patch_id, score, gt, feature = max(candidates, key=lambda item: item[0])
-    support = supports[0]
-    support_feature = load_feature(spec, support.patch_id)
-    fig, axes = plt.subplots(2, 3, figsize=(12, 8))
-    panels = [
-        ("Support polygon (train only)", binary_rgb(support.mask, (180, 40, 180))),
-        ("Support embedding PCA", pca_rgb(support_feature)),
-        ("Test embedding PCA", pca_rgb(feature)),
-        ("Test GT (not used in PU fitting)", binary_rgb(gt, (45, 170, 80))),
-        ("PU + Query score", score),
-        ("Prediction (red)", binary_rgb(score >= float(model["threshold"]))),
-    ]
-    for axis, (title, image) in zip(axes.flat, panels):
-        axis.imshow(image, cmap="turbo" if image.ndim == 2 else None)
-        axis.set_title(title, fontsize=10)
-        axis.axis("off")
-    fig.suptitle(f"{PLOT_NAMES[task]} | {spec.name} | {len(supports)} polygons | representative independent test patch {patch_id}", fontsize=13)
-    fig.tight_layout()
-    output = root / f"{task}_{len(supports)}polygons_example.png"
-    fig.savefig(output, dpi=180)
-    plt.close(fig)
-    return output
-
-
-def pca_rgb(feature: np.ndarray) -> np.ndarray:
-    pixels = np.moveaxis(feature, 0, -1).reshape(-1, feature.shape[0]).astype(np.float32)
-    pixels -= pixels.mean(0)
-    _, _, vectors = np.linalg.svd(pixels[::8], full_matrices=False)
-    output = (pixels @ vectors[:3].T).reshape(feature.shape[1], feature.shape[2], 3)
-    low, high = np.percentile(output, 2, axis=(0, 1)), np.percentile(output, 98, axis=(0, 1))
-    return (255 * np.clip((output - low) / np.maximum(high - low, 1e-6), 0, 1)).astype(np.uint8)
-
-
-def plot_summary(rows: list[dict[str, object]], output: Path) -> None:
-    tasks = sorted({str(row["task"]) for row in rows})
-    counts = sorted({int(row["polygon_count"]) for row in rows})
-    fig, (ax_f1, ax_auc) = plt.subplots(1, 2, figsize=(12, 4.5), sharex=True)
-    for task in tasks:
-        values = [next(float(row["metrics"]["f1"]) for row in rows if row["task"] == task and row["polygon_count"] == count) for count in counts]
-        auc = [next(float(row["metrics"]["auc"]) for row in rows if row["task"] == task and row["polygon_count"] == count) for count in counts]
-        ax_f1.plot(counts, values, marker="o", label=PLOT_NAMES[task])
-        ax_auc.plot(counts, auc, marker="o", label=PLOT_NAMES[task])
-    for axis, title in ((ax_f1, "Independent-test F1"), (ax_auc, "Independent-test AUC")):
-        axis.set_title(title); axis.set_xlabel("Number of labelled polygons"); axis.set_xticks(counts); axis.set_ylim(0, 1); axis.grid(alpha=.25); axis.legend()
-    fig.suptitle("P10C PU + Query: sparse polygon mapping")
-    fig.tight_layout()
-    fig.savefig(output, dpi=180)
-    plt.close(fig)
 
 
 def run_comparison(args: argparse.Namespace) -> dict[str, object]:

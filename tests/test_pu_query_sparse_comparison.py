@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import torch
 
 
 SCRIPT = Path(__file__).parents[1] / "scripts/eval/run_pu_query_sparse_eval.py"
@@ -21,12 +22,37 @@ def comparison_args(tmp_path: Path) -> SimpleNamespace:
     return SimpleNamespace(
         embedding_root=tmp_path / "xuannv",
         aef_embedding_root=tmp_path / "aef",
-        data_root=tmp_path / "processed" / "haidian",
-        manifest=tmp_path / "processed" / "haidian" / "manifest.json",
+        data_root=tmp_path / "data-root",
+        manifest=tmp_path / "manifest-location" / "manifest.json",
         tasks=["building"],
         fold=0,
         seed=17,
         output_root=tmp_path / "output",
+    )
+
+
+def write_embedding(root: Path, patch_id: str, month: str, channels: int) -> np.ndarray:
+    feature = np.arange(channels * 16 * 16, dtype=np.float32).reshape(channels, 16, 16)
+    feature += sum(map(ord, patch_id))
+    path = root / "haidian" / patch_id / f"{month}_embedding_map.pt"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(torch.from_numpy(feature), path)
+    return feature
+
+
+def write_manifest(args: SimpleNamespace, patch_ids: list[str]) -> None:
+    args.manifest.parent.mkdir(parents=True, exist_ok=True)
+    args.manifest.write_text(
+        json.dumps(
+            [
+                {
+                    "patch_id": patch_id,
+                    "s2": [f"sources/{patch_id}_202604_scene.tif"],
+                }
+                for patch_id in patch_ids
+            ]
+        ),
+        encoding="utf-8",
     )
 
 
@@ -39,6 +65,7 @@ def test_feature_specs_describe_the_three_protocol_feature_sources(tmp_path: Pat
     assert specs["aef"].month == "202512"
     assert specs["traditional"].channels == 42
     assert specs["traditional"].kind == "fixed_highres_feature_map"
+    assert specs["traditional"].data_root == args.data_root
 
 
 def test_pick_supports_is_deterministic_for_polygon_candidates() -> None:
@@ -48,6 +75,33 @@ def test_pick_supports_is_deterministic_for_polygon_candidates() -> None:
     ]
 
     assert MODULE.pick_supports(candidates, 3, 91) == MODULE.pick_supports(candidates, 3, 91)
+
+
+def test_load_feature_reads_embedding_and_manifest_relative_to_configured_data_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    args = comparison_args(tmp_path)
+    patch_id = "patch-1"
+    expected_embedding = write_embedding(args.embedding_root, patch_id, "202604", 64)
+    write_manifest(args, [patch_id])
+    MODULE.MANIFEST_CACHE.clear()
+    observed_source_paths: list[Path] = []
+
+    def fake_fixed_highres(record, month: str) -> np.ndarray:
+        assert month == "202604"
+        observed_source_paths.extend(record.sources["s2"])
+        return np.zeros((42, 16, 16), dtype=np.float32)
+
+    monkeypatch.setattr(MODULE, "fixed_highres_feature_map", fake_fixed_highres)
+    specs = MODULE.feature_specs(args)
+
+    np.testing.assert_array_equal(MODULE.load_feature(specs["xuannv"], patch_id), expected_embedding)
+    np.testing.assert_array_equal(
+        MODULE.load_feature(specs["traditional"], patch_id),
+        np.zeros((42, 16, 16), dtype=np.float32),
+    )
+    assert observed_source_paths == [args.data_root / "sources" / f"{patch_id}_202604_scene.tif"]
 
 
 def test_comparison_reuses_each_task_supports_and_test_ids_for_all_features(
@@ -62,7 +116,13 @@ def test_comparison_reuses_each_task_supports_and_test_ids_for_all_features(
         for index in range(4)
     ]
     test_ids = ["test-1", "test-2"]
-    loaded: dict[str, set[str]] = {}
+    all_patch_ids = [candidate.patch_id for candidate in candidates] + test_ids
+    write_manifest(args, all_patch_ids)
+    MODULE.MANIFEST_CACHE.clear()
+    for patch_id in all_patch_ids:
+        write_embedding(args.embedding_root, patch_id, "202604", 64)
+        write_embedding(args.aef_embedding_root, patch_id, "202512", 64)
+    traditional_loaded: set[str] = set()
 
     monkeypatch.setattr(
         MODULE,
@@ -75,10 +135,13 @@ def test_comparison_reuses_each_task_supports_and_test_ids_for_all_features(
     )
     monkeypatch.setattr(MODULE, "collect_components", lambda _root, _train: candidates)
 
-    def synthetic_feature(spec, patch_id: str) -> np.ndarray:
-        loaded.setdefault(spec.name, set()).add(patch_id)
-        seed = sum(map(ord, f"{spec.name}:{patch_id}"))
-        return np.random.default_rng(seed).normal(size=(spec.channels, 16, 16)).astype(np.float32)
+    def fake_fixed_highres(record, _month: str) -> np.ndarray:
+        traditional_loaded.add(record.patch_id)
+        assert record.sources["s2"] == [
+            args.data_root / "sources" / f"{record.patch_id}_202604_scene.tif"
+        ]
+        seed = sum(map(ord, record.patch_id))
+        return np.random.default_rng(seed).normal(size=(42, 16, 16)).astype(np.float32)
 
     def synthetic_mask(_root: Path, patch_id: str) -> np.ndarray:
         mask = np.zeros((16, 16), dtype=bool)
@@ -87,7 +150,7 @@ def test_comparison_reuses_each_task_supports_and_test_ids_for_all_features(
             mask[15, 15] = True
         return mask
 
-    monkeypatch.setattr(MODULE, "load_feature", synthetic_feature)
+    monkeypatch.setattr(MODULE, "fixed_highres_feature_map", fake_fixed_highres)
     monkeypatch.setattr(MODULE, "load_mask", synthetic_mask)
 
     payload = MODULE.run_comparison(args)
@@ -111,8 +174,4 @@ def test_comparison_reuses_each_task_supports_and_test_ids_for_all_features(
     }
     assert {tuple(row["test_patch_ids"]) for row in payload["rows"]} == {tuple(test_ids)}
     selected_support_ids = set(payload["rows"][0]["support_patch_ids"])
-    assert loaded == {
-        "xuannv": selected_support_ids | set(test_ids),
-        "aef": selected_support_ids | set(test_ids),
-        "traditional": selected_support_ids | set(test_ids),
-    }
+    assert traditional_loaded == selected_support_ids | set(test_ids)
