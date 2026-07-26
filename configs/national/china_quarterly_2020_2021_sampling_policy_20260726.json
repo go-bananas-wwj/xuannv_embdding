@@ -1,0 +1,175 @@
+{
+  "name": "xuannv_china_quarterly_2020_2021_sampling",
+  "version": "2026-07-26",
+  "purpose": "Build the frozen nationwide spatial registry shared by 2020Q1 through 2021Q4 embedding products.",
+  "boundary": {
+    "study_area": "China land area and included islands under the project-approved boundary",
+    "boundary_version_must_be_frozen": true,
+    "full_patch_must_intersect_study_area": true,
+    "center_must_be_inside_study_area": true
+  },
+  "patch": {
+    "side_meters": 1280,
+    "pixels": 128,
+    "resolution_meters": 10,
+    "embedding_dimensions": 64,
+    "grid": "UTM-zone-local metric grid aligned to a frozen origin for each zone",
+    "macro_side_patches": 10,
+    "macro_side_meters": 12800
+  },
+  "products": {
+    "periods": [
+      "2020Q1",
+      "2020Q2",
+      "2020Q3",
+      "2020Q4",
+      "2021Q1",
+      "2021Q2",
+      "2021Q3",
+      "2021Q4"
+    ],
+    "shared_spatial_registry": true,
+    "temporal_composite": "quarterly",
+    "output_shape_per_patch": [128, 128, 64]
+  },
+  "sampling": {
+    "sampling_seed": 20260726,
+    "hash_algorithm": "SHA-256",
+    "target_total": 62000,
+    "base_count": 57405,
+    "estimated_full_grid_patches": 5859375,
+    "base_inclusion_probability": 0.01,
+    "final_land_fraction": 0.0106,
+    "base_rule": "Within each 10 x 10 patch macrocell, choose the deterministic SHA-256 winner. For a boundary macrocell with n valid candidates, accept the macrocell with probability n / 100 before choosing its winner.",
+    "layers": [
+      {
+        "id": "base_expected_1pct",
+        "count": 57405,
+        "replacement": false,
+        "selection": "deterministic macrocell hash with boundary acceptance correction"
+      },
+      {
+        "id": "utm_spatial_balance_supplement",
+        "count": 2595,
+        "replacement": false,
+        "selection": "allocate by square root of eligible UTM-zone area; deterministic selection; at most one supplemental patch per macrocell"
+      },
+      {
+        "id": "coastal_supplement",
+        "count": 500,
+        "replacement": false,
+        "selection": "ocean-adjacent land-water interfaces identified with an independent ocean polygon; allocate across coastal UTM zones",
+        "exclude_false_coasts": ["river banks", "lake shores", "province borders", "international land borders"]
+      },
+      {
+        "id": "semantic_and_difficult_supplement",
+        "count": 1500,
+        "replacement": false,
+        "selection": "rank independent candidate pools using broad land-cover, OSM, DEM and source-quality summaries; do not use final downstream manual labels",
+        "subquotas": {
+          "urban_and_built_up": 500,
+          "rare_natural_surfaces": 400,
+          "rare_infrastructure": 300,
+          "difficult_observation": 300
+        }
+      }
+    ],
+    "deduplication": {
+      "unique_keys": ["patch_id", "geometry_hash"],
+      "supplement_max_per_macrocell": 1,
+      "no_replacement_of_existing_layers": true
+    },
+    "regional_balance": {
+      "stratification_fields": ["utm_zone", "admin1", "ecoregion"],
+      "max_fraction_per_regional_group_within_semantic_subquota": 0.4
+    }
+  },
+  "quality_gate": {
+    "required_core_sources": ["sentinel_2", "sentinel_1", "landsat_8"],
+    "optional_sources": [
+      "landsat_9_2021Q4",
+      "gf_series",
+      "hj_2",
+      "zy_2",
+      "jilin_1",
+      "hi_glass"
+    ],
+    "evaluate_each_quarter": true,
+    "optical_selection": "retain the best quality observations in each quarter and composite only valid pixels",
+    "pixel_masks": ["cloud", "cloud_shadow", "snow", "nodata", "saturation", "invalid_geometry"],
+    "fail_closed_on_missing_quality_mask": true,
+    "do_not_treat_cloud_as_surface": true,
+    "do_not_silently_replace_failed_patches": true,
+    "failed_patch_action": "record in a repair queue with source, period and reason"
+  },
+  "weak_semantics": {
+    "sources": [
+      "ESA WorldCover 2020 and 2021",
+      "Dynamic World 2020 and 2021",
+      "GlobeLand30 2020",
+      "GLC_FCS30D 2020 and 2021",
+      "CLCD 2020",
+      "WorldCereal 2021",
+      "JRC Global Surface Water 2020 and 2021",
+      "historical OSM snapshots",
+      "Copernicus DEM GLO-30"
+    ],
+    "blank_means": "unknown",
+    "uses_final_downstream_manual_labels": false,
+    "roles": ["sampling strata", "masked weak auxiliary targets", "coverage audit"]
+  },
+  "training_use": {
+    "development_split": {
+      "fractions": {
+        "train": 0.9,
+        "validation": 0.05,
+        "test": 0.05
+      },
+      "spatial_blocked": true,
+      "stratify_by": ["admin1", "ecoregion", "sampling_layer"],
+      "adjacent_patches_must_share_split": true,
+      "test_is_never_used_for_model_selection": true
+    },
+    "final_fit": {
+      "uses_all_accepted_patches": true,
+      "allowed_after_protocol_freeze": true,
+      "evaluation_uses_external_or_pre_frozen_labels": true
+    }
+  },
+  "registry": {
+    "required_fields": [
+      "patch_id",
+      "geometry_hash",
+      "grid_id",
+      "grid_epsg",
+      "grid_row",
+      "grid_col",
+      "macro_id",
+      "wgs84_bounds",
+      "utm_bounds",
+      "longitude",
+      "latitude",
+      "admin1",
+      "ecoregion",
+      "sampling_layer",
+      "sampling_reasons",
+      "sampling_seed",
+      "boundary_version",
+      "source_coverage_by_quarter",
+      "quality_summary_by_quarter",
+      "split",
+      "registry_version"
+    ],
+    "sort_order": ["grid_epsg", "grid_row", "grid_col", "patch_id"],
+    "publish_checksums": true
+  },
+  "acceptance": {
+    "exact_total": 62000,
+    "no_duplicate_patch_id": true,
+    "no_duplicate_geometry_hash": true,
+    "all_centers_inside_frozen_boundary": true,
+    "all_layers_meet_quota": true,
+    "deterministic_rerun_checksum_match": true,
+    "manual_visual_audit_required": true
+  }
+}
