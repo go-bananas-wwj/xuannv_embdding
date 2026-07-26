@@ -54,7 +54,7 @@ Each output is associated with one target month but may use six-month context th
 attention; it is not a causal, month-local representation. For each 1.28 km by 1.28 km patch, the
 model produces a 128 by 128 map of 64-dimensional unit-norm vectors, corresponding to a 10 m grid.
 The representation is learned from multi-sensor reconstruction, a merged OSM land-cover target,
-fine OSM-derived auxiliary probes, structured source corruption, and within-rank uniformity.
+fine OSM-derived auxiliary probes, structured source corruption, and batch-uniformity regularisation.
 
 This paper asks a bounded question: under geographically separated folds, can a frozen monthly
 embedding field support label-efficient urban mapping through the same lightweight reader and fixed
@@ -185,7 +185,7 @@ cross-entropy with background ID 0 ignored. The registered V5 weights are 0.80 f
 0.25 for Sentinel-1, 0.45 for Landsat, 0.45 for merged OSM land cover, 0.90 for higher-resolution
 optical, and 0.35 for higher-resolution SAR. Fine OSM semantic-probe loss ramps to 0.14 over 80
 epochs. Its hard-negative component uses a ratio of 0.02, weight 0.35, and 120-epoch warmup. The
-within-rank uniformity term uses temperature 2.0 and ramps to 0.06 over 60 epochs. Temporal-
+batch-uniformity term uses temperature 2.0 and ramps to 0.06 over 60 epochs. Temporal-
 endpoint, temporal-contrast, and supervised-change terms are disabled.
 
 Corruption is applied during training after targets are prepared. Sentinel-2, Sentinel-1, and
@@ -268,11 +268,14 @@ training-manifest and statistics-audit hash. The archive will include all five a
 source-specific mean and standard-deviation arrays.
 
 For each task and labelled-patch budget, Table 3 will report the arithmetic mean and sample standard
-deviation over the three probe-seed means, where each seed mean averages the five held-out spatial
-folds. The table will also state the five-fold-by-three-seed sample size (15) and retain all
-fold-seed values in the supplement. Comparative intervals for F1, IoU, precision, and recall will
-use a registered 10,000-resample hierarchical paired bootstrap (random seed 20260725): spatial
-folds, complete 2 by 2 geographic test clusters, and probe seeds are resampled in that order.
+deviation over the three registered schedule/probe-seed means, where each condition mean averages
+the five held-out spatial folds. Each registered condition selects the support schedule and
+deterministically sets the probe initialisation. The table will retain all 15 fold-by-condition
+values in the supplement, but will not treat them as 15 independent encoder pretraining repetitions. Comparative
+intervals for F1, IoU, precision, and recall will use a registered 10,000-resample hierarchical
+paired bootstrap (random seed 20260725): spatial folds, complete 2 by 2 geographic test clusters,
+and registered schedule/probe-seed conditions are resampled in that order. The interval does not quantify uncertainty
+from an independently repeated encoder pretraining run.
 AP and ROC-AUC will be reported as point estimates with the same fold/seed aggregation but are not
 assigned this confusion-matrix bootstrap interval. The bootstrap compares only paired result cells
 with the same task, budget, fold, seed, test-patch IDs, labels, split, and protocol provenance.
