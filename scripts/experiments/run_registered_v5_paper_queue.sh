@@ -166,6 +166,7 @@ verified_resume_checkpoint() {
 import hashlib
 import json
 import sys
+import time
 from pathlib import Path
 
 attempt = Path(sys.argv[1]).resolve()
@@ -185,24 +186,44 @@ if Path(str(manifest.get("attempt_dir", ""))).resolve() != attempt:
     raise SystemExit("attempt manifest does not bind this same attempt")
 records = sorted((attempt / "checkpoint_verifications").glob("*.json"))
 valid = []
+snapshot_dir = attempt / "verified_checkpoints"
 for record_path in records:
     record = json.loads(record_path.read_text(encoding="utf-8"))
+    if record.get("schema_version") != 1:
+        raise SystemExit("checkpoint verification has an unsupported schema version")
     checkpoint = Path(str(record.get("checkpoint_path", ""))).resolve()
     try:
-        checkpoint.relative_to(attempt)
+        checkpoint.relative_to(snapshot_dir)
     except ValueError as exc:
-        raise SystemExit("verified resume checkpoint must remain inside the same attempt") from exc
+        raise SystemExit("verified resume checkpoint must remain inside verified_checkpoints") from exc
+    if record_path.name != f"{checkpoint.name}.json":
+        raise SystemExit("checkpoint verification filename does not bind the immutable snapshot")
     if Path(str(record.get("attempt_dir", ""))).resolve() != attempt:
         raise SystemExit("checkpoint verification does not bind this same attempt")
+    source_checkpoint = Path(str(record.get("source_checkpoint_path", ""))).resolve()
+    try:
+        source_checkpoint.relative_to(attempt)
+    except ValueError as exc:
+        raise SystemExit("checkpoint verification source must remain inside the same attempt") from exc
+    expected_snapshot_name = (
+        f"{source_checkpoint.stem}_{record.get('checkpoint_sha256', '')}{source_checkpoint.suffix}"
+    )
+    if checkpoint.name != expected_snapshot_name:
+        raise SystemExit("verified resume checkpoint is not a content-addressed snapshot")
     if not checkpoint.is_file():
         raise SystemExit("verified resume checkpoint is missing")
     actual = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
     if actual != record.get("checkpoint_sha256"):
         raise SystemExit("verified resume checkpoint hash changed")
-    valid.append((checkpoint.name != "recovery.pt", checkpoint.name, checkpoint))
+    created_at_ns = record.get("created_at_ns")
+    if isinstance(created_at_ns, bool) or not isinstance(created_at_ns, int) or created_at_ns <= 0:
+        raise SystemExit("checkpoint verification has an invalid creation timestamp")
+    if created_at_ns > time.time_ns() + 300_000_000_000:
+        raise SystemExit("checkpoint verification creation timestamp is implausibly in the future")
+    valid.append((created_at_ns, checkpoint.name, checkpoint))
 if not valid:
     raise SystemExit("attempt has no verified same-attempt recovery checkpoint")
-valid.sort()
+valid.sort(reverse=True)
 print(valid[0][2])
 PY
 }
@@ -350,6 +371,7 @@ import json
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 
 attempt = Path(sys.argv[1]).resolve()
@@ -364,14 +386,36 @@ digest = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
 snapshot_dir = attempt / "verified_checkpoints"
 snapshot_dir.mkdir(exist_ok=True)
 snapshot = snapshot_dir / f"{checkpoint.stem}_{digest}{checkpoint.suffix}"
-if not snapshot.exists():
-    descriptor = os.open(snapshot, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
-    with checkpoint.open("rb") as source, os.fdopen(descriptor, "wb") as target:
-        shutil.copyfileobj(source, target)
-        target.flush()
-        os.fsync(target.fileno())
-if hashlib.sha256(snapshot.read_bytes()).hexdigest() != digest:
+def wait_for_snapshot() -> None:
+    for _ in range(40):
+        try:
+            if hashlib.sha256(snapshot.read_bytes()).hexdigest() == digest:
+                return
+        except FileNotFoundError:
+            pass
+        time.sleep(0.05)
     raise SystemExit("verified checkpoint snapshot hash mismatch")
+
+def read_stable_record(path: Path) -> dict:
+    for _ in range(40):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError):
+            time.sleep(0.05)
+    raise SystemExit("checkpoint verification record was not written atomically")
+
+if not snapshot.exists():
+    try:
+        descriptor = os.open(snapshot, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    except FileExistsError:
+        # Another recovery path sealed the same content-addressed snapshot first.
+        pass
+    else:
+        with checkpoint.open("rb") as source, os.fdopen(descriptor, "wb") as target:
+            shutil.copyfileobj(source, target)
+            target.flush()
+            os.fsync(target.fileno())
+wait_for_snapshot()
 record = {
     "schema_version": 1,
     "attempt_dir": str(attempt),
@@ -381,12 +425,24 @@ record = {
 }
 record_path = attempt / "checkpoint_verifications" / f"{snapshot.name}.json"
 record_path.parent.mkdir(exist_ok=True)
-descriptor = os.open(record_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
-with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-    json.dump(record, handle, ensure_ascii=True, indent=2)
-    handle.write("\n")
-    handle.flush()
-    os.fsync(handle.fileno())
+if record_path.exists():
+    existing = read_stable_record(record_path)
+    if any(existing.get(key) != value for key, value in record.items()):
+        raise SystemExit("existing checkpoint verification disagrees with the checkpoint snapshot")
+else:
+    record["created_at_ns"] = time.time_ns()
+    try:
+        descriptor = os.open(record_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    except FileExistsError:
+        existing = read_stable_record(record_path)
+        if any(existing.get(key) != value for key, value in record.items() if key != "created_at_ns"):
+            raise SystemExit("existing checkpoint verification disagrees with the checkpoint snapshot")
+    else:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(record, handle, ensure_ascii=True, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
 print(snapshot)
 PY
 }
@@ -555,17 +611,28 @@ run_fold() {
       "$lane" "$devices" "$fold" "$config" "$next_attempt"
     return 0
   fi
-  local retry attempt_number attempt parent=""
-  for ((retry = 1; retry <= MAX_JOB_ATTEMPTS; retry++)); do
-    mkdir -p "$job_root"
-    attempt_number=$(next_attempt_number "$job_root")
-    attempt="$job_root/attempt_$attempt_number"
-    if (( attempt_number > 1 )); then parent="$job_root/attempt_$((attempt_number - 1))"; fi
-    mkdir "$attempt"
-    write_attempt "$attempt" "$config" "$fold" "$parent"
-    printf 'ENCODER protocol=v5_osm_assisted family=full_150 lane=%s devices=%s fold=%s config=%s attempt=%s resume=fresh\n' \
-      "$lane" "$devices" "$fold" "$config" "$attempt_number"
-    if run_attempt "$lane" "$devices" "$port" "$fold" "$attempt"; then return 0; fi
+  local attempt_number attempt parent="" checkpoint resume_index verification_error reason
+  mkdir -p "$job_root"
+  attempt_number=$(next_attempt_number "$job_root")
+  attempt="$job_root/attempt_$attempt_number"
+  if (( attempt_number > 1 )); then parent="$job_root/attempt_$((attempt_number - 1))"; fi
+  mkdir "$attempt"
+  write_attempt "$attempt" "$config" "$fold" "$parent"
+  printf 'ENCODER protocol=v5_osm_assisted family=full_150 lane=%s devices=%s fold=%s config=%s attempt=%s resume=fresh\n' \
+    "$lane" "$devices" "$fold" "$config" "$attempt_number"
+  if run_attempt "$lane" "$devices" "$port" "$fold" "$attempt"; then return 0; fi
+  for ((resume_index = 1; resume_index <= MAX_JOB_ATTEMPTS; resume_index++)); do
+    verification_error=$(mktemp "$attempt/.resume_verification_error.XXXXXX")
+    if ! checkpoint=$(verified_resume_checkpoint "$attempt" "$fold" 2>"$verification_error"); then
+      reason=$(tr '\n' ' ' < "$verification_error" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')
+      rm -f "$verification_error"
+      write_event "$attempt" recovery_verification_failed "resume_index=$resume_index" "reason=${reason:-unknown}"
+      return 1
+    fi
+    rm -f "$verification_error"
+    printf 'ENCODER protocol=v5_osm_assisted family=full_150 lane=%s devices=%s fold=%s config=%s attempt=%s resume=%s\n' \
+      "$lane" "$devices" "$fold" "$config" "$attempt_number" "$checkpoint"
+    if run_attempt "$lane" "$devices" "$port" "$fold" "$attempt" "$checkpoint"; then return 0; fi
   done
   return 1
 }

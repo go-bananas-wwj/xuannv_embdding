@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -2856,9 +2857,13 @@ def _sealed_v5_queue_repo(tmp_path: Path) -> tuple[Path, Path]:
 def _write_verified_resume_attempt(output_root: Path) -> Path:
     attempt = output_root / "paper_registered_v5_full_150_fold0_20260726" / "attempt_1"
     attempt.mkdir(parents=True)
-    checkpoint = attempt / "verified_resume.pt"
-    checkpoint.write_bytes(b"verified recovery checkpoint")
-    checkpoint_sha256 = _sha256(checkpoint)
+    source = attempt / "recovery.pt"
+    source.write_bytes(b"verified recovery checkpoint")
+    checkpoint_sha256 = _sha256(source)
+    snapshot_dir = attempt / "verified_checkpoints"
+    snapshot_dir.mkdir()
+    checkpoint = snapshot_dir / f"recovery_{checkpoint_sha256}.pt"
+    shutil.copyfile(source, checkpoint)
     _write_json(
         attempt / "attempt_manifest.json",
         {
@@ -2867,18 +2872,20 @@ def _write_verified_resume_attempt(output_root: Path) -> Path:
             "family": "full_150",
             "fold": 0,
             "attempt_dir": str(attempt.resolve()),
-            "checkpoint_hashes": {"verified_resume.pt": checkpoint_sha256},
+            "checkpoint_hashes": {checkpoint.name: checkpoint_sha256},
         },
     )
     verification_dir = attempt / "checkpoint_verifications"
     verification_dir.mkdir()
     _write_json(
-        verification_dir / "verified_resume.pt.json",
+        verification_dir / f"{checkpoint.name}.json",
         {
             "schema_version": 1,
             "attempt_dir": str(attempt.resolve()),
             "checkpoint_path": str(checkpoint.resolve()),
             "checkpoint_sha256": checkpoint_sha256,
+            "source_checkpoint_path": str(source.resolve()),
+            "created_at_ns": time.time_ns(),
         },
     )
     return attempt
@@ -2981,7 +2988,7 @@ def test_v5_encoder_queue_resume_verification_is_attempt_local(tmp_path: Path) -
     repo, queue = _sealed_v5_queue_repo(tmp_path)
     output_root = tmp_path / "outputs"
     attempt = _write_verified_resume_attempt(output_root)
-    checkpoint = attempt / "verified_resume.pt"
+    checkpoint = next((attempt / "verified_checkpoints").glob("*.pt"))
     verification_dir = attempt / "checkpoint_verifications"
 
     accepted = subprocess.run(
@@ -3059,11 +3066,12 @@ def test_v5_encoder_queue_resume_verification_is_attempt_local(tmp_path: Path) -
     )
     assert modified.returncode != 0
     assert "hash" in modified.stderr.lower()
+    checkpoint.write_bytes((attempt / "recovery.pt").read_bytes())
 
     foreign = tmp_path / "foreign.pt"
     foreign.write_bytes(b"foreign checkpoint")
     _write_json(
-        verification_dir / "verified_resume.pt.json",
+        verification_dir / "foreign.pt.json",
         {
             "schema_version": 1,
             "attempt_dir": str(attempt.resolve()),
@@ -3079,7 +3087,129 @@ def test_v5_encoder_queue_resume_verification_is_attempt_local(tmp_path: Path) -
         check=False,
     )
     assert foreign_result.returncode != 0
-    assert "same attempt" in foreign_result.stderr.lower()
+    assert "verified_checkpoints" in foreign_result.stderr.lower()
+
+
+def test_v5_encoder_queue_selects_the_newest_verified_recovery(tmp_path: Path) -> None:
+    """Resume selection is chronological, not an accidental checkpoint-filename ordering."""
+    repo, queue = _sealed_v5_queue_repo(tmp_path)
+    output_root = tmp_path / "outputs"
+    attempt = _write_verified_resume_attempt(output_root)
+    newer_payload = b"newer verified recovery"
+    newer_name = f"recovery_{hashlib.sha256(newer_payload).hexdigest()}.pt"
+    newer = attempt / "verified_checkpoints" / newer_name
+    newer.write_bytes(newer_payload)
+    verification_dir = attempt / "checkpoint_verifications"
+    _write_json(
+        verification_dir / f"{newer.name}.json",
+        {
+            "schema_version": 1,
+            "attempt_dir": str(attempt.resolve()),
+            "checkpoint_path": str(newer.resolve()),
+            "checkpoint_sha256": _sha256(newer),
+            "source_checkpoint_path": str(attempt / "recovery.pt"),
+            "created_at_ns": time.time_ns() + 1,
+        },
+    )
+
+    result = subprocess.run(
+        [str(queue), "--verify-attempt", str(attempt)],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert str(newer.resolve()) in result.stdout
+
+
+def test_v5_encoder_queue_rejects_a_mutable_or_malformed_verification_record(
+    tmp_path: Path,
+) -> None:
+    """Only queue-sealed snapshots with the complete record contract authorize recovery."""
+    repo, queue = _sealed_v5_queue_repo(tmp_path)
+    output_root = tmp_path / "outputs"
+    attempt = _write_verified_resume_attempt(output_root)
+    mutable = attempt / "mutable.pt"
+    mutable.write_bytes(b"not an immutable queue snapshot")
+    _write_json(
+        attempt / "checkpoint_verifications" / "mutable.pt.json",
+        {
+            "schema_version": 1,
+            "attempt_dir": str(attempt.resolve()),
+            "checkpoint_path": str(mutable.resolve()),
+            "checkpoint_sha256": _sha256(mutable),
+            "source_checkpoint_path": str(mutable.resolve()),
+            "created_at_ns": time.time_ns() + 1,
+        },
+    )
+
+    result = subprocess.run(
+        [str(queue), "--verify-attempt", str(attempt)],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "verified_checkpoints" in result.stderr
+
+
+def test_v5_encoder_queue_rejects_an_unhashed_snapshot(
+    tmp_path: Path,
+) -> None:
+    """Only content-addressed snapshots can enter the verified recovery set."""
+    repo, queue = _sealed_v5_queue_repo(tmp_path)
+    output_root = tmp_path / "outputs"
+    attempt = _write_verified_resume_attempt(output_root)
+    snapshot = attempt / "verified_checkpoints" / "unhashed.pt"
+    snapshot.write_bytes(b"not content-addressed")
+    _write_json(
+        attempt / "checkpoint_verifications" / "unhashed.pt.json",
+        {
+            "schema_version": 1,
+            "attempt_dir": str(attempt.resolve()),
+            "checkpoint_path": str(snapshot.resolve()),
+            "checkpoint_sha256": _sha256(snapshot),
+            "source_checkpoint_path": str(attempt / "recovery.pt"),
+            "created_at_ns": time.time_ns(),
+        },
+    )
+
+    result = subprocess.run(
+        [str(queue), "--verify-attempt", str(attempt)],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "content-addressed" in result.stderr
+
+
+def test_v5_encoder_queue_rejects_a_verified_record_without_creation_time(tmp_path: Path) -> None:
+    """Chronological selection requires an explicit immutable creation time."""
+    repo, queue = _sealed_v5_queue_repo(tmp_path)
+    output_root = tmp_path / "outputs"
+    attempt = _write_verified_resume_attempt(output_root)
+    record_path = next((attempt / "checkpoint_verifications").glob("*.json"))
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record.pop("created_at_ns")
+    _write_json(record_path, record)
+
+    result = subprocess.run(
+        [str(queue), "--verify-attempt", str(attempt)],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "creation timestamp" in result.stderr
 
 
 def test_v5_encoder_queue_resume_writes_immutable_resume_logs(tmp_path: Path) -> None:
@@ -3124,3 +3254,181 @@ def test_v5_encoder_queue_resume_writes_immutable_resume_logs(tmp_path: Path) ->
     assert (attempt / "logs" / "resume_2.log").read_text(
         encoding="utf-8"
     ) == "fake resume failure\n"
+
+
+def test_v5_encoder_queue_prefers_same_attempt_resume_after_fresh_failure(tmp_path: Path) -> None:
+    """A verified recovery must be resumed before the queue creates another fresh attempt."""
+    repo, queue = _sealed_v5_queue_repo(tmp_path)
+    output_root = tmp_path / "outputs"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    trace = tmp_path / "torchrun_trace.txt"
+    fake_torchrun = bin_dir / "torchrun"
+    fake_torchrun.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -eu\n"
+        f"trace={trace}\n"
+        "config=\n"
+        "previous=\n"
+        "for arg in \"$@\"; do\n"
+        "  if [[ \"$previous\" == --config ]]; then config=\"$arg\"; fi\n"
+        "  previous=\"$arg\"\n"
+        "done\n"
+        "if [[ \" $* \" == *\" --resume \"* ]]; then\n"
+        "  echo resume >> \"$trace\"\n"
+        "  exit 1\n"
+        "fi\n"
+        "echo fresh >> \"$trace\"\n"
+        "printf recovery > \"$(dirname \"$config\")/recovery.pt\"\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_torchrun.chmod(0o755)
+    environment = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "MAX_JOB_ATTEMPTS": "1",
+    }
+
+    result = subprocess.run(
+        [str(queue), "--output-root", str(output_root)],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=environment,
+    )
+
+    assert result.returncode != 0
+    assert "resume" in trace.read_text(encoding="utf-8").splitlines()
+    fold0 = output_root / "paper_registered_v5_full_150_fold0_20260726"
+    assert (fold0 / "attempt_1" / "logs" / "resume_1.log").is_file()
+    assert not (fold0 / "attempt_2").exists()
+    payloads = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in (fold0 / "attempt_1" / "status").glob("*.json")
+    ]
+    assert "log_seal_failed" not in {payload["event"] for payload in payloads}
+    verification_records = list((fold0 / "attempt_1" / "checkpoint_verifications").glob("*.json"))
+    assert len(verification_records) == 1
+    verification = json.loads(verification_records[0].read_text(encoding="utf-8"))
+    assert isinstance(verification["created_at_ns"], int)
+    assert all(
+        any(
+            detail.startswith("checkpoint=") and detail != "checkpoint="
+            for detail in payload["details"]
+        )
+        for payload in payloads
+        if payload["event"] == "failed"
+    )
+
+
+def test_v5_encoder_queue_records_recovery_verification_reason_and_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """A failed verification must be immutable evidence, not a silent fresh retry."""
+    repo, queue = _sealed_v5_queue_repo(tmp_path)
+    output_root = tmp_path / "outputs"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_torchrun = bin_dir / "torchrun"
+    fake_torchrun.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+    fake_torchrun.chmod(0o755)
+
+    result = subprocess.run(
+        [str(queue), "--output-root", str(output_root)],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "MAX_JOB_ATTEMPTS": "1"},
+    )
+
+    assert result.returncode != 0
+    fold0 = output_root / "paper_registered_v5_full_150_fold0_20260726"
+    assert not (fold0 / "attempt_2").exists()
+    payloads = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in (fold0 / "attempt_1" / "status").glob("*.json")
+    ]
+    verification_failure = next(
+        payload for payload in payloads if payload["event"] == "recovery_verification_failed"
+    )
+    assert any(
+        detail.startswith("reason=attempt has no verified same-attempt recovery checkpoint")
+        for detail in verification_failure["details"]
+    )
+
+
+def test_v5_encoder_queue_concurrent_resumes_share_one_new_verified_snapshot(
+    tmp_path: Path,
+) -> None:
+    """Two failed resume workers can seal the same newly-written recovery without corruption."""
+    repo, queue = _sealed_v5_queue_repo(tmp_path)
+    output_root = tmp_path / "outputs"
+    attempt = _write_verified_resume_attempt(output_root)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_torchrun = bin_dir / "torchrun"
+    fake_torchrun.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -eu\n"
+        "config=\n"
+        "previous=\n"
+        "for arg in \"$@\"; do\n"
+        "  if [[ \"$previous\" == --config ]]; then config=\"$arg\"; fi\n"
+        "  previous=\"$arg\"\n"
+        "done\n"
+        "attempt=$(dirname \"$config\")\n"
+        "barrier=\"$attempt/.concurrent_resume_barrier\"\n"
+        "mkdir -p \"$barrier\"\n"
+        "touch \"$barrier/$RANDOM.$RANDOM\"\n"
+        "while (( $(find \"$barrier\" -type f | wc -l) < 2 )); do sleep 0.01; done\n"
+        "dd if=/dev/zero of=\"$attempt/recovery.pt\" bs=1M count=32 conv=fsync status=none\n"
+        "touch \"$barrier/sealed.$RANDOM.$RANDOM\"\n"
+        "while (( $(find \"$barrier\" -type f -name 'sealed.*' | wc -l) < 2 )); do sleep 0.01; done\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_torchrun.chmod(0o755)
+    command = [
+        str(queue),
+        "--output-root",
+        str(output_root),
+        "--resume-fold",
+        "0",
+        "--resume-attempt",
+        "1",
+    ]
+    environment = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+    first = subprocess.Popen(
+        command,
+        cwd=repo,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=environment,
+    )
+    second = subprocess.Popen(
+        command,
+        cwd=repo,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=environment,
+    )
+    first_stdout, first_stderr = first.communicate(timeout=30)
+    second_stdout, second_stderr = second.communicate(timeout=30)
+
+    assert first.returncode != 0
+    assert second.returncode != 0
+    combined = first_stdout + first_stderr + second_stdout + second_stderr
+    assert "snapshot hash mismatch" not in combined
+    assert "JSONDecodeError" not in combined
+    records = list((attempt / "checkpoint_verifications").glob("*.json"))
+    assert len(records) == 2
+    newest = max(
+        (json.loads(path.read_text(encoding="utf-8")) for path in records),
+        key=lambda record: record["created_at_ns"],
+    )
+    assert newest["checkpoint_sha256"] == _sha256(attempt / "recovery.pt")
