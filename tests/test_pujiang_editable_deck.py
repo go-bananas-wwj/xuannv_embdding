@@ -15,6 +15,8 @@ from pptx.util import Inches
 
 SCRIPT = Path(__file__).parents[1] / "scripts/report/pujiang_editable_common.py"
 PAGES04_07_SCRIPT = Path(__file__).parents[1] / "scripts/report/pujiang_editable_pages04_07.py"
+PAGES08_10_SCRIPT = Path(__file__).parents[1] / "scripts/report/pujiang_editable_pages08_10.py"
+DECK_SCRIPT = Path(__file__).parents[1] / "scripts/report/build_pujiang_editable_deck.py"
 PRESENTATION_ROOT = Path(__file__).parents[1] / "docs/presentations/pujiang_202607"
 EDITABLE_SOURCE_SLIDES = [
     PRESENTATION_ROOT / f"玄女月度地理嵌入_浦江交流_第{page:02d}页_20260726.pptx"
@@ -225,6 +227,91 @@ def test_page06_workflow_text_boxes_have_sufficient_height_and_spacing() -> None
         detail_shape = text_shapes[detail]
         assert title_shape.height >= Inches(0.22)
         assert title_shape.top + title_shape.height <= detail_shape.top
+
+
+def _pages08_10_module():
+    spec = importlib.util.spec_from_file_location("pujiang_editable_pages08_10", PAGES08_10_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_pages08_to_10_use_native_metrics_cards_and_independent_pictures() -> None:
+    presentation = Presentation()
+    pages = _pages08_10_module()
+    for builder in (pages.build_page08, pages.build_page09, pages.build_page10):
+        builder(presentation)
+
+    page08, page09, page10 = presentation.slides
+    assert "海淀区 3 多边形同协议评测：道路与水体领先" in _slide_text(page08)
+    assert all(shape.shape_type != MSO_SHAPE_TYPE.PICTURE for shape in page08.shapes)
+    assert sum(shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE for shape in page08.shapes) >= 35
+    for value in ("F1", "AUC", "0.368", "0.745", "0.304", "单 fold、单次随机 3 多边形实验"):
+        assert any(value in text for text in _slide_text(page08))
+
+    assert "嵌入结构与任务表现：优势、边界和下一步" in _slide_text(page09)
+    assert len(
+        [shape for shape in page09.shapes if shape.shape_type == MSO_SHAPE_TYPE.PICTURE]
+    ) == 1
+    for card in (
+        "道路｜当前优势最稳定",
+        "水体｜排序能力领先",
+        "建筑｜建筑假正例仍偏多",
+        "下一步验证",
+    ):
+        assert card in _slide_text(page09)
+
+    assert "哈尔滨新区：从月度嵌入到城市治理专题" in _slide_text(page10)
+    assert len(
+        [shape for shape in page10.shapes if shape.shape_type == MSO_SHAPE_TYPE.PICTURE]
+    ) >= 5
+    assert any("土地利用 / 覆盖" in text for text in _slide_text(page10))
+
+
+def test_final_editable_deck_has_ten_native_slides_without_duplicate_zip_members(
+    tmp_path: Path,
+) -> None:
+    spec = importlib.util.spec_from_file_location("build_pujiang_editable_deck", DECK_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    output = tmp_path / "pujiang_editable_deck.pptx"
+
+    module.build_deck(output)
+
+    presentation = Presentation(output)
+    expected_titles = [
+        "玄女月度地理嵌入",
+        "两个区域的多源数据处理与训练组织",
+        "从 AEF 思路到城市尺度月度嵌入",
+        "玄女嵌入平台：浏览、分析、训练与生成",
+        "少量标注，快速形成区域级专题图",
+        "嵌入底座进入遥感智能体工作流",
+        "云遮挡或观测缺失时，生成指定时刻的遥感参考影像",
+        "海淀区 3 多边形同协议评测：道路与水体领先",
+        "嵌入结构与任务表现：优势、边界和下一步",
+        "哈尔滨新区：从月度嵌入到城市治理专题",
+    ]
+    assert len(presentation.slides) == len(expected_titles)
+    for slide, title in zip(presentation.slides, expected_titles, strict=True):
+        assert any(title in text for text in _slide_text(slide))
+        assert len(slide.shapes) > 1
+        assert any(shape.has_text_frame and shape.text.strip() for shape in slide.shapes)
+        assert not any(MODULE.is_full_slide_picture(shape, presentation) for shape in slide.shapes)
+
+    page05 = presentation.slides[4]
+    assert len(
+        [shape for shape in page05.shapes if shape.shape_type == MSO_SHAPE_TYPE.PICTURE]
+    ) >= 18
+    page08 = presentation.slides[7]
+    assert all(shape.shape_type != MSO_SHAPE_TYPE.PICTURE for shape in page08.shapes)
+    assert sum(shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE for shape in page08.shapes) >= 35
+    with zipfile.ZipFile(output) as archive:
+        member_counts = Counter(archive.namelist())
+    assert not [member for member, count in member_counts.items() if count > 1]
 
 
 def _picture_dimensions(shape) -> tuple[int, int]:
