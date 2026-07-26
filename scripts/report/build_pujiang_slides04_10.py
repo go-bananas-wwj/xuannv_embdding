@@ -17,10 +17,15 @@ ASSET_ROOT = ROOT / "docs/presentations/assets/pujiang_202607"
 SOURCE_PPTX = Path(
     "/root/.codex/attachments/d0a9024d-03de-463f-83fa-675e2a235467/Alpha Earth介绍.pptx"
 )
+COMPLETE_OUTPUT = PRESENTATION_ROOT / "玄女月度地理嵌入_浦江交流_10页完整版_20260726.pptx"
 PLATFORM_POSTER = ROOT / "docs/bp_deck/assets/video/custom_annotation_demo_poster.png"
 PLATFORM_SCREENSHOT = Path(
     "/data/xuannv_embedding/experiments/presentation_pujiang_202607/frontend/"
     "haidian_platform_thum.png"
+)
+RECON_EXAMPLE = Path(
+    "/data/xuannv_embedding/experiments/presentation_pujiang_202607/frontend/"
+    "patch_000093_recon.png"
 )
 WORKFLOW_IMAGE = ROOT / "docs/bp_deck/assets/remote_sensing_team_workflow.png"
 FEWSHOT_IMAGE = ROOT / "docs/production/assets/haidian_v1_20260708/fewshot_5shot_examples.png"
@@ -354,11 +359,9 @@ def page07() -> tuple[Image.Image, dict]:
             "云雾、空洞或传感器未覆盖",
         ),
         (
-            Image.open(HAR_BIN_ROOT / "patch_000146_2025-06_vs_2025-08_detail.png")
-            .convert("RGB")
-            .crop((strip.width // 5, 0, strip.width // 5 * 2, strip.height - 34)),
-            "生成参考影像示意（非实测）",
-            "仅说明平台输出形态｜不作为生成质量证据",
+            Image.open(RECON_EXAMPLE).convert("RGB"),
+            "真实运行输出｜patch_000093",
+            "平台已保存生成结果｜目标日期元数据未公开",
         ),
     ]
     for index, (panel, title, detail) in enumerate(panels):
@@ -370,13 +373,15 @@ def page07() -> tuple[Image.Image, dict]:
         draw.rounded_rectangle((x, 220, x + 450, 720), radius=6, outline=LINE, width=2)
         centered(draw, title, (x + 10, 225, x + 440, 275), font(21, True), DEEP_BLUE)
         centered(draw, detail, (x + 15, 630, x + 435, 708), font(16), MUTED)
-        if index < 2:
+        if index == 0:
             centered(draw, "→", (x + 450, 410, x + 510, 500), font(32, True), BLUE)
+        elif index == 1:
+            centered(draw, "独立\n案例", (x + 452, 405, x + 508, 505), font(15, True), MUTED)
     draw.rounded_rectangle((55, 756, 1545, 850), radius=6, fill=PALE_GRAY)
     centered(
         draw,
-        "使用边界｜本页为平台能力流程示意，不是生成精度对比；模型输出是“参考影像”，"
-        "不是该时刻真实观测。重要结论仍需真实影像核验。",
+        "使用边界｜左侧两图用于说明缺测场景，右图为独立真实运行样例，三者不构成同一 patch 的对照；"
+        "模型输出是“参考影像”，不是该时刻真实观测，重要结论仍需真实影像核验。",
         (80, 760, 1520, 846),
         font(18, True),
         RED,
@@ -385,6 +390,7 @@ def page07() -> tuple[Image.Image, dict]:
         "slide": 7,
         "title": PAGE_TITLES[7],
         "output": "指定时刻参考影像",
+        "verified_example": "patch_000093_recon.png",
         "boundary": "Reference generation, not recovery of a true observation.",
     }
 
@@ -598,14 +604,40 @@ def default_paths(page: int) -> tuple[Path, Path]:
     return output, preview
 
 
+def merge_complete_deck(output: Path = COMPLETE_OUTPUT) -> None:
+    prs = Presentation()
+    prs.slide_width = Inches(13.333333)
+    prs.slide_height = Inches(7.5)
+    for page in range(1, 11):
+        preview = ASSET_ROOT / f"slide{page:02d}" / f"slide{page:02d}_preview.png"
+        if not preview.exists():
+            raise FileNotFoundError(f"Missing reviewed preview for page {page}: {preview}")
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        slide.shapes.add_picture(
+            str(preview),
+            0,
+            0,
+            width=prs.slide_width,
+            height=prs.slide_height,
+        )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    prs.save(output)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--page", type=int, required=True, choices=range(4, 11))
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--page", type=int, choices=range(4, 11))
+    group.add_argument("--merge", action="store_true")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if args.merge:
+        merge_complete_deck()
+        print(COMPLETE_OUTPUT)
+        return
     output, preview = default_paths(args.page)
     build_page(args.page, output, preview)
     print(output)

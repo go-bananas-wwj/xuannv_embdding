@@ -48,3 +48,11 @@ def test_slides05_to10_build_with_required_evidence(tmp_path: Path) -> None:
         assert str(evidence) in str(metadata)
         with Image.open(preview) as image:
             assert image.size == (1600, 900)
+
+
+def test_merge_deck_contains_ten_slides(tmp_path: Path) -> None:
+    output = tmp_path / "complete.pptx"
+
+    MODULE.merge_complete_deck(output)
+
+    assert len(Presentation(output).slides) == 10

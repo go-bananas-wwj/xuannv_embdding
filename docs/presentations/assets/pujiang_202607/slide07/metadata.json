@@ -2,5 +2,6 @@
   "slide": 7,
   "title": "云遮挡或观测缺失时，生成指定时刻的遥感参考影像",
   "output": "指定时刻参考影像",
+  "verified_example": "patch_000093_recon.png",
   "boundary": "Reference generation, not recovery of a true observation."
 }
