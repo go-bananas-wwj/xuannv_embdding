@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1046,3 +1049,290 @@ def test_v5_export_and_launcher_dry_runs_admit_declared_family_only(tmp_path: Pa
                 check=False,
             )
             assert rejected.returncode == 2
+
+
+def _sealed_v5_queue_repo(tmp_path: Path) -> tuple[Path, Path]:
+    """Create the small committed repository needed to exercise the queue's Git gate."""
+    source_root = Path(__file__).resolve().parents[1]
+    repo = tmp_path / "queue-repo"
+    required_paths = [
+        Path("scripts/experiments/run_registered_v5_paper_queue.sh"),
+        *(
+            Path("configs/paper_registered_v5_20260726")
+            / f"paper_registered_v5_full_150_fold{fold}_20260726.yaml"
+            for fold in range(5)
+        ),
+        Path("configs/eval/rse_v5_osm_assisted_matrix.json"),
+        Path("configs/eval/haidian_spatial_5fold_complete2x2_v5_seed42.json"),
+        Path("configs/eval/haidian_paper_subsets_40_80_150_complete2x2_v5_seed42.json"),
+        Path("configs/eval/haidian_paper_v5_normalization_statistics.json"),
+        Path("configs/eval/registered_embedding_exports_v5_20260726.json"),
+    ]
+    for relative_path in required_paths:
+        target = repo / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_root / relative_path, target)
+
+    for command in (
+        ["git", "init", "--quiet"],
+        ["git", "config", "user.email", "queue-test@example.invalid"],
+        ["git", "config", "user.name", "Queue Test"],
+        ["git", "add", "."],
+        ["git", "commit", "--quiet", "-m", "seal queue fixture"],
+    ):
+        subprocess.run(command, cwd=repo, check=True)
+    return repo, repo / "scripts/experiments/run_registered_v5_paper_queue.sh"
+
+
+def _write_verified_resume_attempt(output_root: Path) -> Path:
+    attempt = output_root / "paper_registered_v5_full_150_fold0_20260726" / "attempt_1"
+    attempt.mkdir(parents=True)
+    checkpoint = attempt / "verified_resume.pt"
+    checkpoint.write_bytes(b"verified recovery checkpoint")
+    checkpoint_sha256 = _sha256(checkpoint)
+    _write_json(
+        attempt / "attempt_manifest.json",
+        {
+            "schema_version": 1,
+            "protocol_id": "v5_osm_assisted",
+            "family": "full_150",
+            "fold": 0,
+            "attempt_dir": str(attempt.resolve()),
+            "checkpoint_hashes": {"verified_resume.pt": checkpoint_sha256},
+        },
+    )
+    verification_dir = attempt / "checkpoint_verifications"
+    verification_dir.mkdir()
+    _write_json(
+        verification_dir / "verified_resume.pt.json",
+        {
+            "schema_version": 1,
+            "attempt_dir": str(attempt.resolve()),
+            "checkpoint_path": str(checkpoint.resolve()),
+            "checkpoint_sha256": checkpoint_sha256,
+        },
+    )
+    return attempt
+
+
+def test_v5_encoder_queue_dry_run_requires_committed_queue_and_runs_from_root(
+    tmp_path: Path,
+) -> None:
+    repo, queue = _sealed_v5_queue_repo(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    python_cwd = tmp_path / "python-cwds.txt"
+    python_wrapper = bin_dir / "python"
+    python_wrapper.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf \'%s\\n\' "$PWD" >> "$QUEUE_TEST_PYTHON_CWDS"\n'
+        'exec "$QUEUE_TEST_REAL_PYTHON" "$@"\n',
+        encoding="utf-8",
+    )
+    python_wrapper.chmod(0o755)
+    environment = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "QUEUE_TEST_PYTHON_CWDS": str(python_cwd),
+        "QUEUE_TEST_REAL_PYTHON": sys.executable,
+    }
+
+    result = subprocess.run(
+        [str(queue), "--dry-run"],
+        cwd=outside,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=environment,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert python_cwd.read_text(encoding="utf-8").splitlines() == [str(repo)]
+    jobs = [line for line in result.stdout.splitlines() if line.startswith("ENCODER ")]
+    assert len(jobs) == 5
+    assert all("family=full_150" in line for line in jobs)
+    assert all("paper_registered_v5_full_150_fold" in line for line in jobs)
+    assert "lane=0 devices=0,1 fold=0" in jobs[0]
+    assert "lane=1 devices=2,3 fold=1" in jobs[1]
+    assert "lane=2 devices=4,5 fold=2" in jobs[2]
+    assert "lane=0 devices=0,1 fold=3" in jobs[3]
+    assert "lane=1 devices=2,3 fold=4" in jobs[4]
+
+    queue.write_text(queue.read_text(encoding="utf-8") + "\n# dirty queue\n", encoding="utf-8")
+    dirty = subprocess.run(
+        [str(queue), "--dry-run"],
+        cwd=outside,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=environment,
+    )
+    assert dirty.returncode != 0
+    assert "queue script differs from Git HEAD" in dirty.stderr
+
+
+def test_v5_encoder_queue_rejects_an_untracked_queue_script(tmp_path: Path) -> None:
+    repo, queue = _sealed_v5_queue_repo(tmp_path)
+    subprocess.run(["git", "rm", "--cached", str(queue.relative_to(repo))], cwd=repo, check=True)
+
+    result = subprocess.run(
+        [str(queue), "--dry-run"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "queue script is not Git tracked" in result.stderr
+
+
+def test_v5_encoder_queue_resume_verification_is_attempt_local(tmp_path: Path) -> None:
+    repo, queue = _sealed_v5_queue_repo(tmp_path)
+    output_root = tmp_path / "outputs"
+    attempt = _write_verified_resume_attempt(output_root)
+    checkpoint = attempt / "verified_resume.pt"
+    verification_dir = attempt / "checkpoint_verifications"
+
+    accepted = subprocess.run(
+        [str(queue), "--verify-attempt", str(attempt)],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert accepted.returncode == 0, accepted.stderr
+    assert "VERIFIED_RESUME" in accepted.stdout
+
+    resumed = subprocess.run(
+        [
+            str(queue),
+            "--output-root",
+            str(output_root),
+            "--resume-fold",
+            "0",
+            "--resume-attempt",
+            "1",
+            "--dry-run",
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert resumed.returncode == 0, resumed.stderr
+    assert "attempt=1 resume=" in resumed.stdout
+
+    restarted = subprocess.run(
+        [str(queue), "--output-root", str(output_root), "--dry-run"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert restarted.returncode == 0, restarted.stderr
+    restart_job = next(line for line in restarted.stdout.splitlines() if "fold=0" in line)
+    assert "attempt=2 resume=fresh" in restart_job
+
+    manifest_path = attempt / "attempt_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["fold"] = 1
+    _write_json(manifest_path, manifest)
+    wrong_fold = subprocess.run(
+        [
+            str(queue),
+            "--output-root",
+            str(output_root),
+            "--resume-fold",
+            "0",
+            "--resume-attempt",
+            "1",
+            "--dry-run",
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert wrong_fold.returncode != 0
+    assert "fold" in wrong_fold.stderr.lower()
+
+    manifest["fold"] = 0
+    _write_json(manifest_path, manifest)
+    checkpoint.write_bytes(b"modified after verification")
+    modified = subprocess.run(
+        [str(queue), "--verify-attempt", str(attempt)],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert modified.returncode != 0
+    assert "hash" in modified.stderr.lower()
+
+    foreign = tmp_path / "foreign.pt"
+    foreign.write_bytes(b"foreign checkpoint")
+    _write_json(
+        verification_dir / "verified_resume.pt.json",
+        {
+            "schema_version": 1,
+            "attempt_dir": str(attempt.resolve()),
+            "checkpoint_path": str(foreign.resolve()),
+            "checkpoint_sha256": _sha256(foreign),
+        },
+    )
+    foreign_result = subprocess.run(
+        [str(queue), "--verify-attempt", str(attempt)],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert foreign_result.returncode != 0
+    assert "same attempt" in foreign_result.stderr.lower()
+
+
+def test_v5_encoder_queue_resume_writes_immutable_resume_logs(tmp_path: Path) -> None:
+    repo, queue = _sealed_v5_queue_repo(tmp_path)
+    output_root = tmp_path / "outputs"
+    attempt = _write_verified_resume_attempt(output_root)
+    historical_log = attempt.parent / "logs" / "attempt_1.log"
+    historical_log.parent.mkdir()
+    historical_log.write_text("original attempt log\n", encoding="utf-8")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_torchrun = bin_dir / "torchrun"
+    fake_torchrun.write_text(
+        "#!/usr/bin/env bash\n" "echo fake resume failure >&2\n" "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_torchrun.chmod(0o755)
+    environment = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+    command = [
+        str(queue),
+        "--output-root",
+        str(output_root),
+        "--resume-fold",
+        "0",
+        "--resume-attempt",
+        "1",
+    ]
+
+    first = subprocess.run(
+        command, cwd=repo, capture_output=True, text=True, check=False, env=environment
+    )
+    second = subprocess.run(
+        command, cwd=repo, capture_output=True, text=True, check=False, env=environment
+    )
+
+    assert first.returncode != 0
+    assert second.returncode != 0
+    assert historical_log.read_text(encoding="utf-8") == "original attempt log\n"
+    assert (attempt / "logs" / "resume_1.log").read_text(
+        encoding="utf-8"
+    ) == "fake resume failure\n"
+    assert (attempt / "logs" / "resume_2.log").read_text(
+        encoding="utf-8"
+    ) == "fake resume failure\n"
