@@ -22,6 +22,11 @@ import torch
 from scipy.ndimage import gaussian_filter, label
 from sklearn.metrics import average_precision_score, roc_auc_score
 
+from scripts.eval.run_strong_downstream_benchmark import (
+    fixed_highres_feature_map,
+    load_manifest,
+)
+
 
 TASKS = {
     "building": ("建筑物", Path("/data/xuannv_embedding/processed/haidian/labels/building_osm")),
@@ -47,14 +52,38 @@ class PolygonSupport:
     mask: np.ndarray
 
 
+@dataclass(frozen=True)
+class FeatureSpec:
+    name: str
+    kind: str
+    root: Path
+    month: str
+    channels: int
+
+
+MANIFEST_CACHE: dict[Path, dict[str, object]] = {}
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--embedding-root", type=Path, default=Path(
         "/data/xuannv_embedding/embeddings/production/haidian_202512_202605_p10c_epoch800_202604"))
-    parser.add_argument("--month", default="202604")
+    parser.add_argument(
+        "--aef-embedding-root",
+        type=Path,
+        default=Path("/data/xuannv_embedding/embeddings/aef_official_2025_annual"),
+    )
+    parser.add_argument("--data-root", type=Path, default=Path("/data/xuannv_embedding/processed/haidian"))
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=Path(
+            "/data/xuannv_embedding/processed/haidian/"
+            "manifest_p6a_202512_202605_pixelmask_clean_osm_landcover.json"
+        ),
+    )
     parser.add_argument("--fold", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--polygon-counts", nargs="+", type=int, default=[1, 3, 5, 9])
     parser.add_argument("--tasks", nargs="+", choices=sorted(TASKS), default=sorted(TASKS))
     parser.add_argument("--output-root", type=Path, default=Path(
         "/data/xuannv_embedding/experiments/production/haidian_p10c_pu_query_strict_20260721"))
@@ -69,8 +98,38 @@ def emb_path(root: Path, patch_id: str, month: str) -> Path:
     return root / "haidian" / patch_id / f"{month}_embedding_map.pt"
 
 
-def load_embedding(args: argparse.Namespace, patch_id: str) -> np.ndarray:
-    return torch.load(emb_path(args.embedding_root, patch_id, args.month), map_location="cpu", weights_only=True).numpy().astype(np.float32)
+def feature_specs(args: argparse.Namespace) -> dict[str, FeatureSpec]:
+    return {
+        "xuannv": FeatureSpec("xuannv", "embedding_map", args.embedding_root, "202604", 64),
+        "aef": FeatureSpec("aef", "embedding_map", args.aef_embedding_root, "202512", 64),
+        "traditional": FeatureSpec(
+            "traditional",
+            "fixed_highres_feature_map",
+            args.manifest,
+            "202604",
+            42,
+        ),
+    }
+
+
+def load_feature(spec: FeatureSpec, patch_id: str) -> np.ndarray:
+    if spec.kind == "embedding_map":
+        path = emb_path(spec.root, patch_id, spec.month)
+        feature = torch.load(path, map_location="cpu", weights_only=True).float().numpy()
+    elif spec.kind == "fixed_highres_feature_map":
+        records = MANIFEST_CACHE.get(spec.root)
+        if records is None:
+            records = load_manifest(spec.root, spec.root.parent)
+            MANIFEST_CACHE[spec.root] = records
+        feature = fixed_highres_feature_map(records[patch_id], spec.month)
+    else:
+        raise KeyError(f"Unsupported feature kind: {spec.kind}")
+    feature = np.asarray(feature, dtype=np.float32)
+    if feature.ndim != 3 or feature.shape[0] != spec.channels:
+        raise ValueError(
+            f"Expected {spec.channels}xHxW {spec.name} feature for {patch_id}, got {feature.shape}"
+        )
+    return feature
 
 
 def load_mask(root: Path, patch_id: str) -> np.ndarray:
@@ -124,9 +183,9 @@ def fbeta(positive_scores: np.ndarray, negative_scores: np.ndarray, threshold: f
     return (1 + b2) * tp / max((1 + b2) * tp + b2 * fn + fp, 1e-8)
 
 
-def train_pu_query(args: argparse.Namespace, supports: list[PolygonSupport]) -> dict[str, np.ndarray | float | int]:
+def train_pu_query(spec: FeatureSpec, supports: list[PolygonSupport], seed: int) -> dict[str, np.ndarray | float | int]:
     unique_ids = sorted({item.patch_id for item in supports})
-    raw = {patch_id: load_embedding(args, patch_id) for patch_id in unique_ids}
+    raw = {patch_id: load_feature(spec, patch_id) for patch_id in unique_ids}
     all_pixels = np.concatenate([raw[patch_id].reshape(raw[patch_id].shape[0], -1).T for patch_id in unique_ids])
     mean, std = all_pixels.mean(0), np.maximum(all_pixels.std(0), 1e-5)
     features = {patch_id: normalize_map(value, mean, std) for patch_id, value in raw.items()}
@@ -136,7 +195,7 @@ def train_pu_query(args: argparse.Namespace, supports: list[PolygonSupport]) -> 
     for item in supports:
         union_masks[item.patch_id] |= item.mask
     backgrounds: list[np.ndarray] = []
-    rng = np.random.default_rng(args.seed + len(supports) * 17)
+    rng = np.random.default_rng(seed + len(supports) * 17)
     for patch_id in unique_ids:
         feature = features[patch_id]
         reliable = ~dilate(union_masks[patch_id], BACKGROUND_EXCLUSION_PIXELS)
@@ -190,17 +249,17 @@ def binary_rgb(mask: np.ndarray, color: tuple[int, int, int] = (226, 42, 42)) ->
     return output
 
 
-def make_visual(root: Path, args: argparse.Namespace, task: str, label_root: Path, supports: list[PolygonSupport], model: dict[str, np.ndarray | float | int], test_ids: list[str]) -> Path:
+def make_visual(root: Path, spec: FeatureSpec, task: str, label_root: Path, supports: list[PolygonSupport], model: dict[str, np.ndarray | float | int], test_ids: list[str]) -> Path:
     # Select a representative only after the aggregate test calculation; it never affects the score.
     candidates: list[tuple[float, str, np.ndarray, np.ndarray, np.ndarray]] = []
     for patch_id in test_ids:
-        score, _ = score_pu_query(load_embedding(args, patch_id), model)
+        score, _ = score_pu_query(load_feature(spec, patch_id), model)
         gt = load_mask(label_root, patch_id)
         value = metrics(score, gt, float(model["threshold"]))["f1"] if gt.any() else -1.0
-        candidates.append((value, patch_id, score, gt, load_embedding(args, patch_id)))
+        candidates.append((value, patch_id, score, gt, load_feature(spec, patch_id)))
     _, patch_id, score, gt, feature = max(candidates, key=lambda item: item[0])
     support = supports[0]
-    support_feature = load_embedding(args, support.patch_id)
+    support_feature = load_feature(spec, support.patch_id)
     fig, axes = plt.subplots(2, 3, figsize=(12, 8))
     panels = [
         ("Support polygon (train only)", binary_rgb(support.mask, (180, 40, 180))),
@@ -214,7 +273,7 @@ def make_visual(root: Path, args: argparse.Namespace, task: str, label_root: Pat
         axis.imshow(image, cmap="turbo" if image.ndim == 2 else None)
         axis.set_title(title, fontsize=10)
         axis.axis("off")
-    fig.suptitle(f"{PLOT_NAMES[task]} | {len(supports)} polygons | representative independent test patch {patch_id}", fontsize=13)
+    fig.suptitle(f"{PLOT_NAMES[task]} | {spec.name} | {len(supports)} polygons | representative independent test patch {patch_id}", fontsize=13)
     fig.tight_layout()
     output = root / f"{task}_{len(supports)}polygons_example.png"
     fig.savefig(output, dpi=180)
@@ -248,32 +307,35 @@ def plot_summary(rows: list[dict[str, object]], output: Path) -> None:
     plt.close(fig)
 
 
-def main() -> None:
-    args = parse_args()
+def run_comparison(args: argparse.Namespace) -> dict[str, object]:
     args.output_root.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, object]] = []
+    specs = feature_specs(args)
     for task in args.tasks:
         name, label_root = TASKS[task]
         split = split_for(label_root, args.fold)
         components = collect_components(label_root, split["train"])
-        if len(components) < max(args.polygon_counts):
+        polygon_count = 3
+        if len(components) < polygon_count:
             raise RuntimeError(f"{task}: only {len(components)} usable train polygons")
-        for polygon_count in args.polygon_counts:
-            supports = pick_supports(components, polygon_count, args.seed + sum(map(ord, task)) + polygon_count * 1009)
-            model = train_pu_query(args, supports)
+        supports = pick_supports(components, polygon_count, args.seed + sum(map(ord, task)))
+        for spec in specs.values():
+            model = train_pu_query(spec, supports, args.seed)
             test_scores, test_labels, adapted = [], [], 0
             for patch_id in split["test"]:
-                score, did_adapt = score_pu_query(load_embedding(args, patch_id), model)
+                score, did_adapt = score_pu_query(load_feature(spec, patch_id), model)
                 test_scores.append(score); test_labels.append(load_mask(label_root, patch_id)); adapted += int(did_adapt)
             result = metrics(np.concatenate(test_scores), np.concatenate(test_labels), float(model["threshold"]))
-            row = {"task": task, "task_zh": name, "polygon_count": polygon_count, "support_patch_ids": [item.patch_id for item in supports], "unique_support_patches": len({item.patch_id for item in supports}), "threshold": model["threshold"], "query_adapted_test_patches": adapted, "test_patch_count": len(split["test"]), "metrics": result}
+            row = {"task": task, "task_zh": name, "feature": spec.name, "polygon_count": polygon_count, "support_patch_ids": [item.patch_id for item in supports], "test_patch_ids": list(split["test"]), "unique_support_patches": len({item.patch_id for item in supports}), "threshold": model["threshold"], "query_adapted_test_patches": adapted, "test_patch_count": len(split["test"]), "metrics": result}
             rows.append(row)
-            if polygon_count == 5:
-                row["visualization"] = str(make_visual(args.output_root, args, task, label_root, supports, model, split["test"]))
-            print(f"[{task}] polygons={polygon_count} test_f1={result['f1']:.4f} auc={result['auc']:.4f}", flush=True)
-    plot_summary(rows, args.output_root / "pu_query_sparse_summary.png")
-    payload = {"protocol": {"source": "embedding-api commit 530b8f4", "fold": args.fold, "month": args.month, "embedding": "P10C epoch_800 64D", "train_split_only": True, "test_metrics_only": True, "threshold_source": "support positives + reliable PU background, F0.5 sweep (180 thresholds)", "query": "sigma=.55, q=.997, blend=.12, guarded area growth"}, "rows": rows}
+            print(f"[{task}] feature={spec.name} polygons={polygon_count} test_f1={result['f1']:.4f} auc={result['auc']:.4f}", flush=True)
+    payload = {"protocol": {"polygon_count": 3, "fold": args.fold, "shared_supports": True, "test_patch_count": len(split["test"])}, "rows": rows}
     (args.output_root / "results.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return payload
+
+
+def main() -> None:
+    run_comparison(parse_args())
 
 
 if __name__ == "__main__":
