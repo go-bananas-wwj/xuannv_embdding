@@ -118,8 +118,8 @@ def build_contextual_comparison_admission(
     return {
         "schema_version": 1,
         "comparison_id": "annual_aef_2025_vs_monthly_xuannv_202604_contextual",
-        "paper_eligible": True,
-        "admission_status": "contextual_paired_comparison_verified",
+        "paper_eligible": False,
+        "admission_status": "contextual_paired_comparison_pending_external_release_admissions",
         "evidence_scope": "osm_assisted_spatial_readout",
         "time_inequivalent_contextual": True,
         "temporal_statement": report["temporal_statement"],

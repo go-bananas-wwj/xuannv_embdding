@@ -21,6 +21,7 @@ from scripts.eval.run_registered_paper_downstream import (
     load_registered_v5_matrix,
     resolve_registered_protocol,
     sha256_file,
+    validate_v5_embedding_registry,
     verify_git_head_file,
     verify_artifact_registry_binding,
     target_support_sha256,
@@ -133,13 +134,17 @@ def _verify_test_confusion(payload: Mapping[str, object]) -> None:
                 raise ValueError("Contextual comparison has invalid patch confusion counts")
 
 
-def verify_prediction_target_support(payload: Mapping[str, object]) -> None:
+def verify_prediction_target_support(
+    payload: Mapping[str, object], *, expected_prediction_path: Path | None = None
+) -> None:
     """Recompute per-patch support hashes from the sealed test prediction archive."""
     prediction_value = payload.get("prediction_file")
     support = payload.get("per_patch_target_support_sha256")
     if not isinstance(prediction_value, str) or not isinstance(support, Mapping):
         raise ValueError("Contextual comparison lacks target-support archive provenance")
     prediction_path = Path(prediction_value)
+    if expected_prediction_path is not None and prediction_path.resolve() != expected_prediction_path.resolve():
+        raise ValueError("Contextual metric prediction path differs from its sealed artifact")
     if not prediction_path.is_file():
         raise FileNotFoundError(f"Missing contextual test prediction archive: {prediction_path}")
     with np.load(prediction_path, allow_pickle=True) as archive:
@@ -150,6 +155,35 @@ def verify_prediction_target_support(payload: Mapping[str, object]) -> None:
     observed = {patch_id: target_support_sha256(targets[index]) for index, patch_id in enumerate(patch_ids)}
     if observed != dict(support):
         raise ValueError("Contextual prediction archive target support differs from metric provenance")
+
+
+def _verify_candidate_embedding_registry(payload: Mapping[str, object]) -> None:
+    """Bind a V5 candidate result to a Git-pinned full_150 export registry entry."""
+    registry = payload.get("embedding_registry")
+    if not isinstance(registry, Mapping) or not isinstance(registry.get("path"), str):
+        raise ValueError("Contextual candidate lacks a sealed V5 embedding registry path")
+    registry_path = Path(str(registry["path"]))
+    if registry.get("sha256") != sha256_file(registry_path):
+        raise ValueError("Contextual candidate V5 embedding registry hash differs from metric provenance")
+    raw = validate_v5_embedding_registry(registry_path, load_registered_v5_matrix())
+    entries = raw.get("exports")
+    if not isinstance(entries, list):
+        raise ValueError("Contextual candidate V5 embedding registry lacks exports")
+    fields = (
+        "family",
+        "encoder_fold",
+        "checkpoint_sha256",
+        "config_sha256",
+        "manifest_sha256",
+        "embedding_file_index_sha256",
+        "canonical_export_provenance_sha256",
+        "region",
+        "month",
+        "patch_count",
+        "protocol_id",
+    )
+    if sum(all(entry.get(key) == registry.get(key) for key in fields) for entry in entries) != 1:
+        raise ValueError("Contextual candidate export is absent from the registered V5 registry")
 
 
 def _verify_fixed_protocol_bindings(
@@ -205,7 +239,9 @@ def load_verified_contextual_records(
         verify_artifact_registry_binding(artifact_path, registry_path)
         if json.loads(metrics_path.read_text(encoding="utf-8")) != payload:
             raise ValueError("Contextual result metric provenance differs from its sealed metric file")
-        verify_prediction_target_support(payload)
+        verify_prediction_target_support(payload, expected_prediction_path=metrics_path.parent / "predictions_test.npz")
+        if expected_protocol == XUANNV_PROTOCOL:
+            _verify_candidate_embedding_registry(payload)
         cell = _cell_from_payload(payload)
         if cell in records:
             raise ValueError(f"Duplicate contextual result cell: {cell}")
