@@ -2780,9 +2780,6 @@ def test_v5_full_matrix_preflight_rejects_a_missing_fold_export(
     checkpoint = tmp_path / "checkpoint.pt"
     checkpoint.write_bytes(b"checkpoint")
     monkeypatch.setattr(resolver, "resolve_registered_v5_checkpoint", lambda *_args, **_kwargs: checkpoint)
-    monkeypatch.setattr(
-        resolver, "validate_registered_v5_checkpoint_config_binding", lambda *_args, **_kwargs: None
-    )
     monkeypatch.setattr(registered, "load_registered_v5_matrix", lambda: {"families": {"full_150": {}}})
     monkeypatch.setattr(registered, "validate_v5_embedding_registry", lambda *_args: {"exports": entries})
     monkeypatch.setattr(
@@ -2790,24 +2787,6 @@ def test_v5_full_matrix_preflight_rejects_a_missing_fold_export(
         "verify_encoder_provenance",
         lambda *_args, **_kwargs: {"config_sha256": "config", "checkpoint_sha256": "checkpoint"},
     )
-    monkeypatch.setattr(
-        registered,
-        "_verify_embedding_export",
-        lambda *_args, **_kwargs: {
-            "manifest": {"manifest_sha256": "manifest"},
-            "embedding_file_index_sha256": "index",
-            "canonical_export_provenance_sha256": "provenance",
-        },
-    )
-    monkeypatch.setattr(
-        registered,
-        "verify_embedding_registry",
-        lambda *_args, **kwargs: {
-            "family": "full_150",
-            "encoder_fold": int(Path(kwargs["region"]).name) if False else 0,
-        },
-    )
-
     with pytest.raises(ValueError, match="exactly one full_150 embedding export for fold 0"):
         registered.validate_v5_full_150_matrix_readiness(
             encoder_root=tmp_path / "encoders",
