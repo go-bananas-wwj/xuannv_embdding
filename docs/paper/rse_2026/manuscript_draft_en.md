@@ -74,10 +74,13 @@ regional scale, imperfect weak labels, and sparse higher-resolution observations
 ### 2.1 Dense geospatial representations and EO foundation models
 
 Large-scale Earth-observation encoders and embedding products motivate a stable feature interface
-rather than a separate end-to-end model per task (Brown et al., 2025; Herzog et al., 2025).
-XuannvEarth follows this interface at city scale and monthly cadence. It is not a global foundation
-model: its training extent, observation history, and label sources are narrower than those of
-globally trained products.
+rather than a separate end-to-end model per task (Brown et al., 2025; Herzog et al., 2025;
+Szwarcman et al., 2026). Temporal and multispectral masked pre-training has also shown that a
+single encoder can support classification and segmentation readouts after downstream adaptation
+(Cong et al., 2022). XuannvEarth follows this interface at city scale and monthly cadence. It is
+not a global foundation model: its training extent, observation history, and label sources are
+narrower than those of globally trained products. Accordingly, the paper does not infer global or
+cross-region transfer from a single-city spatial-holdout study.
 
 ### 2.2 Multimodal and temporal Earth observation learning
 
@@ -85,10 +88,11 @@ Optical, radar, and Landsat observations offer complementary strengths but diffe
 availability, radiometry, and spatial resolution. Multimodal temporal models therefore require
 availability-aware fusion and explicit treatment of missing sources. Masked reconstruction offers a
 general self-supervised precedent for learning from partially observed visual inputs (He et al.,
-2022). XuannvEarth uses independent sensor stems and full temporal attention, while structured
-source corruption exposes the encoder to missing modalities, months, and spatial blocks during
-training. This design targets robustness; it does not by itself prove a causal contribution until
-matched ablations are admitted.
+2022), while SatMAE explicitly studies temporal and spectral positional encoding with both
+consistent and independently masked observations (Cong et al., 2022). XuannvEarth uses
+independent sensor stems and full temporal attention, while structured source corruption exposes
+the encoder to missing modalities, months, and spatial blocks during training. This design targets
+robustness; it does not by itself prove a causal contribution until matched ablations are admitted.
 
 ### 2.3 Reconstruction and weak geographic supervision
 
@@ -98,6 +102,17 @@ collaboratively maintained geographic database (Haklay and Weber, 2008); it can 
 structure while being incomplete, temporally uncertain, and ontology-overlapping with downstream
 labels. XuannvEarth therefore treats OSM as auxiliary weak supervision and separates OSM-assisted
 diagnostic evaluation from independent-label evidence.
+
+### 2.4 Label-efficient and spatially valid evaluation
+
+EO foundation-model evaluations commonly contrast limited-label adaptation with task-specific
+learners, including linear-probe and segmentation settings (Dionelis et al., 2024; Szwarcman et
+al., 2026). Such comparisons are only interpretable when the representation, support budget,
+reader capacity, split, and decision rule are held fixed. They are particularly sensitive in spatial
+data because nearby pixels and neighbouring patches are correlated. We therefore use
+geographically separated folds, fixed support-patch schedules, training-only feature
+standardisation, and validation-only threshold selection. These safeguards constrain the scope of
+our conclusions; they do not replace independent labels or a cross-city replication.
 
 ## 3. Materials and methods
 
@@ -329,6 +344,14 @@ Schechter, E., Askay, S., Guinan, O., Moore, R., Boukouvalas, A., and Kohli, P.,
 AlphaEarth Foundations: An embedding field model for accurate and efficient global mapping from
 sparse label data. arXiv:2507.22291. https://doi.org/10.48550/arXiv.2507.22291.
 
+Cong, Y., Khanna, S., Meng, C., Liu, P., Rozi, E., He, Y., Burke, M., Lobell, D.B., and Ermon,
+S., 2022. SatMAE: Pre-training Transformers for Temporal and Multi-Spectral Satellite Imagery.
+arXiv:2207.08051. https://doi.org/10.48550/arXiv.2207.08051.
+
+Dionelis, N., Fibaek, C., Camilleri, L., Luyts, A., Bosmans, J., and Le Saux, B., 2024.
+Evaluating and Benchmarking Foundation Models for Earth Observation and Geospatial AI.
+arXiv:2406.18295. https://doi.org/10.48550/arXiv.2406.18295.
+
 Drusch, M., Del Bello, U., Carlier, S., Colin, O., Fernandez, V., Gascon, F., Hoersch, B., Isola,
 C., Laberinti, P., Martimort, P., Meygret, A., Spoto, F., Sy, O., Marchese, F., and Bargellini,
 P., 2012. Sentinel-2: ESA's Optical High-Resolution Mission for GMES Operational Services. Remote
@@ -346,6 +369,15 @@ Buraczynski, A., Farley, K., Hansen, J., Howe, A., Johnson, P.A., Otterlee, M., 
 Pitelka, H., Daspit, S., Ratner, R., Wilhelm, C., Wood, S., Jacobi, M., Kerner, H., Shelhamer, E.,
 Farhadi, A., Krishna, R., and Beukema, P., 2025. OlmoEarth: Stable Latent Image Modeling for
 Multimodal Earth Observation. arXiv:2511.13655. https://doi.org/10.48550/arXiv.2511.13655.
+
+Szwarcman, D., Roy, S., Fraccaro, P., Gislason, T.E., Blumenstiel, B., Ghosal, R., de Oliveira,
+P.H., de Sousa Almeida, J.L., Sedona, R., Kang, Y., Chakraborty, S., Wang, S., Gomes, C., Kumar,
+A., Gaur, V., Truong, M., Godwin, D., Khallaghi, S., Lee, H., Hsu, C.-Y., Akbari Asanjan, A.,
+Mujeci, B., Shidham, D., Balogun, R.O., Kolluru, V., Keenan, T., Arevalo, P., Li, W., Alemohammad,
+H., Olofsson, P., Mayer, T., Hain, C., Kennedy, R., Zadrozny, B., Bell, D., Cavallaro, G., Watson,
+C., Maskey, M., Ramachandran, R., and Moreno, J.B., 2026. Prithvi-EO-2.0: A Versatile
+Multitemporal Foundation Model for Earth Observation Applications. IEEE Transactions on
+Geoscience and Remote Sensing 64, 4400120. https://doi.org/10.1109/TGRS.2025.3642610.
 
 Torres, R., Snoeij, P., Geudtner, D., Bibby, D., Davidson, M., Attema, E., Potin, P., Rommen, B.,
 Floury, N., Brown, M., Traver, I.N., Deghaye, P., Duesmann, B., Rosich, B., Miranda, N., Bruno,
