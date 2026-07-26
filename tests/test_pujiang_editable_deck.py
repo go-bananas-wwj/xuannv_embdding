@@ -13,6 +13,7 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.util import Inches
 
 SCRIPT = Path(__file__).parents[1] / "scripts/report/pujiang_editable_common.py"
+PAGES04_07_SCRIPT = Path(__file__).parents[1] / "scripts/report/pujiang_editable_pages04_07.py"
 PRESENTATION_ROOT = Path(__file__).parents[1] / "docs/presentations/pujiang_202607"
 EDITABLE_SOURCE_SLIDES = [
     PRESENTATION_ROOT / f"玄女月度地理嵌入_浦江交流_第{page:02d}页_20260726.pptx"
@@ -124,3 +125,67 @@ def _picture_hashes(slide) -> list[str]:
         for shape in slide.shapes
         if shape.shape_type == MSO_SHAPE_TYPE.PICTURE
     )
+
+
+def _pages04_07_module():
+    spec = importlib.util.spec_from_file_location("pujiang_editable_pages04_07", PAGES04_07_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _editable_pages04_07() -> Presentation:
+    presentation = Presentation()
+    pages = _pages04_07_module()
+    for builder in (pages.build_page04, pages.build_page05, pages.build_page06, pages.build_page07):
+        builder(presentation)
+    return presentation
+
+
+def test_pages04_to_07_have_required_titles_shapes_and_no_full_slide_picture() -> None:
+    presentation = _editable_pages04_07()
+    expected = [
+        ("玄女嵌入平台：浏览、分析、训练与生成", 20),
+        ("少量标注，快速形成区域级专题图", 35),
+        ("嵌入底座进入遥感智能体工作流", 22),
+        ("云遮挡或观测缺失时，生成指定时刻的遥感参考影像", 18),
+    ]
+
+    assert len(presentation.slides) == len(expected)
+    for slide, (title, minimum_shapes) in zip(presentation.slides, expected, strict=True):
+        assert title in _slide_text(slide)
+        assert len(slide.shapes) >= minimum_shapes
+        assert not any(MODULE.is_full_slide_picture(shape, presentation) for shape in slide.shapes)
+
+
+def test_page05_has_18_independent_raster_panels_and_native_labels() -> None:
+    presentation = _editable_pages04_07()
+    slide = presentation.slides[1]
+    pictures = [shape for shape in slide.shapes if shape.shape_type == MSO_SHAPE_TYPE.PICTURE]
+
+    assert len(pictures) >= 18
+    assert all(not MODULE.is_full_slide_picture(shape, presentation) for shape in pictures)
+    text = _slide_text(slide)
+    for label in (
+        "建筑物",
+        "道路",
+        "水体",
+        "3 个圈选",
+        "测试影像",
+        "玄女候选",
+        "AEF 候选",
+        "传统候选",
+        "真实标签",
+    ):
+        assert label in text
+
+
+def test_page07_splits_the_observation_timeline_into_independent_pictures() -> None:
+    presentation = _editable_pages04_07()
+    slide = presentation.slides[3]
+    pictures = [shape for shape in slide.shapes if shape.shape_type == MSO_SHAPE_TYPE.PICTURE]
+
+    assert len(pictures) >= 3
+    assert any("使用边界｜左侧两图用于说明缺测场景" in text for text in _slide_text(slide))
