@@ -372,11 +372,13 @@ def test_result_identities_are_sorted_and_fail_closed() -> None:
             "result_id": "result-b",
             "artifact_sha256": "artifact-b",
             "registry_entry_sha256": "entry-b",
+            "metrics_sha256": "metrics-b",
         },
         {
             "result_id": "result-a",
             "artifact_sha256": "artifact-a",
             "registry_entry_sha256": "entry-a",
+            "metrics_sha256": "metrics-a",
         },
     ]
 
@@ -385,21 +387,24 @@ def test_result_identities_are_sorted_and_fail_closed() -> None:
             "result_id": "result-a",
             "artifact_sha256": "artifact-a",
             "registry_entry_sha256": "entry-a",
+            "metrics_sha256": "metrics-a",
         },
         {
             "result_id": "result-b",
             "artifact_sha256": "artifact-b",
             "registry_entry_sha256": "entry-b",
+            "metrics_sha256": "metrics-b",
         },
     ]
 
-    with pytest.raises(ValueError, match="incomplete identity"):
+    with pytest.raises(ValueError, match="complete sealed identity"):
         bootstrap.result_identities(
             [
                 {
                     "result_id": "result-a",
                     "artifact_sha256": "",
                     "registry_entry_sha256": "entry-a",
+                    "metrics_sha256": "metrics-a",
                 }
             ]
         )
@@ -407,13 +412,19 @@ def test_result_identities_are_sorted_and_fail_closed() -> None:
 
 def test_input_snapshot_has_a_stable_identity_hash() -> None:
     baseline = [
-        {"result_id": "base-a", "artifact_sha256": "artifact-a", "registry_entry_sha256": "entry-a"}
+        {
+            "result_id": "base-a",
+            "artifact_sha256": "artifact-a",
+            "registry_entry_sha256": "entry-a",
+            "metrics_sha256": "metrics-a",
+        }
     ]
     candidate = [
         {
             "result_id": "candidate-a",
             "artifact_sha256": "artifact-b",
             "registry_entry_sha256": "entry-b",
+            "metrics_sha256": "metrics-b",
         }
     ]
 
@@ -509,6 +520,7 @@ def _matrix_records(prefix: str, *, include_unrelated: bool) -> list[dict[str, o
                             "result_id": result_id,
                             "artifact_sha256": f"artifact-{result_id}",
                             "registry_entry_sha256": f"entry-{result_id}",
+                            "metrics_sha256": f"metrics-{result_id}",
                             "metric_provenance": {
                                 "task": task,
                                 "shot": shot,
@@ -537,6 +549,7 @@ def _matrix_records(prefix: str, *, include_unrelated: bool) -> list[dict[str, o
                 "result_id": f"{prefix}-unrelated",
                 "artifact_sha256": f"artifact-{prefix}-unrelated",
                 "registry_entry_sha256": f"entry-{prefix}-unrelated",
+                "metrics_sha256": f"metrics-{prefix}-unrelated",
                 "metric_provenance": {
                     "task": "unrelated",
                     "shot": "50",
@@ -578,7 +591,7 @@ def test_compare_snapshot_excludes_unrelated_family_records_and_stays_preliminar
         candidate_family="full_150",
         tasks=("building", "road", "water"),
         shots=("5", "10"),
-        allow_preliminary=False,
+        allow_preliminary=True,
         n_resamples=1,
         seed=1,
         patch_metadata_path=metadata_path,
@@ -703,6 +716,7 @@ def test_main_writes_a_sealed_selected_input_snapshot(
             str(metadata_path),
             "--n-resamples",
             "1",
+            "--allow-preliminary",
         ],
     )
 
@@ -721,3 +735,41 @@ def test_main_writes_a_sealed_selected_input_snapshot(
     assert all("unrelated" not in item["result_id"] for item in snapshot["candidate_input_results"])
     assert report["preliminary"] is True
     assert report["paper_eligible"] is False
+
+
+def test_main_refuses_to_overwrite_a_bootstrap_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Bootstrap output and its identity snapshot are write-once evidence artifacts."""
+    output_path = tmp_path / "bootstrap.json"
+    output_path.write_text('{"existing":true}\n', encoding="utf-8")
+    monkeypatch.setattr(
+        bootstrap,
+        "compare_families",
+        lambda **_kwargs: {
+            "input_identity_snapshot": {
+                "sha256": "identity",
+                "baseline_result_count": 90,
+                "candidate_result_count": 90,
+            }
+        },
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paired_spatial_bootstrap.py",
+            "--registry",
+            str(tmp_path / "results.jsonl"),
+            "--baseline-family",
+            "aef_v5",
+            "--candidate-family",
+            "full_150",
+            "--output",
+            str(output_path),
+            "--patch-metadata",
+            str(tmp_path / "patches.json"),
+        ],
+    )
+
+    with pytest.raises(FileExistsError, match="refusing to overwrite"):
+        bootstrap.main()

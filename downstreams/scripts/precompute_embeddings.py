@@ -15,8 +15,7 @@ from downstreams.inference import (
     precompute_embeddings,
     write_meta_json,
 )
-
-from scripts.export_paths import resolve_export_root
+from export_paths import resolve_export_root
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)

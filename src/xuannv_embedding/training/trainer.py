@@ -185,13 +185,20 @@ class Trainer:
     def _compute_losses(self, output: Any, batch: dict[str, Any]) -> dict[str, torch.Tensor]:
         """Call the criterion with optional supervised labels when present."""
         supervised_labels = batch.get("supervised_labels")
+        teacher_features = batch.get("teacher_feature")
+        teacher_valid = batch.get("teacher_valid")
+        teacher_kwargs: dict[str, Any] = {}
+        if teacher_features is not None or teacher_valid is not None:
+            teacher_kwargs = {
+                "teacher_features": teacher_features,
+                "teacher_valid": teacher_valid,
+            }
         if supervised_labels is None:
             losses = self.criterion(
                 output,
                 batch["targets"],
                 batch["target_masks"],
-                teacher_features=batch.get("teacher_feature"),
-                teacher_valid=batch.get("teacher_valid"),
+                **teacher_kwargs,
             )
         else:
             losses = self.criterion(
@@ -200,8 +207,7 @@ class Trainer:
                 batch["target_masks"],
                 supervised_labels,
                 batch.get("supervised_label_masks"),
-                teacher_features=batch.get("teacher_feature"),
-                teacher_valid=batch.get("teacher_valid"),
+                **teacher_kwargs,
             )
         for name, value in batch.get("masking_stats", {}).items():
             if isinstance(value, torch.Tensor):

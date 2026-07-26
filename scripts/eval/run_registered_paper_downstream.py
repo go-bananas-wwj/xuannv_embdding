@@ -780,7 +780,9 @@ def verify_git_head_file(path: Path) -> None:
         check=False,
     )
     if root.returncode != 0 or not root.stdout.strip():
-        raise ValueError("External registry must be inside a Git repository")
+        raise ValueError(
+            "External registry must be inside a Git repository (inside the repository)"
+        )
     repo_root = Path(root.stdout.strip()).resolve()
     try:
         relative = resolved.relative_to(repo_root)

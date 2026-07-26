@@ -171,8 +171,33 @@ def load_verified_records(
     return records
 
 
+def load_admitted_records(
+    registry_path: Path,
+    *,
+    family: str,
+    release_admission_path: Path | None,
+) -> list[dict[str, Any]]:
+    """Load paper-facing records only through an immutable release-admission overlay."""
+    if release_admission_path is None:
+        raise ValueError("Paper-eligible aggregation requires --release-admission")
+    from scripts.report import admit_registered_results as admission
+
+    return admission.load_admitted_records(
+        registry_path, family=family, release_admission_path=release_admission_path
+    )
+
+
 def _cell_key(task: str, shot: str) -> str:
     return f"{task}|{shot}"
+
+
+def sealed_result_identity(record: dict[str, Any]) -> dict[str, str]:
+    """Return the complete four-hash identity shared by reports and admissions."""
+    fields = ("result_id", "artifact_sha256", "registry_entry_sha256", "metrics_sha256")
+    identity = {field: record.get(field) for field in fields}
+    if any(not isinstance(value, str) or not value for value in identity.values()):
+        raise ValueError("Registered result lacks a complete sealed identity")
+    return identity  # type: ignore[return-value]
 
 
 def is_primary_matrix(
@@ -295,7 +320,7 @@ def summarize_records(
 
 
 def _write_csv(path: Path, report: dict[str, Any]) -> None:
-    with path.open("w", newline="", encoding="utf-8") as handle:
+    with path.open("x", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
             handle,
             fieldnames=[
@@ -372,7 +397,8 @@ def _write_markdown(path: Path, report: dict[str, Any]) -> None:
             f"{values[metric]['mean']:.4f} +/- {values[metric]['std']:.4f}" for metric in METRICS
         ]
         lines.append(f"| {cell['task']} | {cell['shot']} | " + " | ".join(formatted) + " |")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    with path.open("x", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
 
 
 def parse_args() -> argparse.Namespace:
@@ -393,6 +419,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Git-tracked immutable anchor required for paper-eligible aggregation.",
     )
+    parser.add_argument(
+        "--release-admission",
+        type=Path,
+        default=None,
+        help="Git-tracked immutable release-admission required for paper-facing aggregation.",
+    )
     return parser.parse_args()
 
 
@@ -412,14 +444,27 @@ def main() -> None:
         raise ValueError(
             "Paper-eligible aggregation requires folds 0..4 and seeds 42,43,44 exactly"
         )
-    anchor = (
-        None
-        if args.allow_preliminary
-        else verify_result_registry_anchor(args.registry, args.registry_anchor)
-    )
-    records = load_verified_records(
-        args.registry, family=args.family, allow_preliminary=args.allow_preliminary
-    )
+    if args.allow_preliminary:
+        if args.release_admission is not None:
+            raise ValueError("Preliminary aggregation must not consume --release-admission")
+        anchor = None
+        release_admission = None
+        records = load_verified_records(args.registry, family=args.family, allow_preliminary=True)
+    else:
+        if args.registry_anchor is not None:
+            raise ValueError(
+                "Paper-facing aggregation uses --release-admission, not --registry-anchor"
+            )
+        anchor = None
+        records = load_admitted_records(
+            args.registry,
+            family=args.family,
+            release_admission_path=args.release_admission,
+        )
+        release_admission = {
+            "path": str(args.release_admission.resolve()),
+            "sha256": registered.sha256_file(args.release_admission),
+        }
     evidence = validate_report_evidence(records, args.report_kind)
     if evidence["protocol_id"] == "v5_osm_assisted" and args.protocol != "v5_osm_assisted":
         raise ValueError("V5 aggregation requires --protocol v5_osm_assisted")
@@ -438,14 +483,8 @@ def main() -> None:
         "record_count": len(records),
         "registry_sha256": registered.sha256_file(args.registry),
         "registry_anchor": anchor,
-        "selected_results": [
-            {
-                "result_id": record["result_id"],
-                "artifact_sha256": record["artifact_sha256"],
-                "registry_entry_sha256": record["registry_entry_sha256"],
-            }
-            for record in records
-        ],
+        "release_admission": release_admission,
+        "selected_results": [sealed_result_identity(record) for record in records],
         "summary": summarize_records(
             records,
             tasks=tasks,
@@ -458,9 +497,12 @@ def main() -> None:
         {"selected_results": report["selected_results"]}
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(
-        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    output_paths = (args.output, args.output.with_suffix(".csv"), args.output.with_suffix(".md"))
+    existing = [path for path in output_paths if path.exists()]
+    if existing:
+        raise FileExistsError(f"Aggregate report exists; refusing to overwrite: {existing[0]}")
+    with args.output.open("x", encoding="utf-8") as handle:
+        handle.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     _write_csv(args.output.with_suffix(".csv"), report)
     _write_markdown(args.output.with_suffix(".md"), report)
 

@@ -24,9 +24,28 @@ from scripts.report import aggregate_registered_paper_results as aggregate
 CONFUSION_KEYS = ("tp", "fp", "fn", "tn")
 METRICS = ("f1", "miou", "precision", "recall")
 PROTOCOL_N_RESAMPLES = 10000
+PROTOCOL_RANDOM_SEED = 20260725
+PAPER_PATCH_METADATA = Path(__file__).resolve().parents[2] / "configs/regions/haidian_patches.json"
+PAPER_PATCH_METADATA_SHA256 = "17137cc379a874949a3eb460d48d8ad7c7698b63dbaaf5b4d3c1b40f84f69d97"
 
 PatchConfusion = Mapping[str, Mapping[str, int | float]]
 GroupKey = tuple[int, int]
+
+
+def validate_paper_bootstrap_output_path(
+    output_path: Path, *, baseline_family: str, candidate_family: str
+) -> None:
+    """Reserve one committed output path for the formal V5 paired bootstrap."""
+    repo_root = Path(__file__).resolve().parents[2]
+    expected = (
+        repo_root
+        / "configs"
+        / "eval"
+        / "release_admissions"
+        / f"rse_v5_osm_assisted_{baseline_family}_vs_{candidate_family}_paired_bootstrap.json"
+    )
+    if output_path.resolve() != expected.resolve():
+        raise ValueError(f"Paired bootstrap must use canonical paired-bootstrap path: {expected}")
 
 
 def _empty_confusion() -> dict[str, int]:
@@ -480,17 +499,10 @@ def verify_paired_record_provenance(
 
 def result_identities(records: list[dict[str, Any]]) -> list[dict[str, str]]:
     """Return a deterministic, portable identity list for all bootstrap inputs."""
-    identities: list[dict[str, str]] = []
-    for record in records:
-        identity = {
-            "result_id": str(record["result_id"]),
-            "artifact_sha256": str(record["artifact_sha256"]),
-            "registry_entry_sha256": str(record["registry_entry_sha256"]),
-        }
-        if any(not value for value in identity.values()):
-            raise ValueError("Bootstrap input record has an incomplete identity")
-        identities.append(identity)
-    return sorted(identities, key=lambda item: item["result_id"])
+    return sorted(
+        (aggregate.sealed_result_identity(record) for record in records),
+        key=lambda item: item["result_id"],
+    )
 
 
 def select_records_for_matrix(
@@ -541,6 +553,15 @@ def validate_matrix_dimensions(*, tasks: tuple[str, ...], shots: tuple[str, ...]
         raise ValueError("Bootstrap task and shot dimensions must be unique")
 
 
+def validate_paper_patch_metadata(path: Path) -> None:
+    """Pin formal bootstrap clusters to the committed Haidian patch lattice."""
+    if path.resolve() != PAPER_PATCH_METADATA.resolve():
+        raise ValueError("Paper-facing bootstrap requires the registered patch metadata")
+    aggregate.registered.verify_git_head_file(path)
+    if aggregate.registered.sha256_file(path) != PAPER_PATCH_METADATA_SHA256:
+        raise ValueError("Registered patch metadata hash differs from the V5 protocol")
+
+
 def compare_families(
     *,
     registry_path: Path,
@@ -553,17 +574,57 @@ def compare_families(
     seed: int,
     patch_metadata_path: Path,
     protocol: str | None = None,
+    baseline_release_admission_path: Path | None = None,
+    candidate_release_admission_path: Path | None = None,
 ) -> dict[str, Any]:
     """Load sealed records and compute one paired hierarchical interval per task/shot."""
     validate_matrix_dimensions(tasks=tasks, shots=shots)
     if n_resamples != PROTOCOL_N_RESAMPLES:
         raise ValueError(f"Registered bootstrap requires exactly {PROTOCOL_N_RESAMPLES} resamples")
-    baseline_records = aggregate.load_verified_records(
-        registry_path, family=baseline_family, allow_preliminary=allow_preliminary
-    )
-    candidate_records = aggregate.load_verified_records(
-        registry_path, family=candidate_family, allow_preliminary=allow_preliminary
-    )
+    if not allow_preliminary and (
+        tasks != aggregate.PRIMARY_TASKS
+        or shots != aggregate.PRIMARY_SHOTS
+        or seed != PROTOCOL_RANDOM_SEED
+    ):
+        raise ValueError(
+            "Paper-facing bootstrap requires the preregistered tasks, shots, and random seed"
+        )
+    if not allow_preliminary:
+        validate_paper_patch_metadata(patch_metadata_path)
+    if allow_preliminary:
+        if (
+            baseline_release_admission_path is not None
+            or candidate_release_admission_path is not None
+        ):
+            raise ValueError("Preliminary bootstrap must not consume release admissions")
+        baseline_records = aggregate.load_verified_records(
+            registry_path, family=baseline_family, allow_preliminary=True
+        )
+        candidate_records = aggregate.load_verified_records(
+            registry_path, family=candidate_family, allow_preliminary=True
+        )
+        release_admissions = None
+    else:
+        baseline_records = aggregate.load_admitted_records(
+            registry_path,
+            family=baseline_family,
+            release_admission_path=baseline_release_admission_path,
+        )
+        candidate_records = aggregate.load_admitted_records(
+            registry_path,
+            family=candidate_family,
+            release_admission_path=candidate_release_admission_path,
+        )
+        release_admissions = {
+            "baseline": {
+                "path": str(baseline_release_admission_path.resolve()),
+                "sha256": aggregate.registered.sha256_file(baseline_release_admission_path),
+            },
+            "candidate": {
+                "path": str(candidate_release_admission_path.resolve()),
+                "sha256": aggregate.registered.sha256_file(candidate_release_admission_path),
+            },
+        }
     baseline_selected = select_records_for_matrix(baseline_records, tasks=tasks, shots=shots)
     candidate_selected = select_records_for_matrix(candidate_records, tasks=tasks, shots=shots)
     baseline_record_cells = _record_cells(baseline_selected, tasks=tasks, shots=shots)
@@ -618,12 +679,15 @@ def compare_families(
         "comparison_direction": "candidate_minus_baseline",
         "baseline_family": baseline_family,
         "candidate_family": candidate_family,
+        "tasks": list(tasks),
+        "shots": list(shots),
         "protocol_id": protocol_id,
         **aggregate.registered.result_evidence(protocol_id),
         "source_registry_path": str(registry_path.resolve()),
         "patch_metadata_path": str(patch_metadata_path.resolve()),
         "patch_metadata_sha256": aggregate.registered.sha256_file(patch_metadata_path),
         "input_identity_snapshot": identity_snapshot,
+        "release_admissions": release_admissions,
         **derived_bootstrap_admission(),
         "n_resamples": n_resamples,
         "random_seed": seed,
@@ -640,7 +704,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tasks", nargs="+", default=("building", "road", "water"))
     parser.add_argument("--shots", nargs="+", default=("5", "10"))
     parser.add_argument("--n-resamples", type=int, default=PROTOCOL_N_RESAMPLES)
-    parser.add_argument("--seed", type=int, default=20260725)
+    parser.add_argument("--seed", type=int, default=PROTOCOL_RANDOM_SEED)
     parser.add_argument(
         "--patch-metadata",
         type=Path,
@@ -648,6 +712,8 @@ def parse_args() -> argparse.Namespace:
         help="Projected patch metadata used to form 2 x 2 geographic bootstrap clusters.",
     )
     parser.add_argument("--allow-preliminary", action="store_true")
+    parser.add_argument("--baseline-release-admission", type=Path, default=None)
+    parser.add_argument("--candidate-release-admission", type=Path, default=None)
     parser.add_argument(
         "--protocol",
         choices=tuple(aggregate.registered.PROTOCOL_DESCRIPTORS),
@@ -658,6 +724,12 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.protocol == "v5_osm_assisted":
+        validate_paper_bootstrap_output_path(
+            args.output,
+            baseline_family=args.baseline_family,
+            candidate_family=args.candidate_family,
+        )
     result = compare_families(
         registry_path=args.registry,
         baseline_family=args.baseline_family,
@@ -669,13 +741,17 @@ def main() -> None:
         seed=args.seed,
         patch_metadata_path=args.patch_metadata,
         protocol=args.protocol,
+        baseline_release_admission_path=args.baseline_release_admission,
+        candidate_release_admission_path=args.candidate_release_admission,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     snapshot = result.pop("input_identity_snapshot")
     snapshot_path = args.output.with_name(f"{args.output.stem}_input_identity_snapshot.json")
-    snapshot_path.write_text(
-        json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    existing = [path for path in (args.output, snapshot_path) if path.exists()]
+    if existing:
+        raise FileExistsError(f"Bootstrap report exists; refusing to overwrite: {existing[0]}")
+    with snapshot_path.open("x", encoding="utf-8") as handle:
+        handle.write(json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n")
     result["input_identity_snapshot"] = {
         "path": str(snapshot_path.resolve()),
         "sha256": aggregate.registered.sha256_file(snapshot_path),
@@ -683,9 +759,8 @@ def main() -> None:
         "baseline_result_count": snapshot["baseline_result_count"],
         "candidate_result_count": snapshot["candidate_result_count"],
     }
-    args.output.write_text(
-        json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    with args.output.open("x", encoding="utf-8") as handle:
+        handle.write(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
 
 
 if __name__ == "__main__":

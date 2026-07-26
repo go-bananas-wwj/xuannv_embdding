@@ -1524,7 +1524,16 @@ class TotalLoss(nn.Module):
         """
         recon_losses: dict[str, torch.Tensor] = {}
         embedding_map = _center_crop_tensor(output.embedding_map, self.loss_crop_size)
-        embedding = F.normalize(embedding_map.mean(dim=[3, 4]), p=2, dim=-1)
+        if embedding_map.dim() == 5:
+            embedding = embedding_map.mean(dim=[3, 4])
+        elif embedding_map.dim() == 4:
+            embedding = embedding_map.mean(dim=[2, 3])
+        else:
+            raise ValueError(
+                "embedding_map must have shape [B, C, H, W] or [B, T, C, H, W], "
+                f"got {tuple(embedding_map.shape)}"
+            )
+        embedding = F.normalize(embedding, p=2, dim=-1)
         reconstructions = _center_crop_dict(output.reconstructions, self.loss_crop_size)
         targets = _center_crop_dict(targets, self.loss_crop_size)
         masks = _center_crop_dict(masks, self.loss_crop_size)

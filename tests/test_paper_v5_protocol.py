@@ -17,6 +17,7 @@ from scripts.data import build_paper_manifests, compute_statistics
 from scripts.eval import register_registered_v5_embedding_export as registrar
 from scripts.eval import run_registered_paper_downstream as registered
 from scripts.experiments import build_clean_paper_configs, build_paper_subset_registry
+from scripts.report import admit_registered_comparison as comparison_admission
 from scripts.report import admit_registered_results as admission
 from scripts.report import aggregate_registered_paper_results as aggregate
 from scripts.report import paired_spatial_bootstrap as bootstrap
@@ -442,8 +443,1050 @@ def test_release_anchor_rejects_worktree_bytes_that_differ_from_git_head(
         admission.verify_release_anchor(registry_path, anchor_path)
 
 
+def test_build_release_admission_creates_an_immutable_overlay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Admission records identify sealed results without changing their preliminary status."""
+    registry_path = tmp_path / "results.jsonl"
+    registry_path.write_text('{"result_id":"sealed"}\n', encoding="utf-8")
+    anchor_path = tmp_path / "anchor.json"
+    anchor_path.write_text("{}\n", encoding="utf-8")
+    identities = [
+        {
+            "result_id": "sealed",
+            "registry_entry_sha256": "entry",
+            "artifact_sha256": "artifact",
+            "metrics_sha256": "metrics",
+        }
+    ]
+    monkeypatch.setattr(
+        admission,
+        "verify_release_anchor",
+        lambda registry, anchor: {
+            "path": str(anchor.resolve()),
+            "sha256": _sha256(anchor),
+            "registry_sha256": _sha256(registry),
+        },
+    )
+    monkeypatch.setattr(
+        admission, "collect_sealed_result_identities", lambda registry, **kwargs: identities
+    )
+    monkeypatch.setattr(admission.aggregate, "load_verified_records", lambda *args, **kwargs: [])
+    monkeypatch.setattr(admission, "validate_complete_v5_family_records", lambda *args: None)
+    monkeypatch.setattr(admission.aggregate, "summarize_records", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        admission,
+        "verify_preliminary_aggregate_report",
+        lambda *args, **kwargs: {"path": "aggregate.json", "sha256": "aggregate"},
+    )
+
+    record = admission.build_release_admission(
+        registry_path,
+        anchor_path,
+        family="full_150",
+        aggregate_report_path=tmp_path / "aggregate.json",
+    )
+
+    assert record["paper_eligible"] is True
+    assert record["admission_status"] == "external_release_anchor_verified"
+    assert record["selected_results"] == identities
+    assert record["selected_results_sha256"] == registered._canonical_sha256(
+        {"selected_results": identities}
+    )
+    assert registry_path.read_text(encoding="utf-8") == '{"result_id":"sealed"}\n'
+
+
+def test_write_release_admission_refuses_to_overwrite_an_existing_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Admission output is write-once so its future Git identity stays auditable."""
+    output_path = tmp_path / "admission.json"
+    output_path.write_text('{"old":true}\n', encoding="utf-8")
+    monkeypatch.setattr(
+        admission, "build_release_admission", lambda registry, anchor, **kwargs: {"new": True}
+    )
+
+    with pytest.raises(FileExistsError, match="refusing to overwrite"):
+        admission.write_release_admission(
+            tmp_path / "results.jsonl",
+            tmp_path / "anchor.json",
+            output_path,
+            family="full_150",
+            aggregate_report_path=tmp_path / "aggregate.json",
+        )
+
+
+def test_release_admission_rejects_an_incomplete_v5_probe_matrix() -> None:
+    """No partial fold/task/shot/seed matrix may receive paper-eligible status."""
+    with pytest.raises(ValueError, match="V5 probe matrix is incomplete"):
+        admission.validate_complete_v5_family_records([], "full_150")
+
+
+def test_build_release_admission_rejects_partial_family_before_marking_eligible(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The writer must validate all 90 registered cells before creating an overlay."""
+    registry_path = tmp_path / "results.jsonl"
+    registry_path.write_text("\n", encoding="utf-8")
+    anchor_path = tmp_path / "anchor.json"
+    anchor_path.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(admission.aggregate, "load_verified_records", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        admission,
+        "verify_release_anchor",
+        lambda registry, anchor: {"registry_sha256": _sha256(registry)},
+    )
+
+    with pytest.raises(ValueError, match="V5 probe matrix is incomplete"):
+        admission.build_release_admission(
+            registry_path,
+            anchor_path,
+            family="full_150",
+            aggregate_report_path=tmp_path / "aggregate.json",
+        )
+
+
+def test_release_admission_rejects_aggregate_report_for_another_result_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The release overlay must bind the exact preliminary aggregate it later cites."""
+    registry_path = tmp_path / "results.jsonl"
+    registry_path.write_text('{"result_id":"sealed"}\n', encoding="utf-8")
+    anchor_path = tmp_path / "anchor.json"
+    anchor_path.write_text("{}\n", encoding="utf-8")
+    report_path = tmp_path / "aggregate.json"
+    _write_json(
+        report_path,
+        {
+            "family": "full_150",
+            "preliminary": True,
+            "protocol_id": "v5_osm_assisted",
+            "primary_matrix": True,
+            "report_kind": "weak_supervision",
+            **registered.result_evidence("v5_osm_assisted"),
+            "registry": str(registry_path.resolve()),
+            "registry_sha256": _sha256(registry_path),
+            "selected_results_sha256": "wrong",
+            "record_count": 0,
+            "summary": {},
+        },
+    )
+    identities = [
+        {
+            "result_id": "sealed",
+            "registry_entry_sha256": "entry",
+            "artifact_sha256": "artifact",
+            "metrics_sha256": "metrics",
+        }
+    ]
+    monkeypatch.setattr(
+        admission,
+        "verify_release_anchor",
+        lambda registry, anchor: {"registry_sha256": _sha256(registry)},
+    )
+    monkeypatch.setattr(admission.aggregate, "load_verified_records", lambda *args, **kwargs: [])
+    monkeypatch.setattr(admission, "validate_complete_v5_family_records", lambda *args: None)
+    monkeypatch.setattr(admission.aggregate, "summarize_records", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        admission, "collect_sealed_result_identities", lambda registry, **kwargs: identities
+    )
+
+    with pytest.raises(ValueError, match="Aggregate selected-result identity"):
+        admission.build_release_admission(
+            registry_path, anchor_path, family="full_150", aggregate_report_path=report_path
+        )
+
+
+def test_release_admission_rejects_a_forged_aggregate_summary(tmp_path: Path) -> None:
+    """Matching identity fields do not admit a report with fabricated metrics."""
+    report_path = tmp_path / "aggregate.json"
+    _write_json(
+        report_path,
+        {
+            "family": "full_150",
+            "preliminary": True,
+            "primary_matrix": True,
+            "report_kind": "weak_supervision",
+            "protocol_id": "v5_osm_assisted",
+            **registered.result_evidence("v5_osm_assisted"),
+            "registry": "/tmp/results.jsonl",
+            "registry_sha256": "registry",
+            "selected_results_sha256": "selected",
+            "record_count": 90,
+            "summary": {"forged": True},
+        },
+    )
+
+    with pytest.raises(ValueError, match="Aggregate summary differs"):
+        admission.verify_preliminary_aggregate_report(
+            report_path,
+            registry_path=Path("/tmp/results.jsonl"),
+            registry_sha256="registry",
+            family="full_150",
+            selected_results_sha256="selected",
+            expected_summary={"real": True},
+            expected_record_count=90,
+        )
+
+
+def test_release_admission_cli_path_is_pinned_to_one_protocol_family_location(
+    tmp_path: Path,
+) -> None:
+    """A second arbitrary output path cannot become a competing formal admission."""
+    with pytest.raises(ValueError, match="canonical release-admission path"):
+        admission.validate_release_admission_output_path(tmp_path / "other.json", "full_150")
+
+
+def test_formal_aggregation_requires_an_immutable_release_admission(tmp_path: Path) -> None:
+    """Raw preliminary records cannot enter paper aggregation without its overlay."""
+    with pytest.raises(ValueError, match="requires --release-admission"):
+        aggregate.load_admitted_records(
+            tmp_path / "results.jsonl", family="full_150", release_admission_path=None
+        )
+
+
+def test_aggregation_selected_result_identity_includes_the_metrics_hash() -> None:
+    """Admission and aggregation share one four-hash identity contract."""
+    assert aggregate.sealed_result_identity(
+        {
+            "result_id": "result",
+            "artifact_sha256": "artifact",
+            "registry_entry_sha256": "entry",
+            "metrics_sha256": "metrics",
+        }
+    ) == {
+        "result_id": "result",
+        "artifact_sha256": "artifact",
+        "registry_entry_sha256": "entry",
+        "metrics_sha256": "metrics",
+    }
+
+
+def test_release_admission_rejects_a_changed_bound_aggregate_report() -> None:
+    """The report bytes named by an admission are part of its sealed evidence set."""
+    with pytest.raises(ValueError, match="Aggregate report hash differs"):
+        admission.verify_hash_bound_report(
+            {"path": "/tmp/report.json", "sha256": "sealed"},
+            {"path": "/tmp/report.json", "sha256": "changed"},
+            "Aggregate report",
+        )
+
+
+def test_load_admitted_comparison_requires_a_git_sealed_matching_bootstrap_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Paper prose may only load the exact admitted paired-bootstrap bytes."""
+    admission_path = tmp_path / "comparison_admission.json"
+    bootstrap_path = tmp_path / "bootstrap.json"
+    baseline_release = {"path": str(tmp_path / "baseline.json"), "sha256": "baseline"}
+    candidate_release = {"path": str(tmp_path / "candidate.json"), "sha256": "candidate"}
+    snapshot_path = tmp_path / "snapshot.json"
+    snapshot_payload = bootstrap.build_input_identity_snapshot([], [])
+    _write_json(snapshot_path, snapshot_payload)
+    snapshot = {
+        "path": str(snapshot_path),
+        "sha256": _sha256(snapshot_path),
+        "identity_sha256": snapshot_payload["sha256"],
+        "baseline_result_count": snapshot_payload["baseline_result_count"],
+        "candidate_result_count": snapshot_payload["candidate_result_count"],
+    }
+    _write_json(
+        bootstrap_path,
+        {
+            "comparisons": {},
+            "release_admissions": {
+                "baseline": baseline_release,
+                "candidate": candidate_release,
+            },
+            "input_identity_snapshot": snapshot,
+        },
+    )
+    payload = {
+        "schema_version": 1,
+        "protocol_id": "v5_osm_assisted",
+        "paper_eligible": True,
+        "admission_status": "paired_bootstrap_external_admission_verified",
+        "baseline_family": "aef_v5",
+        "candidate_family": "full_150",
+        "bootstrap_report": {
+            "path": str(bootstrap_path),
+            "sha256": _sha256(bootstrap_path),
+        },
+        "baseline_release_admission": baseline_release,
+        "candidate_release_admission": candidate_release,
+        "input_identity_snapshot": snapshot,
+    }
+    admission_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        admission, "validate_comparison_admission_output_path", lambda *_args, **_kwargs: None
+    )
+    _allow_test_only_paired_bootstrap_path(monkeypatch)
+    monkeypatch.setattr(registered, "verify_git_head_file", lambda _path: None)
+    monkeypatch.setattr(
+        admission,
+        "_comparison_input_admission",
+        lambda path, *, family, role: (
+            baseline_release if role == "baseline" else candidate_release,
+            [],
+        ),
+    )
+
+    assert admission.load_admitted_comparison(
+        admission_path, baseline_family="aef_v5", candidate_family="full_150"
+    ) == payload
+
+
+def test_load_admitted_comparison_revalidates_the_two_release_admissions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A committed comparison shell cannot bypass its two family evidence chains."""
+    admission_path = tmp_path / "comparison_admission.json"
+    bootstrap_path = tmp_path / "bootstrap.json"
+    bootstrap_path.write_text('{"comparisons":{}}\n', encoding="utf-8")
+    _write_json(
+        admission_path,
+        {
+            "schema_version": 1,
+            "protocol_id": "v5_osm_assisted",
+            "paper_eligible": True,
+            "admission_status": "paired_bootstrap_external_admission_verified",
+            "baseline_family": "aef_v5",
+            "candidate_family": "full_150",
+            "bootstrap_report": {
+                "path": str(bootstrap_path),
+                "sha256": _sha256(bootstrap_path),
+            },
+        },
+    )
+    monkeypatch.setattr(
+        admission, "validate_comparison_admission_output_path", lambda *_args, **_kwargs: None
+    )
+    _allow_test_only_paired_bootstrap_path(monkeypatch)
+    monkeypatch.setattr(registered, "verify_git_head_file", lambda _path: None)
+
+    with pytest.raises(ValueError, match="release-admission"):
+        admission.load_admitted_comparison(
+            admission_path, baseline_family="aef_v5", candidate_family="full_150"
+        )
+
+
+def test_load_admitted_comparison_revalidates_the_input_identity_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bootstrap and comparison cannot share an arbitrary stale input snapshot."""
+    admission_path = tmp_path / "comparison_admission.json"
+    bootstrap_path = tmp_path / "bootstrap.json"
+    baseline_release = {"path": str(tmp_path / "baseline.json"), "sha256": "baseline"}
+    candidate_release = {"path": str(tmp_path / "candidate.json"), "sha256": "candidate"}
+    stale_snapshot_path = tmp_path / "stale_snapshot.json"
+    _write_json(stale_snapshot_path, {"schema_version": 1, "wrong": True})
+    stale_snapshot = {"path": str(stale_snapshot_path), "sha256": _sha256(stale_snapshot_path)}
+    _write_json(
+        bootstrap_path,
+        {
+            "release_admissions": {
+                "baseline": baseline_release,
+                "candidate": candidate_release,
+            },
+            "input_identity_snapshot": stale_snapshot,
+        },
+    )
+    _write_json(
+        admission_path,
+        {
+            "schema_version": 1,
+            "protocol_id": "v5_osm_assisted",
+            "paper_eligible": True,
+            "admission_status": "paired_bootstrap_external_admission_verified",
+            "baseline_family": "aef_v5",
+            "candidate_family": "full_150",
+            "baseline_release_admission": baseline_release,
+            "candidate_release_admission": candidate_release,
+            "bootstrap_report": {
+                "path": str(bootstrap_path),
+                "sha256": _sha256(bootstrap_path),
+            },
+            "input_identity_snapshot": stale_snapshot,
+        },
+    )
+    monkeypatch.setattr(
+        admission, "validate_comparison_admission_output_path", lambda *_args, **_kwargs: None
+    )
+    _allow_test_only_paired_bootstrap_path(monkeypatch)
+    monkeypatch.setattr(registered, "verify_git_head_file", lambda _path: None)
+    monkeypatch.setattr(
+        admission,
+        "_comparison_input_admission",
+        lambda path, *, family, role: (
+            baseline_release if role == "baseline" else candidate_release,
+            [{"result_id": role}],
+        ),
+    )
+
+    with pytest.raises(ValueError, match="input identit"):
+        admission.load_admitted_comparison(
+            admission_path, baseline_family="aef_v5", candidate_family="full_150"
+        )
+
+
+def test_load_admitted_records_rejects_a_noncanonical_release_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Formal consumers have one canonical release-admission path per family."""
+    registry_path = tmp_path / "results.jsonl"
+    registry_path.write_text("", encoding="utf-8")
+    monkeypatch.setattr(registered, "verify_git_head_file", lambda _path: None)
+
+    with pytest.raises(ValueError, match="canonical release-admission path"):
+        admission.load_admitted_records(
+            registry_path,
+            family="full_150",
+            release_admission_path=tmp_path / "competing_admission.json",
+        )
+
+
+def test_comparison_admission_binds_two_family_admissions_and_bootstrap_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only one immutable record may authorize a paired paper comparison."""
+    baseline_path = tmp_path / "baseline_admission.json"
+    candidate_path = tmp_path / "candidate_admission.json"
+    bootstrap_path = tmp_path / "bootstrap.json"
+    snapshot_path = tmp_path / "bootstrap_snapshot.json"
+    patch_metadata_path = tmp_path / "patches.json"
+    patch_metadata_path.write_text("[]\n", encoding="utf-8")
+    baseline_results = [
+        {
+            "result_id": "aef-result",
+            "artifact_sha256": "aef-artifact",
+            "registry_entry_sha256": "aef-entry",
+            "metrics_sha256": "aef-metrics",
+        }
+    ]
+    candidate_results = [
+        {
+            "result_id": "xuannv-result",
+            "artifact_sha256": "xuannv-artifact",
+            "registry_entry_sha256": "xuannv-entry",
+            "metrics_sha256": "xuannv-metrics",
+        }
+    ]
+    snapshot_payload = bootstrap.build_input_identity_snapshot(baseline_results, candidate_results)
+    _write_json(snapshot_path, snapshot_payload)
+    _write_json(
+        baseline_path,
+        {
+            "schema_version": 1,
+            "protocol_id": "v5_osm_assisted",
+            "paper_eligible": True,
+            "family": "aef_v5",
+            "registry_path": str((tmp_path / "results.jsonl").resolve()),
+        },
+    )
+    _write_json(
+        candidate_path,
+        {
+            "schema_version": 1,
+            "protocol_id": "v5_osm_assisted",
+            "paper_eligible": True,
+            "family": "full_150",
+            "registry_path": str((tmp_path / "results.jsonl").resolve()),
+        },
+    )
+    _write_json(
+        bootstrap_path,
+        {
+            "protocol_id": "v5_osm_assisted",
+            "preliminary": True,
+            "paper_eligible": False,
+            "admission_status": "derived_statistic_pending_external_admission",
+            "comparison_direction": "candidate_minus_baseline",
+            "baseline_family": "aef_v5",
+            "candidate_family": "full_150",
+            "tasks": ["building", "road", "water"],
+            "shots": ["5", "10"],
+            "n_resamples": 10000,
+            "random_seed": 20260725,
+            "source_registry_path": str((tmp_path / "results.jsonl").resolve()),
+            "patch_metadata_path": str(patch_metadata_path.resolve()),
+            "patch_metadata_sha256": _sha256(patch_metadata_path),
+            "comparisons": {"building|5": {"f1": "verified"}},
+            "release_admissions": {
+                "baseline": {
+                    "path": str(baseline_path.resolve()),
+                    "sha256": _sha256(baseline_path),
+                },
+                "candidate": {
+                    "path": str(candidate_path.resolve()),
+                    "sha256": _sha256(candidate_path),
+                },
+            },
+            "input_identity_snapshot": _bootstrap_snapshot_reference(
+                snapshot_path, snapshot_payload
+            ),
+        },
+    )
+    monkeypatch.setattr(admission.registered, "verify_git_head_file", lambda path: None)
+    _allow_test_only_paired_bootstrap_path(monkeypatch)
+    monkeypatch.setattr(
+        admission,
+        "_load_json",
+        lambda path, **_kwargs: json.loads(path.read_text(encoding="utf-8")),
+    )
+    monkeypatch.setattr(
+        admission,
+        "load_admitted_records",
+        lambda _registry, *, family, **_kwargs: (
+            baseline_results if family == "aef_v5" else candidate_results
+        ),
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "compare_families",
+        lambda **_kwargs: {"comparisons": {"building|5": {"f1": "verified"}}},
+    )
+
+    payload = admission.build_comparison_admission(
+        baseline_release_admission_path=baseline_path,
+        candidate_release_admission_path=candidate_path,
+        bootstrap_report_path=bootstrap_path,
+        baseline_family="aef_v5",
+        candidate_family="full_150",
+    )
+
+    assert payload["paper_eligible"] is True
+    assert payload["admission_status"] == "paired_bootstrap_external_admission_verified"
+    assert payload["bootstrap_report"]["sha256"] == _sha256(bootstrap_path)
+
+
+def test_comparison_admission_rejects_a_forged_bootstrap_interval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A matching input snapshot cannot substitute for recomputed CI values."""
+    baseline_path = tmp_path / "baseline_admission.json"
+    candidate_path = tmp_path / "candidate_admission.json"
+    bootstrap_path = tmp_path / "bootstrap.json"
+    snapshot_path = tmp_path / "snapshot.json"
+    patch_metadata_path = tmp_path / "patches.json"
+    patch_metadata_path.write_text("[]\n", encoding="utf-8")
+    baseline_results = [
+        {
+            "result_id": "aef-result",
+            "artifact_sha256": "aef-artifact",
+            "registry_entry_sha256": "aef-entry",
+            "metrics_sha256": "aef-metrics",
+        }
+    ]
+    candidate_results = [
+        {
+            "result_id": "xuannv-result",
+            "artifact_sha256": "xuannv-artifact",
+            "registry_entry_sha256": "xuannv-entry",
+            "metrics_sha256": "xuannv-metrics",
+        }
+    ]
+    snapshot_payload = bootstrap.build_input_identity_snapshot(baseline_results, candidate_results)
+    _write_json(snapshot_path, snapshot_payload)
+    for path, family in ((baseline_path, "aef_v5"), (candidate_path, "full_150")):
+        _write_json(
+            path,
+            {
+                "schema_version": 1,
+                "protocol_id": "v5_osm_assisted",
+                "paper_eligible": True,
+                "family": family,
+                "registry_path": str((tmp_path / "results.jsonl").resolve()),
+            },
+        )
+    _write_json(
+        bootstrap_path,
+        {
+            "protocol_id": "v5_osm_assisted",
+            "preliminary": True,
+            "paper_eligible": False,
+            "admission_status": "derived_statistic_pending_external_admission",
+            "comparison_direction": "candidate_minus_baseline",
+            "baseline_family": "aef_v5",
+            "candidate_family": "full_150",
+            "tasks": ["building", "road", "water"],
+            "shots": ["5", "10"],
+            "n_resamples": 10000,
+            "random_seed": 20260725,
+            "source_registry_path": str((tmp_path / "results.jsonl").resolve()),
+            "patch_metadata_path": str(patch_metadata_path.resolve()),
+            "patch_metadata_sha256": _sha256(patch_metadata_path),
+            "release_admissions": {
+                "baseline": {
+                    "path": str(baseline_path.resolve()),
+                    "sha256": _sha256(baseline_path),
+                },
+                "candidate": {
+                    "path": str(candidate_path.resolve()),
+                    "sha256": _sha256(candidate_path),
+                },
+            },
+            "input_identity_snapshot": _bootstrap_snapshot_reference(
+                snapshot_path, snapshot_payload
+            ),
+            "comparisons": {"building|5": {"f1": "forged"}},
+        },
+    )
+    monkeypatch.setattr(admission.registered, "verify_git_head_file", lambda path: None)
+    _allow_test_only_paired_bootstrap_path(monkeypatch)
+    monkeypatch.setattr(
+        admission,
+        "load_admitted_records",
+        lambda _registry, *, family, **_kwargs: (
+            baseline_results if family == "aef_v5" else candidate_results
+        ),
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "compare_families",
+        lambda **_kwargs: {"comparisons": {"building|5": {"f1": "verified"}}},
+    )
+
+    with pytest.raises(ValueError, match="comparison values differ"):
+        admission.build_comparison_admission(
+            baseline_release_admission_path=baseline_path,
+            candidate_release_admission_path=candidate_path,
+            bootstrap_report_path=bootstrap_path,
+            baseline_family="aef_v5",
+            candidate_family="full_150",
+        )
+
+
+def test_comparison_admission_rejects_a_reversed_comparison_direction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The admitted interval sign must remain candidate minus baseline."""
+    baseline_path = tmp_path / "baseline_admission.json"
+    candidate_path = tmp_path / "candidate_admission.json"
+    bootstrap_path = tmp_path / "bootstrap.json"
+    snapshot_path = tmp_path / "snapshot.json"
+    records = {
+        "aef_v5": [
+            {
+                "result_id": "aef-result",
+                "artifact_sha256": "aef-artifact",
+                "registry_entry_sha256": "aef-entry",
+                "metrics_sha256": "aef-metrics",
+            }
+        ],
+        "full_150": [
+            {
+                "result_id": "xuannv-result",
+                "artifact_sha256": "xuannv-artifact",
+                "registry_entry_sha256": "xuannv-entry",
+                "metrics_sha256": "xuannv-metrics",
+            }
+        ],
+    }
+    _write_json(snapshot_path, bootstrap.build_input_identity_snapshot(*records.values()))
+    for path, family in ((baseline_path, "aef_v5"), (candidate_path, "full_150")):
+        _write_json(
+            path,
+            {
+                "schema_version": 1,
+                "protocol_id": "v5_osm_assisted",
+                "paper_eligible": True,
+                "family": family,
+                "registry_path": str((tmp_path / "results.jsonl").resolve()),
+            },
+        )
+    _write_json(
+        bootstrap_path,
+        {
+            "protocol_id": "v5_osm_assisted",
+            "preliminary": True,
+            "paper_eligible": False,
+            "admission_status": "derived_statistic_pending_external_admission",
+            "comparison_direction": "baseline_minus_candidate",
+            "baseline_family": "aef_v5",
+            "candidate_family": "full_150",
+            "tasks": ["building", "road", "water"],
+            "shots": ["5", "10"],
+            "n_resamples": 10000,
+            "random_seed": 20260725,
+            "source_registry_path": str((tmp_path / "results.jsonl").resolve()),
+            "patch_metadata_path": str((tmp_path / "patches.json").resolve()),
+            "release_admissions": {
+                "baseline": {
+                    "path": str(baseline_path.resolve()),
+                    "sha256": _sha256(baseline_path),
+                },
+                "candidate": {
+                    "path": str(candidate_path.resolve()),
+                    "sha256": _sha256(candidate_path),
+                },
+            },
+            "input_identity_snapshot": {
+                "path": str(snapshot_path.resolve()),
+                "sha256": _sha256(snapshot_path),
+            },
+            "comparisons": {"building|5": {"f1": "verified"}},
+        },
+    )
+    monkeypatch.setattr(admission.registered, "verify_git_head_file", lambda path: None)
+    _allow_test_only_paired_bootstrap_path(monkeypatch)
+    monkeypatch.setattr(
+        admission, "load_admitted_records", lambda _registry, *, family, **_kwargs: records[family]
+    )
+
+    with pytest.raises(ValueError, match="direction or matrix"):
+        admission.build_comparison_admission(
+            baseline_release_admission_path=baseline_path,
+            candidate_release_admission_path=candidate_path,
+            bootstrap_report_path=bootstrap_path,
+            baseline_family="aef_v5",
+            candidate_family="full_150",
+        )
+
+
+def test_comparison_admission_rejects_bootstrap_with_different_admission_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bootstrap result cannot be relabelled with unrelated family admissions."""
+    baseline_path = tmp_path / "baseline_admission.json"
+    candidate_path = tmp_path / "candidate_admission.json"
+    bootstrap_path = tmp_path / "bootstrap.json"
+    _write_json(
+        baseline_path,
+        {
+            "schema_version": 1,
+            "protocol_id": "v5_osm_assisted",
+            "paper_eligible": True,
+            "family": "aef_v5",
+            "registry_path": str((tmp_path / "results.jsonl").resolve()),
+        },
+    )
+    _write_json(
+        candidate_path,
+        {
+            "schema_version": 1,
+            "protocol_id": "v5_osm_assisted",
+            "paper_eligible": True,
+            "family": "full_150",
+            "registry_path": str((tmp_path / "results.jsonl").resolve()),
+        },
+    )
+    _write_json(
+        bootstrap_path,
+        {
+            "protocol_id": "v5_osm_assisted",
+            "preliminary": True,
+            "paper_eligible": False,
+            "admission_status": "derived_statistic_pending_external_admission",
+            "comparison_direction": "candidate_minus_baseline",
+            "baseline_family": "aef_v5",
+            "candidate_family": "full_150",
+            "tasks": ["building", "road", "water"],
+            "shots": ["5", "10"],
+            "n_resamples": 10000,
+            "random_seed": 20260725,
+            "release_admissions": {
+                "baseline": {"path": "other", "sha256": "wrong"},
+                "candidate": {
+                    "path": str(candidate_path.resolve()),
+                    "sha256": _sha256(candidate_path),
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(admission.registered, "verify_git_head_file", lambda path: None)
+    _allow_test_only_paired_bootstrap_path(monkeypatch)
+    monkeypatch.setattr(
+        admission,
+        "load_admitted_records",
+        lambda _registry, *, family, **_kwargs: [
+            {
+                "result_id": f"{family}-result",
+                "artifact_sha256": "artifact",
+                "registry_entry_sha256": "entry",
+                "metrics_sha256": "metrics",
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError, match="baseline release-admission"):
+        admission.build_comparison_admission(
+            baseline_release_admission_path=baseline_path,
+            candidate_release_admission_path=candidate_path,
+            bootstrap_report_path=bootstrap_path,
+            baseline_family="aef_v5",
+            candidate_family="full_150",
+        )
+
+
+def test_comparison_admission_rejects_snapshot_from_another_result_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bootstrap snapshot must equal both families' admitted result identities."""
+    baseline_path = tmp_path / "baseline_admission.json"
+    candidate_path = tmp_path / "candidate_admission.json"
+    bootstrap_path = tmp_path / "bootstrap.json"
+    snapshot_path = tmp_path / "bootstrap_snapshot.json"
+    baseline_results = [
+        {
+            "result_id": "aef-result",
+            "artifact_sha256": "aef-artifact",
+            "registry_entry_sha256": "aef-entry",
+            "metrics_sha256": "aef-metrics",
+        }
+    ]
+    candidate_results = [
+        {
+            "result_id": "xuannv-result",
+            "artifact_sha256": "xuannv-artifact",
+            "registry_entry_sha256": "xuannv-entry",
+            "metrics_sha256": "xuannv-metrics",
+        }
+    ]
+    _write_json(
+        baseline_path,
+        {
+            "schema_version": 1,
+            "protocol_id": "v5_osm_assisted",
+            "paper_eligible": True,
+            "family": "aef_v5",
+            "registry_path": str((tmp_path / "results.jsonl").resolve()),
+        },
+    )
+    _write_json(
+        candidate_path,
+        {
+            "schema_version": 1,
+            "protocol_id": "v5_osm_assisted",
+            "paper_eligible": True,
+            "family": "full_150",
+            "registry_path": str((tmp_path / "results.jsonl").resolve()),
+        },
+    )
+    _write_json(snapshot_path, bootstrap.build_input_identity_snapshot([], candidate_results))
+    _write_json(
+        bootstrap_path,
+        {
+            "protocol_id": "v5_osm_assisted",
+            "preliminary": True,
+            "paper_eligible": False,
+            "admission_status": "derived_statistic_pending_external_admission",
+            "comparison_direction": "candidate_minus_baseline",
+            "baseline_family": "aef_v5",
+            "candidate_family": "full_150",
+            "tasks": ["building", "road", "water"],
+            "shots": ["5", "10"],
+            "n_resamples": 10000,
+            "random_seed": 20260725,
+            "release_admissions": {
+                "baseline": {
+                    "path": str(baseline_path.resolve()),
+                    "sha256": _sha256(baseline_path),
+                },
+                "candidate": {
+                    "path": str(candidate_path.resolve()),
+                    "sha256": _sha256(candidate_path),
+                },
+            },
+            "input_identity_snapshot": {
+                "path": str(snapshot_path.resolve()),
+                "sha256": _sha256(snapshot_path),
+            },
+        },
+    )
+    monkeypatch.setattr(admission.registered, "verify_git_head_file", lambda path: None)
+    _allow_test_only_paired_bootstrap_path(monkeypatch)
+    monkeypatch.setattr(
+        admission,
+        "load_admitted_records",
+        lambda _registry, *, family, **_kwargs: (
+            baseline_results if family == "aef_v5" else candidate_results
+        ),
+    )
+
+    with pytest.raises(ValueError, match="input identities differ"):
+        admission.build_comparison_admission(
+            baseline_release_admission_path=baseline_path,
+            candidate_release_admission_path=candidate_path,
+            bootstrap_report_path=bootstrap_path,
+            baseline_family="aef_v5",
+            candidate_family="full_150",
+        )
+
+
+def test_write_comparison_admission_refuses_to_overwrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A paired-comparison admission is a write-once paper evidence record."""
+    output_path = tmp_path / "comparison_admission.json"
+    output_path.write_text('{"old":true}\n', encoding="utf-8")
+    monkeypatch.setattr(
+        admission,
+        "build_comparison_admission",
+        lambda **_kwargs: {"new": True},
+    )
+
+    with pytest.raises(FileExistsError, match="refusing to overwrite"):
+        admission.write_comparison_admission(
+            output_path=output_path,
+            baseline_release_admission_path=tmp_path / "baseline.json",
+            candidate_release_admission_path=tmp_path / "candidate.json",
+            bootstrap_report_path=tmp_path / "bootstrap.json",
+            baseline_family="aef_v5",
+            candidate_family="full_150",
+        )
+
+
+def test_comparison_admission_cli_exposes_all_sealed_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Paired-bootstrap admission must be reproducible without an ad-hoc Python call."""
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "admit_registered_comparison.py",
+            "--output",
+            "comparison.json",
+            "--baseline-release-admission",
+            "aef.json",
+            "--candidate-release-admission",
+            "xuannv.json",
+            "--bootstrap-report",
+            "bootstrap.json",
+            "--baseline-family",
+            "aef_v5",
+            "--candidate-family",
+            "full_150",
+        ],
+    )
+
+    args = comparison_admission.parse_args()
+
+    assert args.baseline_release_admission == Path("aef.json")
+    assert args.candidate_release_admission == Path("xuannv.json")
+    assert args.bootstrap_report == Path("bootstrap.json")
+
+
+def test_comparison_admission_output_path_is_unique_per_family_pair(tmp_path: Path) -> None:
+    """One family comparison has one canonical write-once admission location."""
+    with pytest.raises(ValueError, match="canonical comparison-admission path"):
+        admission.validate_comparison_admission_output_path(
+            tmp_path / "other.json", baseline_family="aef_v5", candidate_family="full_150"
+        )
+
+
+def test_comparison_admission_rejects_a_noncanonical_paired_bootstrap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A formal comparison cannot bind an arbitrary bootstrap file outside Git."""
+    bootstrap_path = tmp_path / "external_bootstrap.json"
+    _write_json(bootstrap_path, {})
+    monkeypatch.setattr(
+        admission,
+        "_comparison_input_admission",
+        lambda _path, *, family, role: ({"path": f"/{role}", "sha256": role}, []),
+    )
+
+    with pytest.raises(ValueError, match="canonical paired-bootstrap path"):
+        admission.build_comparison_admission(
+            baseline_release_admission_path=tmp_path / "baseline.json",
+            candidate_release_admission_path=tmp_path / "candidate.json",
+            bootstrap_report_path=bootstrap_path,
+            baseline_family="aef_v5",
+            candidate_family="full_150",
+        )
+
+
+def test_comparison_admission_rejects_a_noncanonical_paired_bootstrap_snapshot(
+    tmp_path: Path,
+) -> None:
+    """The bootstrap input identities must be committed beside the bootstrap report."""
+    with pytest.raises(ValueError, match="canonical paired-bootstrap snapshot path"):
+        admission.validate_paired_bootstrap_snapshot_path(
+            tmp_path / "external_snapshot.json",
+            baseline_family="aef_v5",
+            candidate_family="full_150",
+        )
+
+
+def test_aggregation_cli_accepts_release_admission(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The formal aggregation entrypoint exposes the immutable admission input."""
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "aggregate_registered_paper_results.py",
+            "--registry",
+            "results.jsonl",
+            "--family",
+            "full_150",
+            "--output",
+            "report.json",
+            "--release-admission",
+            "admission.json",
+        ],
+    )
+    assert aggregate.parse_args().release_admission == Path("admission.json")
+
+
+def test_bootstrap_cli_accepts_two_release_admissions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A formal comparison binds each encoder family to its own sealed admission."""
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paired_spatial_bootstrap.py",
+            "--registry",
+            "results.jsonl",
+            "--baseline-family",
+            "aef_v5",
+            "--candidate-family",
+            "full_150",
+            "--output",
+            "bootstrap.json",
+            "--baseline-release-admission",
+            "aef_admission.json",
+            "--candidate-release-admission",
+            "xuannv_admission.json",
+        ],
+    )
+    args = bootstrap.parse_args()
+    assert args.baseline_release_admission == Path("aef_admission.json")
+    assert args.candidate_release_admission == Path("xuannv_admission.json")
+
+
+def test_admitted_records_reject_an_untracked_release_admission(tmp_path: Path) -> None:
+    """Formal consumers must reject a competing path before reading its contents."""
+    admission_path = tmp_path / "admission.json"
+    _write_json(admission_path, {"schema_version": 1})
+
+    with pytest.raises(ValueError, match="canonical release-admission path"):
+        admission.load_admitted_records(
+            tmp_path / "results.jsonl", family="full_150", release_admission_path=admission_path
+        )
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _bootstrap_snapshot_reference(
+    snapshot_path: Path, snapshot: dict[str, object]
+) -> dict[str, object]:
+    return {
+        "path": str(snapshot_path.resolve()),
+        "sha256": _sha256(snapshot_path),
+        "identity_sha256": snapshot["sha256"],
+        "baseline_result_count": snapshot["baseline_result_count"],
+        "candidate_result_count": snapshot["candidate_result_count"],
+    }
+
+
+def _allow_test_only_paired_bootstrap_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep unit tests focused on admission payload checks, not repository layout."""
+    monkeypatch.setattr(
+        admission, "validate_paired_bootstrap_output_path", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        admission, "validate_paired_bootstrap_snapshot_path", lambda *_args, **_kwargs: None
+    )
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -1239,6 +2282,7 @@ def _sealed_v5_wrapper_repo(tmp_path: Path) -> Path:
     source_root = Path(__file__).resolve().parents[1]
     repo = tmp_path / "wrapper-repo"
     for relative in (
+        Path("scripts/__init__.py"),
         Path("scripts/eval/export_registered_v5_paper_encoders.sh"),
         Path("scripts/eval/launch_registered_v5_downstream.sh"),
         Path("scripts/eval/registered_v5_matrix.py"),
