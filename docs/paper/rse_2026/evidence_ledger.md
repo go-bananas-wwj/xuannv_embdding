@@ -1,8 +1,9 @@
 # XuannvEarth RSE Evidence Ledger
 
 Status convention: only a row marked **verified** may support the Abstract, Results, or
-Conclusion. A completed run that is still marked `paper_eligible=false` is a diagnostic,
-not a paper result.
+Conclusion. Registered probe artifacts remain immutable preliminary records
+(`paper_eligible=false`); they become admissible paper evidence only when an immutable
+release-admission record binds their exact registry, metric, artifact, and report hashes.
 
 | Claim | Required evidence | Required statistical evidence | Status | Use in manuscript |
 |---|---|---|---|---|
@@ -31,8 +32,12 @@ not a paper result.
   a release-admission decision.
 - Registered exports must have a six-shard canonical provenance record, a content index, and
   a Git-anchored registry entry.
-- Downstream artifacts must pass `verify_artifact_registry_binding()` and retain
-  `paper_eligible=true` before they enter a manuscript table or figure.
+- Downstream artifacts must pass `verify_artifact_registry_binding()` while retaining their
+  original preliminary state. **Pending implementation and execution of the release-admission
+  consumer**, a manuscript table or figure must not consume them. Once that gate exists, it will
+  require a Git-anchored release-admission record whose selected registry, metric, artifact, and
+  report hashes exactly match the sealed files. The admission overlay never rewrites probe
+  artifacts.
 - The paper aggregator is intentionally fail-closed by default. `--allow-preliminary` output
   is for internal diagnosis only and must be labelled preliminary.
 - OSM-overlap tasks are reported as OSM-assisted readout evidence. They do not by themselves
@@ -43,7 +48,9 @@ not a paper result.
 
 ## Manuscript decision rule
 
-Before updating the Abstract, Results, Discussion, or Conclusion, record the exact artifact
-path, registry entry hash, metric aggregation command, and statistical output for each claim
-above. If any required component is unavailable, retain the claim as `pending` or move it to
-limitations/future work.
+Before updating the Abstract, Results, Discussion, or Conclusion, record the exact
+release-admission path and hash, the versioned Zenodo DOI and DOI-bound registry URL, matching
+`registry_sha256`, every selected registry-entry/artifact/`metrics_sha256`, every aggregate or
+bootstrap `report_sha256`, the metric aggregation command, and the statistical output for each
+claim above. If any required component is unavailable, retain the claim as `pending` or move it
+to limitations/future work.
