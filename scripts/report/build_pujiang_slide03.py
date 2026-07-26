@@ -353,26 +353,14 @@ def add_semantic_card(slide) -> None:
     )
     add_text(
         slide,
-        "困难负样本：最难的 2% 背景像素，额外权重 0.35",
+        "困难负样本：最难的 2% 背景像素，额外权重 0.35\n"
+        "uniformity 0.06｜高分光学重建 0.90｜配置权重，不代表损失贡献",
         x + 0.27,
-        6.01,
+        5.99,
         3.40,
-        0.40,
+        0.52,
         12,
         INK,
-        True,
-        PP_ALIGN.CENTER,
-    )
-    add_text(
-        slide,
-        "最难的 2% 背景像素额外权重 0.35｜uniformity 0.06｜"
-        "高分光学重建 0.90｜配置权重，不代表损失贡献",
-        x + 0.27,
-        6.34,
-        3.40,
-        0.19,
-        12,
-        MUTED,
         True,
         PP_ALIGN.CENTER,
     )
