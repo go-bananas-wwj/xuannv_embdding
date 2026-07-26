@@ -10,7 +10,7 @@ from pathlib import Path
 from PIL import Image
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE
-from pptx.util import Inches
+from pptx.util import Inches, Pt
 from pujiang_editable_common import (
     BLUE,
     CYAN,
@@ -32,14 +32,9 @@ from pujiang_editable_common import (
 ROOT = Path(__file__).resolve().parents[2]
 PRESENTATION_ROOT = ROOT / "docs/presentations/pujiang_202607"
 SLIDE01_ROOT = ROOT / "docs/presentations/assets/pujiang_202607/slide01"
-PLATFORM_SCREENSHOT = Path(
-    "/data/xuannv_embedding/experiments/presentation_pujiang_202607/frontend/"
-    "haidian_platform_thum.png"
-)
-RECON_EXAMPLE = Path(
-    "/data/xuannv_embedding/experiments/presentation_pujiang_202607/frontend/"
-    "patch_000093_recon.png"
-)
+EDITABLE_SOURCE_ROOT = ROOT / "docs/presentations/assets/pujiang_202607/editable_sources"
+PLATFORM_SCREENSHOT = EDITABLE_SOURCE_ROOT / "haidian_platform_thum.png"
+RECON_EXAMPLE = EDITABLE_SOURCE_ROOT / "patch_000093_recon.png"
 PLATFORM_POSTER = ROOT / "docs/bp_deck/assets/video/custom_annotation_demo_poster.png"
 WORKFLOW_IMAGE = ROOT / "docs/bp_deck/assets/remote_sensing_team_workflow.png"
 OBSERVATION_TIMELINE = (
@@ -67,6 +62,13 @@ def _add_number_badge(slide, number: int, x: float, y: float) -> None:
     add_text(slide, str(number), x, y + 0.01, 0.38, 0.28, 13, WHITE, True)
 
 
+def _set_header_title_size(slide, size: float) -> None:
+    """Reduce a long header title without changing the shared deck primitive."""
+    for paragraph in slide.shapes[1].text_frame.paragraphs:
+        for run in paragraph.runs:
+            run.font.size = Pt(size)
+
+
 def _add_cropped_picture(
     slide,
     source_path: Path,
@@ -78,6 +80,10 @@ def _add_cropped_picture(
 ):
     """Embed one source crop as its own picture relationship in the PPTX."""
     with Image.open(source_path) as source:
+        source_width, source_height = source.size
+        left, top, right, bottom = crop_box
+        if left < 0 or top < 0 or right > source_width or bottom > source_height:
+            raise ValueError(f"Crop {crop_box} exceeds {source_path} dimensions {source.size}")
         crop = source.crop(crop_box).convert("RGB")
     stream = BytesIO()
     crop.save(stream, format="PNG")
@@ -168,9 +174,9 @@ def build_page05(prs: Presentation):
     )
 
     columns = ("3 个圈选", "测试影像", "玄女候选", "AEF 候选", "传统候选", "真实标签")
-    image_x = 1.3
+    image_x = 1.32
     image_width = 1.84
-    image_gap = 0.14
+    image_gap = 0.15
     for index, title in enumerate(columns):
         x = image_x + index * (image_width + image_gap)
         add_text(slide, title, x, 1.91, image_width, 0.24, 14, DEEP_BLUE, True)
@@ -183,8 +189,8 @@ def build_page05(prs: Presentation):
     tasks = (("建筑物", "building"), ("道路", "road"), ("水体", "water"))
     for row, (task, filename_stem) in enumerate(tasks):
         y = 2.24 + row * 1.46
-        add_rect(slide, 0.52, y, 0.6, 1.12, BLUE, BLUE, MSO_SHAPE.ROUNDED_RECTANGLE)
-        add_text(slide, task, 0.58, y + 0.33, 0.48, 0.42, 16, WHITE, True)
+        add_rect(slide, 0.45, y, 0.72, 1.12, BLUE, BLUE, MSO_SHAPE.ROUNDED_RECTANGLE)
+        add_text(slide, task, 0.52, y + 0.43, 0.58, 0.22, 13, WHITE, True)
         source = PU_QUERY_ASSET_ROOT / f"{filename_stem}_slide_row.png"
         for column in range(6):
             x = image_x + column * (image_width + image_gap)
@@ -197,15 +203,15 @@ def build_page05(prs: Presentation):
             )
             _add_cropped_picture(slide, source, crop, x, y, image_width, 1.12)
 
-    add_rect(slide, 0.5, 6.8, 12.28, 0.36, PALE_GRAY, PALE_GRAY, MSO_SHAPE.ROUNDED_RECTANGLE)
+    add_rect(slide, 0.5, 6.72, 12.28, 0.48, PALE_GRAY, PALE_GRAY, MSO_SHAPE.ROUNDED_RECTANGLE)
     add_text(
         slide,
         "三行依次为建筑物、道路、水体；本页显示候选排序，第 8 页报告独立测试集二值指标。",
-        0.7,
-        6.9,
+        0.72,
+        6.86,
         11.85,
-        0.15,
-        12,
+        0.22,
+        10,
         MUTED,
         True,
     )
@@ -221,7 +227,8 @@ def build_page06(prs: Presentation):
         "现有数据与推理 API 可封装为智能体工具；嵌入底座负责提供可复用地理表示",
     )
     _add_panel_frame(slide, 0.5, 1.35, 7.15, 4.85)
-    add_text(slide, "自然语言需求到地图结果的协同流程", 0.73, 1.52, 4.8, 0.25, 16, DEEP_BLUE, True)
+    add_text(slide, "自然语言需求到地图结果的协同流程", 0.73, 1.52, 4.5, 0.25, 16, DEEP_BLUE, True)
+    add_text(slide, "概念流程示意（非真实系统界面）", 5.05, 1.55, 2.2, 0.18, 11, RED, True)
     add_picture(slide, WORKFLOW_IMAGE, 0.7, 1.88, 6.75, 4.02, "contain")
 
     tool_rows = [
@@ -232,21 +239,21 @@ def build_page06(prs: Presentation):
         ("交付结果", "地图图层、案例图与结构化报告"),
     ]
     for index, (title, detail) in enumerate(tool_rows, start=1):
-        y = 1.35 + (index - 1) * 0.86
-        add_rect(slide, 8.0, y, 4.78, 0.69, PALE_BLUE, LINE, MSO_SHAPE.ROUNDED_RECTANGLE)
-        _add_number_badge(slide, index, 8.2, y + 0.15)
-        add_text(slide, title, 8.75, y + 0.1, 1.26, 0.2, 15, DEEP_BLUE, True)
-        add_text(slide, detail, 10.02, y + 0.1, 2.45, 0.28, 12, MUTED)
+        y = 1.35 + (index - 1) * 0.84
+        add_rect(slide, 8.0, y, 4.78, 0.76, PALE_BLUE, LINE, MSO_SHAPE.ROUNDED_RECTANGLE)
+        _add_number_badge(slide, index, 8.2, y + 0.19)
+        add_text(slide, title, 8.75, y + 0.11, 3.5, 0.18, 14, DEEP_BLUE, True)
+        add_text(slide, detail, 8.75, y + 0.41, 3.7, 0.18, 11, MUTED)
 
-    add_rect(slide, 8.0, 5.8, 4.78, 0.47, PALE_GRAY, PALE_GRAY, MSO_SHAPE.ROUNDED_RECTANGLE)
+    add_rect(slide, 8.0, 5.64, 4.78, 0.58, PALE_GRAY, PALE_GRAY, MSO_SHAPE.ROUNDED_RECTANGLE)
     add_text(
         slide,
-        "边界：智能体调用模型与工具，不替代模型推理；关键结果仍需地图复核。",
+        "边界：智能体调用模型与工具，不替代模型推理；\n关键结果仍需地图复核。",
         8.2,
-        5.95,
+        5.76,
         4.4,
-        0.16,
-        11,
+        0.34,
+        10,
         RED,
         True,
     )
@@ -254,10 +261,10 @@ def build_page06(prs: Presentation):
         slide,
         "当前状态：具备数据、推理与结构化分析接口；正式智能体编排属于下一步集成工作。",
         0.55,
-        6.58,
+        6.56,
         12.15,
-        0.26,
-        16,
+        0.3,
+        15,
         INK,
         True,
     )
@@ -272,55 +279,100 @@ def build_page07(prs: Presentation):
         PAGE_TITLES[7],
         "融合目标时刻前后的多源观测，为缺测场景提供可解释的参考影像",
     )
-    panels = [
-        ("相邻时刻有效观测", "提供空间结构与地物背景", (0, 0, 280, 366)),
-        ("目标时刻观测缺失", "云雾、空洞或传感器未覆盖", (280, 0, 560, 366)),
-    ]
-    for index, (title, detail, crop) in enumerate(panels):
-        x = 0.5 + index * 4.18
-        _add_panel_frame(slide, x, 1.52, 3.65, 4.65)
-        add_text(slide, title, x + 0.2, 1.75, 3.25, 0.3, 18, DEEP_BLUE, True)
-        _add_cropped_picture(slide, OBSERVATION_TIMELINE, crop, x + 0.3, 2.18, 3.05, 3.35)
-        add_text(slide, detail, x + 0.22, 5.75, 3.2, 0.22, 13, MUTED)
-
-    add_rect(slide, 4.1, 3.55, 0.55, 0.38, PALE_BLUE, PALE_BLUE, MSO_SHAPE.RIGHT_ARROW)
-    add_text(slide, "独立\n案例", 8.4, 3.44, 0.35, 0.58, 12, MUTED, True)
-
-    output_x = 8.78
-    _add_panel_frame(slide, output_x, 1.52, 4.0, 4.65)
+    _set_header_title_size(slide, 24)
     add_text(
         slide,
-        "真实运行输出 | patch_000093",
-        output_x + 0.2,
-        1.75,
-        3.62,
-        0.3,
-        18,
-        DEEP_BLUE,
-        True,
-    )
-    add_picture(slide, RECON_EXAMPLE, output_x + 0.43, 2.18, 3.14, 3.35, "cover")
-    add_text(
-        slide,
-        "平台已保存生成结果 | 目标日期元数据未公开",
-        output_x + 0.22,
-        5.75,
-        3.55,
+        "时序输入：五个独立面板（源条裁去底部标签区）",
+        0.52,
+        1.05,
+        5.2,
         0.22,
         13,
         MUTED,
+        True,
     )
+    panel_titles = ("前期 S2", "后期 S2", "变化前嵌入", "变化后嵌入", "变化概率")
+    for index, title in enumerate(panel_titles):
+        x = 0.5 + index * 2.48
+        _add_panel_frame(slide, x, 1.35, 2.35, 2.61)
+        add_text(slide, title, x + 0.1, 1.57, 2.15, 0.22, 13, DEEP_BLUE, True)
+        left = index * 275
+        right = left + 275 if index < 4 else 1376
+        _add_cropped_picture(
+            slide,
+            OBSERVATION_TIMELINE,
+            (left, 0, right, 262),
+            x + 0.15,
+            1.98,
+            2.05,
+            2.05 * 262 / (right - left),
+        )
+        if index < len(panel_titles) - 1:
+            add_rect(slide, x + 2.32, 2.82, 0.2, 0.22, PALE_BLUE, PALE_BLUE, MSO_SHAPE.RIGHT_ARROW)
 
-    add_rect(slide, 0.5, 6.48, 12.28, 0.58, PALE_GRAY, PALE_GRAY, MSO_SHAPE.ROUNDED_RECTANGLE)
+    add_rect(slide, 0.5, 4.25, 4.75, 1.72, PALE_BLUE, LINE, MSO_SHAPE.ROUNDED_RECTANGLE)
+    add_text(slide, "时序面板说明", 0.76, 4.52, 2.1, 0.22, 16, DEEP_BLUE, True)
     add_text(
         slide,
-        "使用边界｜左侧两图用于说明缺测场景，右图为独立真实运行样例，三者不构成同一 patch 的对照；"
+        "前两幅展示相邻观测与目标时刻缺失；后续三幅为\n"
+        "嵌入与变化候选线索，用于解释模型输入与输出边界。",
+        0.76,
+        4.88,
+        4.05,
+        0.5,
+        12,
+        MUTED,
+    )
+    add_rect(slide, 5.18, 4.87, 0.42, 0.3, PALE_BLUE, PALE_BLUE, MSO_SHAPE.RIGHT_ARROW)
+    add_text(slide, "独立样例", 5.03, 4.48, 0.72, 0.2, 11, MUTED, True)
+
+    output_x = 5.85
+    _add_panel_frame(slide, output_x, 4.25, 6.93, 1.72)
+    add_text(
+        slide,
+        "真实运行输出 | patch_000093",
+        output_x + 2.52,
+        4.52,
+        3.9,
+        0.22,
+        16,
+        DEEP_BLUE,
+        True,
+    )
+    add_picture(slide, RECON_EXAMPLE, output_x + 0.2, 4.52, 2.08, 1.16, "cover")
+    add_text(
+        slide,
+        "平台已保存生成结果 | 目标日期元数据未公开",
+        output_x + 2.52,
+        4.93,
+        3.92,
+        0.2,
+        12,
+        MUTED,
+    )
+    add_text(
+        slide,
+        "输出为参考影像，不等同于该时刻的真实观测。",
+        output_x + 2.52,
+        5.28,
+        3.92,
+        0.18,
+        11,
+        RED,
+        True,
+    )
+
+    add_rect(slide, 0.5, 6.24, 12.28, 0.78, PALE_GRAY, PALE_GRAY, MSO_SHAPE.ROUNDED_RECTANGLE)
+    add_text(
+        slide,
+        "使用边界｜左侧两图用于说明缺测场景，右图为独立真实运行样例，"
+        "三者不构成同一 patch 的对照；\n"
         "模型输出是“参考影像”，不是该时刻真实观测，重要结论仍需真实影像核验。",
         0.72,
-        6.65,
+        6.38,
         11.85,
-        0.2,
-        13,
+        0.46,
+        11,
         RED,
         True,
     )

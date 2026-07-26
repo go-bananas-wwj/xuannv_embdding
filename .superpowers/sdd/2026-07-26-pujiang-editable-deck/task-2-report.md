@@ -9,8 +9,17 @@
 - Page 5 crops each reviewed row asset into six separate raster pictures for each
   task, resulting in 18 independent picture objects; task names and column titles
   are native text.
-- Page 7 embeds the two observation timeline crops and the independent generation
-  example as separate picture objects.
+- Page 7 embeds all five observation-timeline panels and the independent generation
+  example as six separate picture objects. The first four crops are 275x262 pixels,
+  the final crop is 276x262 pixels, and all omit the source strip's 34-pixel label
+  band.
+- Adjusted the page 5 task/footer text, page 6 card/boundary text, and page 7
+  title/boundary text to fit their native text boxes without overlap. Page 6 now
+  carries the native boundary label `概念流程示意（非真实系统界面）`.
+- Archived the platform screenshot and generation example in
+  `docs/presentations/assets/pujiang_202607/editable_sources/`, with source paths
+  recorded in that directory's README; the builder now uses these repository-local
+  assets instead of `/data` paths.
 - Generated and reopened the four-slide inspection deck at
   `docs/presentations/pujiang_202607/浦江交流_第04至07页_可编辑检查版_20260726.pptx`.
 
@@ -18,6 +27,8 @@
 
 - `ruff check scripts/report/pujiang_editable_pages04_07.py tests/test_pujiang_editable_deck.py`
   passed.
-- `python -m pytest tests/test_pujiang_editable_deck.py -q` passed: 7 tests.
-- Reopened inspection PPTX: pages 4-7 contain 35, 55, 34, and 19 shapes;
-  picture counts are 3, 18, 1, and 3. No slide contains a full-slide picture.
+- `python -m pytest tests/test_pujiang_editable_deck.py -q` passed: 8 tests.
+- Reopened inspection PPTX: pages 4-7 contain 35, 55, 35, and 35 shapes;
+  picture counts are 3, 18, 1, and 6. No slide contains a full-slide picture.
+- The re-opened page 7 picture blobs contain exactly four 275x262 crops and one
+  276x262 crop; their boundary rows are not all black.

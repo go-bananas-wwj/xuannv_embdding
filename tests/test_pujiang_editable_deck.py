@@ -5,6 +5,7 @@ import importlib.util
 import sys
 import zipfile
 from collections import Counter
+from io import BytesIO
 from pathlib import Path
 
 from PIL import Image
@@ -187,5 +188,34 @@ def test_page07_splits_the_observation_timeline_into_independent_pictures() -> N
     slide = presentation.slides[3]
     pictures = [shape for shape in slide.shapes if shape.shape_type == MSO_SHAPE_TYPE.PICTURE]
 
-    assert len(pictures) >= 3
+    dimensions = [_picture_dimensions(shape) for shape in pictures]
+    timeline_dimensions = [size for size in dimensions if size[1] == 262]
+
+    assert len(pictures) >= 6
+    assert Counter(timeline_dimensions) == Counter([(275, 262)] * 4 + [(276, 262)])
+    timeline_pictures = [shape for shape in pictures if _picture_dimensions(shape)[1] == 262]
+    assert not any(_has_all_black_edge(shape) for shape in timeline_pictures)
     assert any("使用边界｜左侧两图用于说明缺测场景" in text for text in _slide_text(slide))
+
+
+def test_page06_marks_the_workflow_as_a_conceptual_diagram() -> None:
+    presentation = _editable_pages04_07()
+
+    assert "概念流程示意（非真实系统界面）" in _slide_text(presentation.slides[2])
+
+
+def _picture_dimensions(shape) -> tuple[int, int]:
+    with Image.open(BytesIO(shape.image.blob)) as image:
+        return image.size
+
+
+def _has_all_black_edge(shape) -> bool:
+    with Image.open(BytesIO(shape.image.blob)) as image:
+        picture = image.convert("RGB")
+        edges = (
+            picture.crop((0, 0, picture.width, 1)),
+            picture.crop((0, picture.height - 1, picture.width, picture.height)),
+            picture.crop((0, 0, 1, picture.height)),
+            picture.crop((picture.width - 1, 0, picture.width, picture.height)),
+        )
+    return any(all(pixel == (0, 0, 0) for pixel in edge.get_flattened_data()) for edge in edges)
