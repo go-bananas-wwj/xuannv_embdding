@@ -48,7 +48,7 @@ def test_slide03_states_p10c_adaptations_without_overclaiming(tmp_path: Path) ->
         "不代表总损失的 14%",
         "临时 1×1 线性探针",
         "训练结束后丢弃",
-        "前 80 轮逐步增加到 0.14",
+        "前 80 轮逐步加到 0.14",
         "人工变化监督 0",
         "时间对比损失 0",
     ]:

@@ -353,7 +353,7 @@ def add_semantic_card(slide) -> None:
     )
     add_text(
         slide,
-        "前 80 轮逐步增加到 0.14，避免训练刚开始时语义提示过强",
+        "前 80 轮逐步加到 0.14",
         x + 0.27,
         6.03,
         3.40,
@@ -574,7 +574,7 @@ def build_preview(output: Path) -> None:
     )
     draw_centered(
         draw,
-        "前 80 轮逐步增加到 0.14，避免训练初期提示过强",
+        "前 80 轮逐步加到 0.14",
         (1095, 690, 1519, 744),
         pil_font(12, True),
         muted,
