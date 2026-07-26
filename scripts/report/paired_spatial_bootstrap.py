@@ -23,6 +23,7 @@ from scripts.report import aggregate_registered_paper_results as aggregate
 
 CONFUSION_KEYS = ("tp", "fp", "fn", "tn")
 METRICS = ("f1", "miou", "precision", "recall")
+PROTOCOL_N_RESAMPLES = 10000
 
 PatchConfusion = Mapping[str, Mapping[str, int | float]]
 GroupKey = tuple[int, int]
@@ -80,6 +81,13 @@ def _summarize_differences(
     return summary
 
 
+def _sample_standard_deviation(values: list[float]) -> float:
+    """Return a descriptive sample standard deviation, including singleton support."""
+    if len(values) < 2:
+        return 0.0
+    return float(np.std(np.asarray(values, dtype=np.float64), ddof=1))
+
+
 def _validate_patch_pair(baseline: PatchConfusion, candidate: PatchConfusion) -> list[str]:
     baseline_ids = set(baseline)
     candidate_ids = set(candidate)
@@ -88,6 +96,75 @@ def _validate_patch_pair(baseline: PatchConfusion, candidate: PatchConfusion) ->
     if not baseline_ids:
         raise ValueError("Paired bootstrap requires at least one test patch")
     return sorted(baseline_ids)
+
+
+def build_two_by_two_geographic_clusters(
+    bounds_by_patch: Mapping[str, tuple[float, float, float, float]],
+    patch_ids: list[str],
+) -> list[tuple[str, ...]]:
+    """Group a regular patch grid into deterministic 2 x 2 geographic blocks."""
+    if not patch_ids:
+        raise ValueError("Cannot build geographic clusters without patch IDs")
+    missing = sorted(set(patch_ids) - set(bounds_by_patch))
+    if missing:
+        raise ValueError(f"Patch metadata is missing bounds for: {', '.join(missing[:3])}")
+    all_bounds = list(bounds_by_patch.values())
+    if not np.all(np.isfinite(np.asarray(all_bounds, dtype=np.float64))):
+        raise ValueError("Geographic patch bounds must be finite")
+    widths = np.array([bounds[2] - bounds[0] for bounds in all_bounds], dtype=np.float64)
+    heights = np.array([bounds[3] - bounds[1] for bounds in all_bounds], dtype=np.float64)
+    if np.any(widths <= 0.0) or np.any(heights <= 0.0):
+        raise ValueError("Geographic patch bounds must have positive width and height")
+    width = float(np.median(widths))
+    height = float(np.median(heights))
+    if not np.allclose(widths, width) or not np.allclose(heights, height):
+        raise ValueError("2 x 2 geographic clusters require a regular patch grid")
+    # Use the full region's lattice origin.  A held-out fold may omit patches
+    # along an outer edge, and re-anchoring blocks on that subset would make
+    # the definition of a "2 x 2" block vary across folds.
+    origin_x = min(bounds[0] for bounds in all_bounds)
+    origin_y = min(bounds[1] for bounds in all_bounds)
+    grouped: dict[tuple[int, int], list[str]] = {}
+    occupied_cells: set[tuple[int, int]] = set()
+    for patch_id in sorted(patch_ids):
+        min_x, min_y, _, _ = bounds_by_patch[patch_id]
+        scaled_col = (min_x - origin_x) / width
+        scaled_row = (min_y - origin_y) / height
+        col = int(round(scaled_col))
+        row = int(round(scaled_row))
+        if not np.isclose(scaled_col, col) or not np.isclose(scaled_row, row):
+            raise ValueError("Geographic patch bounds must lie on one regular patch lattice")
+        if (row, col) in occupied_cells:
+            raise ValueError("Geographic patch bounds must not overlap on one lattice cell")
+        occupied_cells.add((row, col))
+        grouped.setdefault((row // 2, col // 2), []).append(patch_id)
+    clusters = [tuple(sorted(grouped[key])) for key in sorted(grouped)]
+    incomplete = [cluster for cluster in clusters if len(cluster) != 4]
+    if incomplete:
+        raise ValueError(
+            "Each test fold must be a union of complete 2 x 2 geographic patch blocks; "
+            "regenerate the registered spatial split before inference"
+        )
+    return clusters
+
+
+def load_patch_bounds(path: Path) -> dict[str, tuple[float, float, float, float]]:
+    """Load the projected patch bounds needed for geographic cluster resampling."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, list):
+        raise ValueError("Patch metadata must be a list of patch records")
+    bounds_by_patch: dict[str, tuple[float, float, float, float]] = {}
+    for record in payload:
+        if not isinstance(record, dict):
+            raise ValueError("Patch metadata records must be objects")
+        patch_id = record.get("patch_id")
+        bounds = record.get("bounds")
+        if not isinstance(patch_id, str) or not isinstance(bounds, list) or len(bounds) != 4:
+            raise ValueError("Patch metadata records require patch_id and four projected bounds")
+        if patch_id in bounds_by_patch:
+            raise ValueError(f"Duplicate patch metadata ID: {patch_id}")
+        bounds_by_patch[patch_id] = tuple(float(value) for value in bounds)
+    return bounds_by_patch
 
 
 def bootstrap_group_difference(
@@ -121,14 +198,15 @@ def bootstrap_group_difference(
     }
 
 
-def hierarchical_paired_bootstrap(
+def _hierarchical_paired_resample(
     baseline: Mapping[GroupKey, PatchConfusion],
     candidate: Mapping[GroupKey, PatchConfusion],
     *,
     n_resamples: int,
     seed: int,
+    clusters_by_fold: Mapping[int, list[tuple[str, ...]]],
 ) -> dict[str, Any]:
-    """Bootstrap matched fold/seed groups and their complete test patches."""
+    """Resample an already validated hierarchy; internal testable implementation."""
     if n_resamples < 1:
         raise ValueError("n_resamples must be positive")
     if set(baseline) != set(candidate):
@@ -148,11 +226,19 @@ def hierarchical_paired_bootstrap(
     if not first_seed_set or any(seeds != first_seed_set for seeds in seeds_by_fold.values()):
         raise ValueError("Each spatial fold must contain the same non-empty probe-seed set")
     patch_ids_by_fold: dict[int, list[str]] = {}
+    resolved_clusters: dict[int, list[tuple[str, ...]]] = {}
     for fold in folds:
         reference = patch_ids[(fold, first_seed_set[0])]
         if any(patch_ids[(fold, seed)] != reference for seed in seeds_by_fold[fold]):
             raise ValueError("All probe seeds in one spatial fold must share identical patch IDs")
         patch_ids_by_fold[fold] = reference
+        clusters = [tuple(cluster) for cluster in clusters_by_fold.get(fold, [])]
+        if any(len(cluster) != 4 for cluster in clusters):
+            raise ValueError("Geographic bootstrap clusters must each contain exactly four patches")
+        flattened = [patch_id for cluster in clusters for patch_id in cluster]
+        if len(flattened) != len(set(flattened)) or set(flattened) != set(reference):
+            raise ValueError("Geographic clusters must partition each fold's patch support")
+        resolved_clusters[fold] = clusters
     point_a = _empty_confusion()
     point_b = _empty_confusion()
     for group in group_keys:
@@ -162,6 +248,43 @@ def hierarchical_paired_bootstrap(
     point_metrics_b = metrics_from_confusion(point_b)
     point = {metric: point_metrics_b[metric] - point_metrics_a[metric] for metric in METRICS}
 
+    # These are descriptive variation summaries, distinct from the inferential
+    # interval below.  They expose whether uncertainty is driven by geography
+    # (the five spatial folds) or by the three few-shot seed schedules.
+    fold_differences = {metric: [] for metric in METRICS}
+    for fold in folds:
+        fold_a = _empty_confusion()
+        fold_b = _empty_confusion()
+        for probe_seed in seeds_by_fold[fold]:
+            group = (fold, probe_seed)
+            _add_confusion(
+                fold_a, _aggregate([baseline[group][patch] for patch in patch_ids[group]])
+            )
+            _add_confusion(
+                fold_b, _aggregate([candidate[group][patch] for patch in patch_ids[group]])
+            )
+        metrics_a = metrics_from_confusion(fold_a)
+        metrics_b = metrics_from_confusion(fold_b)
+        for metric in METRICS:
+            fold_differences[metric].append(metrics_b[metric] - metrics_a[metric])
+
+    seed_differences = {metric: [] for metric in METRICS}
+    for probe_seed in first_seed_set:
+        seed_a = _empty_confusion()
+        seed_b = _empty_confusion()
+        for fold in folds:
+            group = (fold, probe_seed)
+            _add_confusion(
+                seed_a, _aggregate([baseline[group][patch] for patch in patch_ids[group]])
+            )
+            _add_confusion(
+                seed_b, _aggregate([candidate[group][patch] for patch in patch_ids[group]])
+            )
+        metrics_a = metrics_from_confusion(seed_a)
+        metrics_b = metrics_from_confusion(seed_b)
+        for metric in METRICS:
+            seed_differences[metric].append(metrics_b[metric] - metrics_a[metric])
+
     generator = np.random.default_rng(seed)
     samples = {metric: np.empty(n_resamples, dtype=np.float64) for metric in METRICS}
     for index in range(n_resamples):
@@ -170,12 +293,22 @@ def hierarchical_paired_bootstrap(
         total_b = _empty_confusion()
         for fold_index in sampled_folds:
             fold = folds[int(fold_index)]
-            ids = patch_ids_by_fold[fold]
-            draw = generator.integers(0, len(ids), size=len(ids))
-            for seed_key in seeds_by_fold[fold]:
+            clusters = resolved_clusters[fold]
+            cluster_draw = generator.integers(0, len(clusters), size=len(clusters))
+            seed_draw = generator.integers(
+                0, len(seeds_by_fold[fold]), size=len(seeds_by_fold[fold])
+            )
+            for seed_index in seed_draw:
+                seed_key = seeds_by_fold[fold][int(seed_index)]
                 group = (fold, seed_key)
-                _add_confusion(total_a, _aggregate([baseline[group][ids[item]] for item in draw]))
-                _add_confusion(total_b, _aggregate([candidate[group][ids[item]] for item in draw]))
+                for cluster_index in cluster_draw:
+                    cluster = clusters[int(cluster_index)]
+                    _add_confusion(
+                        total_a, _aggregate([baseline[group][patch_id] for patch_id in cluster])
+                    )
+                    _add_confusion(
+                        total_b, _aggregate([candidate[group][patch_id] for patch_id in cluster])
+                    )
         metrics_a = metrics_from_confusion(total_a)
         metrics_b = metrics_from_confusion(total_b)
         for metric in METRICS:
@@ -184,8 +317,51 @@ def hierarchical_paired_bootstrap(
         "n_spatial_folds": len(folds),
         "probe_seeds_per_fold": list(first_seed_set),
         "n_patches_per_fold": {f"fold{fold}": len(patch_ids_by_fold[fold]) for fold in folds},
+        "n_geographic_clusters_per_fold": {
+            f"fold{fold}": len(resolved_clusters[fold]) for fold in folds
+        },
+        "geographic_cluster_membership_by_fold": {
+            f"fold{fold}": [list(cluster) for cluster in resolved_clusters[fold]] for fold in folds
+        },
+        "resampling_hierarchy": ["spatial_fold", "2x2_geographic_cluster", "probe_seed"],
+        "descriptive_candidate_minus_baseline_standard_deviation": {
+            metric: {
+                "across_spatial_folds": _sample_standard_deviation(fold_differences[metric]),
+                "across_probe_seeds": _sample_standard_deviation(seed_differences[metric]),
+            }
+            for metric in METRICS
+        },
         "candidate_minus_baseline": _summarize_differences(point, samples),
     }
+
+
+def hierarchical_paired_bootstrap(
+    baseline: Mapping[GroupKey, PatchConfusion],
+    candidate: Mapping[GroupKey, PatchConfusion],
+    *,
+    n_resamples: int,
+    seed: int,
+    bounds_by_patch: Mapping[str, tuple[float, float, float, float]],
+) -> dict[str, Any]:
+    """Run only the registered 5-fold, 3-seed, complete-block bootstrap protocol."""
+    if n_resamples != PROTOCOL_N_RESAMPLES:
+        raise ValueError(f"Registered bootstrap requires exactly {PROTOCOL_N_RESAMPLES} resamples")
+    expected_groups = {(fold, probe_seed) for fold in range(5) for probe_seed in (42, 43, 44)}
+    if set(baseline) != expected_groups or set(candidate) != expected_groups:
+        raise ValueError("Registered bootstrap requires exactly five folds and seeds 42, 43, 44")
+    clusters_by_fold = {
+        fold: build_two_by_two_geographic_clusters(
+            bounds_by_patch, _validate_patch_pair(baseline[(fold, 42)], candidate[(fold, 42)])
+        )
+        for fold in range(5)
+    }
+    return _hierarchical_paired_resample(
+        baseline,
+        candidate,
+        n_resamples=n_resamples,
+        seed=seed,
+        clusters_by_fold=clusters_by_fold,
+    )
 
 
 def _records_by_cell(
@@ -209,6 +385,75 @@ def _records_by_cell(
             raise ValueError(f"Duplicate result cell: {key}")
         indexed[key] = confusion
     return indexed
+
+
+def _record_cells(
+    records: list[dict[str, Any]], *, tasks: tuple[str, ...], shots: tuple[str, ...]
+) -> dict[tuple[str, str, int, int], dict[str, Any]]:
+    """Index selected registered records without discarding pairing provenance."""
+    indexed: dict[tuple[str, str, int, int], dict[str, Any]] = {}
+    for record in records:
+        payload = aggregate._metric_payload(record)
+        key = (
+            str(payload["task"]),
+            str(payload["shot"]),
+            int(payload["fold"]),
+            int(payload["shot_seed"]),
+        )
+        if key[0] not in tasks or key[1] not in shots:
+            continue
+        if key in indexed:
+            raise ValueError(f"Duplicate result cell: {key}")
+        indexed[key] = record
+    return indexed
+
+
+def _paired_value(record: dict[str, Any], key: str) -> Any:
+    payload = aggregate._metric_payload(record)
+    if key == "label_sha256":
+        value = record.get(key)
+    elif key == "shot_manifest_label_sha256":
+        shot_manifest = payload.get("shot_manifest")
+        value = shot_manifest.get("label_sha256") if isinstance(shot_manifest, dict) else None
+    elif key == "shot_manifest_split_sha256":
+        shot_manifest = payload.get("shot_manifest")
+        value = shot_manifest.get("split_sha256") if isinstance(shot_manifest, dict) else None
+    else:
+        value = payload.get(key)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"Result lacks required pairing provenance: {key}")
+    return value
+
+
+def verify_paired_record_provenance(
+    baseline: Mapping[tuple[str, str, int, int], dict[str, Any]],
+    candidate: Mapping[tuple[str, str, int, int], dict[str, Any]],
+) -> None:
+    """Fail closed unless paired runs used identical labels, split, and test patches."""
+    if set(baseline) != set(candidate):
+        raise ValueError("Paired bootstrap requires identical registered result cells")
+    provenance_keys = (
+        "label_sha256",
+        "spatial_split_sha256",
+        "manifest_sha256",
+        "shot_manifest_sha256",
+        "shot_manifest_label_sha256",
+        "shot_manifest_split_sha256",
+    )
+    for cell in sorted(baseline):
+        for key in provenance_keys:
+            if _paired_value(baseline[cell], key) != _paired_value(candidate[cell], key):
+                raise ValueError(
+                    f"Paired bootstrap requires identical {key} for result cell {cell}"
+                )
+        baseline_payload = aggregate._metric_payload(baseline[cell])
+        candidate_payload = aggregate._metric_payload(candidate[cell])
+        baseline_confusion = baseline_payload.get("per_patch_confusion")
+        candidate_confusion = candidate_payload.get("per_patch_confusion")
+        if not isinstance(baseline_confusion, dict) or not isinstance(candidate_confusion, dict):
+            raise ValueError("Paired bootstrap requires per-patch test confusion provenance")
+        if set(baseline_confusion) != set(candidate_confusion):
+            raise ValueError(f"Paired bootstrap requires identical test patch IDs for {cell}")
 
 
 def result_identities(records: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -284,9 +529,12 @@ def compare_families(
     allow_preliminary: bool,
     n_resamples: int,
     seed: int,
+    patch_metadata_path: Path,
 ) -> dict[str, Any]:
     """Load sealed records and compute one paired hierarchical interval per task/shot."""
     validate_matrix_dimensions(tasks=tasks, shots=shots)
+    if n_resamples != PROTOCOL_N_RESAMPLES:
+        raise ValueError(f"Registered bootstrap requires exactly {PROTOCOL_N_RESAMPLES} resamples")
     baseline_records = aggregate.load_verified_records(
         registry_path, family=baseline_family, allow_preliminary=allow_preliminary
     )
@@ -295,6 +543,9 @@ def compare_families(
     )
     baseline_selected = select_records_for_matrix(baseline_records, tasks=tasks, shots=shots)
     candidate_selected = select_records_for_matrix(candidate_records, tasks=tasks, shots=shots)
+    baseline_record_cells = _record_cells(baseline_selected, tasks=tasks, shots=shots)
+    candidate_record_cells = _record_cells(candidate_selected, tasks=tasks, shots=shots)
+    verify_paired_record_provenance(baseline_record_cells, candidate_record_cells)
     baseline = _records_by_cell(baseline_selected, tasks=tasks, shots=shots)
     candidate = _records_by_cell(candidate_selected, tasks=tasks, shots=shots)
     baseline_identities = result_identities(baseline_selected)
@@ -309,6 +560,7 @@ def compare_families(
     }
     if set(baseline) != expected or set(candidate) != expected:
         raise ValueError("Each family must contain the complete registered 5-fold x 3-seed matrix")
+    bounds_by_patch = load_patch_bounds(patch_metadata_path)
     comparisons: dict[str, Any] = {}
     for task in tasks:
         for shot in shots:
@@ -327,6 +579,7 @@ def compare_families(
                 groups_b,
                 n_resamples=n_resamples,
                 seed=seed + len(comparisons),
+                bounds_by_patch=bounds_by_patch,
             )
     return {
         "schema_version": 1,
@@ -335,6 +588,8 @@ def compare_families(
         "baseline_family": baseline_family,
         "candidate_family": candidate_family,
         "source_registry_path": str(registry_path.resolve()),
+        "patch_metadata_path": str(patch_metadata_path.resolve()),
+        "patch_metadata_sha256": aggregate.registered.sha256_file(patch_metadata_path),
         "input_identity_snapshot": identity_snapshot,
         **derived_bootstrap_admission(),
         "n_resamples": n_resamples,
@@ -351,8 +606,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--tasks", nargs="+", default=("building", "road", "water"))
     parser.add_argument("--shots", nargs="+", default=("5", "10"))
-    parser.add_argument("--n-resamples", type=int, default=10000)
+    parser.add_argument("--n-resamples", type=int, default=PROTOCOL_N_RESAMPLES)
     parser.add_argument("--seed", type=int, default=20260725)
+    parser.add_argument(
+        "--patch-metadata",
+        type=Path,
+        default=Path("configs/regions/haidian_patches.json"),
+        help="Projected patch metadata used to form 2 x 2 geographic bootstrap clusters.",
+    )
     parser.add_argument("--allow-preliminary", action="store_true")
     return parser.parse_args()
 
@@ -368,6 +629,7 @@ def main() -> None:
         allow_preliminary=args.allow_preliminary,
         n_resamples=args.n_resamples,
         seed=args.seed,
+        patch_metadata_path=args.patch_metadata,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     snapshot = result.pop("input_identity_snapshot")
