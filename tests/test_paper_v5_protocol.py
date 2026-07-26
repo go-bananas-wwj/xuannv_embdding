@@ -2391,7 +2391,7 @@ def test_v5_rejects_aef_family_before_task5(
         "seed": 42,
     }
 
-    with pytest.raises(ValueError, match="outside the registered v5 matrix"):
+    with pytest.raises(ValueError, match="only full_150"):
         registered.validate_registered_matrix_cell("v5_osm_assisted", aef_cell)
     with pytest.raises(ValueError, match="baseline is outside"):
         registered.validate_v5_matrix_comparator("matched_aef_v5", "full_150")
@@ -2444,6 +2444,59 @@ def test_v5_canonical_checkpoint_resolver_uses_the_queue_sealed_pointer(tmp_path
     _write_json(pointer_path, pointer)
     with pytest.raises(ValueError, match="self-hash"):
         checkpoint_resolver.resolve_registered_v5_checkpoint(tmp_path, family="full_150", fold=2)
+
+
+def test_v5_canonical_checkpoint_resolver_requires_the_sealed_source_config(
+    tmp_path: Path,
+) -> None:
+    """An export cannot relabel a sealed checkpoint with another fold config."""
+    from scripts.eval import registered_v5_encoder_checkpoint as checkpoint_resolver
+
+    attempt = tmp_path / "paper_registered_v5_full_150_fold0_20260726" / "attempt_1"
+    checkpoint = attempt / "verified_checkpoints" / "best_sealed.pt"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"sealed checkpoint")
+    source_config = tmp_path / "source_fold0.yaml"
+    requested_config = tmp_path / "requested_fold0.yaml"
+    source_config.write_text("experiment: {name: source}\n", encoding="utf-8")
+    requested_config.write_text("experiment: {name: requested}\n", encoding="utf-8")
+    manifest = attempt / "attempt_manifest.json"
+    _write_json(
+        manifest,
+        {
+            "schema_version": 1,
+            "attempt_dir": str(attempt.resolve()),
+            "source_config": {"path": str(source_config.resolve()), "sha256": _sha256(source_config)},
+        },
+    )
+    verification = attempt / "checkpoint_verifications" / f"{checkpoint.name}.json"
+    verification.parent.mkdir()
+    _write_json(
+        verification,
+        {
+            "schema_version": 1,
+            "attempt_dir": str(attempt.resolve()),
+            "checkpoint_path": str(checkpoint.resolve()),
+            "checkpoint_sha256": _sha256(checkpoint),
+        },
+    )
+    pointer = {
+        "schema_version": 1,
+        "attempt_dir": str(attempt.resolve()),
+        "attempt_manifest_sha256": _sha256(manifest),
+        "checkpoint_path": str(checkpoint.resolve()),
+        "checkpoint_sha256": _sha256(checkpoint),
+    }
+    pointer["sha256"] = checkpoint_resolver._canonical_pointer_sha256(pointer)
+    _write_json(attempt.parent / "canonical_attempt.json", pointer)
+
+    checkpoint_resolver.validate_registered_v5_checkpoint_config_binding(
+        checkpoint, expected_config_path=source_config
+    )
+    with pytest.raises(ValueError, match="source config"):
+        checkpoint_resolver.validate_registered_v5_checkpoint_config_binding(
+            checkpoint, expected_config_path=requested_config
+        )
 
 
 def test_v5_shot_schedule_generator_resolves_repo_imports_when_run_directly(tmp_path: Path) -> None:
@@ -2529,7 +2582,7 @@ def test_v5_export_and_launcher_dry_runs_admit_declared_family_only(tmp_path: Pa
         assert all(line.startswith(("EXPORT ", "PROBE ")) for line in accepted.stdout.splitlines())
         if script == exporter:
             assert sum("phase=finalize" in line for line in accepted.stdout.splitlines()) == 5
-        for rejected_family in ("not_declared", "matched_aef_v5"):
+        for rejected_family in ("not_declared", "matched_aef_v5", "full_80", "no_osm_150"):
             rejected = subprocess.run(
                 [
                     str(script),
@@ -2545,6 +2598,223 @@ def test_v5_export_and_launcher_dry_runs_admit_declared_family_only(tmp_path: Pa
                 check=False,
             )
             assert rejected.returncode == 2
+
+
+def test_v5_exporter_refuses_to_contend_with_an_active_registered_trainer(tmp_path: Path) -> None:
+    """The exporter must fail before any NPU work if a V5 trainer is live."""
+    root = _sealed_v5_wrapper_repo(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    pgrep = bin_dir / "pgrep"
+    pgrep.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    pgrep.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            str(root / "scripts/eval/export_registered_v5_paper_encoders.sh"),
+            "--protocol",
+            "v5_osm_assisted",
+            "--family",
+            "full_150",
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+    )
+
+    assert result.returncode != 0
+    assert "registered V5 encoder training is active" in result.stderr
+
+
+def test_v5_exporter_refuses_a_shared_registered_lane_lease(tmp_path: Path) -> None:
+    """A queue lease acquired after pgrep still prevents all-NPU export contention."""
+    root = _sealed_v5_wrapper_repo(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    pgrep = bin_dir / "pgrep"
+    pgrep.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+    pgrep.chmod(0o755)
+    lock_root = root / ".pytest_registered_v5_locks"
+    lock_root.mkdir()
+    ready = tmp_path / "lease-ready"
+    holder = subprocess.Popen(
+        [
+            "flock",
+            str(lock_root / "lane_1.lock"),
+            "bash",
+            "-c",
+            "touch \"$1\"; sleep 30",
+            "bash",
+            str(ready),
+        ]
+    )
+    try:
+        for _ in range(100):
+            if ready.is_file():
+                break
+            time.sleep(0.01)
+        assert ready.is_file(), "lease holder did not acquire lane_1"
+        result = subprocess.run(
+            [
+                str(root / "scripts/eval/export_registered_v5_paper_encoders.sh"),
+                "--protocol",
+                "v5_osm_assisted",
+                "--family",
+                "full_150",
+            ],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+            env={
+                **os.environ,
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            },
+        )
+    finally:
+        holder.terminate()
+        holder.wait(timeout=10)
+
+    assert result.returncode != 0
+    assert "encoder lane 1 is active" in result.stderr
+
+
+def test_v5_exporter_holds_all_registered_lane_leases_after_acquisition(tmp_path: Path) -> None:
+    """All three leases remain held while the exporter is still in its preflight phase."""
+    root = _sealed_v5_wrapper_repo(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    pgrep = bin_dir / "pgrep"
+    pgrep.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+    pgrep.chmod(0o755)
+    ready = tmp_path / "exporter-after-locks"
+    python_wrapper = bin_dir / "python"
+    python_wrapper.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$1\" == \"-\" ]]; then\n"
+        "  touch \"$V5_LEASE_READY\"\n"
+        "  sleep 30\n"
+        "  exit 0\n"
+        "fi\n"
+        "exec \"$V5_LEASE_REAL_PYTHON\" \"$@\"\n",
+        encoding="utf-8",
+    )
+    python_wrapper.chmod(0o755)
+    exporter = subprocess.Popen(
+        [
+            str(root / "scripts/eval/export_registered_v5_paper_encoders.sh"),
+            "--protocol",
+            "v5_osm_assisted",
+            "--family",
+            "full_150",
+        ],
+        cwd=root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "V5_LEASE_READY": str(ready),
+            "V5_LEASE_REAL_PYTHON": sys.executable,
+        },
+    )
+    try:
+        for _ in range(100):
+            if ready.is_file():
+                break
+            time.sleep(0.01)
+        assert ready.is_file(), "exporter did not reach the post-lease preflight"
+        lock_root = root / ".pytest_registered_v5_locks"
+        for lane in range(3):
+            contender = subprocess.run(
+                ["flock", "-n", str(lock_root / f"lane_{lane}.lock"), "true"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert contender.returncode != 0, f"lane {lane} was released during export"
+    finally:
+        exporter.terminate()
+        exporter.wait(timeout=10)
+
+
+def test_v5_probe_request_rejects_a_declared_but_not_yet_admitted_encoder_family() -> None:
+    """Direct runner calls cannot bypass the full_150-only release boundary."""
+    cell = {
+        "family": "full_80",
+        "head": "conv3x3_64_128_64",
+        "task": "building",
+        "shot": "5",
+        "fold": 0,
+        "seed": 42,
+    }
+
+    with pytest.raises(ValueError, match="only full_150"):
+        registered.validate_registered_matrix_cell("v5_osm_assisted", cell)
+
+
+def test_v5_full_matrix_preflight_rejects_a_missing_fold_export(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No probe wave may start when even one full_150 export is absent."""
+    config_root = tmp_path / "configs"
+    for fold in range(5):
+        (config_root / f"paper_registered_v5_full_150_fold{fold}_20260726.yaml").parent.mkdir(
+            parents=True, exist_ok=True
+        )
+        (config_root / f"paper_registered_v5_full_150_fold{fold}_20260726.yaml").write_text(
+            f"fold: {fold}\n", encoding="utf-8"
+        )
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("[]\n", encoding="utf-8")
+    entries = [
+        {"family": "full_150", "encoder_fold": fold, "embedding_root": str(tmp_path / str(fold))}
+        for fold in range(1, 5)
+    ]
+    resolver = __import__(
+        "scripts.eval.registered_v5_encoder_checkpoint", fromlist=["placeholder"]
+    )
+    checkpoint = tmp_path / "checkpoint.pt"
+    checkpoint.write_bytes(b"checkpoint")
+    monkeypatch.setattr(resolver, "resolve_registered_v5_checkpoint", lambda *_args, **_kwargs: checkpoint)
+    monkeypatch.setattr(
+        resolver, "validate_registered_v5_checkpoint_config_binding", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(registered, "load_registered_v5_matrix", lambda: {"families": {"full_150": {}}})
+    monkeypatch.setattr(registered, "validate_v5_embedding_registry", lambda *_args: {"exports": entries})
+    monkeypatch.setattr(
+        registered,
+        "verify_encoder_provenance",
+        lambda *_args, **_kwargs: {"config_sha256": "config", "checkpoint_sha256": "checkpoint"},
+    )
+    monkeypatch.setattr(
+        registered,
+        "_verify_embedding_export",
+        lambda *_args, **_kwargs: {
+            "manifest": {"manifest_sha256": "manifest"},
+            "embedding_file_index_sha256": "index",
+            "canonical_export_provenance_sha256": "provenance",
+        },
+    )
+    monkeypatch.setattr(
+        registered,
+        "verify_embedding_registry",
+        lambda *_args, **kwargs: {
+            "family": "full_150",
+            "encoder_fold": int(Path(kwargs["region"]).name) if False else 0,
+        },
+    )
+
+    with pytest.raises(ValueError, match="exactly one full_150 embedding export for fold 0"):
+        registered.validate_v5_full_150_matrix_readiness(
+            encoder_root=tmp_path / "encoders",
+            registry_path=tmp_path / "registry.json",
+            manifest_path=manifest,
+            config_root=config_root,
+        )
 
 
 def test_v5_exporter_dry_run_can_plan_an_atomic_registry_batch(tmp_path: Path) -> None:

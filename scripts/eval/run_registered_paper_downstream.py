@@ -168,6 +168,8 @@ def validate_registered_matrix_cell(protocol_id: str, cell: dict[str, Any]) -> N
         return
     matrix = load_registered_v5_matrix()
     family = cell.get("family")
+    if family != "full_150":
+        raise ValueError("registered V5 downstream currently admits only full_150")
     family_spec = matrix["families"].get(family)
     if not isinstance(family_spec, dict):
         raise ValueError("Result cell family is outside the registered v5 matrix")
@@ -218,6 +220,64 @@ def validate_v5_embedding_registry(registry_path: Path, bindings: dict[str, Any]
         raise ValueError("V5 embedding registry requires an exports list")
     verify_git_head_file(registry_path)
     return raw
+
+
+def validate_v5_full_150_matrix_readiness(
+    *,
+    encoder_root: Path,
+    registry_path: Path,
+    manifest_path: Path,
+    config_root: Path = V5_CONFIG_ROOT,
+) -> None:
+    """Fail closed unless all five registered full_150 exports are sealed and usable."""
+    from scripts.eval.registered_v5_encoder_checkpoint import resolve_registered_v5_checkpoint
+
+    matrix = load_registered_v5_matrix()
+    registry = validate_v5_embedding_registry(registry_path, matrix)
+    for fold in range(5):
+        config = config_root / f"paper_registered_v5_full_150_fold{fold}_20260726.yaml"
+        checkpoint = resolve_registered_v5_checkpoint(
+            encoder_root, family="full_150", fold=fold
+        )
+        provenance = verify_encoder_provenance(
+            config, checkpoint, fold, "v5_osm_assisted"
+        )
+        entries = [
+            entry
+            for entry in registry["exports"]
+            if entry.get("family") == "full_150" and entry.get("encoder_fold") == fold
+        ]
+        if len(entries) != 1 or not isinstance(entries[0].get("embedding_root"), str):
+            raise ValueError(
+                "registered V5 downstream requires exactly one full_150 embedding export "
+                f"for fold {fold}"
+            )
+        config_sha256 = str(provenance["config_sha256"])
+        checkpoint_sha256 = str(provenance["checkpoint_sha256"])
+        meta = _verify_embedding_export(
+            Path(entries[0]["embedding_root"]),
+            manifest_path,
+            checkpoint_sha256,
+            "202604",
+            "v5_osm_assisted",
+            config_sha256,
+        )
+        sealed = verify_embedding_registry(
+            registry_path,
+            checkpoint_sha256=checkpoint_sha256,
+            config_sha256=config_sha256,
+            manifest_sha256=meta["manifest"]["manifest_sha256"],
+            index_sha256=meta["embedding_file_index_sha256"],
+            canonical_provenance_sha256=meta["canonical_export_provenance_sha256"],
+            region="haidian",
+            month="202604",
+            patch_count=320,
+            protocol_id="v5_osm_assisted",
+        )
+        if sealed.get("family") != "full_150" or sealed.get("encoder_fold") != fold:
+            raise ValueError(
+                f"registered V5 export provenance is not bound to full_150 fold {fold}"
+            )
 
 
 def validate_v5_protocol_assets_for_commit(
@@ -854,6 +914,13 @@ def verify_encoder_provenance(
 
         validate_registered_v5_checkpoint_path(
             checkpoint_path, expected_job_name=str(experiment_name)
+        )
+        from scripts.eval.registered_v5_encoder_checkpoint import (
+            validate_registered_v5_checkpoint_config_binding,
+        )
+
+        validate_registered_v5_checkpoint_config_binding(
+            checkpoint_path, expected_config_path=config_path
         )
     elif checkpoint_path.name != "best.pt" or experiment_name != checkpoint_path.parent.name:
         raise ValueError("Checkpoint path does not match config experiment.name")

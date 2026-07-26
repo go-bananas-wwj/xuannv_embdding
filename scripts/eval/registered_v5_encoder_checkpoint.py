@@ -90,6 +90,27 @@ def validate_registered_v5_checkpoint_path(checkpoint: Path, *, expected_job_nam
     return checkpoint
 
 
+def validate_registered_v5_checkpoint_config_binding(
+    checkpoint: Path, *, expected_config_path: Path
+) -> Path:
+    """Require the queue-sealed checkpoint to originate from the requested config bytes."""
+    checkpoint = checkpoint.resolve()
+    attempt = checkpoint.parent.parent
+    expected_config_path = expected_config_path.resolve()
+    manifest_path = attempt / "attempt_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    source = manifest.get("source_config")
+    if not isinstance(source, dict):
+        raise ValueError("registered V5 attempt manifest lacks source config provenance")
+    source_path = Path(str(source.get("path", ""))).resolve()
+    source_sha256 = source.get("sha256")
+    if source_path != expected_config_path:
+        raise ValueError("registered V5 checkpoint source config does not match requested config")
+    if not expected_config_path.is_file() or source_sha256 != _sha256(expected_config_path):
+        raise ValueError("registered V5 checkpoint source config hash does not match requested config")
+    return checkpoint
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-root", type=Path)

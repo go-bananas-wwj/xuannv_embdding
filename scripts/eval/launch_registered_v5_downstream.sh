@@ -32,6 +32,10 @@ while (( $# > 0 )); do
 done
 
 [[ "$PROTOCOL" == "v5_osm_assisted" && -n "$FAMILY" ]] || { usage; exit 2; }
+[[ "$FAMILY" == "full_150" ]] || {
+  echo "registered V5 downstream launcher currently supports only full_150" >&2
+  exit 2
+}
 cd "$ROOT"
 assert_script_at_head() {
   local relative=$1
@@ -110,6 +114,28 @@ if [[ "$DRY_RUN" == true ]]; then
 fi
 
 source /usr/local/Ascend/cann-9.0.0/set_env.sh
+
+assert_full_150_matrix_is_ready() {
+  python - "$ROOT" "$ENCODER_ROOT" "$EMBEDDING_REGISTRY" "$MANIFEST" <<'PY'
+import sys
+from pathlib import Path
+
+root, encoder_root, registry_path, manifest_path = map(Path, sys.argv[1:])
+sys.path.insert(0, str(root))
+from scripts.eval.run_registered_paper_downstream import (
+    validate_v5_full_150_matrix_readiness,
+)
+
+validate_v5_full_150_matrix_readiness(
+    encoder_root=encoder_root,
+    registry_path=registry_path,
+    manifest_path=manifest_path,
+    config_root=root / "configs/paper_registered_v5_20260726",
+)
+PY
+}
+
+assert_full_150_matrix_is_ready
 
 embedding_root_for_fold() {
   local fold=$1

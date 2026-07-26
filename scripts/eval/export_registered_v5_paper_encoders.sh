@@ -15,6 +15,10 @@ OUTPUT_ROOT=/data/xuannv_embedding/outputs/paper_registered_v5_20260726
 EMBED_ROOT=/data/xuannv_embedding/experiments/paper_registered_v5_20260726/embeddings
 REGISTRY="$ROOT/configs/eval/registered_embedding_exports_v5_20260726.json"
 LOG_ROOT=/data/xuannv_embedding/experiments/paper_registered_v5_20260726/logs/exports
+LANE_LOCK_ROOT=/data/xuannv_embedding/locks/registered_v5
+if [[ -n "${PYTEST_CURRENT_TEST:-}" && "$ROOT" == /tmp/pytest-of-* ]]; then
+  LANE_LOCK_ROOT="$ROOT/.pytest_registered_v5_locks"
+fi
 
 usage() {
   echo "usage: $0 --protocol v5_osm_assisted --family <declared-v5-family> [--matrix path] [--register-pending] [--dry-run]" >&2
@@ -32,6 +36,10 @@ while (( $# > 0 )); do
 done
 
 [[ "$PROTOCOL" == "v5_osm_assisted" && -n "$FAMILY" ]] || { usage; exit 2; }
+[[ "$FAMILY" == "full_150" ]] || {
+  echo "registered V5 exporter currently supports only full_150" >&2
+  exit 2
+}
 cd "$ROOT"
 assert_script_at_head() {
   local relative=$1
@@ -84,6 +92,34 @@ for runtime_source in \
 done
 export PYTHONPATH="$ROOT:$ROOT/src:$ROOT/downstreams:${PYTHONPATH:-}"
 
+assert_no_active_registered_v5_training() {
+  local fold
+  for fold in 0 1 2 3 4; do
+    if pgrep -f "$ROOT/scripts/train/train.py.*paper_registered_v5_full_150_fold${fold}_" >/dev/null; then
+      echo "registered V5 encoder training is active; refuse export until all folds stop" >&2
+      exit 5
+    fi
+  done
+}
+
+acquire_registered_v5_export_leases() {
+  local lane
+  mkdir -p "$LANE_LOCK_ROOT"
+  for lane in 0 1 2; do
+    local fd
+    exec {fd}>"$LANE_LOCK_ROOT/lane_${lane}.lock"
+    if ! flock -n "$fd"; then
+      echo "registered V5 encoder lane $lane is active; refuse export until all folds stop" >&2
+      exit 5
+    fi
+  done
+}
+
+if [[ "$DRY_RUN" == false ]]; then
+  assert_no_active_registered_v5_training
+  acquire_registered_v5_export_leases
+fi
+
 python - "$FAMILY" "$MATRIX" <<'PY'
 import sys
 from pathlib import Path
@@ -113,6 +149,18 @@ for fold in 0 1 2 3 4; do
   fi
   checkpoint="$(python "$ROOT/scripts/eval/registered_v5_encoder_checkpoint.py" \
     --output-root "$OUTPUT_ROOT" --family "$FAMILY" --fold "$fold")"
+  python - "$checkpoint" "$config" <<'PY'
+import sys
+from pathlib import Path
+
+from scripts.eval.registered_v5_encoder_checkpoint import (
+    validate_registered_v5_checkpoint_config_binding,
+)
+
+validate_registered_v5_checkpoint_config_binding(
+    Path(sys.argv[1]), expected_config_path=Path(sys.argv[2])
+)
+PY
   [[ -f "$config" && -f "$checkpoint" ]] || {
     echo "missing registered v5 config or best checkpoint for ${FAMILY}/fold${fold}" >&2
     exit 3
