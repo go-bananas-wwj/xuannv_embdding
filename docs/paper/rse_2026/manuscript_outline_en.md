@@ -138,27 +138,38 @@ independent-label/held-out-ontology evidence separate.
 ### 4.1 Spatially independent multi-task readout
 
 Insert the registered five-fold, three-seed table only after every row is admitted by the
-evidence ledger. Figure 1 should show representative held-out predictions with high-resolution
+evidence ledger. Its section title, table captions, figure captions, and discussion must identify
+it as an **OSM-assisted, ontology-overlapping diagnostic readout**, not as independent semantic
+transfer evidence. Figure 1 should show representative held-out predictions with high-resolution
 imagery, labels, probabilities, and masks; Figure 2 should show a compact task-by-budget
-comparison with uncertainty.
+comparison with uncertainty. Keep independent-label and held-out-ontology results in a separate,
+explicitly named analysis; do not combine their conclusions with the OSM-overlap table.
 
 ### 4.2 Data scale and recipe ablations
 
-Report strictly nested 40/80/150 training sets and matched no-OSM, coarse-OSM, no-hard-negative,
-no-high-resolution-pathway, and no-masking ablations. Describe one-encoder-seed ablations as
-exploratory associations. Do not attribute the combined higher-resolution pathway result to
-input fusion or reconstruction separately without the required 2 x 2 experiment.
+Include this section only after every scale or ablation row has passed the evidence-ledger
+admission gate. Report strictly nested 40/80/150 training sets and matched no-OSM, coarse-OSM,
+no-hard-negative, no-high-resolution-pathway, and no-masking ablations only when their registered
+comparators and downstream results are complete. Describe one-encoder-seed ablations as
+exploratory associations. Do not attribute the combined higher-resolution pathway result to input
+fusion or reconstruction separately without the required 2 x 2 experiment. If these conditions
+are not met at submission, omit this subsection rather than presenting planned experiments.
 
 ### 4.3 Quality, temporal, and geographic robustness
 
 Include this section only for completed, information-matched 1/3/6-month, clear/cloudy,
-missing-source, and second-city experiments. A test-time deletion or shuffling study is a
-distribution-shift diagnosis, not a causal temporal ablation.
+missing-source, and second-city experiments whose results have also been verified and admitted
+by the evidence ledger. A test-time deletion or shuffling study is a distribution-shift diagnosis,
+not a causal temporal ablation. Omit any completed but preliminary robustness output from the
+manuscript and supplementary evidence.
 
 ### 4.4 Full-region product case study
 
-Show P10C maps, PCA mosaics, and retrieval examples separately as a transductive deployment
-case study. These visuals cannot enter the spatial-generalisation main table.
+Show P10C maps, PCA mosaics, and retrieval examples only after their provenance is bound and
+admitted in the evidence ledger. Present them separately as a transductive, qualitative product
+case study; these visuals cannot enter the spatial-generalisation main table or support an
+independent-transfer claim. If provenance admission remains pending, exclude them from both the
+main manuscript and supplementary evidence.
 
 ## 5. Discussion
 
@@ -169,8 +180,10 @@ sparse higher-resolution data, and uncertain transfer outside the study area.
 
 ## 6. Conclusion
 
-Restate the problem, the monthly dense embedding framework, the strongest registered finding,
-the practical implication, and one boundary. Do not make a global-foundation-model or universal
+Restate the problem, the monthly dense embedding framework, the strongest verified and
+evidence-ledger-admitted finding, the practical implication, and one boundary. If no finding has
+completed admission, omit quantitative conclusions rather
+than treating registration as evidence. Do not make a global-foundation-model or universal
 superiority claim.
 
 ## Declarations and supplementary material
@@ -178,8 +191,9 @@ superiority claim.
 Include CRediT roles, funding, competing interests, acknowledgements, data/code availability,
 third-party imagery restrictions, generative-AI disclosure if required, and a prior-publication
 statement for the APGARSS abstract. Supplementary material should contain full protocol details,
-all task figures, complete ablation tables, quality statistics, provenance hashes, and negative
-results.
+quality statistics, provenance hashes, and negative results. Include task figures and ablation
+tables only after their underlying results are verified and admitted by the evidence ledger; do
+not use supplementary material to present preliminary results as manuscript evidence.
 
 ## References
 
