@@ -4,9 +4,15 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
+import io
 import json
 from dataclasses import dataclass
 from pathlib import Path
+import time
+from typing import Callable
+from urllib.parse import urlencode
+from urllib.request import urlopen
 
 import numpy as np
 import rasterio
@@ -46,32 +52,14 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--embedding-root",
-        type=Path,
-        default=Path(
-            "/data/xuannv_embedding/embeddings/presentation_pujiang_202607/"
-            "harbin_stage2_v1_202605/harbin"
-        ),
+        "--api-base",
+        default="http://60.31.21.42:22065",
     )
     parser.add_argument(
-        "--layout-root",
-        type=Path,
-        default=Path("/data/xuannv_embedding/processed/harbin/labels/building_osm"),
-    )
-    parser.add_argument(
-        "--harbin-head-checkpoint",
+        "--api-cache-root",
         type=Path,
         default=Path(
-            "/data/xuannv_embedding/outputs/downstream/"
-            "stage2_harbin_construction_v1_frac1.0/fold_0/checkpoints/best.pt"
-        ),
-    )
-    parser.add_argument(
-        "--harbin-head-metrics",
-        type=Path,
-        default=Path(
-            "/data/xuannv_embedding/outputs/downstream/"
-            "stage2_harbin_construction_v1_frac1.0/fold_0/metrics.json"
+            "/data/xuannv_embedding/experiments/presentation_pujiang_202607/api_assets"
         ),
     )
     parser.add_argument(
@@ -92,6 +80,174 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pca-sample-pixels", type=int, default=220_000)
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
+
+
+def api_url(base: str, path: str, **query: str | int) -> str:
+    suffix = f"?{urlencode(query)}" if query else ""
+    return f"{base.rstrip('/')}/{path.lstrip('/')}{suffix}"
+
+
+def read_url_with_retry(
+    url: str,
+    attempts: int = 5,
+    opener: Callable = urlopen,
+    sleep: Callable[[float], None] = time.sleep,
+) -> bytes:
+    for attempt in range(attempts):
+        try:
+            with opener(url, timeout=120) as response:
+                return response.read()
+        except OSError:
+            if attempt + 1 == attempts:
+                raise
+            sleep(2**attempt)
+    raise RuntimeError("unreachable")
+
+
+def api_get_json(base: str, path: str, **query: str | int) -> dict:
+    payload = read_url_with_retry(api_url(base, path, **query))
+    return json.loads(payload)
+
+
+def api_download(base: str, path: str, output: Path, **query: str | int) -> str:
+    url = api_url(base, path, **query)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(read_url_with_retry(url))
+    return url
+
+
+def api_patches(base: str, region: str) -> list[dict]:
+    first = api_get_json(base, f"regions/{region}/patches", page=1, page_size=100)
+    patches = list(first["patches"])
+    page = 2
+    while len(patches) < int(first["total"]):
+        payload = api_get_json(
+            base,
+            f"regions/{region}/patches",
+            page=page,
+            page_size=100,
+        )
+        patches.extend(payload["patches"])
+        page += 1
+    if len(patches) != int(first["total"]):
+        raise RuntimeError(f"{region} API patch list is incomplete")
+    return patches
+
+
+def api_patch_layout(patches: list[dict]) -> tuple[list[PatchLayout], int, int]:
+    lefts = sorted({round(float(item["bounds"][0]), 3) for item in patches})
+    tops = sorted(
+        {round(float(item["bounds"][3]), 3) for item in patches},
+        reverse=True,
+    )
+    col_of = {value: index for index, value in enumerate(lefts)}
+    row_of = {value: index for index, value in enumerate(tops)}
+    layouts = [
+        PatchLayout(
+            patch_id=str(item["patch_id"]),
+            row=row_of[round(float(item["bounds"][3]), 3)],
+            col=col_of[round(float(item["bounds"][0]), 3)],
+        )
+        for item in patches
+    ]
+    return layouts, len(tops), len(lefts)
+
+
+def binary_prediction_mosaic(
+    layouts: list[PatchLayout],
+    rows: int,
+    cols: int,
+    predictions: dict[str, np.ndarray],
+    threshold: float,
+) -> tuple[np.ndarray, dict[str, float | int]]:
+    first = np.asarray(predictions[layouts[0].patch_id]).squeeze()
+    if first.ndim != 2:
+        raise ValueError(f"Expected 2D prediction, got {first.shape}")
+    tile_h, tile_w = first.shape
+    canvas = np.full((rows * tile_h, cols * tile_w, 3), 255, dtype=np.uint8)
+    positive = total = 0
+    for layout in layouts:
+        prediction = np.asarray(predictions[layout.patch_id]).squeeze()
+        if prediction.shape != (tile_h, tile_w):
+            raise ValueError(f"Inconsistent prediction shape for {layout.patch_id}")
+        mask = np.nan_to_num(prediction, nan=0.0) >= threshold
+        tile = np.full((tile_h, tile_w, 3), 255, dtype=np.uint8)
+        tile[mask] = (230, 0, 0)
+        y0, x0 = layout.row * tile_h, layout.col * tile_w
+        canvas[y0 : y0 + tile_h, x0 : x0 + tile_w] = tile
+        positive += int(mask.sum())
+        total += int(mask.size)
+    return canvas, {
+        "patches": len(layouts),
+        "threshold": threshold,
+        "positive_pixel_ratio": positive / total,
+    }
+
+
+def build_api_binary_task_mosaic(
+    base: str,
+    region: str,
+    task: str,
+    version: str,
+    month: str,
+    cache_root: Path,
+    output: Path,
+) -> dict[str, float | int | str]:
+    summary = api_get_json(
+        base,
+        f"regions/{region}/tasks/{task}/summary",
+        version=version,
+        month=month,
+    )
+    threshold = float(summary.get("prediction_statistics", {}).get("threshold") or 0.5)
+    patches = api_patches(base, region)
+    layouts, rows, cols = api_patch_layout(patches)
+    prediction_root = cache_root / region / version / task / month
+    prediction_root.mkdir(parents=True, exist_ok=True)
+
+    def fetch(patch_id: str) -> tuple[str, np.ndarray]:
+        target = prediction_root / f"{patch_id}.npy"
+        url = api_url(
+            base,
+            f"regions/{region}/patches/{patch_id}/tasks/{task}/prediction",
+            version=version,
+            period=month,
+        )
+        if not target.exists():
+            target.write_bytes(read_url_with_retry(url))
+        return patch_id, np.load(target, allow_pickle=False)
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        predictions = dict(pool.map(fetch, [item.patch_id for item in layouts]))
+    canvas, stats = binary_prediction_mosaic(
+        layouts,
+        rows,
+        cols,
+        predictions,
+        threshold,
+    )
+    save_slide_image(Image.fromarray(canvas), output)
+    return {
+        **stats,
+        "region": region,
+        "task": task,
+        "version": version,
+        "month": month,
+        "head": summary["model"]["head_type"],
+        "feature_source": summary["model"]["feature_source"],
+        "api_summary": api_url(
+            base,
+            f"regions/{region}/tasks/{task}/summary",
+            version=version,
+            month=month,
+        ),
+        "api_prediction_template": api_url(
+            base,
+            f"regions/{region}/patches/{{patch_id}}/tasks/{task}/prediction",
+            version=version,
+            period=month,
+        ),
+    }
 
 
 def font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
@@ -516,13 +672,13 @@ def build_ppt(source: Path, output: Path, assets: dict[str, Path]) -> None:
     )
     add_region(
         slide,
-        "哈尔滨新区｜Stage 2 既有权重",
+        "哈尔滨新区｜V5（API v2）",
         7.16,
         assets["harbin_pca"],
         [
-            ("施工工地提取", assets["harbin_construction"]),
+            ("建设区域监测", assets["harbin_building"]),
         ],
-        "424 patch｜月度：2025.12–2026.05｜128×128×64 / patch",
+        "424 patch｜10期：2025.04–2026.05｜64维月度嵌入",
         "2026年5月全域 Embedding PCA",
     )
     add_text(
@@ -588,12 +744,12 @@ def build_preview(output: Path, assets: dict[str, Path]) -> None:
         ),
         (
             857,
-            "哈尔滨新区｜Stage 2 既有权重",
+            "哈尔滨新区｜V5（API v2）",
             assets["harbin_pca"],
             [
-                ("施工工地提取", assets["harbin_construction"]),
+                ("建设区域监测", assets["harbin_building"]),
             ],
-            "424 patch｜月度：2025.12–2026.05｜128×128×64 / patch",
+            "424 patch｜10期：2025.04–2026.05｜64维月度嵌入",
             "2026年5月全域 Embedding PCA",
         ),
     ]
@@ -677,29 +833,76 @@ def main() -> None:
         for key in [
             *sources,
             "harbin_pca",
-            "harbin_construction",
+            "harbin_building",
         ]
     }
     for key, source in sources.items():
+        if key in {"haidian_building", "haidian_road", "haidian_water"}:
+            continue
         clean_existing_asset(source, assets[key])
 
-    pca_meta = build_harbin_pca(
-        args.embedding_root,
-        args.layout_root,
-        args.month,
-        assets["harbin_pca"],
-        args.pca_sample_pixels,
-        args.seed,
+    harbin_pca_cache = (
+        args.api_cache_root / f"harbin_v5_embedding_{args.month}_api.png"
     )
+    harbin_pca_url = api_download(
+        args.api_base,
+        "regions/harbin/mosaic",
+        harbin_pca_cache,
+        date=args.month,
+        sensor_type="embedding",
+        version="v2",
+        format="png",
+    )
+    clean_existing_asset(harbin_pca_cache, assets["harbin_pca"], header_pixels=0)
+    haidian_building_meta = build_api_binary_task_mosaic(
+        args.api_base,
+        "haidian",
+        "building_extraction",
+        "v1",
+        args.haidian_month,
+        args.api_cache_root,
+        assets["haidian_building"],
+    )
+    haidian_road_meta = build_api_binary_task_mosaic(
+        args.api_base,
+        "haidian",
+        "road_extraction",
+        "v1",
+        args.haidian_month,
+        args.api_cache_root,
+        assets["haidian_road"],
+    )
+    haidian_water_meta = build_api_binary_task_mosaic(
+        args.api_base,
+        "haidian",
+        "water_extraction",
+        "v1",
+        args.haidian_month,
+        args.api_cache_root,
+        assets["haidian_water"],
+    )
+    harbin_building_meta = build_api_binary_task_mosaic(
+        args.api_base,
+        "harbin",
+        "building_extraction",
+        "v2",
+        args.month,
+        args.api_cache_root,
+        assets["harbin_building"],
+    )
+    pca_meta = {
+        "patches": 424,
+        "month": args.month,
+        "version": "v2",
+        "model": "V5",
+        "api_url": harbin_pca_url,
+        "cache_path": str(harbin_pca_cache),
+    }
     probe_meta = {
-        "construction": build_harbin_prediction(
-            args.embedding_root,
-            args.layout_root,
-            args.month,
-            args.harbin_head_checkpoint,
-            args.harbin_head_metrics,
-            assets["harbin_construction"],
-        )
+        "haidian_building": haidian_building_meta,
+        "haidian_road": haidian_road_meta,
+        "haidian_water": haidian_water_meta,
+        "harbin_building": harbin_building_meta,
     }
     build_ppt(args.source_pptx, args.output_pptx, assets)
     preview = args.asset_root / "slide01_preview.png"
@@ -709,21 +912,34 @@ def main() -> None:
         "title": "玄女月度地理嵌入：海淀区与哈尔滨新区实践",
         "pptx": str(args.output_pptx),
         "preview": str(preview),
+        "api_base": args.api_base,
         "haidian_model": {
             "experiment": "P10C",
             "checkpoint": "epoch_800",
+            "embedding_version": "v1",
             "month": args.haidian_month,
-            "task_map_type": "fold_0 model prediction",
+            "building_head": "binary_conv3x3",
+            "building_threshold": haidian_building_meta["threshold"],
+            "building_task_map_type": "API numeric prediction thresholded with registered threshold",
+            "building_source": haidian_building_meta["api_prediction_template"],
+            "road_head": haidian_road_meta["head"],
+            "road_threshold": haidian_road_meta["threshold"],
+            "road_source": haidian_road_meta["api_prediction_template"],
+            "water_head": haidian_water_meta["head"],
+            "water_threshold": haidian_water_meta["threshold"],
+            "water_source": haidian_water_meta["api_prediction_template"],
         },
         "harbin_model": {
-            "experiment": "harbin_128_stage2_v1",
-            "checkpoint": "/data/xuannv_embedding/outputs/harbin_128_stage2_v1/best.pt",
+            "experiment": "V5",
+            "embedding_version": "v2",
             "month": args.month,
-            "training": "existing_stage2_checkpoint",
-            "task_map_type": "original fold_0 lightweight UNet construction prediction",
+            "training": "deployed embedding-api asset",
+            "embedding_source": harbin_pca_url,
+            "task_map_type": "API construction-mapped numeric prediction",
+            "task_label": "建设区域监测",
         },
         "harbin_pca": pca_meta,
-        "harbin_probes": probe_meta,
+        "api_task_maps": probe_meta,
         "assets": {key: str(path) for key, path in assets.items()},
     }
     (args.asset_root / "metadata.json").write_text(

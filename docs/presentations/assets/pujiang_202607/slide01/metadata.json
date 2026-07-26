@@ -3,37 +3,92 @@
   "title": "玄女月度地理嵌入：海淀区与哈尔滨新区实践",
   "pptx": "/root/workspace/xuannv/docs/presentations/pujiang_202607/玄女月度地理嵌入_浦江交流_第01页_20260726.pptx",
   "preview": "/root/workspace/xuannv/docs/presentations/assets/pujiang_202607/slide01/slide01_preview.png",
+  "api_base": "http://60.31.21.42:22065",
   "haidian_model": {
     "experiment": "P10C",
     "checkpoint": "epoch_800",
+    "embedding_version": "v1",
     "month": "202605",
-    "task_map_type": "fold_0 model prediction"
+    "building_head": "binary_conv3x3",
+    "building_threshold": 0.978237,
+    "building_task_map_type": "API numeric prediction thresholded with registered threshold",
+    "building_source": "http://60.31.21.42:22065/regions/haidian/patches/{patch_id}/tasks/building_extraction/prediction?version=v1&period=202605",
+    "road_head": "binary_conv3x3",
+    "road_threshold": 0.5,
+    "road_source": "http://60.31.21.42:22065/regions/haidian/patches/{patch_id}/tasks/road_extraction/prediction?version=v1&period=202605",
+    "water_head": "binary_conv3x3",
+    "water_threshold": 0.5,
+    "water_source": "http://60.31.21.42:22065/regions/haidian/patches/{patch_id}/tasks/water_extraction/prediction?version=v1&period=202605"
   },
   "harbin_model": {
-    "experiment": "harbin_128_stage2_v1",
-    "checkpoint": "/data/xuannv_embedding/outputs/harbin_128_stage2_v1/best.pt",
+    "experiment": "V5",
+    "embedding_version": "v2",
     "month": "202605",
-    "training": "existing_stage2_checkpoint",
-    "task_map_type": "original fold_0 lightweight UNet construction prediction"
+    "training": "deployed embedding-api asset",
+    "embedding_source": "http://60.31.21.42:22065/regions/harbin/mosaic?date=202605&sensor_type=embedding&version=v2&format=png",
+    "task_map_type": "API construction-mapped numeric prediction",
+    "task_label": "建设区域监测"
   },
   "harbin_pca": {
     "patches": 424,
-    "rows": 24,
-    "cols": 26,
-    "tile_height": 128,
-    "tile_width": 128,
-    "month": "202605"
+    "month": "202605",
+    "version": "v2",
+    "model": "V5",
+    "api_url": "http://60.31.21.42:22065/regions/harbin/mosaic?date=202605&sensor_type=embedding&version=v2&format=png",
+    "cache_path": "/data/xuannv_embedding/experiments/presentation_pujiang_202607/api_assets/harbin_v5_embedding_202605_api.png"
   },
-  "harbin_probes": {
-    "construction": {
-      "checkpoint": "/data/xuannv_embedding/outputs/downstream/stage2_harbin_construction_v1_frac1.0/fold_0/checkpoints/best.pt",
-      "metrics": "/data/xuannv_embedding/outputs/downstream/stage2_harbin_construction_v1_frac1.0/fold_0/metrics.json",
-      "threshold": 0.63,
-      "head": "legacy_stage2_lightweight_unet",
-      "fold": 0,
-      "best_epoch": 32,
-      "f1": 0.06811238359399846,
-      "auc": null
+  "api_task_maps": {
+    "haidian_building": {
+      "patches": 320,
+      "threshold": 0.978237,
+      "positive_pixel_ratio": 0.007831001281738281,
+      "region": "haidian",
+      "task": "building_extraction",
+      "version": "v1",
+      "month": "202605",
+      "head": "binary_conv3x3",
+      "feature_source": "P10C 64D embedding",
+      "api_summary": "http://60.31.21.42:22065/regions/haidian/tasks/building_extraction/summary?version=v1&month=202605",
+      "api_prediction_template": "http://60.31.21.42:22065/regions/haidian/patches/{patch_id}/tasks/building_extraction/prediction?version=v1&period=202605"
+    },
+    "haidian_road": {
+      "patches": 320,
+      "threshold": 0.5,
+      "positive_pixel_ratio": 0.1503053665161133,
+      "region": "haidian",
+      "task": "road_extraction",
+      "version": "v1",
+      "month": "202605",
+      "head": "binary_conv3x3",
+      "feature_source": "P10C 64D embedding",
+      "api_summary": "http://60.31.21.42:22065/regions/haidian/tasks/road_extraction/summary?version=v1&month=202605",
+      "api_prediction_template": "http://60.31.21.42:22065/regions/haidian/patches/{patch_id}/tasks/road_extraction/prediction?version=v1&period=202605"
+    },
+    "haidian_water": {
+      "patches": 320,
+      "threshold": 0.5,
+      "positive_pixel_ratio": 0.04817981719970703,
+      "region": "haidian",
+      "task": "water_extraction",
+      "version": "v1",
+      "month": "202605",
+      "head": "binary_conv3x3",
+      "feature_source": "P10C 64D embedding",
+      "api_summary": "http://60.31.21.42:22065/regions/haidian/tasks/water_extraction/summary?version=v1&month=202605",
+      "api_prediction_template": "http://60.31.21.42:22065/regions/haidian/patches/{patch_id}/tasks/water_extraction/prediction?version=v1&period=202605"
+    },
+    "harbin_building": {
+      "patches": 424,
+      "threshold": 0.5,
+      "positive_pixel_ratio": 0.21961600825471697,
+      "region": "harbin",
+      "task": "building_extraction",
+      "version": "v2",
+      "month": "202605",
+      "head": "configured_system_head",
+      "feature_source": "Xuannv v2 embedding",
+      "api_summary": "http://60.31.21.42:22065/regions/harbin/tasks/building_extraction/summary?version=v2&month=202605",
+      "api_prediction_template": "http://60.31.21.42:22065/regions/harbin/patches/{patch_id}/tasks/building_extraction/prediction?version=v2&period=202605"
     }
   },
   "assets": {
@@ -42,6 +97,6 @@
     "haidian_road": "/root/workspace/xuannv/docs/presentations/assets/pujiang_202607/slide01/haidian_road.png",
     "haidian_water": "/root/workspace/xuannv/docs/presentations/assets/pujiang_202607/slide01/haidian_water.png",
     "harbin_pca": "/root/workspace/xuannv/docs/presentations/assets/pujiang_202607/slide01/harbin_pca.png",
-    "harbin_construction": "/root/workspace/xuannv/docs/presentations/assets/pujiang_202607/slide01/harbin_construction.png"
+    "harbin_building": "/root/workspace/xuannv/docs/presentations/assets/pujiang_202607/slide01/harbin_building.png"
   }
 }
