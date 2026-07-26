@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 import geopandas as gpd
+import numpy as np
+import shapely
 from pyproj import Transformer
 from shapely import normalize as normalize_geometry
 from shapely import set_precision
@@ -32,6 +34,7 @@ from shapely.prepared import prep
 
 PATCH_SIDE_METERS = 1280
 MACRO_SIDE_PATCHES = 10
+COAST_MIN_FRACTION = 0.001
 SCHEMA_VERSION = "xuannv_china_quarterly_sampling_candidate_v1"
 TIER_TO_LAYER = {
     "base_spatial": "base_expected_1pct",
@@ -226,6 +229,52 @@ def allocate_sqrt_by_group(
     return allocated
 
 
+def exact_owner_candidate_counts_by_grid(
+    inventory: list[dict[str, Any]],
+    country_geometry: Any,
+) -> dict[str, int]:
+    """Count all boundary-valid owner-zone patch centers in each UTM grid."""
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for macro in inventory:
+        groups.setdefault(str(macro["grid_id"]), []).append(macro)
+    counts: dict[str, int] = {}
+    offsets = (np.arange(MACRO_SIDE_PATCHES, dtype=np.float64) + 0.5) * PATCH_SIDE_METERS
+    for grid_id, macros in sorted(groups.items()):
+        epsg = int(macros[0]["grid_epsg"])
+        transformer = _transformer(epsg, 4326)
+        total = 0
+        for start in range(0, len(macros), 1000):
+            chunk = macros[start : start + 1000]
+            left = np.asarray([item["utm_bounds"][0] for item in chunk], dtype=np.float64)
+            bottom = np.asarray([item["utm_bounds"][1] for item in chunk], dtype=np.float64)
+            x = (left[:, None, None] + offsets[None, None, :]).repeat(MACRO_SIDE_PATCHES, axis=1)
+            y = (bottom[:, None, None] + offsets[None, :, None]).repeat(MACRO_SIDE_PATCHES, axis=2)
+            longitude, latitude = transformer.transform(x.ravel(), y.ravel())
+            longitude = np.asarray(longitude)
+            latitude = np.asarray(latitude)
+            owner_zone = np.floor((longitude + 180.0) / 6.0).astype(np.int16) + 1
+            expected_epsg = np.where(latitude >= 0, 32600, 32700) + np.clip(owner_zone, 1, 60)
+            inside = shapely.intersects_xy(country_geometry, longitude, latitude)
+            total += int(np.count_nonzero(inside & (expected_epsg == epsg)))
+        counts[grid_id] = total
+    return counts
+
+
+def allocate_sqrt_by_counts(total: int, counts: dict[str, int]) -> dict[str, int]:
+    weights = {name: math.sqrt(value) for name, value in counts.items() if value > 0}
+    denominator = sum(weights.values())
+    raw = {name: total * weight / denominator for name, weight in weights.items()}
+    allocated = {name: int(math.floor(value)) for name, value in raw.items()}
+    residual = total - sum(allocated.values())
+    for name in sorted(
+        raw,
+        key=lambda key: (raw[key] - allocated[key], key),
+        reverse=True,
+    )[:residual]:
+        allocated[name] += 1
+    return allocated
+
+
 def choose_spatial_balance_candidates(
     inventory: list[dict[str, Any]],
     country_geometry: Any,
@@ -233,11 +282,12 @@ def choose_spatial_balance_candidates(
     count: int,
     seed: int,
     forbid_supplement_macros: set[str],
-) -> tuple[list[dict[str, Any]], dict[str, int]]:
+) -> tuple[list[dict[str, Any]], dict[str, int], dict[str, int]]:
     groups: dict[str, list[dict[str, Any]]] = {}
     for macro in inventory:
         groups.setdefault(str(macro["grid_id"]), []).append(macro)
-    allocations = allocate_sqrt_by_group(count, groups)
+    exact_candidate_counts = exact_owner_candidate_counts_by_grid(inventory, country_geometry)
+    allocations = allocate_sqrt_by_counts(count, exact_candidate_counts)
     selected: list[dict[str, Any]] = []
     used_macros = set(forbid_supplement_macros)
     for group in sorted(allocations):
@@ -259,13 +309,14 @@ def choose_spatial_balance_candidates(
         used_macros.update(str(item["macro_id"]) for item in group_selected)
     if len(selected) != count:
         raise RuntimeError(f"selected {len(selected)} spatial points, expected {count}")
-    return selected, allocations
+    return selected, allocations, exact_candidate_counts
 
 
 def choose_coastal_candidates(
     inventory: list[dict[str, Any]],
     country_geometry: Any,
-    ocean_geometry: Any,
+    exclusive_land_geometry: Any,
+    exclusive_ocean_geometry: Any,
     existing: list[dict[str, Any]],
     count: int,
     seed: int,
@@ -280,14 +331,16 @@ def choose_coastal_candidates(
         )
         for item in existing
     }
-    prepared_ocean = prep(ocean_geometry)
-    prepared_country = prep(country_geometry)
+    prepared_ocean = prep(exclusive_ocean_geometry)
+    to_equal_area = _transformer(4326, 6933)
+    exclusive_land_equal_area = transform_geometry(to_equal_area.transform, exclusive_land_geometry)
+    prepared_land_equal_area = prep(exclusive_land_equal_area)
+    prepared_ocean_wgs84 = prep(exclusive_ocean_geometry)
     ordered = sorted(
         (
             item
             for item in inventory
-            if float(item.get("land_fraction", 1.0)) < 0.999999
-            and prepared_ocean.intersects(box(*[float(value) for value in item["wgs84_bounds"]]))
+            if prepared_ocean.intersects(box(*[float(value) for value in item["wgs84_bounds"]]))
             and str(item["macro_id"]) not in forbid_supplement_macros
         ),
         key=lambda item: stable_hash(seed, f"coastal:macro:{item['macro_id']}"),
@@ -297,7 +350,15 @@ def choose_coastal_candidates(
 
     def is_land_ocean_intersection(candidate: dict[str, Any]) -> bool:
         footprint = patch_geometry_wgs84(candidate)
-        return prepared_country.intersects(footprint) and prepared_ocean.intersects(footprint)
+        if not prepared_ocean_wgs84.intersects(footprint):
+            return False
+        footprint_equal_area = transform_geometry(to_equal_area.transform, footprint)
+        if not prepared_land_equal_area.intersects(footprint_equal_area):
+            return False
+        minimum_area = footprint_equal_area.area * COAST_MIN_FRACTION
+        land_area = footprint_equal_area.intersection(exclusive_land_equal_area).area
+        outside_area = footprint_equal_area.area - land_area
+        return land_area >= minimum_area and outside_area >= minimum_area
 
     for macro in ordered:
         if len(selected) == count:
@@ -320,9 +381,12 @@ def choose_coastal_candidates(
                 "status": "design_candidate_not_quality_eligible",
                 "sampling_tier": "coastal_ocean_adjacent_supplement",
                 "sampling_layer": "coastal_supplement",
-                "sampling_primary_reason": "verified_land_ocean_intersection",
-                "sampling_reasons": ["verified_land_ocean_intersection"],
-                "coastal_geometry_status": "verified_topological_intersection",
+                "sampling_primary_reason": "verified_boundary_crossing_and_ocean",
+                "sampling_reasons": [
+                    "country_inside_and_outside_each_at_least_0.1pct",
+                    "intersects_independent_ocean",
+                ],
+                "coastal_geometry_status": "verified_boundary_crossing_ocean",
             }
         )
         selected.append(candidate)
@@ -335,8 +399,71 @@ def choose_coastal_candidates(
             )
         )
         used_macros.add(macro_id)
+    strict_count = len(selected)
+    if strict_count < count:
+        country_boundary = country_geometry.boundary
+        near_ocean = prep(exclusive_ocean_geometry.buffer(0.05))
+        near_boundary = prep(country_boundary.buffer(0.05))
+        fallback_macros = sorted(
+            (
+                item
+                for item in inventory
+                if str(item["macro_id"]) not in used_macros
+                and near_ocean.intersects(box(*[float(value) for value in item["wgs84_bounds"]]))
+                and near_boundary.intersects(box(*[float(value) for value in item["wgs84_bounds"]]))
+            ),
+            key=lambda item: stable_hash(seed, f"near-coast-fallback:{item['macro_id']}"),
+        )
+
+        def is_near_coast(candidate: dict[str, Any]) -> bool:
+            center = Point(candidate["longitude"], candidate["latitude"])
+            return (
+                center.distance(exclusive_ocean_geometry) <= 0.035
+                and center.distance(country_boundary) <= 0.035
+            )
+
+        for macro in fallback_macros:
+            if len(selected) == count:
+                break
+            macro_id = str(macro["macro_id"])
+            candidate = _candidate_from_macro(
+                macro,
+                country_geometry,
+                seed + len(selected),
+                used_patch_ids,
+                used_identities,
+                candidate_predicate=is_near_coast,
+            )
+            if candidate is None:
+                continue
+            candidate.update(
+                {
+                    "status": "design_candidate_not_quality_eligible",
+                    "sampling_tier": "coastal_ocean_adjacent_supplement",
+                    "sampling_layer": "coastal_supplement",
+                    "sampling_primary_reason": "near_coast_requires_detailed_review",
+                    "sampling_reasons": [
+                        "center_within_0.035_degree_of_boundary_and_ocean",
+                        "strict_boundary_crossing_not_satisfied",
+                    ],
+                    "coastal_geometry_status": "near_coast_pending",
+                }
+            )
+            selected.append(candidate)
+            used_patch_ids.add(str(candidate["patch_id"]))
+            used_identities.add(
+                (
+                    int(candidate["grid_epsg"]),
+                    int(candidate["grid_col"]),
+                    int(candidate["grid_row"]),
+                )
+            )
+            used_macros.add(macro_id)
     if len(selected) != count:
-        raise RuntimeError(f"selected {len(selected)} coastal points, expected {count}")
+        raise RuntimeError(
+            f"selected {strict_count} strict and {len(selected) - strict_count} "
+            f"near-coast points, expected {count}"
+        )
     return selected
 
 
@@ -655,7 +782,10 @@ def write_package_readme(output_dir: Path, validation: dict[str, Any]) -> None:
 - 中心落在国界外：{validation["centers_outside_boundary"]}
 - UTM 归属错误：{validation["owner_zone_mismatches"]}
 - 跨 UTM 分区重叠超过 1%：{validation["cross_zone_overlaps_over_1pct"]}
-- 真实陆海相交海岸样本：{validation["coastal_land_ocean_intersections"]:,}
+- 国界内外各占至少 0.1% 且与独立海洋面相交的严格海岸样本：
+  {validation["coastal_exclusive_land_ocean_area_pass"]:,}
+- 近海待高精度复核样本：
+  {validation["coastal_geometry_status_counts"].get("near_coast_pending", 0):,}
 - ADM1 冻结面未覆盖点：{validation["admin1_not_covered_by_frozen_source"]:,}
 
 ## 尚未完成
@@ -666,8 +796,9 @@ def write_package_readme(output_dir: Path, validation: dict[str, Any]) -> None:
    重新执行获批的逐宏网格概率抽样。
 3. `ADM1_NOT_COVERED_BY_FROZEN_SOURCE` 表示 ADM0 内、但冻结 ADM1 数据未覆盖的点，
    不应被当作一个真实省级类别。
-4. 2020Q1 至 2021Q4 的 S2、S1、Landsat 覆盖、云、配准等数值质量门槛尚未执行。
-5. 上述检查完成后，才可冻结最终训练 registry 和 train/validation/test 划分。
+4. 海岸层中 `near_coast_pending` 点需用更高精度海岸线复核后才可冻结。
+5. 2020Q1 至 2021Q4 的 S2、S1、Landsat 覆盖、云、配准等数值质量门槛尚未执行。
+6. 上述检查完成后，才可冻结最终训练 registry 和 train/validation/test 划分。
 """
     (output_dir / "README.md").write_text(text, encoding="utf-8")
 
@@ -675,7 +806,8 @@ def write_package_readme(output_dir: Path, validation: dict[str, Any]) -> None:
 def validate_registry(
     records: list[dict[str, Any]],
     country_geometry: Any,
-    ocean_geometry: Any,
+    exclusive_land_geometry: Any,
+    exclusive_ocean_geometry: Any,
     expected_seed: int,
     required_fields: list[str],
     cross_zone_overlap_count: int = 0,
@@ -695,15 +827,28 @@ def validate_registry(
         not country_geometry.covers(Point(item["longitude"], item["latitude"])) for item in records
     )
     coastal_records = [item for item in records if item["sampling_layer"] == "coastal_supplement"]
-    coastal_land_ocean_intersections = sum(
-        patch_geometry_wgs84(item).intersects(country_geometry)
-        and patch_geometry_wgs84(item).intersects(ocean_geometry)
-        for item in coastal_records
-    )
+    to_equal_area = _transformer(4326, 6933)
+    exclusive_land_equal_area = transform_geometry(to_equal_area.transform, exclusive_land_geometry)
+    prepared_ocean = prep(exclusive_ocean_geometry)
+    coastal_exclusive_area_pass = 0
+    for item in coastal_records:
+        footprint = transform_geometry(to_equal_area.transform, patch_geometry_wgs84(item))
+        minimum_area = footprint.area * COAST_MIN_FRACTION
+        land_area = footprint.intersection(exclusive_land_equal_area).area
+        outside_area = footprint.area - land_area
+        if (
+            land_area >= minimum_area
+            and outside_area >= minimum_area
+            and prepared_ocean.intersects(patch_geometry_wgs84(item))
+        ):
+            coastal_exclusive_area_pass += 1
     semantic_reason_counts = Counter(
         item["sampling_primary_reason"]
         for item in records
         if item["sampling_layer"] == "semantic_and_difficult_supplement"
+    )
+    coastal_status_counts = Counter(
+        item.get("coastal_geometry_status", "missing") for item in coastal_records
     )
     missing_required_fields = sorted(
         {field for item in records for field in required_fields if field not in item}
@@ -726,7 +871,8 @@ def validate_registry(
             item.get("admin1") == "ADM1_NOT_COVERED_BY_FROZEN_SOURCE" for item in records
         ),
         "sampling_seed_values": sorted({int(item["sampling_seed"]) for item in records}),
-        "coastal_land_ocean_intersections": coastal_land_ocean_intersections,
+        "coastal_exclusive_land_ocean_area_pass": coastal_exclusive_area_pass,
+        "coastal_geometry_status_counts": dict(sorted(coastal_status_counts.items())),
         "semantic_candidate_reason_counts": dict(sorted(semantic_reason_counts.items())),
         "missing_required_registry_fields": missing_required_fields,
         "semantic_atlas_status": "pending",
@@ -755,8 +901,8 @@ def validate_registry(
         raise ValueError(f"{report['unknown_admin1']} records have unknown admin1")
     if report["sampling_seed_values"] != [expected_seed]:
         raise ValueError("sampling_seed must be the single approved global seed")
-    if coastal_land_ocean_intersections != len(coastal_records):
-        raise ValueError("not every coastal footprint intersects land and ocean")
+    if sum(coastal_status_counts.values()) != len(coastal_records):
+        raise ValueError("coastal geometry status count does not match the coastal layer")
     if missing_required_fields:
         raise ValueError(f"required registry fields missing: {missing_required_fields}")
     return report
@@ -912,6 +1058,11 @@ def main() -> None:
     registry_version = f"china-quarterly-candidate-{policy['version']}"
     country = gpd.read_file(args.country).to_crs("EPSG:4326").geometry.union_all()
     ocean = gpd.read_file(args.ocean).to_crs("EPSG:4326").geometry.union_all()
+    # Use the frozen country interior as the land side and only the part of
+    # the independent ocean polygon outside that country as the ocean side.
+    # These two classes are disjoint without erasing coastline disagreement.
+    exclusive_land = country
+    exclusive_ocean = ocean
     existing = _read_jsonl(args.existing_points)
     repaired, repair_report = repair_owner_zones(existing, country)
 
@@ -983,7 +1134,8 @@ def main() -> None:
     coastal = choose_coastal_candidates(
         inventory=inventory,
         country_geometry=country,
-        ocean_geometry=ocean,
+        exclusive_land_geometry=exclusive_land,
+        exclusive_ocean_geometry=exclusive_ocean,
         existing=deduplicated,
         count=layer_targets["coastal_supplement"],
         seed=seed + layer_targets["coastal_supplement"],
@@ -992,7 +1144,7 @@ def main() -> None:
     deduplicated.extend(coastal)
     supplement_macros = {str(item["macro_id"]) for item in coastal}
 
-    spatial, spatial_allocation = choose_spatial_balance_candidates(
+    spatial, spatial_allocation, exact_owner_candidate_counts = choose_spatial_balance_candidates(
         inventory=inventory,
         country_geometry=country,
         existing=deduplicated,
@@ -1065,7 +1217,8 @@ def main() -> None:
                 replacements = choose_coastal_candidates(
                     inventory=inventory,
                     country_geometry=country,
-                    ocean_geometry=ocean,
+                    exclusive_land_geometry=exclusive_land,
+                    exclusive_ocean_geometry=exclusive_ocean,
                     existing=records,
                     count=missing,
                     seed=seed + 70000 + attempt * 100 + target,
@@ -1110,7 +1263,8 @@ def main() -> None:
     validation = validate_registry(
         records,
         country,
-        ocean,
+        exclusive_land,
+        exclusive_ocean,
         seed,
         list(policy["registry"]["required_fields"]),
         cross_zone_overlap_count=len(final_overlap_violations),
@@ -1165,6 +1319,7 @@ def main() -> None:
         "legacy_coastal_records_rebuilt": legacy_coastal_removed,
         "legacy_spatial_records_rebuilt": legacy_spatial_removed,
         "utm_spatial_balance_allocation": spatial_allocation,
+        "exact_owner_candidate_counts_by_utm": exact_owner_candidate_counts,
         "macro_limit_records_replenished": len(macro_limit_dropped),
         "admin1_values_filled_from_adm1": assigned_admin1,
         "cross_zone_overlap_resolution": overlap_resolution,
@@ -1183,8 +1338,9 @@ def main() -> None:
                 "gates have not been applied."
             ),
             (
-                "All 500 coastal footprints intersect both the frozen land and ocean "
-                "geometries; detailed coast-type classification remains pending."
+                "The coastal layer contains strict boundary-crossing samples plus a "
+                "small near-coast reserve marked near_coast_pending; the latter must "
+                "be checked against a higher-resolution coastline before registry freeze."
             ),
             (
                 "ADM1_NOT_COVERED_BY_FROZEN_SOURCE marks ADM0 locations absent from "

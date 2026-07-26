@@ -145,6 +145,10 @@ def test_sqrt_group_allocation_is_exact_and_lifts_small_groups() -> None:
     allocation = MODULE.allocate_sqrt_by_group(12, groups)
     assert sum(allocation.values()) == 12
     assert allocation == {"large": 10, "small": 2}
+    assert MODULE.allocate_sqrt_by_counts(12, {"large": 100, "small": 4}) == {
+        "large": 10,
+        "small": 2,
+    }
 
 
 def test_assign_admin1_recomputes_existing_values(tmp_path: Path) -> None:
