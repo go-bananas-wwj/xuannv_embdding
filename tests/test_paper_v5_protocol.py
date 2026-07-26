@@ -16,6 +16,7 @@ from scripts.data import build_paper_manifests, compute_statistics
 from scripts.eval import register_registered_v5_embedding_export as registrar
 from scripts.eval import run_registered_paper_downstream as registered
 from scripts.experiments import build_clean_paper_configs, build_paper_subset_registry
+from scripts.report import admit_registered_results as admission
 from scripts.report import aggregate_registered_paper_results as aggregate
 from scripts.report import paired_spatial_bootstrap as bootstrap
 from scripts.train import train
@@ -203,6 +204,106 @@ def test_legacy_aggregation_cli_defaults_to_diagnostic(monkeypatch: pytest.Monke
         ],
     )
     assert aggregate.parse_args().report_kind == "diagnostic"
+
+
+def test_release_admission_preserves_preliminary_record_bytes_and_binds_hashes(
+    tmp_path: Path,
+) -> None:
+    """A release decision is an overlay; sealed preliminary records stay immutable."""
+    registry_path = tmp_path / "results.jsonl"
+    output = tmp_path / "probe"
+    output.mkdir()
+    predictions = output / "predictions_test.npz"
+    predictions.write_bytes(b"predictions")
+    (output / "final_probe.pt").write_bytes(b"probe")
+    metrics = {
+        "paper_eligible": False,
+        "admission_status": "registered_preliminary_pending_external_gates",
+        **registered.result_evidence("v5_osm_assisted"),
+    }
+    _write_json(output / "metrics.json", metrics)
+    artifact = registered.build_artifact_manifest(
+        metric_payload=metrics,
+        output=output,
+        predictions=predictions,
+        result_id="v5-result",
+        registry_path=registry_path,
+        label_sha256="labels",
+        patch_count=1,
+    )
+    artifact_path = output / "artifact_manifest.json"
+    _write_json(artifact_path, artifact)
+    registry_record = {
+        "result_id": "v5-result",
+        "artifact_sha256": _sha256(artifact_path),
+        "registry_entry_core_sha256": artifact["registry_entry_core_sha256"],
+        **artifact,
+    }
+    registry_record["registry_entry_sha256"] = registered._canonical_sha256(registry_record)
+    registry_path.write_text(json.dumps(registry_record) + "\n", encoding="utf-8")
+    original_registry = registry_path.read_bytes()
+    original_metrics = (output / "metrics.json").read_bytes()
+    original_artifact = artifact_path.read_bytes()
+
+    identities = admission.collect_sealed_result_identities(registry_path)
+
+    assert identities == [
+        {
+            "result_id": "v5-result",
+            "registry_entry_sha256": registry_record["registry_entry_sha256"],
+            "artifact_sha256": _sha256(artifact_path),
+            "metrics_sha256": _sha256(output / "metrics.json"),
+        }
+    ]
+    assert registry_path.read_bytes() == original_registry
+    assert (output / "metrics.json").read_bytes() == original_metrics
+    assert artifact_path.read_bytes() == original_artifact
+
+
+@pytest.mark.parametrize("tampered", ("registry", "metrics", "artifact"))
+def test_release_admission_rejects_tampered_sealed_result(tmp_path: Path, tampered: str) -> None:
+    """Every result identity must pass the existing full sealed-artifact verifier."""
+    registry_path = tmp_path / "results.jsonl"
+    output = tmp_path / "probe"
+    output.mkdir()
+    predictions = output / "predictions_test.npz"
+    predictions.write_bytes(b"predictions")
+    (output / "final_probe.pt").write_bytes(b"probe")
+    metrics = {
+        "paper_eligible": False,
+        "admission_status": "registered_preliminary_pending_external_gates",
+        **registered.result_evidence("v5_osm_assisted"),
+    }
+    _write_json(output / "metrics.json", metrics)
+    artifact = registered.build_artifact_manifest(
+        metric_payload=metrics,
+        output=output,
+        predictions=predictions,
+        result_id="v5-result",
+        registry_path=registry_path,
+        label_sha256="labels",
+        patch_count=1,
+    )
+    artifact_path = output / "artifact_manifest.json"
+    _write_json(artifact_path, artifact)
+    record = {
+        "result_id": "v5-result",
+        "artifact_sha256": _sha256(artifact_path),
+        "registry_entry_core_sha256": artifact["registry_entry_core_sha256"],
+        **artifact,
+    }
+    record["registry_entry_sha256"] = registered._canonical_sha256(record)
+    registry_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    if tampered == "registry":
+        record["registry_entry_sha256"] = "forged"
+        registry_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    elif tampered == "metrics":
+        _write_json(output / "metrics.json", {**metrics, "tampered": True})
+    else:
+        _write_json(artifact_path, {**artifact, "patch_count": 2})
+
+    with pytest.raises(ValueError):
+        admission.collect_sealed_result_identities(registry_path)
 
 
 def _sha256(path: Path) -> str:
