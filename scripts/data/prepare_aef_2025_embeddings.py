@@ -7,6 +7,7 @@ needed pixels from Source Cooperative, dequantizes them, and warps them onto the
 existing 128x128 patch grid so downstream probe code can read the result as
 ``{month}_embedding_map.pt``.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -22,8 +23,8 @@ import rasterio
 import s3fs
 import torch
 from rasterio.env import Env
-from rasterio.windows import Window
 from rasterio.warp import Resampling, reproject, transform_bounds
+from rasterio.windows import Window
 from shapely.geometry import box
 
 LOGGER = logging.getLogger(__name__)
@@ -173,37 +174,26 @@ def build_patch_cog_map(
     return {patch_id: cog_to_local[cog] for patch_id, cog in patch_to_cog.items()}
 
 
-def read_aef_patch(cog_path: str, ref_path: Path) -> torch.Tensor:
+def read_aef_patch_with_validity(cog_path: str, ref_path: Path) -> tuple[torch.Tensor, np.ndarray]:
+    """Read one AEF map and retain its destination-pixel validity mask.
+
+    The legacy caller historically replaced nodata with zero.  Paper-grade exporters
+    need to inspect validity *before* that replacement, so this helper is deliberately
+    lossless with respect to nodata and returns a boolean ``(H, W)`` coverage mask.
+    """
     with rasterio.open(ref_path) as ref:
         dst_crs = ref.crs
         dst_transform = ref.transform
         dst_shape = (ref.height, ref.width)
-        dst_bounds = ref.bounds
 
     with Env(AWS_NO_SIGN_REQUEST="YES"):
         open_path = s3_to_vsis3(cog_path) if cog_path.startswith("s3://") else cog_path
         with rasterio.open(open_path) as src:
-            if src.crs == dst_crs:
-                window = bounds_to_window(src, dst_bounds)
-                raw = src.read(
-                    out_shape=(src.count, *dst_shape),
-                    window=window,
-                    boundless=True,
-                    fill_value=src.nodata if src.nodata is not None else AEF_NODATA,
-                    resampling=Resampling.bilinear,
+            if src.nodata != AEF_NODATA:
+                raise ValueError(
+                    f"AEF source nodata must be declared as {AEF_NODATA}, "
+                    f"got {src.nodata}: {cog_path}"
                 )
-                if src.transform.e > 0 and dst_transform.e < 0:
-                    raw = raw[:, ::-1, :]
-                if src.transform.a < 0 and dst_transform.a > 0:
-                    raw = raw[:, :, ::-1]
-                dst = raw.astype(np.float32, copy=False)
-                return torch.from_numpy(
-                    np.ascontiguousarray(
-                        np.nan_to_num(dequantize(dst), nan=0.0, posinf=0.0, neginf=0.0)
-                    )
-                    .astype(np.float32, copy=False)
-                )
-
             dst = np.full((src.count, *dst_shape), np.nan, dtype=np.float32)
             for band_idx in range(1, src.count + 1):
                 band = np.full(dst_shape, np.nan, dtype=np.float32)
@@ -212,7 +202,7 @@ def read_aef_patch(cog_path: str, ref_path: Path) -> torch.Tensor:
                     destination=band,
                     src_transform=src.transform,
                     src_crs=src.crs,
-                    src_nodata=src.nodata,
+                    src_nodata=AEF_NODATA,
                     dst_transform=dst_transform,
                     dst_crs=dst_crs,
                     dst_nodata=np.nan,
@@ -222,8 +212,14 @@ def read_aef_patch(cog_path: str, ref_path: Path) -> torch.Tensor:
                 dst[band_idx - 1] = band
 
     dst = dequantize(dst)
-    dst = np.nan_to_num(dst, nan=0.0, posinf=0.0, neginf=0.0)
-    return torch.from_numpy(dst.astype(np.float32, copy=False))
+    valid = np.isfinite(dst).all(axis=0)
+    return torch.from_numpy(dst.astype(np.float32, copy=False)), valid
+
+
+def read_aef_patch(cog_path: str, ref_path: Path) -> torch.Tensor:
+    """Read an AEF map using the historical zero-filled nodata compatibility policy."""
+    dst, _ = read_aef_patch_with_validity(cog_path, ref_path)
+    return torch.nan_to_num(dst, nan=0.0, posinf=0.0, neginf=0.0)
 
 
 def write_meta(out_root: Path, args: argparse.Namespace, patch_ids: list[str]) -> None:
@@ -235,7 +231,9 @@ def write_meta(out_root: Path, args: argparse.Namespace, patch_ids: list[str]) -
         "region": args.region,
         "num_patches": len(patch_ids),
         "patch_ids": patch_ids,
-        "note": "Annual 2025 AEF embedding saved with a local month alias for downstream compatibility.",
+        "note": (
+            "Annual 2025 AEF embedding saved with a local month alias for downstream compatibility."
+        ),
     }
     out_root.mkdir(parents=True, exist_ok=True)
     with open(out_root / "meta.json", "w", encoding="utf-8") as f:
@@ -245,11 +243,17 @@ def write_meta(out_root: Path, args: argparse.Namespace, patch_ids: list[str]) -
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--aef-index-path", default=AEF_INDEX_URL)
-    parser.add_argument("--processed-root", type=Path, default=Path("/data/xuannv_embedding/processed"))
+    parser.add_argument(
+        "--processed-root", type=Path, default=Path("/data/xuannv_embedding/processed")
+    )
     parser.add_argument("--region", default="haidian")
     parser.add_argument("--label-root", type=Path)
     parser.add_argument("--patch-ids", nargs="*")
-    parser.add_argument("--out-root", type=Path, default=Path("/data/xuannv_embedding/embeddings/aef_official_2025_annual"))
+    parser.add_argument(
+        "--out-root",
+        type=Path,
+        default=Path("/data/xuannv_embedding/embeddings/aef_official_2025_annual"),
+    )
     parser.add_argument(
         "--cog-cache-dir",
         type=Path,

@@ -19,6 +19,10 @@ V5_MATRIX_SHA256 = "b9f243c9583a35f36a0792ab0c21fb08334553ba02db17b78fad766ad4ad
 V5_SPLIT = Path("configs/eval/haidian_spatial_5fold_complete2x2_v5_seed42.json")
 V5_SPLIT_SHA256 = "9a6d98d6d6456ce0a791ef74ac725e4d360e7d4e0a17c9cb5edfceb850093c0b"
 V5_EVAL_MANIFEST_SHA256 = "9bd55c663616322c13804b7c8c0d2e32860ca1fda1d2e5d59dfca8404b901ab3"
+V5_EVAL_MANIFEST = Path(
+    "/data/xuannv_embedding/processed/haidian/"
+    "manifest_p6a_202512_202605_pixelmask_clean_osm_landcover.json"
+)
 V5_STATISTICS_REGISTRY_SHA256 = "ba1fb10bc105a29286750367dff2ab45e02f89c32f69725ab89da994d0c56929"
 
 

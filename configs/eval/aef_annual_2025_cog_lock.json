@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "release": "aef/v1/annual",
+  "year": 2025,
+  "index_uri": "https://data.source.coop/tge-labs/aef/v1/annual/aef_index.parquet",
+  "index_sha256": "bd4f87740cdac98325c96650600fa774530abcb34de34b4aa00d7aa1b2413b21",
+  "assets": [
+    {
+      "filename": "x6oxy7iyy4d2hrngi-0000000000-0000008192.tiff",
+      "sha256": "239f5230b3bc22395770ad3f5dda2290b95c4740edba63e18251b523d008603b"
+    },
+    {
+      "filename": "x7gr0ny5ao7h28kxr-0000008192-0000008192.tiff",
+      "sha256": "c395929b3f9599101c5d7c6893bfdcdff659bb5bed1a319e9bec675dfa6cec2a"
+    }
+  ]
+}

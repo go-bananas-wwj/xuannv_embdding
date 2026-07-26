@@ -29,9 +29,11 @@ or V5 protocol binding and must not enter paper results.
 
 ## Required sealed export
 
-A new exporter must derive a fresh annual AEF map for every patch in the frozen V5 320-patch
-manifest before any task/fold/shot labels are read. Its accepted inputs are restricted to the
-Git-pinned 320-patch manifest, reference-raster inventory, official AEF index and COG cache; it
+A new exporter must derive a fresh annual AEF map for every patch in a Git-pinned, label-free
+320-patch coverage inventory before any task/fold/shot labels are read. The inventory is generated
+once from the registered V5 manifest, records the reference grid for every patch, and is checked
+against that manifest's exact patch set at export time. Its accepted inputs are restricted to this
+coverage inventory, official AEF index and COG cache; it
 must reject label roots, tasks, folds, shots, and probe-result paths. It records the complete argv,
 an input allowlist and SHA-256 values for each accepted input. It must fail on missing coverage, a source COG
 read failure, an output whose shape is not `64 x 128 x 128`, or an output set that differs from the
@@ -46,8 +48,10 @@ manifest patch set. It must record:
 6. a fixed output identifier `annual_2025`, never a fabricated monthly acquisition date.
 
 For every patch, the source manifest must seal the ordered candidate COG URI/hash list, intersection
-rule, selected source window or reprojection footprint, and either a fixed mosaic order or an
-explicit multi-source rejection. It must also seal an output valid-pixel mask and its hash before
+rule, selected source window or reprojection footprint, and a fixed mosaic order. For boundary
+patches, the registered rule is URI-sorted, first-valid-pixel mosaic; it is a non-learned spatial
+operation and the output is rejected unless the final valid mask covers all pixels. It must also seal
+an output valid-pixel mask, the per-pixel source-selector raster, and their hashes before
 nodata values are replaced with zero. The contextual-comparator protocol requires full valid-pixel
 coverage at every evaluated 128 by 128 output location; any missing AEF pixel rejects the export.
 Thus no AEF-only zero-filled nodata value can enter feature standardisation, probe fitting, threshold
