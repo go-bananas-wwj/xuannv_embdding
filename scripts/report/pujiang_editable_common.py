@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from io import BytesIO
 from pathlib import Path
 from typing import Literal
 
@@ -155,15 +156,15 @@ def is_full_slide_picture(shape, prs: Presentation, tolerance: int = 1) -> bool:
     """Return whether ``shape`` is a picture covering the full slide geometry."""
     return (
         shape.shape_type == MSO_SHAPE_TYPE.PICTURE
-        and abs(shape.left) <= tolerance
-        and abs(shape.top) <= tolerance
-        and abs(shape.width - prs.slide_width) <= tolerance
-        and abs(shape.height - prs.slide_height) <= tolerance
+        and shape.left <= tolerance
+        and shape.top <= tolerance
+        and shape.left + shape.width >= prs.slide_width - tolerance
+        and shape.top + shape.height >= prs.slide_height - tolerance
     )
 
 
 def clone_first_slide(source: str | Path | Presentation, destination: Presentation):
-    """Clone the first source slide into ``destination``, including picture relations."""
+    """Clone first-slide content while creating target-package-local image relationships."""
     source_presentation = Presentation(source) if isinstance(source, (str, Path)) else source
     if not source_presentation.slides:
         raise ValueError("Source presentation has no slides")
@@ -173,20 +174,23 @@ def clone_first_slide(source: str | Path | Presentation, destination: Presentati
     destination.slide_height = source_presentation.slide_height
     cloned_slide = new_blank_slide(destination)
 
-    relationship_ids: dict[str, str] = {}
-    for relationship in source_slide.part.rels.values():
-        if relationship.reltype == RT.SLIDE_LAYOUT:
-            continue
-        target = relationship.target_ref if relationship.is_external else relationship.target_part
-        relationship_ids[relationship.rId] = cloned_slide.part.relate_to(
-            target, relationship.reltype, relationship.is_external
-        )
-
     for shape in source_slide.shapes:
         cloned_element = deepcopy(shape.element)
-        for element in cloned_element.iter():
-            for attribute, value in tuple(element.attrib.items()):
-                if value in relationship_ids:
-                    element.set(attribute, relationship_ids[value])
+        _clone_picture_relationships(cloned_element, source_slide, cloned_slide)
         cloned_slide.shapes._spTree.insert_element_before(cloned_element, "p:extLst")
     return cloned_slide
+
+
+def _clone_picture_relationships(cloned_element, source_slide, destination_slide) -> None:
+    """Replace copied image ``r:embed`` values with image parts owned by the target package."""
+    for element in cloned_element.iter():
+        for attribute, source_rid in tuple(element.attrib.items()):
+            if attribute != "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed":
+                continue
+            relationship = source_slide.part.rels[source_rid]
+            if relationship.reltype != RT.IMAGE or relationship.is_external:
+                raise ValueError(f"Unsupported embedded relationship: {relationship.reltype}")
+            _, destination_rid = destination_slide.part.get_or_add_image_part(
+                BytesIO(relationship.target_part.blob)
+            )
+            element.set(attribute, destination_rid)
