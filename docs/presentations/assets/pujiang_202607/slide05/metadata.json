@@ -1,0 +1,11 @@
+{
+  "slide": 5,
+  "title": "少量标注，快速形成区域级专题图",
+  "protocol": "Paper evaluation: 5-shot = 5 positive patches + 5 negative patches. Platform: polygon labels with PU/query or binary conv.",
+  "fairness": [
+    "same labels",
+    "same split",
+    "same head",
+    "same threshold rule"
+  ]
+}
