@@ -35,3 +35,26 @@ checkpoint snapshot inside the same attempt.
 
 AEF baseline work is explicitly deferred to **Task5**. No AEF embedding export or AEF probe is
 included in this Task4 queue or in the Xuannv `0 / 90` status above.
+
+## Runtime Handoffs
+
+The original lane-0 queue child was terminated while folds 0--2 were active. Two runtime tmux
+handoffs preserve the registered order without changing the training protocol:
+
+1. Fold 3 waits until `registered_v5_encoder_checkpoint.py` verifies fold 0's
+   `canonical_attempt.json`, then runs the existing queue entry point with `--only-fold 3`. A
+   failed or incomplete fold 0 therefore cannot start fold 3.
+2. Export waits until the same canonical-checkpoint resolver verifies all five folds. It then runs
+   `export_registered_v5_paper_encoders.sh --protocol v5_osm_assisted --family full_150
+   --register-pending`. The exporter independently repeats all-five checkpoint/config-binding
+   preflight before it creates any export directory. Exit code 5, used only for an active training
+   process or held lane lease, is retried after 180 seconds; the distinct shard-failure exit code
+   6 and every other non-zero exit stop the handoff for investigation.
+
+The exporter intentionally stops after creating the five sealed embedding exports and updating the
+Git-tracked export registry. Before the 90-probe launcher may run, the registry diff must be
+independently reviewed and committed. This preserves the protocol's Git-anchored provenance rule.
+
+All registered V5 encoder launches must use `run_registered_v5_paper_queue.sh`; ad-hoc launches
+that bypass its shared lane leases are outside the registered protocol and must not run while the
+export handoff is armed.

@@ -2628,6 +2628,274 @@ def test_v5_exporter_refuses_to_contend_with_an_active_registered_trainer(tmp_pa
     assert "registered V5 encoder training is active" in result.stderr
 
 
+def test_v5_exporter_preflights_every_fold_and_reserves_exit_five_for_busy_lanes() -> None:
+    """All-fold checkpoint binding must precede writes and shard failure must not look busy."""
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "scripts/eval/export_registered_v5_paper_encoders.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "preflight_registered_v5_folds()" in source
+    assert source.index("  preflight_registered_v5_folds") < source.index('RUN_ID="$(date -u')
+    assert "one or more v5 export shards failed for ${suffix}\" >&2\n    exit 6" in source
+
+
+def test_v5_exporter_invalid_preflight_creates_no_export_root(tmp_path: Path) -> None:
+    """One invalid canonical fold fails closed before any export directory or shard starts."""
+    root = _sealed_v5_wrapper_repo(tmp_path)
+    for fold in range(5):
+        config = root / "configs/paper_registered_v5_20260726" / (
+            f"paper_registered_v5_full_150_fold{fold}_20260726.yaml"
+        )
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text(f"fold: {fold}\n", encoding="utf-8")
+    checkpoint = tmp_path / "checkpoint.pt"
+    checkpoint.write_bytes(b"checkpoint")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "pgrep").write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+    (bin_dir / "pgrep").chmod(0o755)
+    marker = tmp_path / "python-invoked"
+    (bin_dir / "python").write_text(
+        "#!/usr/bin/env bash\n"
+        "echo \"$*\" >> \"$V5_PYTHON_MARKER\"\n"
+        "if [[ \"$1\" == *registered_v5_encoder_checkpoint.py ]]; then\n"
+        "  count=0; [[ -f \"$V5_RESOLVER_COUNT\" ]] && count=$(<\"$V5_RESOLVER_COUNT\")\n"
+        "  count=$((count + 1)); echo \"$count\" > \"$V5_RESOLVER_COUNT\"\n"
+        "  if [[ $count -eq 5 ]]; then echo 'invalid canonical fold' >&2; exit 3; fi\n"
+        "  echo \"$V5_TEST_CHECKPOINT\"; exit 0\n"
+        "fi\n"
+        "if [[ \"$1\" == \"-\" ]]; then exit 0; fi\n"
+        "exec \"$V5_REAL_PYTHON\" \"$@\"\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "python").chmod(0o755)
+    embed_root = tmp_path / "embeddings"
+    result = subprocess.run(
+        [
+            str(root / "scripts/eval/export_registered_v5_paper_encoders.sh"),
+            "--protocol",
+            "v5_osm_assisted",
+            "--family",
+            "full_150",
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "V5_PYTHON_MARKER": str(marker),
+            "V5_RESOLVER_COUNT": str(tmp_path / "resolver-count"),
+            "V5_REAL_PYTHON": sys.executable,
+            "V5_TEST_CHECKPOINT": str(checkpoint),
+            "V5_EMBED_ROOT": str(embed_root),
+            "V5_LOG_ROOT": str(tmp_path / "logs"),
+        },
+    )
+
+    assert result.returncode == 3
+    assert not embed_root.exists()
+    assert "precompute_embeddings.py" not in marker.read_text(encoding="utf-8")
+
+
+def test_v5_exporter_rechecks_for_training_after_leases(tmp_path: Path) -> None:
+    """A trainer that appears after the first scan aborts export with the retryable busy code."""
+    root = _sealed_v5_wrapper_repo(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    count = tmp_path / "pgrep-count"
+    (bin_dir / "pgrep").write_text(
+        "#!/usr/bin/env bash\n"
+        "count=0; [[ -f \"$V5_PGREP_COUNT\" ]] && count=$(<\"$V5_PGREP_COUNT\")\n"
+        "count=$((count + 1)); echo \"$count\" > \"$V5_PGREP_COUNT\"\n"
+        "[[ $count -ge 6 ]] && exit 0\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "pgrep").chmod(0o755)
+    embed_root = tmp_path / "embeddings"
+    result = subprocess.run(
+        [
+            str(root / "scripts/eval/export_registered_v5_paper_encoders.sh"),
+            "--protocol",
+            "v5_osm_assisted",
+            "--family",
+            "full_150",
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "V5_PGREP_COUNT": str(count),
+            "V5_EMBED_ROOT": str(embed_root),
+        },
+    )
+
+    assert result.returncode == 5
+    assert "registered V5 encoder training is active" in result.stderr
+    assert not embed_root.exists()
+
+
+def test_v5_exporter_rejects_path_override_outside_pytest_fixture(tmp_path: Path) -> None:
+    """Production invocations cannot redirect registered exports through environment overrides."""
+    root = _sealed_v5_wrapper_repo(tmp_path)
+    result = subprocess.run(
+        [
+            str(root / "scripts/eval/export_registered_v5_paper_encoders.sh"),
+            "--protocol",
+            "v5_osm_assisted",
+            "--family",
+            "full_150",
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "PYTEST_CURRENT_TEST": "",
+            "V5_EMBED_ROOT": str(tmp_path / "redirected"),
+        },
+    )
+
+    assert result.returncode == 2
+    assert "path overrides are restricted to pytest fixtures" in result.stderr
+
+
+def test_v5_exporter_rejects_a_snapshot_changed_after_shard_launch(tmp_path: Path) -> None:
+    """Finalization must reject a config snapshot modified after the workers consumed it."""
+    root = _sealed_v5_wrapper_repo(tmp_path)
+    for fold in range(5):
+        config = root / "configs/paper_registered_v5_20260726" / (
+            f"paper_registered_v5_full_150_fold{fold}_20260726.yaml"
+        )
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text("fold: 0\n", encoding="utf-8")
+    checkpoint = tmp_path / "checkpoint.pt"
+    checkpoint.write_bytes(b"checkpoint")
+    config_sha256 = hashlib.sha256(b"fold: 0\n").hexdigest()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "pgrep").write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+    (bin_dir / "pgrep").chmod(0o755)
+    (bin_dir / "python").write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$1\" == *registered_v5_encoder_checkpoint.py ]]; then\n"
+        "  echo \"$V5_TEST_CHECKPOINT\"; exit 0\n"
+        "fi\n"
+        "if [[ \"$1\" == *precompute_embeddings.py ]]; then\n"
+        "  for ((i=1; i<=$#; i++)); do\n"
+        "    [[ \"${!i}\" == --config ]] && next=$((i + 1)) && printf tampered > \"${!next}\"\n"
+        "  done\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [[ \"$1\" == \"-\" ]]; then\n"
+        "  payload=$(cat)\n"
+        "  if [[ \"$payload\" == *validate_registered_v5_checkpoint_config_binding* ]]; then\n"
+        "    echo \"$V5_TEST_CONFIG_SHA\"; exit 0\n"
+        "  fi\n"
+        "  if [[ \"$payload\" == *training_config_snapshot* ]]; then\n"
+        "    printf '%s' \"$payload\" | exec \"$V5_REAL_PYTHON\" \"$@\"\n"
+        "  fi\n"
+        "  exit 0\n"
+        "fi\n"
+        "exec \"$V5_REAL_PYTHON\" \"$@\"\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "python").chmod(0o755)
+    embed_root = tmp_path / "embeddings"
+    embed_root.mkdir()
+    result = subprocess.run(
+        [
+            str(root / "scripts/eval/export_registered_v5_paper_encoders.sh"),
+            "--protocol",
+            "v5_osm_assisted",
+            "--family",
+            "full_150",
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "V5_REAL_PYTHON": sys.executable,
+            "V5_TEST_CHECKPOINT": str(checkpoint),
+            "V5_TEST_CONFIG_SHA": config_sha256,
+            "V5_EMBED_ROOT": str(embed_root),
+            "V5_LOG_ROOT": str(tmp_path / "logs"),
+        },
+    )
+
+    assert result.returncode != 0
+    assert "training config snapshot hash changed before finalization" in result.stderr
+    assert not list(embed_root.rglob("meta.json"))
+    assert not list(embed_root.rglob("pending_registry_entry.json"))
+
+
+def test_v5_exporter_shard_failure_exits_six(tmp_path: Path) -> None:
+    """A failed export shard is terminal, rather than being mistaken for a busy lane."""
+    root = _sealed_v5_wrapper_repo(tmp_path)
+    for fold in range(5):
+        config = root / "configs/paper_registered_v5_20260726" / (
+            f"paper_registered_v5_full_150_fold{fold}_20260726.yaml"
+        )
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text(f"fold: {fold}\n", encoding="utf-8")
+    checkpoint = tmp_path / "checkpoint.pt"
+    checkpoint.write_bytes(b"checkpoint")
+    config_sha256 = hashlib.sha256(b"fold: 0\n").hexdigest()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "pgrep").write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+    (bin_dir / "pgrep").chmod(0o755)
+    (bin_dir / "python").write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$1\" == *registered_v5_encoder_checkpoint.py ]]; then\n"
+        "  echo \"$V5_TEST_CHECKPOINT\"\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [[ \"$1\" == \"-\" ]]; then echo \"$V5_TEST_CONFIG_SHA\"; exit 0; fi\n"
+        "if [[ \"$1\" == *precompute_embeddings.py ]]; then exit 1; fi\n"
+        "exec \"$V5_REAL_PYTHON\" \"$@\"\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "python").chmod(0o755)
+    embed_root = tmp_path / "embeddings"
+    embed_root.mkdir()
+    result = subprocess.run(
+        [
+            str(root / "scripts/eval/export_registered_v5_paper_encoders.sh"),
+            "--protocol",
+            "v5_osm_assisted",
+            "--family",
+            "full_150",
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "V5_REAL_PYTHON": sys.executable,
+            "V5_TEST_CHECKPOINT": str(checkpoint),
+            "V5_TEST_CONFIG_SHA": config_sha256,
+            "V5_EMBED_ROOT": str(embed_root),
+            "V5_LOG_ROOT": str(tmp_path / "logs"),
+        },
+    )
+
+    assert result.returncode == 6
+    assert "one or more v5 export shards failed" in result.stderr
+
+
 def test_v5_exporter_refuses_a_shared_registered_lane_lease(tmp_path: Path) -> None:
     """A queue lease acquired after pgrep still prevents all-NPU export contention."""
     root = _sealed_v5_wrapper_repo(tmp_path)
@@ -2693,7 +2961,7 @@ def test_v5_exporter_holds_all_registered_lane_leases_after_acquisition(tmp_path
     python_wrapper = bin_dir / "python"
     python_wrapper.write_text(
         "#!/usr/bin/env bash\n"
-        "if [[ \"$1\" == \"-\" ]]; then\n"
+        "if [[ -n \"$V5_LEASE_READY\" ]]; then\n"
         "  touch \"$V5_LEASE_READY\"\n"
         "  sleep 30\n"
         "  exit 0\n"

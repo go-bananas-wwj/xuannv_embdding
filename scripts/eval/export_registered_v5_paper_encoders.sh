@@ -12,12 +12,17 @@ MATRIX="$ROOT/configs/eval/rse_v5_osm_assisted_matrix.json"
 MONTH=202604
 MANIFEST=/data/xuannv_embedding/processed/haidian/manifest_p6a_202512_202605_pixelmask_clean_osm_landcover.json
 OUTPUT_ROOT=/data/xuannv_embedding/outputs/paper_registered_v5_20260726
-EMBED_ROOT=/data/xuannv_embedding/experiments/paper_registered_v5_20260726/embeddings
+EMBED_ROOT="${V5_EMBED_ROOT:-/data/xuannv_embedding/experiments/paper_registered_v5_20260726/embeddings}"
 REGISTRY="$ROOT/configs/eval/registered_embedding_exports_v5_20260726.json"
-LOG_ROOT=/data/xuannv_embedding/experiments/paper_registered_v5_20260726/logs/exports
+LOG_ROOT="${V5_LOG_ROOT:-/data/xuannv_embedding/experiments/paper_registered_v5_20260726/logs/exports}"
 LANE_LOCK_ROOT=/data/xuannv_embedding/locks/registered_v5
 if [[ -n "${PYTEST_CURRENT_TEST:-}" && "$ROOT" == /tmp/pytest-of-* ]]; then
   LANE_LOCK_ROOT="$ROOT/.pytest_registered_v5_locks"
+fi
+if [[ -n "${V5_EMBED_ROOT:-}${V5_LOG_ROOT:-}" ]] && \
+  [[ -z "${PYTEST_CURRENT_TEST:-}" || "$ROOT" != /tmp/pytest-of-* ]]; then
+  echo "registered V5 export path overrides are restricted to pytest fixtures" >&2
+  exit 2
 fi
 
 usage() {
@@ -115,9 +120,37 @@ acquire_registered_v5_export_leases() {
   done
 }
 
+preflight_registered_v5_folds() {
+  local fold config checkpoint
+  for fold in 0 1 2 3 4; do
+    config="$ROOT/configs/paper_registered_v5_20260726/paper_registered_v5_${FAMILY}_fold${fold}_20260726.yaml"
+    checkpoint="$(python "$ROOT/scripts/eval/registered_v5_encoder_checkpoint.py" \
+      --output-root "$OUTPUT_ROOT" --family "$FAMILY" --fold "$fold")"
+    python - "$checkpoint" "$config" <<'PY'
+import sys
+from pathlib import Path
+
+from scripts.eval.registered_v5_encoder_checkpoint import (
+    validate_registered_v5_checkpoint_config_binding,
+)
+
+validate_registered_v5_checkpoint_config_binding(
+    Path(sys.argv[1]), expected_config_path=Path(sys.argv[2])
+)
+PY
+    [[ -f "$config" && -f "$checkpoint" ]] || {
+      echo "missing registered v5 config or best checkpoint for ${FAMILY}/fold${fold}" >&2
+      exit 3
+    }
+  done
+}
+
 if [[ "$DRY_RUN" == false ]]; then
   assert_no_active_registered_v5_training
   acquire_registered_v5_export_leases
+  # Catch a non-cooperative legacy launch that raced the first process check.
+  assert_no_active_registered_v5_training
+  preflight_registered_v5_folds
 fi
 
 python - "$FAMILY" "$MATRIX" <<'PY'
@@ -149,8 +182,9 @@ for fold in 0 1 2 3 4; do
   fi
   checkpoint="$(python "$ROOT/scripts/eval/registered_v5_encoder_checkpoint.py" \
     --output-root "$OUTPUT_ROOT" --family "$FAMILY" --fold "$fold")"
-  python - "$checkpoint" "$config" <<'PY'
+  config_sha256="$(python - "$checkpoint" "$config" <<'PY'
 import sys
+import hashlib
 from pathlib import Path
 
 from scripts.eval.registered_v5_encoder_checkpoint import (
@@ -160,8 +194,10 @@ from scripts.eval.registered_v5_encoder_checkpoint import (
 validate_registered_v5_checkpoint_config_binding(
     Path(sys.argv[1]), expected_config_path=Path(sys.argv[2])
 )
+print(hashlib.sha256(Path(sys.argv[2]).read_bytes()).hexdigest())
 PY
-  [[ -f "$config" && -f "$checkpoint" ]] || {
+  )"
+  [[ -f "$config" && -f "$checkpoint" && -n "$config_sha256" ]] || {
     echo "missing registered v5 config or best checkpoint for ${FAMILY}/fold${fold}" >&2
     exit 3
   }
@@ -173,10 +209,19 @@ PY
     echo "refusing to reuse a registered v5 export root: $export_root" >&2
     exit 4
   }
+  # Every shard reads this verified snapshot, not a mutable working-tree config path.
+  config_snapshot="$export_root/training_config.yaml"
+  cp "$config" "$config_snapshot"
+  snapshot_sha256="$(sha256sum "$config_snapshot" | awk '{print $1}')"
+  [[ "$snapshot_sha256" == "$config_sha256" ]] || {
+    echo "registered v5 config changed while creating export snapshot for ${suffix}" >&2
+    exit 3
+  }
+  chmod 0444 "$config_snapshot"
   declare -a pids=()
   for shard in 0 1 2 3 4 5; do
     ASCEND_RT_VISIBLE_DEVICES="$shard" python "$ROOT/downstreams/scripts/precompute_embeddings.py" \
-      --config "$config" --checkpoint "$checkpoint" --regions haidian --manifest-path "$MANIFEST" \
+      --config "$config_snapshot" --checkpoint "$checkpoint" --regions haidian --manifest-path "$MANIFEST" \
       --output-root "$EMBED_ROOT" --suffix "$suffix" --months "$MONTH" --center-crop-size 128 \
       --export-name "$export_name" \
       --num-shards 6 --shard-id "$shard" --device npu:0 --skip-meta \
@@ -189,7 +234,7 @@ PY
   done
   (( failed == 0 )) || {
     echo "one or more v5 export shards failed for ${suffix}" >&2
-    exit 5
+    exit 6
   }
 commands_json="$(python - "${commands[@]}" <<'PY'
 import hashlib
@@ -198,7 +243,7 @@ import sys
 print(json.dumps({str(index): command for index, command in enumerate(sys.argv[1:])}, sort_keys=True))
 PY
   )"
-  python - "$export_root" "$config" "$checkpoint" "$MANIFEST" "$FAMILY" "$fold" "$MONTH" \
+  python - "$export_root" "$config" "$config_snapshot" "$config_sha256" "$checkpoint" "$MANIFEST" "$FAMILY" "$fold" "$MONTH" \
     "$commands_json" "$REGISTRY" <<'PY'
 import hashlib
 import json
@@ -216,12 +261,15 @@ from scripts.eval.run_registered_paper_downstream import (
     validate_v5_embedding_registry,
 )
 
-export_root, config, checkpoint, manifest, family, fold, month, commands, registry = sys.argv[1:]
+export_root, config, config_snapshot, config_sha256, checkpoint, manifest, family, fold, month, commands, registry = sys.argv[1:]
 export_root = Path(export_root)
 config = Path(config)
+config_snapshot = Path(config_snapshot)
 checkpoint = Path(checkpoint)
 manifest = Path(manifest)
 registry = Path(registry)
+if hashlib.sha256(config_snapshot.read_bytes()).hexdigest() != config_sha256:
+    raise ValueError("registered V5 training config snapshot hash changed before finalization")
 write_meta_json(export_root, checkpoint, config, "registered_v5_sharded_export", manifest_path=manifest)
 meta_path = export_root / "meta.json"
 meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -233,7 +281,9 @@ meta.update(
         "spatial_split_sha256": descriptor["split_sha256"],
         "manifest_sha256": descriptor["manifest_sha256"],
         "statistics_registry_sha256": descriptor["statistics_registry_sha256"],
-        "config_sha256": hashlib.sha256(config.read_bytes()).hexdigest(),
+        "config_sha256": config_sha256,
+        "training_config_snapshot": str(config_snapshot),
+        "training_config_snapshot_sha256": hashlib.sha256(config_snapshot.read_bytes()).hexdigest(),
     }
 )
 _write_json(meta_path, meta)
