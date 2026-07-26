@@ -120,7 +120,9 @@ our conclusions; they do not replace independent labels or a cross-city replicat
 
 The study area is Haidian District, Beijing, China. The registered protocol partitions 320
 georeferenced patches, each covering 1.28 km by 1.28 km, into geographically separated folds with
-train, validation, test, and one-patch buffer regions. The observation window spans December 2025
+train, validation, test, and a one-complete-block-wide buffer at each test edge (complete blocks
+are 2 by 2 patches). The
+observation window spans December 2025
 through May 2026. A full-region P10C product is retained separately as a transductive qualitative
 case study and is not used as spatial-generalisation evidence.
 
@@ -228,6 +230,34 @@ prohibits preliminary outputs from entering tables or figures; this policy is en
 evidence-ledger admission workflow, whose release-admission consumer must complete before any V5
 result is used.
 
+### 3.6 Registered assets, aggregation, and reproducibility
+
+The registered protocol is identified as `rse_v5_registered_20260726`. Its immutable five-fold
+split is `haidian_spatial_5fold_complete2x2_v5_seed42.json`
+(SHA-256 `9a6d98d6d6456ce0a791ef74ac725e4d360e7d4e0a17c9cb5edfceb850093c0b`), and its nested,
+label-free 40/80/150-patch subset registry is
+`haidian_paper_subsets_40_80_150_complete2x2_v5_seed42.json`
+(SHA-256 `5477d4a3c0ca9d1dbbf343fe04ae675725479a60cafa3be67ee29fa1db500c93`). The five
+self-contained encoder configurations follow the naming pattern
+`paper_registered_v5_full_150_fold{0..4}_20260726.yaml`; the archive will bind their byte hashes,
+queue-sealed checkpoint hashes, export file indices, and the V5 export registry to the reported
+cells. All preprocessing statistics are estimated only from the full upstream training manifest
+of the corresponding fold, never from its validation, test, or buffer patches. The normalization
+registry is `haidian_paper_v5_normalization_statistics.json`
+(SHA-256 `ba1fb10bc105a29286750367dff2ab45e02f89c32f69725ab89da994d0c56929`); it records each
+training-manifest and statistics-audit hash. The archive will include all five audits and the
+source-specific mean and standard-deviation arrays.
+
+For each task and labelled-patch budget, Table 3 will report the arithmetic mean and sample standard
+deviation over the three probe-seed means, where each seed mean averages the five held-out spatial
+folds. The table will also state the five-fold-by-three-seed sample size (15) and retain all
+fold-seed values in the supplement. Comparative intervals for F1, IoU, precision, and recall will
+use a registered 10,000-resample hierarchical paired bootstrap (random seed 20260725): spatial
+folds, complete 2 by 2 geographic test clusters, and probe seeds are resampled in that order.
+AP and ROC-AUC will be reported as point estimates with the same fold/seed aggregation but are not
+assigned this confusion-matrix bootstrap interval. The bootstrap compares only paired result cells
+with the same task, budget, fold, seed, test-patch IDs, labels, split, and protocol provenance.
+
 ## 4. Results
 
 ### 4.1 Spatially held-out OSM-assisted diagnostic readout
@@ -306,6 +336,18 @@ and redistribution terms and will not be redistributed; the archival release wil
 access condition, date window, preprocessing inputs, and a procedure for access requests. Any
 artifact that cannot be publicly shared will be listed in the release manifest with its reason and
 access route.
+
+## Supplementary material
+
+The supplementary material will contain: (S1) acquisition, quality-mask, mosaicking,
+reprojection, alignment, source-availability, and OSM-rasterisation audits; (S2) the five-fold
+split, buffer, training-subset, and downstream-shot manifests; (S3) fold-specific normalization
+statistics and audits; (S4) self-contained encoder/probe configurations, training and inference
+commands, environment records, and checkpoint/export provenance; (S5) per-fold/seed metrics,
+validation thresholds, prediction-file schemas, and held-out qualitative examples; and (S6) the
+release-admission records, aggregation output, and paired spatial-bootstrap reports. Exact archive
+paths, version identifiers, and file hashes will be inserted when the final immutable release is
+created.
 
 ## CRediT authorship contribution statement
 
