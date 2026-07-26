@@ -1,0 +1,46 @@
+{
+  "slide": 2,
+  "title": "两个区域的多源数据处理与训练组织",
+  "montage": {
+    "source": "/data/xuannv_embedding/qa/pretrain_p6a_20260703/training_seen_batches_clean/patch_000183_clean_training_tensor_grid.png",
+    "months": [
+      "2025.12",
+      "2026.01",
+      "2026.02",
+      "2026.03",
+      "2026.04",
+      "2026.05"
+    ],
+    "sources": [
+      "Sentinel-2",
+      "高分光学",
+      "高分SAR"
+    ]
+  },
+  "haidian": {
+    "patches": 320,
+    "months": [
+      "2025.12",
+      "2026.01",
+      "2026.02",
+      "2026.03",
+      "2026.04",
+      "2026.05"
+    ],
+    "model": "P10C epoch 800",
+    "initialization": "P9B epoch 800",
+    "hardware": "2 Ascend NPU",
+    "elapsed": "17:49:31",
+    "training_log": "/data/xuannv_embedding/logs/p10c_train_20260704.log"
+  },
+  "harbin": {
+    "patches": 424,
+    "available_month_count": 10,
+    "available_months_are_training_period": false,
+    "model": "V5 (API v2)",
+    "training_data": "API not disclosed",
+    "hardware": "API not disclosed",
+    "elapsed": "API not disclosed",
+    "evidence_boundary": "API deployment facts only; no legacy Stage 2 training claims."
+  }
+}
