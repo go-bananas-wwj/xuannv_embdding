@@ -16,7 +16,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--split",
         type=Path,
-        default=Path("configs/eval/haidian_spatial_5fold_buffer1_seed42.json"),
+        default=Path("configs/eval/haidian_spatial_5fold_complete2x2_v5_seed42.json"),
     )
     parser.add_argument(
         "--patch-metadata",
@@ -26,8 +26,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("configs/eval/haidian_paper_subsets_40_80_150_seed42.json"),
+        default=Path("configs/eval/haidian_paper_subsets_40_80_150_complete2x2_v5_seed42.json"),
     )
+    parser.add_argument("--protocol-name", default="rse_v5_registered_20260726")
     return parser.parse_args()
 
 
@@ -73,32 +74,49 @@ def farthest_point_order(ids: list[str], centers: dict[str, np.ndarray]) -> list
     return [ordered_ids[i] for i in selected]
 
 
-def main() -> None:
-    args = parse_args()
-    split = json.loads(args.split.read_text())
-    centers = patch_centers(args.patch_metadata)
-    budgets = (40, 80, 150)
+def build_registry(
+    split_path: Path,
+    patch_metadata_path: Path,
+    budgets: tuple[int, ...] = (40, 80, 150),
+    protocol_name: str = "rse_v5_registered_20260726",
+) -> dict[str, object]:
+    """Build a deterministic, label-free subset registry bound to one split."""
+    split = json.loads(split_path.read_text(encoding="utf-8"))
+    centers = patch_centers(patch_metadata_path)
     folds: dict[str, dict[str, list[str]]] = {}
-
     for fold in split["folds"]:
         fold_id = str(fold["fold"])
-        train_ids = fold["train"]
+        train_ids = list(fold["train"])
         if len(train_ids) < max(budgets):
             raise ValueError(f"Fold {fold_id} has only {len(train_ids)} eligible patches")
         order = farthest_point_order(train_ids, centers)
         folds[fold_id] = {str(budget): order[:budget] for budget in budgets}
-
-    payload = {
-        "schema_version": 1,
+    return {
+        "schema_version": 2,
+        "protocol_name": protocol_name,
         "seed": 42,
         "selection_algorithm": "deterministic_label_free_maximin_farthest_point",
-        "source_split": str(args.split),
-        "source_split_sha256": sha256(args.split),
-        "patch_metadata": str(args.patch_metadata),
-        "patch_metadata_sha256": sha256(args.patch_metadata),
+        "source_split": str(split_path),
+        "source_split_sha256": sha256(split_path),
+        "patch_metadata": str(patch_metadata_path),
+        "patch_metadata_sha256": sha256(patch_metadata_path),
         "budgets": list(budgets),
         "folds": folds,
     }
+
+
+def validate_registry_split(registry: dict[str, object], split_path: Path) -> None:
+    """Reject a registry that was not created from the exact requested split."""
+    expected = sha256(split_path)
+    actual = registry.get("source_split_sha256")
+    if actual != expected:
+        raise ValueError(f"Subset registry source split hash mismatch: {actual} != {expected}")
+
+
+def main() -> None:
+    args = parse_args()
+    budgets = (40, 80, 150)
+    payload = build_registry(args.split, args.patch_metadata, budgets, args.protocol_name)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(payload, indent=2) + "\n")
 

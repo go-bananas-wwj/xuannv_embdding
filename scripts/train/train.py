@@ -8,8 +8,8 @@ import json
 import logging
 import os
 import random
-from pathlib import Path
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -39,8 +39,7 @@ def reject_base_config(config_path: str | Path) -> None:
         raw = yaml.safe_load(f)
     if isinstance(raw, dict) and "_base_" in raw:
         raise ConfigError(
-            f"实际训练配置必须自包含，禁止使用 `_base_`: {path}. "
-            "请复制完整配置后直接修改字段。"
+            f"实际训练配置必须自包含，禁止使用 `_base_`: {path}. " "请复制完整配置后直接修改字段。"
         )
 
 
@@ -135,6 +134,143 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def validate_registered_paper_v5_sidecars(config_path: str | Path) -> None:
+    """Verify v5 manifest/statistics provenance before loading any training data."""
+    raw = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or not isinstance(raw.get("data"), dict):
+        raise ConfigError("训练配置缺少 data 段")
+    data = raw["data"]
+    if data.get("paper_protocol_name") != "rse_v5_registered_20260726":
+        return
+    required = (
+        "paper_spatial_split",
+        "paper_spatial_split_sha256",
+        "paper_subset_registry",
+        "paper_subset_registry_sha256",
+        "paper_manifest_audit",
+        "paper_manifest_audit_sha256",
+        "paper_normalization_statistics",
+        "paper_normalization_statistics_sha256",
+        "paper_normalization_statistics_audit",
+        "paper_normalization_statistics_audit_sha256",
+        "paper_fold",
+        "train_manifest_path",
+        "val_manifest_path",
+        "statistics_dir",
+    )
+    missing = [key for key in required if data.get(key) is None]
+    if missing:
+        raise ConfigError(f"v5 注册论文配置缺少 provenance 字段: {', '.join(missing)}")
+
+    split_path = Path(data["paper_spatial_split"])
+    subset_path = Path(data["paper_subset_registry"])
+    audit_path = Path(data["paper_manifest_audit"])
+    statistics_path = Path(data["paper_normalization_statistics"])
+    expected_hashes = (
+        ("paper_spatial_split", split_path, data["paper_spatial_split_sha256"]),
+        ("paper_subset_registry", subset_path, data["paper_subset_registry_sha256"]),
+        ("paper_manifest_audit", audit_path, data["paper_manifest_audit_sha256"]),
+        (
+            "paper_normalization_statistics",
+            statistics_path,
+            data["paper_normalization_statistics_sha256"],
+        ),
+    )
+    for name, path, expected_hash in expected_hashes:
+        if not path.exists() or _sha256(path) != expected_hash:
+            raise ConfigError(f"v5 {name} 哈希不匹配")
+
+    split_hash = _sha256(split_path)
+    subset = json.loads(subset_path.read_text(encoding="utf-8"))
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    statistics = json.loads(statistics_path.read_text(encoding="utf-8"))
+    fold_id = int(data["paper_fold"])
+    if subset.get("source_split_sha256") != split_hash:
+        raise ConfigError("v5 subset registry 与 spatial split 不匹配")
+    if audit.get("spatial_split_sha256") != split_hash:
+        raise ConfigError("v5 manifest audit 与 spatial split 不匹配")
+    if audit.get("subset_registry_sha256") != _sha256(subset_path):
+        raise ConfigError("v5 manifest audit 与 subset registry 不匹配")
+    if audit.get("fold") != fold_id:
+        raise ConfigError("v5 manifest audit fold 不匹配")
+    if statistics.get("source_split_sha256") != split_hash:
+        raise ConfigError("v5 normalization statistics 与 spatial split 不匹配")
+    fold_statistics = statistics.get("folds", {}).get(str(fold_id))
+    if not isinstance(fold_statistics, dict):
+        raise ConfigError("v5 normalization statistics 缺少 fold")
+    if fold_statistics.get("manifest_audit_sha256") != _sha256(audit_path):
+        raise ConfigError("v5 normalization statistics 与 manifest audit 不匹配")
+    train_pool = audit.get("manifests", {}).get("train_pool", {})
+    if fold_statistics.get("source_manifest") != train_pool.get("path") or fold_statistics.get(
+        "source_manifest_sha256"
+    ) != train_pool.get("sha256"):
+        raise ConfigError("v5 normalization statistics source manifest 不匹配")
+    if Path(data["statistics_dir"]) != Path(str(fold_statistics.get("statistics_dir"))):
+        raise ConfigError("v5 statistics_dir 不等于注册 fold-only statistics 目录")
+    statistics_audit_path = Path(data["paper_normalization_statistics_audit"])
+    if not statistics_audit_path.exists():
+        raise ConfigError("v5 fold-only statistics audit 不存在")
+    statistics_audit = json.loads(statistics_audit_path.read_text(encoding="utf-8"))
+    if statistics_audit.get("source_manifest") != fold_statistics.get(
+        "source_manifest"
+    ) or statistics_audit.get("source_manifest_sha256") != fold_statistics.get(
+        "source_manifest_sha256"
+    ):
+        raise ConfigError("v5 fold-only statistics audit source manifest 不匹配")
+    statistics_files = statistics_audit.get("statistics_files")
+    if not isinstance(statistics_files, dict) or not statistics_files:
+        raise ConfigError("v5 fold-only statistics audit 缺少 statistics files")
+    configured_sources = data.get("sources")
+    if not isinstance(configured_sources, list) or not all(
+        isinstance(source, str) and source for source in configured_sources
+    ):
+        raise ConfigError("v5 config data.sources 无效")
+    expected_sources = set(configured_sources)
+    if (
+        len(expected_sources) != len(configured_sources)
+        or set(statistics_files) != expected_sources
+    ):
+        raise ConfigError("v5 statistics audit sources do not match configured sources")
+    statistics_dir = Path(data["statistics_dir"]).resolve()
+    for source, record in statistics_files.items():
+        if not isinstance(record, dict):
+            raise ConfigError(f"v5 statistics file record 无效: {source}")
+        path = Path(str(record.get("path", ""))).resolve()
+        if not path.is_relative_to(statistics_dir):
+            raise ConfigError(f"v5 statistics file is outside statistics_dir: {source}")
+        if not path.exists() or record.get("sha256") != _sha256(path):
+            raise ConfigError(f"v5 statistics file 哈希不匹配: {source}")
+    if fold_statistics.get("status") != "materialized":
+        raise ConfigError("v5 normalization statistics fold is not materialized")
+    source_key = "__".join(sorted(expected_sources))
+    registry_audit = fold_statistics.get("statistics_audits", {}).get(source_key)
+    if not isinstance(registry_audit, dict):
+        raise ConfigError("v5 normalization statistics has no audit for configured sources")
+    actual_audit_hash = _sha256(statistics_audit_path)
+    if (
+        registry_audit.get("path") != str(statistics_audit_path)
+        or registry_audit.get("sha256") != actual_audit_hash
+        or registry_audit.get("sources") != sorted(expected_sources)
+        or data["paper_normalization_statistics_audit_sha256"] != actual_audit_hash
+    ):
+        raise ConfigError("v5 normalization statistics audit hash mismatch")
+
+    manifests = audit.get("manifests", {})
+    budget = len(json.loads(Path(data["train_manifest_path"]).read_text(encoding="utf-8")))
+    expected_train = manifests.get(f"train_{budget}", {})
+    expected_val = manifests.get("val", {})
+    if (
+        expected_train.get("path") != data["train_manifest_path"]
+        or expected_train.get("sha256") != _sha256(Path(data["train_manifest_path"]))
+        or expected_val.get("path") != data["val_manifest_path"]
+        or expected_val.get("sha256") != _sha256(Path(data["val_manifest_path"]))
+    ):
+        raise ConfigError("v5 config manifests do not match the manifest audit sidecar")
+    overlap = audit.get("overlap", {})
+    if any(overlap.values()) or not audit.get("strictly_nested"):
+        raise ConfigError("v5 manifest audit contains held-out geography overlap")
+
+
 def validate_registered_paper_manifests(cfg: Config) -> None:
     """Fail closed when a registered paper config does not match its frozen subsets."""
     registry_path = cfg.data.paper_subset_registry
@@ -151,9 +287,7 @@ def validate_registered_paper_manifests(cfg: Config) -> None:
     expected_hash = cfg.data.paper_subset_registry_sha256
     actual_hash = _sha256(registry_path)
     if expected_hash is None or actual_hash != expected_hash:
-        raise ConfigError(
-            f"论文 subset registry 哈希不匹配: {actual_hash} != {expected_hash}"
-        )
+        raise ConfigError(f"论文 subset registry 哈希不匹配: {actual_hash} != {expected_hash}")
 
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
     split_hash = _sha256(split_path)
@@ -165,9 +299,7 @@ def validate_registered_paper_manifests(cfg: Config) -> None:
     budget = str(len(actual_ids))
     expected_ids = registry.get("folds", {}).get(str(fold_id), {}).get(budget)
     if expected_ids is None or actual_ids != expected_ids:
-        raise ConfigError(
-            f"训练 manifest 不等于注册子集: fold={fold_id}, budget={budget}"
-        )
+        raise ConfigError(f"训练 manifest 不等于注册子集: fold={fold_id}, budget={budget}")
 
     if cfg.data.num_samples is not None and len(actual_ids) != cfg.data.num_samples:
         raise ConfigError("训练 manifest 样本数与 data.num_samples 不一致")
@@ -354,6 +486,7 @@ def main() -> None:
     is_distributed, local_rank = setup_distributed()
 
     reject_base_config(args.config)
+    validate_registered_paper_v5_sidecars(args.config)
     cfg = Config.from_yaml(args.config)
     validate_registered_paper_manifests(cfg)
     _set_seed(cfg.experiment.seed)
@@ -416,12 +549,8 @@ def main() -> None:
         covariance_std_target=cfg.training.covariance_std_target,
         covariance_pool_size=cfg.training.covariance_pool_size,
         patch_discrimination_weight=cfg.training.patch_discrimination_weight,
-        patch_discrimination_warmup_epochs=(
-            cfg.training.patch_discrimination_warmup_epochs
-        ),
-        patch_discrimination_temperature=(
-            cfg.training.patch_discrimination_temperature
-        ),
+        patch_discrimination_warmup_epochs=(cfg.training.patch_discrimination_warmup_epochs),
+        patch_discrimination_temperature=(cfg.training.patch_discrimination_temperature),
         patch_discrimination_pool_size=cfg.training.patch_discrimination_pool_size,
         patch_discrimination_max_tokens=cfg.training.patch_discrimination_max_tokens,
         temporal_endpoint_weight=cfg.training.temporal_endpoint_weight,
@@ -440,9 +569,7 @@ def main() -> None:
         supervised_change_tasks=cfg.training.supervised_change_tasks,
         supervised_change_pos_weight=cfg.training.supervised_change_pos_weight,
         supervised_change_neg_weight=cfg.training.supervised_change_neg_weight,
-        supervised_change_hard_negative_ratio=(
-            cfg.training.supervised_change_hard_negative_ratio
-        ),
+        supervised_change_hard_negative_ratio=(cfg.training.supervised_change_hard_negative_ratio),
         supervised_change_task_weights=cfg.training.supervised_change_task_weights,
         semantic_probe_embed_dim=cfg.model.embed_dim,
         semantic_probe_weight=cfg.training.semantic_probe_weight,
@@ -452,12 +579,8 @@ def main() -> None:
         semantic_probe_pos_weight=cfg.training.semantic_probe_pos_weight,
         semantic_probe_pos_weights=cfg.training.semantic_probe_pos_weights,
         semantic_probe_hidden_dim=cfg.training.semantic_probe_hidden_dim,
-        semantic_probe_hard_negative_ratio=(
-            cfg.training.semantic_probe_hard_negative_ratio
-        ),
-        semantic_probe_hard_negative_weight=(
-            cfg.training.semantic_probe_hard_negative_weight
-        ),
+        semantic_probe_hard_negative_ratio=(cfg.training.semantic_probe_hard_negative_ratio),
+        semantic_probe_hard_negative_weight=(cfg.training.semantic_probe_hard_negative_weight),
         semantic_probe_hard_negative_warmup_epochs=(
             cfg.training.semantic_probe_hard_negative_warmup_epochs
         ),
@@ -472,17 +595,11 @@ def main() -> None:
         distill_max_tokens=cfg.training.distill_max_tokens,
         prototype_contrast_embed_dim=cfg.model.embed_dim,
         prototype_contrast_weight=cfg.training.prototype_contrast_weight,
-        prototype_contrast_warmup_epochs=(
-            cfg.training.prototype_contrast_warmup_epochs
-        ),
+        prototype_contrast_warmup_epochs=(cfg.training.prototype_contrast_warmup_epochs),
         prototype_contrast_tasks=cfg.training.prototype_contrast_tasks,
         prototype_contrast_task_weights=cfg.training.prototype_contrast_task_weights,
-        prototype_contrast_negative_margin=(
-            cfg.training.prototype_contrast_negative_margin
-        ),
-        prototype_contrast_separation_margin=(
-            cfg.training.prototype_contrast_separation_margin
-        ),
+        prototype_contrast_negative_margin=(cfg.training.prototype_contrast_negative_margin),
+        prototype_contrast_separation_margin=(cfg.training.prototype_contrast_separation_margin),
         prototype_contrast_max_pixels=cfg.training.prototype_contrast_max_pixels,
         boundary_contrast_weight=cfg.training.boundary_contrast_weight,
         boundary_contrast_warmup_epochs=cfg.training.boundary_contrast_warmup_epochs,
@@ -492,16 +609,10 @@ def main() -> None:
         boundary_contrast_max_pixels=cfg.training.boundary_contrast_max_pixels,
         latent_reconstruction_embed_dim=cfg.model.embed_dim,
         latent_reconstruction_weight=cfg.training.latent_reconstruction_weight,
-        latent_reconstruction_warmup_epochs=(
-            cfg.training.latent_reconstruction_warmup_epochs
-        ),
+        latent_reconstruction_warmup_epochs=(cfg.training.latent_reconstruction_warmup_epochs),
         latent_reconstruction_targets=cfg.training.latent_reconstruction_targets,
-        latent_reconstruction_target_weights=(
-            cfg.training.latent_reconstruction_target_weights
-        ),
-        latent_reconstruction_hidden_dim=(
-            cfg.training.latent_reconstruction_hidden_dim
-        ),
+        latent_reconstruction_target_weights=(cfg.training.latent_reconstruction_target_weights),
+        latent_reconstruction_hidden_dim=(cfg.training.latent_reconstruction_hidden_dim),
         latent_reconstruction_loss_type=cfg.training.latent_reconstruction_loss_type,
         loss_crop_size=cfg.training.loss_crop_size,
     )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import math
@@ -78,8 +79,7 @@ def _collect_tif_files(source_dir: Path, max_patches: int | None) -> list[Path]:
         return []
 
     files = sorted(
-        p for p in source_dir.glob("*.tif")
-        if p.is_file() and not p.stem.endswith("_mask")
+        p for p in source_dir.glob("*.tif") if p.is_file() and not p.stem.endswith("_mask")
     )
     if not files:
         logger.warning("未找到 .tif 文件：%s", source_dir)
@@ -90,11 +90,121 @@ def _collect_tif_files(source_dir: Path, max_patches: int | None) -> list[Path]:
     return files
 
 
+def sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def build_fold_statistics_registry(
+    split_path: Path,
+    manifest_audits: list[Path],
+    statistics_root: Path,
+    protocol_name: str = "rse_v5_registered_20260726",
+) -> dict[str, object]:
+    """Declare fold-only normalization inputs without scanning production rasters."""
+    split_hash = sha256(split_path)
+    folds: dict[str, dict[str, object]] = {}
+    for audit_path in manifest_audits:
+        audit = json.loads(audit_path.read_text(encoding="utf-8"))
+        fold_id = str(audit["fold"])
+        if audit.get("spatial_split_sha256") != split_hash:
+            raise ValueError("Manifest audit source split hash does not match statistics split")
+        if audit.get("protocol_name") not in (None, protocol_name):
+            raise ValueError("Manifest audit protocol name does not match statistics protocol")
+        train_pool = audit.get("manifests", {}).get("train_pool")
+        if not isinstance(train_pool, dict):
+            raise ValueError(f"Manifest audit has no full train pool for fold {fold_id}")
+        source_manifest = Path(str(train_pool["path"]))
+        if train_pool.get("sha256") != sha256(source_manifest):
+            raise ValueError(f"Manifest audit train pool hash mismatch for fold {fold_id}")
+        statistics_dir = statistics_root / f"fold{fold_id}"
+        folds[fold_id] = {
+            "source_manifest": str(source_manifest),
+            "source_manifest_sha256": sha256(source_manifest),
+            "manifest_audit": str(audit_path),
+            "manifest_audit_sha256": sha256(audit_path),
+            "statistics_dir": str(statistics_dir),
+            "statistics_audit": str(statistics_dir / "fold_statistics_audit.json"),
+            "status": "registered_pending_materialization",
+        }
+    return {
+        "schema_version": 1,
+        "protocol_name": protocol_name,
+        "source_split": str(split_path),
+        "source_split_sha256": split_hash,
+        "normalization_scope": "full_upstream_training_manifest_only",
+        "folds": folds,
+    }
+
+
+def validate_fold_statistics_registry(
+    registry: dict[str, object],
+    fold_id: int,
+    manifest_audit_path: Path,
+    split_path: Path,
+) -> dict[str, object]:
+    """Verify the fold-only statistics declaration against immutable provenance."""
+    if registry.get("source_split_sha256") != sha256(split_path):
+        raise ValueError("Fold statistics registry source split hash mismatch")
+    folds = registry.get("folds")
+    if not isinstance(folds, dict) or str(fold_id) not in folds:
+        raise ValueError(f"Fold statistics registry has no fold {fold_id}")
+    entry = folds[str(fold_id)]
+    if not isinstance(entry, dict):
+        raise ValueError(f"Fold statistics registry entry is invalid for fold {fold_id}")
+    if entry.get("manifest_audit_sha256") != sha256(manifest_audit_path):
+        raise ValueError("Fold statistics registry manifest audit hash mismatch")
+    audit = json.loads(manifest_audit_path.read_text(encoding="utf-8"))
+    train_pool = audit.get("manifests", {}).get("train_pool", {})
+    if entry.get("source_manifest") != train_pool.get("path"):
+        raise ValueError("Fold statistics registry source manifest path mismatch")
+    if entry.get("source_manifest_sha256") != train_pool.get("sha256"):
+        raise ValueError("Fold statistics registry source manifest hash mismatch")
+    return entry
+
+
+def mark_fold_statistics_materialized(
+    registry: dict[str, object], fold_id: int, statistics_audit_path: Path
+) -> None:
+    """Seal a completed fold's statistics audit into its immutable registry entry."""
+    folds = registry.get("folds")
+    if not isinstance(folds, dict) or str(fold_id) not in folds:
+        raise ValueError(f"Fold statistics registry has no fold {fold_id}")
+    entry = folds[str(fold_id)]
+    if not isinstance(entry, dict):
+        raise ValueError(f"Fold statistics registry entry is invalid for fold {fold_id}")
+    audit = json.loads(statistics_audit_path.read_text(encoding="utf-8"))
+    if audit.get("source_manifest") != entry.get("source_manifest") or audit.get(
+        "source_manifest_sha256"
+    ) != entry.get("source_manifest_sha256"):
+        raise ValueError("Fold statistics audit source manifest does not match registry")
+    statistics_files = audit.get("statistics_files")
+    if not isinstance(statistics_files, dict) or not statistics_files:
+        raise ValueError("Fold statistics audit has no statistics files")
+    sources = sorted(statistics_files)
+    source_key = "__".join(sources)
+    statistics_audits = entry.setdefault("statistics_audits", {})
+    if not isinstance(statistics_audits, dict):
+        raise ValueError("Fold statistics registry audits entry is invalid")
+    audit_hash = sha256(statistics_audit_path)
+    existing = statistics_audits.get(source_key)
+    if existing is not None and existing.get("sha256") != audit_hash:
+        raise ValueError("Fold statistics audit variant is already sealed with another hash")
+    statistics_audits[source_key] = {
+        "path": str(statistics_audit_path),
+        "sha256": audit_hash,
+        "sources": sources,
+    }
+    entry["status"] = "materialized"
+    if Path(str(entry.get("statistics_audit", ""))) == statistics_audit_path:
+        entry["statistics_audit_sha256"] = audit_hash
+
+
 def compute_statistics(
     processed_dir: Path,
     source: str,
     max_patches: int | None = None,
     source_dirs: dict[str, str] | None = None,
+    files: list[Path] | None = None,
 ) -> dict[str, list[float] | list[int] | int | str]:
     """计算单个数据源所有波段的统计量。
 
@@ -128,7 +238,8 @@ def compute_statistics(
         if not (processed_dir / rel_dir).exists():
             rel_dir = source
     source_dir = processed_dir / rel_dir
-    files = _collect_tif_files(source_dir, max_patches)
+    if files is None:
+        files = _collect_tif_files(source_dir, max_patches)
     if not files:
         return {
             "mean": [],
@@ -213,6 +324,41 @@ def compute_statistics(
     return stats
 
 
+def manifest_source_files(processed_dir: Path, manifest_path: Path, source: str) -> list[Path]:
+    """Resolve only a fold's source rasters from its full upstream train manifest."""
+    records = json.loads(manifest_path.read_text(encoding="utf-8"))
+    files = [
+        processed_dir / relative_path
+        for record in records
+        for relative_path in (record.get(source) or [])
+        if isinstance(relative_path, str) and relative_path
+    ]
+    return sorted(set(files))
+
+
+def write_fold_statistics_audit(
+    audit_path: Path,
+    source_manifest_path: Path,
+    statistics_paths: dict[str, Path],
+    protocol_name: str,
+) -> None:
+    """Seal fold-only normalization outputs to their complete upstream train manifest."""
+    payload = {
+        "schema_version": 1,
+        "protocol_name": protocol_name,
+        "source_manifest": str(source_manifest_path),
+        "source_manifest_sha256": sha256(source_manifest_path),
+        "statistics_files": {
+            source: {"path": str(path), "sha256": sha256(path)}
+            for source, path in statistics_paths.items()
+        },
+    }
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    audit_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="计算 processed patches 各数据源各波段的 mean/std 统计量。",
@@ -246,9 +392,58 @@ def main() -> None:
         action="append",
         default=[],
         help="source 到子目录的映射，格式 source=relative_dir；例如 s2=patches/s2。"
-             "未指定的 source 默认使用 patches/<source>。",
+        "未指定的 source 默认使用 patches/<source>。",
     )
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        help="仅使用该训练 manifest 中列出的栅格计算统计量。",
+    )
+    parser.add_argument(
+        "--fold-manifest-audit",
+        action="append",
+        type=Path,
+        default=[],
+        help="构建 fold-only 统计量注册表时使用的 manifest audit，可重复。",
+    )
+    parser.add_argument(
+        "--statistics-registry",
+        type=Path,
+        help="写入 fold-only 统计量注册表而不扫描栅格。",
+    )
+    parser.add_argument(
+        "--spatial-split",
+        type=Path,
+        help="fold-only 统计量注册表所绑定的 spatial split。",
+    )
+    parser.add_argument(
+        "--protocol-name",
+        default="rse_v5_registered_20260726",
+    )
+    parser.add_argument(
+        "--statistics-audit",
+        type=Path,
+        help="由 --manifest 产生的 fold-only 统计量 provenance sidecar。",
+    )
+    parser.add_argument("--fold", type=int, help="写入 materialized statistics registry 的 fold。")
     args = parser.parse_args()
+
+    if args.fold_manifest_audit:
+        if args.statistics_registry is None or args.spatial_split is None:
+            raise ValueError(
+                "构建 fold statistics registry 需要 --statistics-registry 和 --spatial-split"
+            )
+        registry = build_fold_statistics_registry(
+            args.spatial_split,
+            args.fold_manifest_audit,
+            args.output_dir,
+            args.protocol_name,
+        )
+        args.statistics_registry.parent.mkdir(parents=True, exist_ok=True)
+        args.statistics_registry.write_text(
+            json.dumps(registry, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        return
 
     source_dirs: dict[str, str] = {}
     for mapping in args.source_dir:
@@ -259,17 +454,43 @@ def main() -> None:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
+    statistics_paths: dict[str, Path] = {}
     for source in args.sources:
+        files = (
+            manifest_source_files(args.processed_dir, args.manifest, source)
+            if args.manifest is not None
+            else None
+        )
         stats = compute_statistics(
             args.processed_dir,
             source,
             max_patches=args.max_patches,
             source_dirs=source_dirs,
+            files=files,
         )
         out_path = args.output_dir / f"{source}_stats.json"
         with out_path.open("w", encoding="utf-8") as f:
             json.dump(stats, f, indent=2, ensure_ascii=False)
         logger.info("已保存统计文件：%s", out_path)
+        statistics_paths[source] = out_path
+
+    if args.statistics_audit is not None:
+        if args.manifest is None:
+            raise ValueError("--statistics-audit 需要 --manifest")
+        write_fold_statistics_audit(
+            args.statistics_audit,
+            args.manifest,
+            statistics_paths,
+            args.protocol_name,
+        )
+        if args.statistics_registry is not None:
+            if args.fold is None:
+                raise ValueError("更新 materialized statistics registry 需要 --fold")
+            registry = json.loads(args.statistics_registry.read_text(encoding="utf-8"))
+            mark_fold_statistics_materialized(registry, args.fold, args.statistics_audit)
+            args.statistics_registry.write_text(
+                json.dumps(registry, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+            )
 
 
 if __name__ == "__main__":

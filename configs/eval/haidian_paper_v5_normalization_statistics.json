@@ -1,0 +1,234 @@
+{
+  "schema_version": 1,
+  "protocol_name": "rse_v5_registered_20260726",
+  "source_split": "configs/eval/haidian_spatial_5fold_complete2x2_v5_seed42.json",
+  "source_split_sha256": "9a6d98d6d6456ce0a791ef74ac725e4d360e7d4e0a17c9cb5edfceb850093c0b",
+  "normalization_scope": "full_upstream_training_manifest_only",
+  "folds": {
+    "0": {
+      "source_manifest": "/data/xuannv_embedding/processed/haidian/paper_registered_v5_20260726_train_pool_fold0.json",
+      "source_manifest_sha256": "f12a799d9b784b042974b113016a9f03334e4a01816dfc9aa26e5d24a956748a",
+      "manifest_audit": "/data/xuannv_embedding/processed/haidian/paper_registered_v5_20260726_fold0_audit.json",
+      "manifest_audit_sha256": "bbcd3e9e72c9d6b8b5e4b1a490e39ba33ffec167c2637647455ad3ac7cd8220d",
+      "statistics_dir": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold0",
+      "statistics_audit": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold0/fold_statistics_audit.json",
+      "status": "materialized",
+      "statistics_audit_sha256": "5b5669d4e20037711a6ef1a15506993639c1277aae12efdc48e7f2e6546311da",
+      "statistics_audits": {
+        "highres_optical_haidian__highres_sar_haidian__landsat__s1__s2__worldcover": {
+          "path": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold0/fold_statistics_audit.json",
+          "sha256": "5b5669d4e20037711a6ef1a15506993639c1277aae12efdc48e7f2e6546311da",
+          "sources": [
+            "highres_optical_haidian",
+            "highres_sar_haidian",
+            "landsat",
+            "s1",
+            "s2",
+            "worldcover"
+          ]
+        },
+        "highres_optical_haidian__highres_sar_haidian__landsat__s1__s2": {
+          "path": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold0/fold_statistics_no_worldcover_audit.json",
+          "sha256": "5be9528ab9dbf05fd6920094ed4bbe6bb02f6ccc82909983a79d5e3fb5c6aa76",
+          "sources": [
+            "highres_optical_haidian",
+            "highres_sar_haidian",
+            "landsat",
+            "s1",
+            "s2"
+          ]
+        },
+        "landsat__s1__s2__worldcover": {
+          "path": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold0/fold_statistics_no_highres_audit.json",
+          "sha256": "2c8ae23b9de0d11b86e0e586eb3616fa75504fcf1a9bc8aedb911d5eebc65c4c",
+          "sources": [
+            "landsat",
+            "s1",
+            "s2",
+            "worldcover"
+          ]
+        }
+      }
+    },
+    "1": {
+      "source_manifest": "/data/xuannv_embedding/processed/haidian/paper_registered_v5_20260726_train_pool_fold1.json",
+      "source_manifest_sha256": "e79152a4abb2c742cffab8bc3a9aa19a0a8046cd5d4315ba0775cc946c1d9a2d",
+      "manifest_audit": "/data/xuannv_embedding/processed/haidian/paper_registered_v5_20260726_fold1_audit.json",
+      "manifest_audit_sha256": "898e544d5f45b583178dab8bb72eb7ac7bcbe33a10671fe34db0926766c678a9",
+      "statistics_dir": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold1",
+      "statistics_audit": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold1/fold_statistics_audit.json",
+      "status": "materialized",
+      "statistics_audit_sha256": "dc2756db8eb10fd1dad0e508c470ae6206b9386175bb94c292884c4560eefb9d",
+      "statistics_audits": {
+        "highres_optical_haidian__highres_sar_haidian__landsat__s1__s2__worldcover": {
+          "path": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold1/fold_statistics_audit.json",
+          "sha256": "dc2756db8eb10fd1dad0e508c470ae6206b9386175bb94c292884c4560eefb9d",
+          "sources": [
+            "highres_optical_haidian",
+            "highres_sar_haidian",
+            "landsat",
+            "s1",
+            "s2",
+            "worldcover"
+          ]
+        },
+        "highres_optical_haidian__highres_sar_haidian__landsat__s1__s2": {
+          "path": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold1/fold_statistics_no_worldcover_audit.json",
+          "sha256": "b1be41930acb228b78c2def1fa8b1c52238e99ec61c12a223658274fea32c8bf",
+          "sources": [
+            "highres_optical_haidian",
+            "highres_sar_haidian",
+            "landsat",
+            "s1",
+            "s2"
+          ]
+        },
+        "landsat__s1__s2__worldcover": {
+          "path": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold1/fold_statistics_no_highres_audit.json",
+          "sha256": "7c91fc79e5dba3812743d1db7744692745e4958c3f3aba6d3c84bf23e3fcc80b",
+          "sources": [
+            "landsat",
+            "s1",
+            "s2",
+            "worldcover"
+          ]
+        }
+      }
+    },
+    "2": {
+      "source_manifest": "/data/xuannv_embedding/processed/haidian/paper_registered_v5_20260726_train_pool_fold2.json",
+      "source_manifest_sha256": "569c322b2d97feabde7018123ccbae2dd1f0528f8a3091bd8300ed3b902ca6bb",
+      "manifest_audit": "/data/xuannv_embedding/processed/haidian/paper_registered_v5_20260726_fold2_audit.json",
+      "manifest_audit_sha256": "fe05f954ea21387d4af2e46bc7e6ce83e8a7b10d5231ba6837fb112c38cce458",
+      "statistics_dir": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold2",
+      "statistics_audit": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold2/fold_statistics_audit.json",
+      "status": "materialized",
+      "statistics_audit_sha256": "000a2ef49d62e9ed446be477ee0261a1cab928a097db45973fd162f8a00e1a19",
+      "statistics_audits": {
+        "highres_optical_haidian__highres_sar_haidian__landsat__s1__s2__worldcover": {
+          "path": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold2/fold_statistics_audit.json",
+          "sha256": "000a2ef49d62e9ed446be477ee0261a1cab928a097db45973fd162f8a00e1a19",
+          "sources": [
+            "highres_optical_haidian",
+            "highres_sar_haidian",
+            "landsat",
+            "s1",
+            "s2",
+            "worldcover"
+          ]
+        },
+        "highres_optical_haidian__highres_sar_haidian__landsat__s1__s2": {
+          "path": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold2/fold_statistics_no_worldcover_audit.json",
+          "sha256": "3de68a0bbc5f942ff31211b919da21a82ff80bf75b4c9d81d32a3a2b2bdd499d",
+          "sources": [
+            "highres_optical_haidian",
+            "highres_sar_haidian",
+            "landsat",
+            "s1",
+            "s2"
+          ]
+        },
+        "landsat__s1__s2__worldcover": {
+          "path": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold2/fold_statistics_no_highres_audit.json",
+          "sha256": "9741c34861d537747d1a45b7abff3f7a7b2ca724ae2f869d2b8f29f64c2664cc",
+          "sources": [
+            "landsat",
+            "s1",
+            "s2",
+            "worldcover"
+          ]
+        }
+      }
+    },
+    "3": {
+      "source_manifest": "/data/xuannv_embedding/processed/haidian/paper_registered_v5_20260726_train_pool_fold3.json",
+      "source_manifest_sha256": "5f8fd2d68654a8c049b4e4adadd77598fb62a736f3c8e4cb337a5cf8d714c843",
+      "manifest_audit": "/data/xuannv_embedding/processed/haidian/paper_registered_v5_20260726_fold3_audit.json",
+      "manifest_audit_sha256": "257666ea11f744f9b5b5160f12b5f89b5994e73030de57fed85f693dc120f373",
+      "statistics_dir": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold3",
+      "statistics_audit": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold3/fold_statistics_audit.json",
+      "status": "materialized",
+      "statistics_audit_sha256": "c791723e81b2002c744b19f2f1770291f40e135aca735199172786de24155e13",
+      "statistics_audits": {
+        "highres_optical_haidian__highres_sar_haidian__landsat__s1__s2__worldcover": {
+          "path": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold3/fold_statistics_audit.json",
+          "sha256": "c791723e81b2002c744b19f2f1770291f40e135aca735199172786de24155e13",
+          "sources": [
+            "highres_optical_haidian",
+            "highres_sar_haidian",
+            "landsat",
+            "s1",
+            "s2",
+            "worldcover"
+          ]
+        },
+        "highres_optical_haidian__highres_sar_haidian__landsat__s1__s2": {
+          "path": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold3/fold_statistics_no_worldcover_audit.json",
+          "sha256": "ed4e5f4c888f15f2757c844f68a336c373c3f927fb7305798643ed60b9cefb7b",
+          "sources": [
+            "highres_optical_haidian",
+            "highres_sar_haidian",
+            "landsat",
+            "s1",
+            "s2"
+          ]
+        },
+        "landsat__s1__s2__worldcover": {
+          "path": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold3/fold_statistics_no_highres_audit.json",
+          "sha256": "e9f159f80b906d21c8771fc70cb2e82cab05f467520ed94c80d2a434369d836b",
+          "sources": [
+            "landsat",
+            "s1",
+            "s2",
+            "worldcover"
+          ]
+        }
+      }
+    },
+    "4": {
+      "source_manifest": "/data/xuannv_embedding/processed/haidian/paper_registered_v5_20260726_train_pool_fold4.json",
+      "source_manifest_sha256": "4dfcb423e69eff01cf29298eb8a12d7abd3a5d5815a984e94e75cd3e43b196f7",
+      "manifest_audit": "/data/xuannv_embedding/processed/haidian/paper_registered_v5_20260726_fold4_audit.json",
+      "manifest_audit_sha256": "9e95c8b79c7d47659258f12381bb716b9aa3ca0f2c5279a8b4a23741194c6c5b",
+      "statistics_dir": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold4",
+      "statistics_audit": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold4/fold_statistics_audit.json",
+      "status": "materialized",
+      "statistics_audit_sha256": "d8051c84d55e37d49c74d78b0deabead3553eaea6e5fc12fff1544cdbeb90a83",
+      "statistics_audits": {
+        "highres_optical_haidian__highres_sar_haidian__landsat__s1__s2__worldcover": {
+          "path": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold4/fold_statistics_audit.json",
+          "sha256": "d8051c84d55e37d49c74d78b0deabead3553eaea6e5fc12fff1544cdbeb90a83",
+          "sources": [
+            "highres_optical_haidian",
+            "highres_sar_haidian",
+            "landsat",
+            "s1",
+            "s2",
+            "worldcover"
+          ]
+        },
+        "highres_optical_haidian__highres_sar_haidian__landsat__s1__s2": {
+          "path": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold4/fold_statistics_no_worldcover_audit.json",
+          "sha256": "1ff8013f9b6835723354bba931e7f6cbd990cae1a3e756daf64e4a63f08c3346",
+          "sources": [
+            "highres_optical_haidian",
+            "highres_sar_haidian",
+            "landsat",
+            "s1",
+            "s2"
+          ]
+        },
+        "landsat__s1__s2__worldcover": {
+          "path": "/data/xuannv_embedding/statistics/haidian/paper_registered_v5_20260726/fold4/fold_statistics_no_highres_audit.json",
+          "sha256": "894c7fef016e34270994f4ebf2b9bdb964300b4d2a355c1808fbae18275239a7",
+          "sources": [
+            "landsat",
+            "s1",
+            "s2",
+            "worldcover"
+          ]
+        }
+      }
+    }
+  }
+}
