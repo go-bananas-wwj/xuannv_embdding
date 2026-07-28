@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -16,6 +17,7 @@ import torch
 from scripts.eval.export_aef_v5_embeddings import read_complete_aef_patch
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
 
 
 def sha256_file(path: Path) -> str:
