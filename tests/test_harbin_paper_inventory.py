@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 import types
 from pathlib import Path
@@ -88,6 +89,24 @@ def test_aef_s3_uri_has_a_stable_official_https_fallback() -> None:
     assert module.s3_to_official_https(
         "s3://us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/file.tiff"
     ) == "https://data.source.coop/tge-labs/aef/v1/annual/file.tiff"
+
+
+def test_aef_https_fallback_sanitizes_cann_loader_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """系统 curl 不能继承 CANN 的动态库路径。"""
+    path = Path(__file__).parent.parent / "scripts/data/prepare_aef_2025_embeddings.py"
+    spec = importlib.util.spec_from_file_location("prepare_aef_curl_env", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/usr/local/Ascend/lib")
+    monkeypatch.setenv("LD_PRELOAD", "/usr/local/Ascend/lib/libfake.so")
+
+    env = module.clean_curl_environment()
+
+    assert "LD_LIBRARY_PATH" not in env
+    assert "LD_PRELOAD" not in env
+    assert env["PATH"] == os.environ["PATH"]
 
 
 def test_build_coverage_inventory_binds_target_ids_to_source_labels_and_reference_grid(

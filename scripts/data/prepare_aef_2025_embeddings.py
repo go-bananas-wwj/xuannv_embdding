@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -60,6 +61,14 @@ def s3_to_official_https(path: str) -> str:
     return "https://data.source.coop/" + path.removeprefix(prefix)
 
 
+def clean_curl_environment() -> dict[str, str]:
+    """Return a system-curl environment that cannot inherit CANN loader paths."""
+    environment = dict(os.environ)
+    environment.pop("LD_LIBRARY_PATH", None)
+    environment.pop("LD_PRELOAD", None)
+    return environment
+
+
 def cache_cog(cog_path: str, cache_dir: Path | None) -> str:
     if cache_dir is None or not cog_path.startswith("s3://"):
         return cog_path
@@ -93,6 +102,7 @@ def cache_cog(cog_path: str, cache_dir: Path | None) -> str:
                 https_path,
             ],
             check=False,
+            env=clean_curl_environment(),
         )
         if completed.returncode != 0:
             raise RuntimeError(f"AEF HTTPS fallback failed with exit code {completed.returncode}") from exc
