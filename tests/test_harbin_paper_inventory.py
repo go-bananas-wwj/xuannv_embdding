@@ -76,6 +76,20 @@ def test_local_aef_index_does_not_receive_remote_storage_options(monkeypatch: py
     assert calls == [{}]
 
 
+def test_aef_s3_uri_has_a_stable_official_https_fallback() -> None:
+    """S3 SDK 故障时仍只能落到同一 Source Cooperative 官方对象。"""
+    path = Path(__file__).parent.parent / "scripts/data/prepare_aef_2025_embeddings.py"
+    spec = importlib.util.spec_from_file_location("prepare_aef_https", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    assert module.s3_to_official_https(
+        "s3://us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/file.tiff"
+    ) == "https://data.source.coop/tge-labs/aef/v1/annual/file.tiff"
+
+
 def test_build_coverage_inventory_binds_target_ids_to_source_labels_and_reference_grid(
     tmp_path: Path,
 ) -> None:

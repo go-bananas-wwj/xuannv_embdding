@@ -14,6 +14,7 @@ import argparse
 import json
 import logging
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +52,14 @@ def s3_to_vsis3(path: str) -> str:
     return path
 
 
+def s3_to_official_https(path: str) -> str:
+    """Map the Source Cooperative public S3 URI to its equivalent official HTTPS URL."""
+    prefix = "s3://us-west-2.opendata.source.coop/"
+    if not path.startswith(prefix):
+        raise ValueError(f"unsupported AEF S3 URI for HTTPS fallback: {path}")
+    return "https://data.source.coop/" + path.removeprefix(prefix)
+
+
 def cache_cog(cog_path: str, cache_dir: Path | None) -> str:
     if cache_dir is None or not cog_path.startswith("s3://"):
         return cog_path
@@ -61,9 +70,32 @@ def cache_cog(cog_path: str, cache_dir: Path | None) -> str:
 
     tmp_path = local_path.with_suffix(local_path.suffix + ".part")
     LOGGER.info("Downloading AEF COG to local cache: %s -> %s", cog_path, local_path)
-    fs = s3fs.S3FileSystem(anon=True)
-    with fs.open(cog_path, "rb") as src, open(tmp_path, "wb") as dst:
-        shutil.copyfileobj(src, dst, length=64 * 1024 * 1024)
+    try:
+        fs = s3fs.S3FileSystem(anon=True)
+        with fs.open(cog_path, "rb") as src, open(tmp_path, "wb") as dst:
+            shutil.copyfileobj(src, dst, length=64 * 1024 * 1024)
+    except Exception as exc:
+        LOGGER.warning("s3fs cache failed (%s); retrying the same official object over HTTPS", exc)
+        https_path = s3_to_official_https(cog_path)
+        completed = subprocess.run(
+            [
+                "curl",
+                "--fail",
+                "--location",
+                "--retry",
+                "5",
+                "--retry-delay",
+                "5",
+                "--continue-at",
+                "-",
+                "--output",
+                str(tmp_path),
+                https_path,
+            ],
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(f"AEF HTTPS fallback failed with exit code {completed.returncode}") from exc
     tmp_path.replace(local_path)
     return str(local_path)
 
