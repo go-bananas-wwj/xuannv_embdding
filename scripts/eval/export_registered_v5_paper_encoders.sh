@@ -203,6 +203,8 @@ PY
   }
   source /usr/local/Ascend/cann-9.0.0/set_env.sh
   mkdir -p "$LOG_ROOT"
+  # The registered export root is created on first use; individual runs remain exclusive below.
+  mkdir -p "$EMBED_ROOT"
   export_name="$(date -u +%Y%m%d)_$(basename "${config%.yaml}")_best_${suffix}"
   export_root="$EMBED_ROOT/$export_name"
   mkdir "$export_root" || {

@@ -2809,7 +2809,6 @@ def test_v5_exporter_rejects_a_snapshot_changed_after_shard_launch(tmp_path: Pat
     )
     (bin_dir / "python").chmod(0o755)
     embed_root = tmp_path / "embeddings"
-    embed_root.mkdir()
     result = subprocess.run(
         [
             str(root / "scripts/eval/export_registered_v5_paper_encoders.sh"),
@@ -2868,7 +2867,6 @@ def test_v5_exporter_shard_failure_exits_six(tmp_path: Path) -> None:
     )
     (bin_dir / "python").chmod(0o755)
     embed_root = tmp_path / "embeddings"
-    embed_root.mkdir()
     result = subprocess.run(
         [
             str(root / "scripts/eval/export_registered_v5_paper_encoders.sh"),
@@ -2894,6 +2892,7 @@ def test_v5_exporter_shard_failure_exits_six(tmp_path: Path) -> None:
 
     assert result.returncode == 6
     assert "one or more v5 export shards failed" in result.stderr
+    assert embed_root.is_dir()
 
 
 def test_v5_exporter_refuses_a_shared_registered_lane_lease(tmp_path: Path) -> None:
