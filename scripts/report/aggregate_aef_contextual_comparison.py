@@ -201,13 +201,25 @@ def _verify_fixed_protocol_bindings(
     }
     for key, value in expected.items():
         if not isinstance(value, str) or any(
-            payload.get(key) != value for payload in (aef_payload, xuannv_payload)
+            _resolved_binding(payload, key) != value for payload in (aef_payload, xuannv_payload)
         ):
             raise ValueError(f"Contextual comparison has an unregistered {key}")
     # The descriptor validates shared assets; the matrix adds the immutable
     # family/fold contract and its pinned file hash.
     resolve_registered_protocol(XUANNV_PROTOCOL)
     load_registered_v5_matrix()
+
+
+def _resolved_binding(payload: Mapping[str, object], key: str) -> object:
+    """Read a binding from the result, or from the sealed V5 export when canonical there."""
+    value = payload.get(key)
+    if value is not None:
+        return value
+    if key == "statistics_registry_sha256":
+        export = payload.get("embedding_export")
+        if isinstance(export, Mapping):
+            return export.get(key)
+    return None
 
 
 def load_verified_contextual_records(
@@ -307,8 +319,8 @@ def verify_contextual_pairing(
             raise ValueError(f"Contextual candidate has invalid sealed V5 embedding registry for {cell}")
         _verify_fixed_protocol_bindings(aef_payload, xuannv_payload, task=cell[0])
         for key in PAIRING_KEYS:
-            left = aef_payload.get(key)
-            right = xuannv_payload.get(key)
+            left = _resolved_binding(aef_payload, key)
+            right = _resolved_binding(xuannv_payload, key)
             if not isinstance(left, str) or not left or left != right:
                 raise ValueError(
                     f"Contextual comparison requires identical {key} for result cell {cell}"

@@ -100,6 +100,18 @@ def _with_protocol_identity(record: dict[str, object], protocol: str) -> dict[st
     return record
 
 
+def test_contextual_pairing_resolves_xuannv_statistics_from_sealed_export() -> None:
+    """V5 probe records may inherit normalization identity from their sealed export."""
+    aef = _matrix("aef_annual_2025_contextual")
+    xuannv = _matrix("v5_osm_assisted")
+    payload = xuannv[("building", "5", 0, 42)]["metric_provenance"]
+    assert isinstance(payload, dict) and isinstance(payload["embedding_export"], dict)
+    statistics_sha = payload.pop("statistics_registry_sha256")
+    payload["embedding_export"]["statistics_registry_sha256"] = statistics_sha
+
+    contextual.verify_contextual_pairing(aef, xuannv)
+
+
 def _matrix(protocol: str) -> dict[tuple[str, str, int, int], dict[str, object]]:
     return {
         (task, shot, fold, seed): _with_protocol_identity(
