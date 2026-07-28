@@ -1,0 +1,35 @@
+experiment:
+  name: paper_p10c_haidian_frozen_to_harbin_20260728
+  output_dir: /data/xuannv_embedding/experiments/paper_p10c_haidian_frozen_to_harbin_20260728
+
+transfer:
+  encoder_checkpoint: /data/xuannv_embedding/outputs/v2_p10c_haidian_202512_202605_osm_semantic_hardneg_20260704/epoch_800.pt
+  freeze_encoder: true
+  source_config: configs/v2_p10c_haidian_202512_202605_osm_semantic_hardneg_20260704.yaml
+  target_region: harbin
+  target_manifest: /data/xuannv_embedding/processed/harbin/manifest_p10c_haidian_frozen_to_harbin_20260728.json
+  target_month: 2026-04
+  normalization: haidian_p10c_training_statistics
+  source_statistics_dir: /data/xuannv_embedding/statistics/haidian
+  target_statistics_fitting: forbidden
+  modality_contract:
+    s2: {channels: 12, availability: provided}
+    s1: {channels: 2, availability: provided}
+    landsat: {channels: 7, availability: provided}
+    highres_optical: {channels: 3, availability: provided_with_physical_source_provenance}
+    highres_sar: {channels: 1, availability: explicit_missing}
+  source_slots:
+    highres_optical:
+      checkpoint_slot: highres_optical_haidian
+      target_source: highres_optical_harbin
+      rule: schema_slot_mapping_with_source_provenance
+    highres_sar:
+      checkpoint_slot: highres_sar_haidian
+      target_source: null
+      rule: explicit_zero_availability_mask
+  forbidden:
+    - encoder_finetuning
+    - learned_adapter
+    - target_statistics_fitting
+    - silent_modality_rename
+    - missing_sensor_as_observation
