@@ -14,7 +14,7 @@ from pathlib import Path
 
 import torch
 
-from scripts.eval.export_aef_v5_embeddings import read_complete_aef_patch
+from scripts.eval.export_aef_v5_embeddings import read_complete_aef_mosaic
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
@@ -75,7 +75,13 @@ def main() -> None:
             patch_id = str(record["patch_id"])
             reference = Path(record["reference_grid"]["path"])
             source = args.cache_dir / Path(str(record["aef_2025_uri"])).name
-            embedding, _validity = read_complete_aef_patch(source, reference)
+            candidates = [
+                source,
+                *sorted(
+                    path for path in (args.cache_dir / name for name in locked) if path != source
+                ),
+            ]
+            embedding, _validity, _selector = read_complete_aef_mosaic(candidates, reference)
             if tuple(embedding.shape) != (64, 128, 128) or not bool(
                 torch.isfinite(embedding).all()
             ):
