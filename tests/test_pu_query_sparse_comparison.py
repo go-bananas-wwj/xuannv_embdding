@@ -93,6 +93,17 @@ def test_pick_supports_is_deterministic_for_polygon_candidates() -> None:
     assert MODULE.pick_supports(candidates, 3, 91) == MODULE.pick_supports(candidates, 3, 91)
 
 
+def test_foreground_similarity_can_preserve_multiple_polygon_prototypes() -> None:
+    pixels = np.array([[[0.8, 0.1], [0.2, 0.9]]], dtype=np.float32)
+    prototypes = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+
+    mean_score = MODULE.aggregate_foreground_similarity(pixels, prototypes, "mean")
+    max_score = MODULE.aggregate_foreground_similarity(pixels, prototypes, "max")
+
+    np.testing.assert_allclose(mean_score, np.array([[0.45, 0.55]], dtype=np.float32))
+    np.testing.assert_allclose(max_score, np.array([[0.8, 0.9]], dtype=np.float32))
+
+
 def test_load_feature_reads_embedding_and_manifest_relative_to_configured_data_root(
     tmp_path: Path,
     monkeypatch,

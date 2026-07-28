@@ -104,6 +104,18 @@ def l2(x: np.ndarray) -> np.ndarray:
     return x / np.maximum(np.linalg.norm(x, axis=-1, keepdims=True), 1e-8)
 
 
+def aggregate_foreground_similarity(
+    pixels: np.ndarray, prototypes: np.ndarray, mode: str = "mean"
+) -> np.ndarray:
+    """Score pixels against one or more user-provided foreground prototypes."""
+    similarities = pixels @ prototypes.T
+    if mode == "mean":
+        return similarities.mean(axis=-1)
+    if mode == "max":
+        return similarities.max(axis=-1)
+    raise ValueError(f"Unsupported prototype aggregation mode: {mode}")
+
+
 def emb_path(root: Path, patch_id: str, month: str) -> Path:
     return root / "haidian" / patch_id / f"{month}_embedding_map.pt"
 
