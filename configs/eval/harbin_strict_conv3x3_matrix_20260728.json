@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "protocol_id": "harbin_aef_locked_380_strict_conv3x3",
+  "scientific_status": "strict_paired_spatial_readout_preliminary",
+  "coverage_inventory": {
+    "path": "configs/eval/harbin_aef_annual_2025_coverage_inventory_20260728.json",
+    "sha256": "88e72782ba329bcd6dde6280ca9c133fada3df49b97cc3ea148c26f468399b7f"
+  },
+  "spatial_split": {
+    "path": "configs/eval/harbin_spatial_5fold_buffer1_20260728.json",
+    "sha256": "f64af0c6b6c66825d661a96a3413b75e63b9ec59b46f28d7dd96f99a9edc1363"
+  },
+  "common_manifest": {
+    "path": "/data/xuannv_embedding/processed/harbin/manifest_e5_harbin424_202512_202605_p10c_harbin_scratch_aef_covered.json",
+    "sha256": "6419491437fbcfa70d47dceacb216acb6e33327fab642c4370417345496fb6d5"
+  },
+  "label_root": "/data/xuannv_embedding/processed/harbin/labels",
+  "labels": {
+    "building": {"tree_sha256": "73f1b27e220bc1fcb39a422b619114ffee128ac1974712ba77701c78ce5729c9"},
+    "road": {"tree_sha256": "e73176a5d5287836a3f2b421226cb5b39cf8ffd38255037b90e224651cf9ddfb"},
+    "water": {"tree_sha256": "89df879fb232e89ea567620e984d98ff745b1e8290770dd4f7f9a257426bc414"}
+  },
+  "families": [
+    {
+      "id": "p10c_harbin_scratch",
+      "embedding_root": "/data/xuannv_embedding/embeddings/paper_p10c_harbin_20260728/p10c_harbin_scratch",
+      "month": "202604",
+      "seal_file": "paper_export_provenance.json",
+      "encoder_status": "harbin_scratch"
+    },
+    {
+      "id": "p10c_haidian_frozen_harbin",
+      "embedding_root": "/data/xuannv_embedding/embeddings/paper_p10c_harbin_20260728/p10c_haidian_frozen_harbin",
+      "month": "202604",
+      "seal_file": "paper_export_provenance.json",
+      "encoder_status": "frozen_haidian_p10c"
+    },
+    {
+      "id": "aef_annual_2025",
+      "embedding_root": "/data/xuannv_embedding/embeddings/aef_official_2025_annual_harbin_20260728",
+      "month": "annual_2025",
+      "seal_file": "meta.json",
+      "encoder_status": "official_aef_annual_2025"
+    }
+  ],
+  "tasks": ["building", "road", "water"],
+  "folds": [0, 1, 2, 3, 4],
+  "shots": [5, 10],
+  "seeds": [42, 43, 44],
+  "probe": {
+    "head": "conv3x3_64_128_64",
+    "epochs": 80,
+    "batch_size": 8,
+    "optimizer": "AdamW",
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "normalization": "support_only_channel_standardizer"
+  },
+  "threshold_rule": {
+    "selection_split": "spatial_validation_only",
+    "objective": "pooled_pixel_f1",
+    "grid_start": 0.001,
+    "grid_stop_exclusive": 1.0,
+    "grid_step": 0.001
+  }
+}
