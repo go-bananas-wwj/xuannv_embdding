@@ -172,6 +172,75 @@ def test_train_pu_query_records_the_requested_prototype_mode(
     assert model["prototype_mode"] == "max"
 
 
+def test_single_prototype_disabled_query_matches_legacy_base_score() -> None:
+    feature = np.array(
+        [
+            [[1.0, 0.0], [0.0, 1.0]],
+            [[0.0, 1.0], [1.0, 0.0]],
+        ],
+        dtype=np.float32,
+    )
+    model = {
+        "mean": np.zeros(2, dtype=np.float32),
+        "std": np.ones(2, dtype=np.float32),
+        "foreground": np.array([1.0, 0.0], dtype=np.float32),
+        "foreground_prototypes": np.array([[1.0, 0.0]], dtype=np.float32),
+        "background": np.array([0.0, 1.0], dtype=np.float32),
+        "threshold": 0.0,
+    }
+
+    score, adapted = MODULE.score_pu_query(
+        feature, model, prototype_mode="single", query_mode="disabled"
+    )
+    pixels = MODULE.normalize_map(feature, model["mean"], model["std"])
+    expected = MODULE.gaussian_filter(
+        pixels @ model["foreground"] - MODULE.BACKGROUND_WEIGHT * (pixels @ model["background"]),
+        sigma=0.55,
+    )
+
+    assert not adapted
+    np.testing.assert_allclose(score, expected.astype(np.float32))
+
+
+def test_validation_mode_uses_validation_scores_before_independent_test_scores(
+    tmp_path: Path, monkeypatch
+) -> None:
+    args = comparison_args(tmp_path)
+    args.prototype_mode = "max"
+    args.query_mode = "disabled"
+    args.threshold_mode = "validation_f1"
+    spec = MODULE.FeatureSpec("xuannv", "embedding_map", tmp_path, "202604", 64)
+    supports = [MODULE.PolygonSupport("support", np.array([[True]], dtype=bool))]
+    calls: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(MODULE, "feature_specs", lambda _args: {"xuannv": spec})
+    monkeypatch.setattr(
+        MODULE,
+        "split_for",
+        lambda _root, _fold: {"train": ["support"], "val": ["val"], "test": ["test"]},
+    )
+    monkeypatch.setattr(MODULE, "collect_components", lambda _root, _train: supports * 3)
+    monkeypatch.setattr(
+        MODULE,
+        "train_pu_query",
+        lambda *_args, **_kwargs: {"threshold": 0.0},
+    )
+
+    def fake_scores(_spec, patch_ids, _label_root, _model, _prototype_mode, _query_mode):
+        calls.append(tuple(patch_ids))
+        if patch_ids == ["val"]:
+            return np.array([[0.1, 0.9]], dtype=np.float32), np.array([[False, True]]), 0
+        return np.array([[0.2, 0.8]], dtype=np.float32), np.array([[False, True]]), 0
+
+    monkeypatch.setattr(MODULE, "score_patch_ids", fake_scores)
+
+    payload = MODULE.run_comparison(args)
+
+    assert calls == [("test",), ("val",)]
+    assert payload["rows"][0]["calibration"]["val_patch_ids"] == ["val"]
+    assert payload["rows"][0]["calibration"]["final_threshold"] > 0.1
+
+
 def test_load_feature_reads_embedding_and_manifest_relative_to_configured_data_root(
     tmp_path: Path,
     monkeypatch,
