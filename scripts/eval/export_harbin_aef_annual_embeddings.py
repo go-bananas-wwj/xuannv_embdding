@@ -75,7 +75,7 @@ def main() -> None:
             patch_id = str(record["patch_id"])
             reference = Path(record["reference_grid"]["path"])
             source = args.cache_dir / Path(str(record["aef_2025_uri"])).name
-            embedding = read_complete_aef_patch(source, reference)
+            embedding, _validity = read_complete_aef_patch(source, reference)
             if tuple(embedding.shape) != (64, 128, 128) or not bool(
                 torch.isfinite(embedding).all()
             ):
