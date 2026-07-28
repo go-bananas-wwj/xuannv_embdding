@@ -11,6 +11,7 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import torch
 
@@ -26,6 +27,74 @@ def sha256_file(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def build_output_index(root: Path, patch_ids: list[str]) -> dict[str, Any]:
+    """Read and hash exactly the sealed annual maps; reject partial outputs."""
+    expected = set(patch_ids)
+    observed = {
+        path.parent.name
+        for path in (root / "harbin").glob("*/annual_2025_embedding_map.pt")
+    }
+    if observed != expected:
+        missing = sorted(expected - observed)
+        unexpected = sorted(observed - expected)
+        raise ValueError(
+            "AEF annual map set differs from coverage inventory: "
+            f"missing={missing[:3]} unexpected={unexpected[:3]}"
+        )
+    files: list[dict[str, Any]] = []
+    for patch_id in sorted(patch_ids):
+        path = root / "harbin" / patch_id / "annual_2025_embedding_map.pt"
+        embedding = torch.load(path, map_location="cpu", weights_only=True)
+        if tuple(embedding.shape) != (64, 128, 128) or not bool(torch.isfinite(embedding).all()):
+            raise ValueError(f"invalid complete AEF embedding for {patch_id}")
+        files.append(
+            {
+                "patch_id": patch_id,
+                "path": str(path.relative_to(root)),
+                "sha256": sha256_file(path),
+                "shape": [64, 128, 128],
+            }
+        )
+    return {
+        "schema_version": 1,
+        "region": "harbin",
+        "month": "annual_2025",
+        "patch_count": len(files),
+        "files": files,
+    }
+
+
+def seal_export(
+    root: Path, coverage_inventory: Path, cog_lock: Path, patch_ids: list[str]
+) -> dict[str, Any]:
+    """Write a content-addressed index and metadata only after full verification."""
+    index = build_output_index(root, patch_ids)
+    index_path = root / "embedding_file_index.json"
+    temporary_index = index_path.with_suffix(".json.tmp")
+    temporary_index.write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
+    os.replace(temporary_index, index_path)
+    meta = {
+        "protocol_id": "harbin_aef_annual_2025_locked",
+        "region": "harbin",
+        "output_identifier": "annual_2025",
+        "coverage_inventory": {
+            "path": str(coverage_inventory.resolve()),
+            "sha256": sha256_file(coverage_inventory),
+        },
+        "cog_lock": {"path": str(cog_lock.resolve()), "sha256": sha256_file(cog_lock)},
+        "embedding_file_index": {
+            "path": index_path.name,
+            "sha256": sha256_file(index_path),
+        },
+        "patch_count": len(patch_ids),
+    }
+    meta_path = root / "meta.json"
+    temporary_meta = meta_path.with_suffix(".json.tmp")
+    temporary_meta.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    os.replace(temporary_meta, meta_path)
+    return meta
 
 
 def parse_args() -> argparse.Namespace:
@@ -50,6 +119,11 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("/data/xuannv_embedding/embeddings/aef_official_2025_annual_harbin_20260728"),
     )
+    parser.add_argument(
+        "--seal-existing",
+        action="store_true",
+        help="Verify and index an already completed export without rewriting any map.",
+    )
     return parser.parse_args()
 
 
@@ -67,6 +141,14 @@ def main() -> None:
         path = args.cache_dir / filename
         if not path.is_file() or sha256_file(path) != checksum:
             raise ValueError(f"cached COG does not match the Harbin source lock: {filename}")
+    patch_ids = [str(record["patch_id"]) for record in records]
+    if len(patch_ids) != len(set(patch_ids)):
+        raise ValueError("Harbin AEF coverage inventory has duplicate patch IDs")
+    if args.seal_existing:
+        if not args.output_root.is_dir():
+            raise FileNotFoundError(f"Missing completed export: {args.output_root}")
+        seal_export(args.output_root, args.coverage_inventory, args.cog_lock, patch_ids)
+        return
     staging = Path(
         tempfile.mkdtemp(prefix=f".{args.output_root.name}.staging.", dir=args.output_root.parent)
     )
@@ -90,21 +172,7 @@ def main() -> None:
             output.mkdir(parents=True, exist_ok=True)
             torch.save(embedding, output / "annual_2025_embedding_map.pt")
             print(f"[{index}/380] {patch_id}", flush=True)
-        (staging / "meta.json").write_text(
-            json.dumps(
-                {
-                    "protocol_id": "harbin_aef_annual_2025_locked",
-                    "region": "harbin",
-                    "output_identifier": "annual_2025",
-                    "coverage_inventory_sha256": sha256_file(args.coverage_inventory),
-                    "cog_lock_sha256": sha256_file(args.cog_lock),
-                    "patch_count": 380,
-                },
-                indent=2,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
+        seal_export(staging, args.coverage_inventory, args.cog_lock, patch_ids)
         if args.output_root.exists():
             raise FileExistsError(f"refusing to overwrite existing export: {args.output_root}")
         os.replace(staging, args.output_root)
