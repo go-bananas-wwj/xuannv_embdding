@@ -385,9 +385,6 @@ def run_comparison(args: argparse.Namespace) -> dict[str, object]:
         supports = pick_supports(components, polygon_count, args.seed + sum(map(ord, task)))
         for spec in specs.values():
             model = train_pu_query(spec, supports, args.seed, prototype_mode=args.prototype_mode)
-            test_scores, test_labels, adapted = score_patch_ids(
-                spec, split["test"], label_root, model, args.prototype_mode, args.query_mode
-            )
             threshold = float(model["threshold"])
             calibration: dict[str, object] = {
                 "mode": "support",
@@ -407,6 +404,9 @@ def run_comparison(args: argparse.Namespace) -> dict[str, object]:
                     "val_query_adapted_patches": val_adapted,
                     "val_metrics_at_final_threshold": metrics(val_scores, val_labels, threshold),
                 }
+            test_scores, test_labels, adapted = score_patch_ids(
+                spec, split["test"], label_root, model, args.prototype_mode, args.query_mode
+            )
             result = metrics(test_scores, test_labels, threshold)
             row = {
                 "task": task,

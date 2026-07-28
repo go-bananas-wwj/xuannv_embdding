@@ -236,9 +236,43 @@ def test_validation_mode_uses_validation_scores_before_independent_test_scores(
 
     payload = MODULE.run_comparison(args)
 
-    assert calls == [("test",), ("val",)]
+    assert calls == [("val",), ("test",)]
     assert payload["rows"][0]["calibration"]["val_patch_ids"] == ["val"]
     assert payload["rows"][0]["calibration"]["final_threshold"] > 0.1
+
+
+def test_single_adaptive_query_matches_the_legacy_formula() -> None:
+    width = 128
+    ramp = np.linspace(0.1, 1.0, width, dtype=np.float32)
+    feature = np.stack(
+        [np.tile(ramp, (width, 1)), np.tile(ramp[::-1], (width, 1))]
+    )
+    model = {
+        "mean": np.zeros(2, dtype=np.float32),
+        "std": np.ones(2, dtype=np.float32),
+        "foreground": np.array([1.0, 0.0], dtype=np.float32),
+        "foreground_prototypes": np.array([[1.0, 0.0]], dtype=np.float32),
+        "background": np.array([0.0, 1.0], dtype=np.float32),
+        "threshold": -1.0,
+    }
+
+    observed, adapted = MODULE.score_pu_query(feature, model)
+    pixels = MODULE.normalize_map(feature, model["mean"], model["std"])
+    base = MODULE.gaussian_filter(
+        pixels @ model["foreground"] - MODULE.BACKGROUND_WEIGHT * (pixels @ model["background"]),
+        sigma=0.55,
+    )
+    confidence = max(float(np.quantile(base, MODULE.QUERY_QUANTILE)), model["threshold"] + MODULE.QUERY_MIN_MARGIN)
+    selected = base >= confidence
+    assert MODULE.QUERY_MIN_PIXELS <= int(selected.sum()) <= MODULE.QUERY_MAX_PIXELS
+    query = MODULE.l2(pixels[selected].mean(0, keepdims=True))[0]
+    query_score = MODULE.gaussian_filter(
+        pixels @ query - MODULE.BACKGROUND_WEIGHT * (pixels @ model["background"]), sigma=0.55
+    )
+    expected = (1.0 - MODULE.QUERY_BLEND) * base + MODULE.QUERY_BLEND * query_score
+
+    assert adapted
+    np.testing.assert_allclose(observed, expected.astype(np.float32))
 
 
 def test_load_feature_reads_embedding_and_manifest_relative_to_configured_data_root(
