@@ -1,7 +1,7 @@
 # 哈尔滨论文评测清单审计
 
 日期：2026-07-28  
-状态：空间清单和 AEF 来源清单已冻结；AEF COG 像素导出等待官方下载通道恢复。
+状态：空间清单、AEF 来源清单及两份官方 52N COG 均已冻结并校验。
 
 ## 空间清单
 
@@ -37,11 +37,22 @@
 | 158 | `xeuzxi87y7s7v28mg-0000008192-0000008192.tiff` |
 | 222 | `xodbkdwud1cbasbyr-0000000000-0000008192.tiff` |
 
-## 当前阻塞与允许的下一步
+## COG 下载与可读性验证
 
-本地原有 AEF 缓存仅有海淀所在 50N COG。2026-07-28 尝试缓存哈尔滨 52N COG 时，
-`s3fs/aiobotocore` 出现版本不兼容；公开 HTTPS 在本容器代理层 SSL 握手失败。因此当前
-**没有**哈尔滨 AEF embedding，也没有任何哈尔滨 AEF 指标。
+两份 COG 已通过官方 Source Cooperative HTTPS 下载并记录在
+`configs/eval/harbin_aef_annual_2025_cog_lock_20260728.json`。下载期间遇到可恢复的 HTTP/2
+stream 与连接提前关闭错误；恢复时使用同一官方 HTTPS URI、清洁动态库环境、HTTP/1.1 与
+断点续传。没有使用非官方镜像，也没有使用任何 `.part` 文件。
 
-允许的下一步是恢复官方 COG 的可重复下载通道，下载两张 URI 后逐 patch 验证 64×128×128
-及全像素 valid mask。不得以零填充 nodata、旧年份 COG 或非官方镜像替代。
+| COG | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `xeuzxi87y7s7v28mg-0000008192-0000008192.tiff` | 2,671,334,309 | `5e35b40cc36616a937e33311f2d83597fc27504e7c5db2006088ae576483ccf6` |
+| `xodbkdwud1cbasbyr-0000000000-0000008192.tiff` | 2,489,175,968 | `bebaa7370c45a0f821f42687e4e221c048814ee26b6e9c46dc54251f39c4daf5` |
+
+2026-07-28 验证：两个文件均可由 rasterio 以 GeoTIFF 打开，具有 EPSG:32652、64 个 int8
+band、8192×8192 栅格、nodata=-128；对四个角的 window 分别读取 band 1/32/64 均成功。
+环境中未提供 `gdalinfo`，故 GDAL Python/rasterio 驱动验证作为该节点的 GDAL 可读性证据。
+
+允许的下一步是按上述 380 patch 覆盖清单导出 annual 2025 AEF map，并与 scratch P10C 和
+冻结海淀 P10C 的 2026-04 embedding 使用同一空间划分、shot 清单、Conv3x3 读取头和
+validation-only 阈值选择规则。

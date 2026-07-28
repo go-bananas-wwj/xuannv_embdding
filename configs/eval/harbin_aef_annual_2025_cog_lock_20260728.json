@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "release": "aef/v1/annual",
+  "year": 2025,
+  "index_uri": "https://data.source.coop/tge-labs/aef/v1/annual/aef_index.parquet",
+  "index_sha256": "bd4f87740cdac98325c96650600fa774530abcb34de34b4aa00d7aa1b2413b21",
+  "assets": [
+    {
+      "filename": "xeuzxi87y7s7v28mg-0000008192-0000008192.tiff",
+      "source_uri": "https://data.source.coop/tge-labs/aef/v1/annual/2025/52N/xeuzxi87y7s7v28mg-0000008192-0000008192.tiff",
+      "bytes": 2671334309,
+      "sha256": "5e35b40cc36616a937e33311f2d83597fc27504e7c5db2006088ae576483ccf6"
+    },
+    {
+      "filename": "xodbkdwud1cbasbyr-0000000000-0000008192.tiff",
+      "source_uri": "https://data.source.coop/tge-labs/aef/v1/annual/2025/52N/xodbkdwud1cbasbyr-0000000000-0000008192.tiff",
+      "bytes": 2489175968,
+      "sha256": "bebaa7370c45a0f821f42687e4e221c048814ee26b6e9c46dc54251f39c4daf5"
+    }
+  ]
+}
