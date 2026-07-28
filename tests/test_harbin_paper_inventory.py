@@ -74,3 +74,52 @@ def test_local_aef_index_does_not_receive_remote_storage_options(monkeypatch: py
 
     assert len(index) == 1
     assert calls == [{}]
+
+
+def test_build_coverage_inventory_binds_target_ids_to_source_labels_and_reference_grid(
+    tmp_path: Path,
+) -> None:
+    """论文清单必须同时保存 embedding ID、标签 ID 和 label-free AEF 来源。"""
+    module = _load_module()
+    raster = tmp_path / "s2_20260401_patch_000001.tif"
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    with rasterio.open(
+        raster,
+        "w",
+        driver="GTiff",
+        width=128,
+        height=128,
+        count=1,
+        dtype="float32",
+        crs="EPSG:32652",
+        transform=from_origin(500000, 5100000, 10, 10),
+    ) as dst:
+        dst.write(np.zeros((1, 128, 128), dtype=np.float32))
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            [
+                {
+                    "patch_id": "harbin_patch_000001",
+                    "source_patch_id": "patch_000001",
+                    "s2": [raster.name],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    inventory = module.build_aef_coverage_inventory(
+        manifest,
+        ["harbin_patch_000001"],
+        resolver=lambda _: "s3://official/2025/52N/aef.tiff",
+    )
+
+    assert inventory["region"] == "harbin"
+    assert inventory["records"][0]["patch_id"] == "harbin_patch_000001"
+    assert inventory["records"][0]["source_patch_id"] == "patch_000001"
+    assert inventory["records"][0]["aef_2025_uri"] == "s3://official/2025/52N/aef.tiff"
+    assert inventory["records"][0]["reference_grid"]["shape"] == [128, 128]
