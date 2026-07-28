@@ -63,6 +63,10 @@ MANIFEST_CACHE: dict[tuple[Path, Path], dict[str, object]] = {}
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    legacy_output_root = Path(
+        "/data/xuannv_embedding/experiments/production/"
+        "haidian_pu_query_3polygon_compare_20260726"
+    )
     parser.add_argument(
         "--embedding-root",
         type=Path,
@@ -89,15 +93,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fold", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--tasks", nargs="+", choices=sorted(TASKS), default=sorted(TASKS))
+    parser.add_argument("--prototype-mode", choices=("single", "max"), default="single")
+    parser.add_argument("--query-mode", choices=("adaptive", "disabled"), default="adaptive")
+    parser.add_argument("--threshold-mode", choices=("support", "validation_f1"), default="support")
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=Path(
-            "/data/xuannv_embedding/experiments/production/"
-            "haidian_pu_query_3polygon_compare_20260726"
-        ),
+        default=legacy_output_root,
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    is_legacy = (
+        args.prototype_mode == "single"
+        and args.query_mode == "adaptive"
+        and args.threshold_mode == "support"
+    )
+    if not is_legacy and args.output_root == legacy_output_root:
+        parser.error("Nonlegacy protocol requires an explicit --output-root to preserve legacy results.")
+    if args.threshold_mode == "validation_f1" and args.query_mode != "disabled":
+        parser.error(
+            "validation_f1 requires --query-mode disabled: adaptive Query is gated by the support threshold."
+        )
+    return args
 
 
 def l2(x: np.ndarray) -> np.ndarray:
@@ -209,7 +225,31 @@ def fbeta(positive_scores: np.ndarray, negative_scores: np.ndarray, threshold: f
     return (1 + b2) * tp / max((1 + b2) * tp + b2 * fn + fp, 1e-8)
 
 
-def train_pu_query(spec: FeatureSpec, supports: list[PolygonSupport], seed: int) -> dict[str, np.ndarray | float | int]:
+def select_f1_threshold(scores: np.ndarray, labels: np.ndarray) -> float:
+    """Choose a threshold from a labelled calibration split, never from test data."""
+    flat_scores = np.asarray(scores, dtype=np.float32).reshape(-1)
+    flat_labels = np.asarray(labels, dtype=bool).reshape(-1)
+    candidates = np.unique(np.quantile(flat_scores, np.linspace(0.001, 0.999, 500)))
+    best_threshold, best_f1 = float(candidates[0]), -1.0
+    for threshold in candidates:
+        prediction = flat_scores >= threshold
+        tp = float((prediction & flat_labels).sum())
+        fp = float((prediction & ~flat_labels).sum())
+        fn = float((~prediction & flat_labels).sum())
+        precision = tp / max(tp + fp, 1.0)
+        recall = tp / max(tp + fn, 1.0)
+        f1 = 2.0 * precision * recall / max(precision + recall, 1e-8)
+        if f1 > best_f1:
+            best_threshold, best_f1 = float(threshold), f1
+    return best_threshold
+
+
+def train_pu_query(
+    spec: FeatureSpec,
+    supports: list[PolygonSupport],
+    seed: int,
+    prototype_mode: str = "single",
+) -> dict[str, np.ndarray | float | int]:
     unique_ids = sorted({item.patch_id for item in supports})
     raw = {patch_id: load_feature(spec, patch_id) for patch_id in unique_ids}
     all_pixels = np.concatenate([raw[patch_id].reshape(raw[patch_id].shape[0], -1).T for patch_id in unique_ids])
@@ -217,6 +257,15 @@ def train_pu_query(spec: FeatureSpec, supports: list[PolygonSupport], seed: int)
     features = {patch_id: normalize_map(value, mean, std) for patch_id, value in raw.items()}
     polygon_vectors = [l2(features[item.patch_id][item.mask].mean(0, keepdims=True))[0] for item in supports]
     foreground = l2(np.mean(polygon_vectors, axis=0, keepdims=True))[0]
+    prototypes = np.stack(polygon_vectors).astype(np.float32)
+
+    def foreground_score(pixels: np.ndarray) -> np.ndarray:
+        if prototype_mode == "single":
+            return pixels @ foreground
+        if prototype_mode == "max":
+            return aggregate_foreground_similarity(pixels, prototypes, "max")
+        raise ValueError(f"Unsupported prototype mode: {prototype_mode}")
+
     union_masks: dict[str, np.ndarray] = {key: np.zeros(features[key].shape[:2], dtype=bool) for key in unique_ids}
     for item in supports:
         union_masks[item.patch_id] |= item.mask
@@ -226,7 +275,7 @@ def train_pu_query(spec: FeatureSpec, supports: list[PolygonSupport], seed: int)
         feature = features[patch_id]
         reliable = ~dilate(union_masks[patch_id], BACKGROUND_EXCLUSION_PIXELS)
         candidates = feature[reliable]
-        similarities = candidates @ foreground
+        similarities = foreground_score(candidates)
         cutoff = np.quantile(similarities, BACKGROUND_QUANTILE)
         candidates = candidates[similarities <= cutoff]
         if candidates.size:
@@ -234,18 +283,52 @@ def train_pu_query(spec: FeatureSpec, supports: list[PolygonSupport], seed: int)
                 candidates = candidates[rng.choice(len(candidates), MAX_BACKGROUND_PER_SUPPORT, replace=False)]
             backgrounds.append(candidates)
     background = l2(np.concatenate(backgrounds).mean(0, keepdims=True))[0]
-    positive_scores = np.concatenate([features[item.patch_id][item.mask] @ foreground - BACKGROUND_WEIGHT * (features[item.patch_id][item.mask] @ background) for item in supports])
-    negative_scores = np.concatenate([values @ foreground - BACKGROUND_WEIGHT * (values @ background) for values in backgrounds])
+    positive_scores = np.concatenate(
+        [
+            foreground_score(features[item.patch_id][item.mask])
+            - BACKGROUND_WEIGHT * (features[item.patch_id][item.mask] @ background)
+            for item in supports
+        ]
+    )
+    negative_scores = np.concatenate(
+        [foreground_score(values) - BACKGROUND_WEIGHT * (values @ background) for values in backgrounds]
+    )
     lo, hi = min(positive_scores.min(), negative_scores.min()), max(positive_scores.max(), negative_scores.max())
     thresholds = np.linspace(lo, hi, 180, dtype=np.float32)
     threshold = float(max(thresholds, key=lambda value: fbeta(positive_scores, negative_scores, float(value))))
-    return {"mean": mean.astype(np.float32), "std": std.astype(np.float32), "foreground": foreground.astype(np.float32), "background": background.astype(np.float32), "threshold": threshold, "polygon_count": len(supports)}
+    return {
+        "mean": mean.astype(np.float32),
+        "std": std.astype(np.float32),
+        "foreground": foreground.astype(np.float32),
+        "foreground_prototypes": prototypes,
+        "background": background.astype(np.float32),
+        "threshold": threshold,
+        "polygon_count": len(supports),
+        "prototype_mode": prototype_mode,
+    }
 
 
-def score_pu_query(feature: np.ndarray, model: dict[str, np.ndarray | float | int]) -> tuple[np.ndarray, bool]:
+def score_pu_query(
+    feature: np.ndarray,
+    model: dict[str, np.ndarray | float | int],
+    prototype_mode: str = "single",
+    query_mode: str = "adaptive",
+) -> tuple[np.ndarray, bool]:
     pixels = normalize_map(feature, model["mean"], model["std"])
     foreground, background, threshold = model["foreground"], model["background"], float(model["threshold"])
-    base = gaussian_filter(pixels @ foreground - BACKGROUND_WEIGHT * (pixels @ background), sigma=0.55)
+    if prototype_mode == "single":
+        foreground_score = pixels @ foreground
+    elif prototype_mode == "max":
+        foreground_score = aggregate_foreground_similarity(
+            pixels, model["foreground_prototypes"], "max"
+        )
+    else:
+        raise ValueError(f"Unsupported prototype mode: {prototype_mode}")
+    base = gaussian_filter(foreground_score - BACKGROUND_WEIGHT * (pixels @ background), sigma=0.55)
+    if query_mode == "disabled":
+        return base.astype(np.float32), False
+    if query_mode != "adaptive":
+        raise ValueError(f"Unsupported query mode: {query_mode}")
     confidence = max(float(np.quantile(base, QUERY_QUANTILE)), threshold + QUERY_MIN_MARGIN)
     selected = base >= confidence
     selected_count = int(selected.sum())
@@ -258,6 +341,25 @@ def score_pu_query(feature: np.ndarray, model: dict[str, np.ndarray | float | in
     if refined_area > max(QUERY_MIN_AREA_CAP, math.ceil(base_area * QUERY_MAX_GROWTH)):
         return base.astype(np.float32), False
     return refined.astype(np.float32), True
+
+
+def score_patch_ids(
+    spec: FeatureSpec,
+    patch_ids: list[str],
+    label_root: Path,
+    model: dict[str, np.ndarray | float | int],
+    prototype_mode: str,
+    query_mode: str,
+) -> tuple[np.ndarray, np.ndarray, int]:
+    scores, labels, adapted = [], [], 0
+    for patch_id in patch_ids:
+        score, did_adapt = score_pu_query(
+            load_feature(spec, patch_id), model, prototype_mode=prototype_mode, query_mode=query_mode
+        )
+        scores.append(score)
+        labels.append(load_mask(label_root, patch_id))
+        adapted += int(did_adapt)
+    return np.concatenate(scores), np.concatenate(labels), adapted
 
 
 def metrics(scores: np.ndarray, labels: np.ndarray, threshold: float) -> dict[str, float]:
@@ -282,16 +384,69 @@ def run_comparison(args: argparse.Namespace) -> dict[str, object]:
             raise RuntimeError(f"{task}: only {len(components)} usable train polygons")
         supports = pick_supports(components, polygon_count, args.seed + sum(map(ord, task)))
         for spec in specs.values():
-            model = train_pu_query(spec, supports, args.seed)
-            test_scores, test_labels, adapted = [], [], 0
-            for patch_id in split["test"]:
-                score, did_adapt = score_pu_query(load_feature(spec, patch_id), model)
-                test_scores.append(score); test_labels.append(load_mask(label_root, patch_id)); adapted += int(did_adapt)
-            result = metrics(np.concatenate(test_scores), np.concatenate(test_labels), float(model["threshold"]))
-            row = {"task": task, "task_zh": name, "feature": spec.name, "polygon_count": polygon_count, "support_patch_ids": [item.patch_id for item in supports], "test_patch_ids": list(split["test"]), "unique_support_patches": len({item.patch_id for item in supports}), "threshold": model["threshold"], "query_adapted_test_patches": adapted, "test_patch_count": len(split["test"]), "metrics": result}
+            model = train_pu_query(spec, supports, args.seed, prototype_mode=args.prototype_mode)
+            test_scores, test_labels, adapted = score_patch_ids(
+                spec, split["test"], label_root, model, args.prototype_mode, args.query_mode
+            )
+            threshold = float(model["threshold"])
+            calibration: dict[str, object] = {
+                "mode": "support",
+                "support_threshold": threshold,
+                "final_threshold": threshold,
+            }
+            if args.threshold_mode == "validation_f1":
+                val_scores, val_labels, val_adapted = score_patch_ids(
+                    spec, split["val"], label_root, model, args.prototype_mode, args.query_mode
+                )
+                threshold = select_f1_threshold(val_scores, val_labels)
+                calibration = {
+                    "mode": "validation_f1",
+                    "support_threshold": float(model["threshold"]),
+                    "final_threshold": threshold,
+                    "val_patch_ids": list(split["val"]),
+                    "val_query_adapted_patches": val_adapted,
+                    "val_metrics_at_final_threshold": metrics(val_scores, val_labels, threshold),
+                }
+            result = metrics(test_scores, test_labels, threshold)
+            row = {
+                "task": task,
+                "task_zh": name,
+                "feature": spec.name,
+                "feature_kind": spec.kind,
+                "feature_root": str(spec.root),
+                "feature_month": spec.month,
+                "polygon_count": polygon_count,
+                "support_patch_ids": [item.patch_id for item in supports],
+                "test_patch_ids": list(split["test"]),
+                "unique_support_patches": len({item.patch_id for item in supports}),
+                "threshold": threshold,
+                "calibration": calibration,
+                "query_adapted_test_patches": adapted,
+                "test_patch_count": len(split["test"]),
+                "metrics": result,
+            }
             rows.append(row)
             print(f"[{task}] feature={spec.name} polygons={polygon_count} test_f1={result['f1']:.4f} auc={result['auc']:.4f}", flush=True)
-    payload = {"protocol": {"polygon_count": 3, "fold": args.fold, "shared_supports": True, "test_patch_count": len(split["test"])}, "rows": rows}
+    payload = {
+        "protocol": {
+            "polygon_count": 3,
+            "fold": args.fold,
+            "seed": args.seed,
+            "shared_supports": True,
+            "test_patch_count": len(split["test"]),
+            "prototype_mode": args.prototype_mode,
+            "query_mode": args.query_mode,
+            "threshold_mode": args.threshold_mode,
+            "pu_query_hyperparameters": {
+                "background_weight": BACKGROUND_WEIGHT,
+                "background_quantile": BACKGROUND_QUANTILE,
+                "background_exclusion_pixels": BACKGROUND_EXCLUSION_PIXELS,
+                "query_blend": QUERY_BLEND,
+                "query_quantile": QUERY_QUANTILE,
+            },
+        },
+        "rows": rows,
+    }
     (args.output_root / "results.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return payload
 

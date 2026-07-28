@@ -27,6 +27,9 @@ def comparison_args(tmp_path: Path) -> SimpleNamespace:
         tasks=["building"],
         fold=0,
         seed=17,
+        prototype_mode="single",
+        query_mode="adaptive",
+        threshold_mode="support",
         output_root=tmp_path / "output",
     )
 
@@ -45,6 +48,43 @@ def test_default_paths_target_p10c_epoch800_and_new_comparison_output(monkeypatc
         "/data/xuannv_embedding/experiments/production/"
         "haidian_pu_query_3polygon_compare_20260726"
     )
+    assert args.prototype_mode == "single"
+    assert args.query_mode == "adaptive"
+    assert args.threshold_mode == "support"
+
+
+def test_nonlegacy_protocol_requires_an_explicit_output_directory(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), "--prototype-mode", "max"])
+
+    try:
+        MODULE.parse_args()
+    except SystemExit as error:
+        assert error.code == 2
+    else:
+        raise AssertionError("nonlegacy protocol must not overwrite the legacy result directory")
+
+
+def test_validation_calibration_rejects_test_time_query_adaptation(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(SCRIPT),
+            "--threshold-mode",
+            "validation_f1",
+            "--output-root",
+            str(tmp_path / "result"),
+        ],
+    )
+
+    try:
+        MODULE.parse_args()
+    except SystemExit as error:
+        assert error.code == 2
+    else:
+        raise AssertionError("validation calibration must not silently use support-gated Query")
 
 
 def write_embedding(root: Path, patch_id: str, month: str, channels: int) -> np.ndarray:
@@ -102,6 +142,34 @@ def test_foreground_similarity_can_preserve_multiple_polygon_prototypes() -> Non
 
     np.testing.assert_allclose(mean_score, np.array([[0.45, 0.55]], dtype=np.float32))
     np.testing.assert_allclose(max_score, np.array([[0.8, 0.9]], dtype=np.float32))
+
+
+def test_select_threshold_uses_only_provided_calibration_scores() -> None:
+    scores = np.array([0.1, 0.2, 0.7, 0.8], dtype=np.float32)
+    labels = np.array([False, False, True, True])
+
+    threshold = MODULE.select_f1_threshold(scores, labels)
+
+    assert 0.2 < threshold < 0.7
+
+
+def test_train_pu_query_records_the_requested_prototype_mode(
+    tmp_path: Path, monkeypatch
+) -> None:
+    feature = np.zeros((64, 16, 16), dtype=np.float32)
+    feature[0] = 1.0
+    feature[1, :2] = 1.0
+    supports = [
+        MODULE.PolygonSupport("support-a", np.pad(np.eye(2, dtype=bool), ((1, 13), (1, 13)))),
+        MODULE.PolygonSupport("support-b", np.pad(np.eye(2, dtype=bool), ((13, 1), (13, 1)))),
+    ]
+    spec = MODULE.FeatureSpec("xuannv", "embedding_map", tmp_path, "202604", 64)
+
+    monkeypatch.setattr(MODULE, "load_feature", lambda _spec, _patch_id: feature.copy())
+
+    model = MODULE.train_pu_query(spec, supports, seed=3, prototype_mode="max")
+
+    assert model["prototype_mode"] == "max"
 
 
 def test_load_feature_reads_embedding_and_manifest_relative_to_configured_data_root(
@@ -189,6 +257,17 @@ def test_comparison_reuses_each_task_supports_and_test_ids_for_all_features(
         "fold": 0,
         "shared_supports": True,
         "test_patch_count": 2,
+        "prototype_mode": "single",
+        "query_mode": "adaptive",
+        "threshold_mode": "support",
+        "seed": 17,
+        "pu_query_hyperparameters": {
+            "background_weight": MODULE.BACKGROUND_WEIGHT,
+            "background_quantile": MODULE.BACKGROUND_QUANTILE,
+            "background_exclusion_pixels": MODULE.BACKGROUND_EXCLUSION_PIXELS,
+            "query_blend": MODULE.QUERY_BLEND,
+            "query_quantile": MODULE.QUERY_QUANTILE,
+        },
     }
     assert {row["feature"] for row in payload["rows"]} == {"xuannv", "aef", "traditional"}
     xuannv_support_ids = next(
