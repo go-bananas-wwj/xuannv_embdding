@@ -75,7 +75,9 @@ def _with_protocol_identity(record: dict[str, object], protocol: str) -> dict[st
         payload.update(
             {
                 "family": "full_150",
-                "embedding_export": {"month": "202604", "protocol_id": "v5_osm_assisted"},
+                # The immutable embedding registry, rather than duplicated export metadata,
+                # is the canonical owner of the monthly slot.
+                "embedding_export": {"protocol_id": "v5_osm_assisted"},
                 "provenance": {
                     "family": "full_150",
                     "config_sha256": "config",

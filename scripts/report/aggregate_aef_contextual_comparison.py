@@ -283,7 +283,6 @@ def verify_contextual_pairing(
         provenance = xuannv_payload.get("provenance")
         if (
             not isinstance(export, Mapping)
-            or export.get("month") != "202604"
             or export.get("protocol_id") != XUANNV_PROTOCOL
             or not isinstance(provenance, Mapping)
             or provenance.get("family") != "full_150"
