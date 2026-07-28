@@ -94,6 +94,8 @@ def _payload(record: Mapping[str, object]) -> Mapping[str, object]:
     payload = record.get("metric_provenance")
     if not isinstance(payload, Mapping):
         raise ValueError("Contextual comparison record lacks metric_provenance")
+    if "label_sha256" not in payload and isinstance(record.get("label_sha256"), str):
+        return {**payload, "label_sha256": record["label_sha256"]}
     return payload
 
 
@@ -235,8 +237,10 @@ def load_verified_contextual_records(
         record = json.loads(line)
         if not isinstance(record, dict):
             raise ValueError("Contextual result registry has an invalid record")
-        payload = _payload(record)
-        if payload.get("protocol_id") != expected_protocol:
+        raw_payload = record.get("metric_provenance")
+        if not isinstance(raw_payload, Mapping):
+            raise ValueError("Contextual comparison record lacks metric_provenance")
+        if raw_payload.get("protocol_id") != expected_protocol:
             continue
         metrics_path = Path(str(record.get("metrics_path", "")))
         artifact_path = metrics_path.parent / "artifact_manifest.json"
@@ -249,8 +253,9 @@ def load_verified_contextual_records(
         ):
             raise ValueError("Contextual result record has an invalid sealed artifact reference")
         verify_artifact_registry_binding(artifact_path, registry_path)
-        if json.loads(metrics_path.read_text(encoding="utf-8")) != payload:
+        if json.loads(metrics_path.read_text(encoding="utf-8")) != raw_payload:
             raise ValueError("Contextual result metric provenance differs from its sealed metric file")
+        payload = _payload(record)
         verify_prediction_target_support(payload, expected_prediction_path=metrics_path.parent / "predictions_test.npz")
         if expected_protocol == XUANNV_PROTOCOL:
             _verify_candidate_embedding_registry(payload)

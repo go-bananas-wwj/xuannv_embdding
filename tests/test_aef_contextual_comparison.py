@@ -112,6 +112,17 @@ def test_contextual_pairing_resolves_xuannv_statistics_from_sealed_export() -> N
     contextual.verify_contextual_pairing(aef, xuannv)
 
 
+def test_contextual_payload_resolves_label_from_sealed_result_registry() -> None:
+    """Older V5 metrics may keep the label hash solely in their sealed result record."""
+    record = _record("v5_osm_assisted", cell=("building", "5", 0, 42))
+    payload = record["metric_provenance"]
+    assert isinstance(payload, dict)
+    label_sha = payload.pop("label_sha256")
+    record["label_sha256"] = label_sha
+
+    assert contextual._payload(record)["label_sha256"] == label_sha
+
+
 def _matrix(protocol: str) -> dict[tuple[str, str, int, int], dict[str, object]]:
     return {
         (task, shot, fold, seed): _with_protocol_identity(
