@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "kind": "p10c_harbin_paper_embedding_exports",
+  "region": "harbin",
+  "month": "202604",
+  "coverage_inventory": "configs/eval/harbin_aef_annual_2025_coverage_inventory_20260728.json",
+  "exports": {
+    "p10c_harbin_scratch": {
+      "config": "configs/paper_e5_p10c_recipe_harbin_scratch_20260714.yaml",
+      "checkpoint": "/data/xuannv_embedding/outputs/paper_e5_p10c_recipe_harbin_scratch_20260714/epoch_800.pt",
+      "source_manifest": "/data/xuannv_embedding/processed/harbin/manifest_e5_harbin424_202512_202605.json",
+      "device": "npu:0",
+      "encoder_frozen": false
+    },
+    "p10c_haidian_frozen_harbin": {
+      "config": "configs/v2_p10c_haidian_202512_202605_osm_semantic_hardneg_20260704.yaml",
+      "checkpoint": "/data/xuannv_embedding/outputs/v2_p10c_haidian_202512_202605_osm_semantic_hardneg_20260704/epoch_800.pt",
+      "source_manifest": "/data/xuannv_embedding/processed/harbin/manifest_p10c_haidian_frozen_to_harbin_20260728.json",
+      "device": "npu:1",
+      "encoder_frozen": true
+    }
+  }
+}
