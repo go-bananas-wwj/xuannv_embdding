@@ -25,8 +25,8 @@ structured source corruption, and OSM-derived auxiliary semantics. We evaluate t
 question of whether three target polygons can initialise a reader that retrieves the same class
 across an urban region with a lightweight positive--unlabelled (PU) reader. In Haidian District,
 Beijing, we use five positive-pixel-ratio-stratified patch folds and three deterministic support
-selections per fold. The three positive polygons initialise the reader, while 25 fully labelled
-validation patches calibrate its threshold. Relative to an annual 2025 AlphaEarth Foundations (AEF)
+selections per fold. Three positive polygons initialise the reader, while 25 fully rasterized
+OSM validation patches calibrate its threshold. Relative to an annual 2025 AlphaEarth Foundations (AEF)
 embedding, XuannvEarth's April-indexed, six-slot contextual embedding has higher mean road F1 by
 0.050 (95% fold-clustered bootstrap interval
 [0.023, 0.093]) and water by 0.103 [0.033, 0.181]; building F1 is comparable (+0.010,
@@ -117,12 +117,27 @@ not a global foundation model: its training extent, observation history, and lab
 narrower than those of globally trained products. Accordingly, the paper does not infer global or
 cross-region transfer from a single-city case study.
 
+Large-scale supervised remote-sensing resources such as SatlasPretrain also demonstrate the value
+of broad task and sensor coverage for transferable features (Bastani et al., 2023). In contrast,
+this study asks a deliberately narrower systems question: whether a locally trained, dense monthly
+field can serve as a reusable interface for repeated urban readouts when a global information budget
+is not available. The distinction matters because scale, label ontology, observation period, and
+sensor suite all alter what a downstream comparison can establish.
+
 This distinction also affects the role of external products. A globally trained embedding can be a
 useful contextual comparator because it exposes a common dense-feature interface to the same
 downstream reader. It is not automatically an information-matched baseline: cadence, observation
 period, input sensors, pretraining geography, and the treatment of weak labels can differ. We
 therefore distinguish controlled *readout* comparisons from claims about upstream model scale or
 general transfer, and retain that distinction in every comparator caption and interpretation.
+
+XuannvEarth is closest in interface to AEF, which releases a dense embedding field intended for
+sparse-label mapping, but differs in its single-city training extent and monthly-indexed output.
+OlmoEarth emphasizes stable latent modelling of multimodal observations, whereas Prithvi-EO-2.0
+emphasizes large-scale multitemporal pretraining and broad downstream adaptation (Herzog et al.,
+2025; Szwarcman et al., 2026). Our contribution is not a claim to replace these global models. It
+is an explicit city-product design in which missing observations, sparse higher-resolution inputs,
+and a downstream sparse reader are treated as first-class operational constraints.
 
 ### 2.2 Multimodal and temporal Earth observation learning
 
@@ -182,6 +197,13 @@ recall), freeze the validation-selected threshold before test evaluation, and re
 and binary masks for audit. Fold-clustered uncertainty is likewise preferred to independent pixel
 intervals because the latter can be artificially narrow in contiguous imagery.
 
+The sparse reader is motivated by positive--unlabelled learning, where a labelled positive set is
+paired with a mixture of unknown positives and negatives (Bekker and Davis, 2020). It is not a
+formal class-prior-estimating PU risk minimiser: the OSM-derived support polygons are geographically
+selected rather than randomly sampled positives, and the operating point is calibrated on separate
+OSM masks. We therefore use *PU reader* as a description of its input interface and report its
+operating assumptions explicitly, rather than claiming a distribution-free PU guarantee.
+
 ## 3. Materials and methods
 
 ### 3.1 Study area and spatial units
@@ -191,8 +213,8 @@ covering 1.28 km by 1.28 km. The P10C regional encoder is trained as a transduct
 using the complete regional observation archive from December 2025 through May 2026; its April
 2026 embedding is the feature product evaluated here. The 320 patches are partitioned by
 positive-pixel-ratio-stratified random five-fold cross-validation into five test sets of 64 patches.
-Within each fold, 231 patches form the support pool and 25 fully labelled patches form the
-threshold-calibration set. No patch is discarded for the PU retrieval experiment.
+Within each fold, 231 patches form the support pool and 25 fully rasterized OSM-mask patches form
+the threshold-calibration set. No patch is discarded for the PU retrieval experiment.
 
 The patch is the unit of support accounting and downstream holdout. The split is random stratified
 at patch level, so adjacent patches can fall in different folds and spatial autocorrelation can
@@ -202,8 +224,14 @@ inductive representation-generalisation experiment. Haidian contains dense urban
 transport corridors, water bodies, green areas, and construction-related surfaces, but this local
 diversity should not be interpreted as geographic representativeness of other cities.
 
-**[Insert Figure 1: 320-patch study layout, five downstream test folds, and representative
-multi-source observations.]**
+![Figure 1. P10C transductive sparse-readout study design.](assets/figure_1_p10c_study_design.png)
+
+**Figure 1. P10C transductive sparse-readout study design.** The encoder receives the complete
+320-patch Haidian regional archive. For each downstream fold, 64 patches are used for test, 25
+fully rasterized OSM-mask patches calibrate the threshold, and 231 patches form the support pool.
+Three deterministic positive-polygon selections are drawn per fold. This is a random stratified
+patch-level readout resampling protocol; it is not geographic blocking or inductive regional
+generalisation.
 
 ### 3.2 Observations and auxiliary labels
 
@@ -292,12 +320,14 @@ relationships well defined for retrieval and regularisation, but do not themselv
 individual land-cover classes form disjoint clusters. We therefore evaluate the representation by
 held-out downstream readout rather than by PCA appearance or an intrinsic-dimension estimate alone.
 
-**Figure 2. XuannvEarth learning and sparse-readout workflow (to be rendered for the submission
-package).** Sensor-specific stems ingest availability-masked temporal observations; the
-space-time-precision encoder fuses six slots; higher-resolution pathways are injected before the
-hyperspherical bottleneck; reconstruction and OSM auxiliary heads supervise training. The frozen
-April-indexed field is read by a three-prototype PU reader, whose operating threshold is selected
-on a separate labelled validation set.
+![Figure 2. XuannvEarth encoder and OSM-assisted sparse-readout workflow.](assets/figure_2_p10c_workflow.png)
+
+**Figure 2. XuannvEarth encoder and sparse-readout workflow.** Availability-masked temporal and
+higher-resolution observations are fused into a 64-channel dense field. Reconstruction and OSM
+semantic objectives are used only during encoder training. At readout, three OSM-derived support
+polygons define target prototypes; a separate set of fully rasterized OSM validation masks selects
+the operating threshold. The downstream reader does not use test labels to construct prototypes or
+choose the threshold.
 
 ### 3.4 Objective and structured source corruption
 
@@ -354,7 +384,7 @@ documents the trained system but does not establish a mechanism of improvement.
 ### 3.5 PU sparse-retrieval evaluation
 
 For each task, a user-facing support set consists of three connected target polygons sampled from
-the support pool. Each polygon is represented by the mean of its L2-normalised embedding vectors;
+the OSM-rasterized support pool. Each polygon is represented by the mean of its L2-normalised embedding vectors;
 the reader retains all three prototypes and scores each pixel by its maximum similarity to a target
 prototype. Reliable background vectors are mined from the lowest 30% foreground-similarity pixels
 outside a three-pixel dilation of the support polygons. The score subtracts 0.65 times similarity
@@ -362,7 +392,8 @@ to the resulting background prototype. This is a positive--unlabelled reader: un
 are not assumed to be negative, and no test labels are used for prototype construction.
 
 To avoid self-reinforcing false positives, the primary reported protocol disables test-patch Query
-adaptation. The operating threshold is selected by maximising F1 on the 25 validation patches and
+adaptation. The operating threshold is selected by maximising F1 on the 25 fully rasterized OSM
+validation patches and
 is then fixed for the 64 test patches. Building, road, and water results use five
 positive-pixel-ratio-stratified patch folds and three deterministic polygon-selection seeds (41,
 42, and 43), producing 15 paired cells per task.
@@ -419,7 +450,7 @@ cross-city replication, both of which remain necessary for broader claims.
 standard deviation across five positive-pixel-ratio-stratified patch folds and three deterministic
 support-polygon selections per fold (15 cells). XuannvEarth is an April-indexed output using the
 December 2025 to May 2026 six-slot context; AEF is annual 2025. The PU reader uses three positive
-polygons and a validation-only threshold selected from 25 fully labelled validation patches.
+polygons and a validation-only threshold selected from 25 fully rasterized OSM validation patches.
 
 Table 3 reports the 15 fold--seed cells for each task. XuannvEarth exceeds the traditional
 multisource feature stack on every reported mean metric. Relative to AEF, the largest gains occur
@@ -495,6 +526,22 @@ annual 2025 public product, while the April-indexed P10C field has a six-slot 20
 context. The common element is the frozen feature readout protocol. This makes the study useful for
 the operational question of sparse urban mapping from available feature products, but insufficient
 for a claim about information-matched representation quality.
+
+### 4.4 Transductive full-region product illustration
+
+Figure 4 visualizes the April-indexed P10C embedding field across the full 320-patch Haidian
+product. The displayed red-green-blue image is a principal-component projection of the 64-channel
+field; its colours have no class semantics. It is included to show spatial coverage and the
+qualitative continuity of the exported product, not to quantify class separability. Because P10C
+was trained transductively on the full regional archive, Figure 4 is not a held-out map and is not
+used in Tables 3--4.
+
+![Figure 4. Principal-component visualization of the P10C April-indexed full-region embedding field.](assets/figure_4_p10c_full_domain_pca.png)
+
+**Figure 4. Full-region P10C embedding product.** The 64-dimensional embedding map is projected
+to three principal components for display. Empty regions denote locations outside the 320-patch
+product extent. This qualitative illustration uses the same P10C epoch-800 artifact as the main
+readout study, but does not constitute an independent evaluation.
 
 ## 5. Discussion
 
@@ -624,8 +671,9 @@ release is created.
 ## Prior dissemination statement
 
 An earlier APGARSS conference abstract described the project direction and preliminary internal
-experiments. This manuscript is a substantially expanded journal study with a separate registered
-spatial evaluation protocol, provenance-bound results, and a full methods and limitations analysis.
+experiments. This manuscript is a substantially expanded journal study with a separate
+transductive OSM-assisted readout protocol, provenance-bound results, and a full methods and
+limitations analysis.
 The authors will provide the exact conference citation and ensure compliance with final publisher
 policy before submission.
 
@@ -638,6 +686,13 @@ current Elsevier policy.]**
 
 Barron, C., Neis, P., and Zipf, A., 2014. A Comprehensive Framework for Intrinsic OpenStreetMap
 Quality Analysis. Transactions in GIS 18, 877-895. https://doi.org/10.1111/tgis.12073.
+
+Bastani, F., Wolters, P., Gupta, R., Ferdinando, J., and Kembhavi, A., 2023. SatlasPretrain: A
+Large-Scale Dataset for Remote Sensing Image Understanding. Proceedings of the IEEE/CVF
+International Conference on Computer Vision, 16772-16782. https://doi.org/10.48550/arXiv.2211.15660.
+
+Bekker, J., and Davis, J., 2020. Learning from positive and unlabeled data: a survey. Machine
+Learning 109, 719-760. https://doi.org/10.1007/s10994-020-05877-5.
 
 Brown, C.F., Kazmierski, M.R., Pasquarella, V.J., Rucklidge, W.J., Samsikova, M., Zhang, C.,
 Shelhamer, E., Lahera, E., Wiles, O., Ilyushchenko, S., Gorelick, N., Zhang, L.L., Alj, S.,
