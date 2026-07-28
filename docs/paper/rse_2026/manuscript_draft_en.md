@@ -1,7 +1,7 @@
-# XuannvEarth: Reusable monthly geospatial embeddings from heterogeneous Earth observations for urban mapping
+# XuannvEarth: Monthly multimodal embedding fields for OSM-assisted sparse urban mapping
 
-> **Working RSE manuscript.** Bracketed slots must be filled only with metrics, tables, and figures
-> admitted by `docs/paper/rse_2026/evidence_ledger.md`; they are not claims.
+> **Working RSE manuscript.** The P10C PU-retrieval results are preliminary working-draft evidence:
+> they are internally reproducible but require immutable archival admission before submission.
 
 ## Title page
 
@@ -16,20 +16,23 @@ Corresponding author: Long Zhao (`zhaolong@aircas.ac.cn`)
 
 ## Abstract
 
-Urban land-surface mapping is recurrent: buildings, roads, water, vegetation, and public
-facilities must be updated repeatedly, yet task-specific segmentation models repeatedly consume
-labels and computation. We present XuannvEarth, a city-scale framework that encodes six monthly
-slots of heterogeneous Earth observations into frozen, dense 64-dimensional embedding fields on a
-10 m grid. The encoder combines sensor-specific stems, availability-aware spatiotemporal fusion,
-higher-resolution feature pathways, a hyperspherical bottleneck, valid-target reconstruction under
-structured source corruption, and OpenStreetMap-derived auxiliary semantics. We evaluate whether a
-frozen field can be read by the same lightweight spatial probe under geographically separated
-folds and fixed labelled-patch budgets. The protocol separates upstream encoder training from
-spatially held-out downstream readout, freezes the support-patch schedule before probe fitting, and
-selects operating thresholds using validation pixels only. **[Insert the strongest verified, evidence-ledger-admitted
-V5 result, comparison, uncertainty, and limitation here.]** The study is limited to a single
-urban region and OSM-overlapping diagnostic readouts do not establish ontology-independent
-semantic transfer.
+Urban mapping requires repeated extraction of buildings, roads, and water from heterogeneous and
+partially observed Earth observations. We present XuannvEarth, a city-scale framework that encodes
+six monthly slots of optical, radar, Landsat, and higher-resolution observations into frozen,
+dense 64-dimensional embedding fields on a 10 m grid. The encoder combines sensor-specific stems,
+availability-aware spatiotemporal fusion, higher-resolution pathways, a hyperspherical bottleneck,
+structured source corruption, and OSM-derived auxiliary semantics. We evaluate the practical
+question of whether three target polygons can initialise a reader that retrieves the same class
+across an urban region with a lightweight positive--unlabelled (PU) reader. In Haidian District,
+Beijing, we use five positive-pixel-ratio-stratified patch folds and three deterministic support
+selections per fold. The three positive polygons initialise the reader, while 25 fully labelled
+validation patches calibrate its threshold. Relative to an annual 2025 AlphaEarth Foundations (AEF)
+embedding, XuannvEarth's April-indexed, six-slot contextual embedding has higher mean road F1 by
+0.050 (95% fold-clustered bootstrap interval
+[0.023, 0.093]) and water by 0.103 [0.033, 0.181]; building F1 is comparable (+0.010,
+[-0.008, 0.033]) while ranking metrics are higher. The study is a single-city,
+time-inequivalent, OSM-overlapping diagnostic comparison, not evidence of independent-label
+transfer or global superiority.
 
 **Keywords:** geospatial embedding; multimodal Earth observation; time series; weak supervision;
 few-shot mapping; urban remote sensing.
@@ -38,13 +41,11 @@ few-shot mapping; urban remote sensing.
 
 - A monthly dense embedding interface for urban mapping readouts
 - Heterogeneous EO observations are fused with availability awareness
-- Structured corruption targets missing sources and monthly observations
-- Spatially held-out probes use frozen supports and validation-only thresholds
+- Three target polygons initialise a regional PU retrieval reader
+- Stratified patch folds and labelled validation patches calibrate readout
 - OSM-overlapping results are scoped as weak-label diagnostic evidence
 
-> These draft highlights are intentionally result-free. Elsevier guidance describes highlights as
-> three to five short bullet points and limits each bullet to 85 characters; final wording must be
-> rechecked against the current RSE Guide for Authors before submission.
+> Final length and journal-specific requirements must be checked before submission.
 
 ## 1. Introduction
 
@@ -68,8 +69,8 @@ regions, and tasks. A monthly urban setting is materially different from an annu
 globally aggregated product: a monthly slot can contain cloud and haze, missing optical
 acquisitions, radar speckle, sparse higher-resolution imagery, and residual cross-sensor
 registration error. It is therefore insufficient to show only an attractive embedding mosaic or
-an in-region map. The representation must be evaluated with geographic separation, matched
-downstream readers, and a threshold protocol that never observes test labels.
+an in-region map. The representation must be evaluated with matched downstream readers and a
+threshold protocol that never observes test labels.
 
 XuannvEarth produces monthly-indexed dense geospatial embeddings from heterogeneous observations.
 Each output is associated with one target month but may use six-month context through full temporal
@@ -85,25 +86,23 @@ degraded acquisitions, but a result at one target month is not evidence of causa
 instantaneous change detection. We make this information window explicit in the method and reserve
 temporal-benefit claims for independently trained, information-matched ablations.
 
-This paper asks a bounded question: under geographically separated folds, can a frozen monthly
-embedding field support label-efficient urban mapping through the same lightweight reader and fixed
-labelled-patch budgets? The fail-closed protocol binds the encoder checkpoint, exported feature
-files, frozen shot schedules, validation-only thresholds, and downstream artifacts. OSM-overlapping
-labels are treated as OSM-assisted diagnostic readouts, not evidence of ontology-independent
-transfer.
+This paper asks a bounded question: can a frozen, transductive city embedding field support an
+OSM-assisted urban retrieval workflow through the same lightweight reader and fixed support-polygon
+budget? The protocol binds the encoder checkpoint, exported feature files, support selections,
+validation-only thresholds, and downstream artifacts. Stratified patch folds quantify variation
+under repeated support selections but do not remove spatial autocorrelation or establish geographic
+generalisation.
 
 The contributions are threefold. First, we specify a reusable dense monthly representation for
-heterogeneous urban Earth observations. Second, we provide a provenance-bound spatial evaluation
-protocol that separates weak-supervision diagnostics from independent-transfer claims. Third, we
-report only conditions supported by released, admitted evidence and state the limitations of
-regional scale, imperfect weak labels, and sparse higher-resolution observations.
+heterogeneous urban Earth observations. Second, we describe a multi-prototype PU reader for sparse
+urban retrieval with validation-calibrated thresholds. Third, we document a bounded OSM-assisted
+case study and its limitations: transductive training, random stratified patch splits, label
+overlap, temporal mismatch, and single-city scope.
 
 The remainder of the paper first situates this design among reusable EO representations and
 weakly supervised geographic learning (Section 2). Section 3 specifies the data, architecture,
-training objective, and registered evaluation protocol. Section 4 is deliberately structured so
-that tables and figures can be populated only after their underlying artifacts pass release
-admission. Sections 5 and 6 interpret the resulting evidence within the stated geographic,
-temporal, and label-provenance boundaries.
+training objective, and evaluation protocol. Section 4 reports the preliminary case-study results;
+Sections 5 and 6 interpret them within their geographic, temporal, and label-provenance boundaries.
 
 ## 2. Related work
 
@@ -116,7 +115,7 @@ single encoder can support classification and segmentation readouts after downst
 (Cong et al., 2022). XuannvEarth follows this interface at city scale and monthly cadence. It is
 not a global foundation model: its training extent, observation history, and label sources are
 narrower than those of globally trained products. Accordingly, the paper does not infer global or
-cross-region transfer from a single-city spatial-holdout study.
+cross-region transfer from a single-city case study.
 
 This distinction also affects the role of external products. A globally trained embedding can be a
 useful contextual comparator because it exposes a common dense-feature interface to the same
@@ -170,70 +169,68 @@ al., 2026). Such comparisons are only interpretable when the representation, sup
 reader capacity, split, and decision rule are held fixed. They are particularly sensitive in spatial
 data because nearby pixels and neighbouring patches are correlated (Roberts et al., 2017). We
 therefore use
-geographically separated folds, fixed support-patch schedules, training-only feature
-standardisation, and validation-only threshold selection. These safeguards constrain the scope of
-our conclusions; they do not replace independent labels or a cross-city replication.
+fixed support-patch schedules, training-only feature standardisation, and validation-only threshold
+selection. In the present case study, patch folds are stratified but not geographically blocked;
+these safeguards constrain the scope of our conclusions and do not replace independent labels,
+spatial blocking, or a cross-city replication.
 
 For imbalanced segmentation, threshold selection is a substantive part of the method rather than a
 visualization detail. Reporting only ranking metrics can obscure a poor operating point, while
 choosing a threshold after inspecting test masks leaks information into the final score. We report
 both threshold-free metrics (AP and ROC-AUC) and thresholded metrics (F1, IoU, precision, and
 recall), freeze the validation-selected threshold before test evaluation, and retain probabilities
-and binary masks for audit. Spatially clustered uncertainty is likewise preferred to independent
-pixel intervals because the latter can be artificially narrow in contiguous imagery.
+and binary masks for audit. Fold-clustered uncertainty is likewise preferred to independent pixel
+intervals because the latter can be artificially narrow in contiguous imagery.
 
 ## 3. Materials and methods
 
 ### 3.1 Study area and spatial units
 
 The study area is Haidian District, Beijing, China, and contains 320 georeferenced patches, each
-covering 1.28 km by 1.28 km. The registered V5 spatial protocol uses the 272 patches contained in
-68 complete 2 by 2 blocks; the remaining 48 boundary patches are explicitly excluded from that
-fold registry. The 272-patch subset is divided into geographically separated train, validation,
-test, and one-complete-block-wide buffer regions at each test edge. The observation window spans December 2025
-through May 2026. A full-region P10C product is retained separately as a transductive qualitative
-case study and is not used as spatial-generalisation evidence.
+covering 1.28 km by 1.28 km. The P10C regional encoder is trained as a transductive city product
+using the complete regional observation archive from December 2025 through May 2026; its April
+2026 embedding is the feature product evaluated here. The 320 patches are partitioned by
+positive-pixel-ratio-stratified random five-fold cross-validation into five test sets of 64 patches.
+Within each fold, 231 patches form the support pool and 25 fully labelled patches form the
+threshold-calibration set. No patch is discarded for the PU retrieval experiment.
 
-The patch is the unit of spatial sampling, support-set accounting, and held-out evaluation within
-the registered 272-patch subset. This
-choice avoids an apparently large sample size created by treating strongly correlated pixels as
-independent geographic observations. The buffer is applied at the complete-block level so that a
-test patch is not immediately adjacent to upstream training patches. The registered split is fixed
-before downstream fitting; any visual inspection used for data quality control is kept separate
-from test-label-informed model selection. Haidian provides heterogeneous dense urban fabric,
+The patch is the unit of support accounting and downstream holdout. The split is random stratified
+at patch level, so adjacent patches can fall in different folds and spatial autocorrelation can
+remain. All patches are also visible to the upstream P10C encoder. This is therefore a
+transductive regional-product evaluation of sparse readout, not a spatial-generalisation or
+inductive representation-generalisation experiment. Haidian contains dense urban fabric,
 transport corridors, water bodies, green areas, and construction-related surfaces, but this local
 diversity should not be interpreted as geographic representativeness of other cities.
 
-**[Insert Figure 1: 320-patch study layout, 272-patch complete-block V5 subset, excluded boundary
-patches, fold allocation, and representative observations only after provenance admission.]**
+**[Insert Figure 1: 320-patch study layout, five downstream test folds, and representative
+multi-source observations.]**
 
 ### 3.2 Observations and auxiliary labels
 
 Temporal inputs are Sentinel-2 optical imagery with 12 channels (Drusch et al., 2012), Sentinel-1
-SAR with two channels (Torres et al., 2012), and Landsat with seven channels. The model also
+SAR with two channels (Torres et al., 2012), and a seven-channel Landsat stack. The model also
 receives availability-masked higher-resolution optical imagery with three channels and
 higher-resolution SAR imagery with one channel.
 Higher-resolution observations are aggregated from available acquisitions and fused into every
 target-month output; they are not assumed to be unique monthly acquisitions.
 
-All sources are transformed to a common patch grid before model input, while their validity and
-availability are retained explicitly. Source quality control is therefore a first-class part of the
-data definition: observations that are absent or invalid are represented by their availability
-state rather than silently converted to nominal reflectance or backscatter values. Monthly
-composition, cloud and invalid-pixel screening, reprojection, and cross-source alignment are
-recorded by source-specific audits. The manuscript will report audited coverage and alignment
-statistics, rather than inferring data quality from a small number of visually selected examples.
+All sources are transformed to the common 128 by 128 output grid before fusion, while their
+validity and availability are retained explicitly. Observations that are absent or invalid are
+represented by their availability state rather than silently converted to nominal reflectance or
+backscatter values. This distinction is central to the monthly setting, where cloudy optical scenes,
+sparse higher-resolution acquisitions, and radar speckle are expected. Source-specific acquisition,
+compositing, and alignment audits are retained as supplementary provenance material; they are not
+inferred from visually selected examples.
 
 The target-only categorical layer is an OSM-derived merged land-cover raster stored under the
-legacy manifest key `worldcover`; it is removed before encoder input. Its 11 IDs comprise ignored
-background (0) plus residential, commercial, industrial, agriculture, green, recreation,
-construction, water, building, and transport. The configured decoder has 11 output channels and
-the loss ignores class 0. Fine auxiliary semantic supervision separately uses 13 cleaned OSM
+legacy manifest key `worldcover`; it is removed before encoder input. The configured decoder has
+11 output channels and its categorical loss ignores class 0. Fine auxiliary semantic supervision
+separately uses 13 cleaned OSM
 layers: building, major road, minor road, rail, water, green space, agriculture, residential,
 commercial, industrial, construction, path/walk, and playground. OSM masks are not contemporaneous
 ground truth for monthly change claims. Native resolutions, acquisition coverage, quality masks,
 mosaicking, reprojection, alignment statistics, normalisation, source missingness, and OSM
-provenance will be reported only from their corresponding quality-control audits.
+provenance are retained in the project quality-control audit.
 
 The label design has three deliberately separate roles. First, the merged categorical raster
 provides broad, target-only land-surface structure during encoder training. Second, the cleaned
@@ -244,8 +241,19 @@ locally retained OSM material is re-rasterisable but lacks a versioned historica
 the observation window; it is consequently unsuitable as contemporaneous ground truth for monthly
 change or for independent-transfer claims.
 
-**[Insert Table 1: source, channels, native resolution, coverage, preprocessing, quality control,
-and role after audit admission.]**
+**Table 1. Inputs and auxiliary supervision in the P10C regional encoder.** All continuous sources
+are availability-masked before fusion. The table records the model interface, rather than claiming
+that every source is available in every target-month slot.
+
+| Component | Channels | Role in P10C | Missingness / supervision treatment |
+| --- | ---: | --- | --- |
+| Sentinel-2 optical | 12 | Continuous reconstruction and temporal fusion | Availability mask; masked L1 on originally valid targets |
+| Sentinel-1 SAR | 2 | Continuous reconstruction and temporal fusion | Availability mask; masked L1 on originally valid targets |
+| Landsat stack | 7 | Continuous reconstruction and temporal fusion | Availability mask; masked L1 on originally valid targets |
+| Higher-resolution optical | 3 | Fine-detail pathway and reconstruction | Availability mask; fused before bottleneck |
+| Higher-resolution SAR | 1 | Fine-detail pathway and reconstruction | Availability mask; fused before bottleneck |
+| Merged OSM land-cover raster | 11 classes | Target-only categorical reconstruction | Not encoder input; background ignored in loss |
+| Fine OSM semantic layers | 13 binary layers | Auxiliary probe and hard-negative supervision | Includes building, road, water, and related urban classes |
 
 ### 3.3 XuannvEarth encoder
 
@@ -284,13 +292,17 @@ relationships well defined for retrieval and regularisation, but do not themselv
 individual land-cover classes form disjoint clusters. We therefore evaluate the representation by
 held-out downstream readout rather than by PCA appearance or an intrinsic-dimension estimate alone.
 
-**[Insert Figure 2: sensor stems, spatiotemporal processor, high-resolution pathway, bottleneck,
-and frozen downstream readout.]**
+**Figure 2. XuannvEarth learning and sparse-readout workflow (to be rendered for the submission
+package).** Sensor-specific stems ingest availability-masked temporal observations; the
+space-time-precision encoder fuses six slots; higher-resolution pathways are injected before the
+hyperspherical bottleneck; reconstruction and OSM auxiliary heads supervise training. The frozen
+April-indexed field is read by a three-prototype PU reader, whose operating threshold is selected
+on a separate labelled validation set.
 
 ### 3.4 Objective and structured source corruption
 
 Continuous reconstructions use masked L1 loss; the merged OSM land-cover target uses masked
-cross-entropy with background ID 0 ignored. The registered V5 weights are 0.80 for Sentinel-2,
+cross-entropy with background ID 0 ignored. The P10C weights are 0.80 for Sentinel-2,
 0.25 for Sentinel-1, 0.45 for Landsat, 0.45 for merged OSM land cover, 0.90 for higher-resolution
 optical, and 0.35 for higher-resolution SAR. Fine OSM semantic-probe loss ramps to 0.14 over 80
 epochs. Its hard-negative component uses a ratio of 0.02, weight 0.35, and 120-epoch warmup. The
@@ -313,9 +325,9 @@ the inputs supplied to the encoder but not the definition of \(v_t\); a target i
 "correct" merely because its source was synthetically dropped. This distinction prevents the
 training loss from rewarding reconstruction of invalid or unavailable imagery.
 
-The registered configuration uses AdamW with learning rate 2e-6, weight decay 0.05, 30 epochs of
-linear warmup, and cosine decay over 800 epochs. It uses batch size 3 per process, gradient
-accumulation of six, mixed precision, gradient checkpointing, validation every 20 epochs, and a
+The P10C configuration uses AdamW with learning rate 2e-6, weight decay 0.05, 30 epochs of linear
+warmup, and cosine decay over 800 epochs. It uses batch size 3 per process, gradient accumulation
+of two, mixed precision, gradient checkpointing, validation every 20 epochs, and a
 checkpoint interval of 200 epochs. Realised wall-clock time, effective global batch size, and
 energy use will be reported only from final run records.
 
@@ -326,72 +338,56 @@ interpretation differ. The contribution of any one weight, the hard-negative ter
 high-resolution pathway requires an admitted matched ablation. Until then, the configuration
 documents the trained system but does not establish a mechanism of improvement.
 
-**[Insert Table 2: model configuration, losses, schedules, and realised training resources.]**
+**Table 2. P10C configuration used for the reported embedding.** Epoch-800 output is used below.
 
-### 3.5 Registered downstream evaluation
+| Component | Setting |
+| --- | --- |
+| Output field | 64 channels on a 128 by 128 grid (10 m equivalent) |
+| Temporal window | Six slots, December 2025 to May 2026; full temporal attention |
+| STP encoder | Six blocks; eight heads; spatial/time/precision widths 512/256/128 |
+| Continuous target weights | Sentinel-2 0.80; Sentinel-1 0.25; Landsat 0.45; higher-resolution optical 0.90; higher-resolution SAR 0.35 |
+| OSM objectives | Merged land-cover 0.45; fine semantic probes ramp to 0.14 over 80 epochs; hard-negative ratio 0.02, weight 0.35, warmup 120 epochs |
+| Uniformity | Weight ramps to 0.06 over 60 epochs; temperature 2.0 |
+| Structured corruption | S2/S1/Landsat drop probabilities 0.18/0.35/0.35; month dropout 0.65; 16 by 16 block corruption probability 0.65, ratio 0.32 |
+| Optimisation | AdamW, learning rate 2e-6, weight decay 0.05, 30-epoch warmup, cosine decay, 800 epochs, gradient accumulation 2 |
 
-The primary reader is a frozen-feature 64-channel Conv3x3 segmentation probe. For each task, fold,
-and probe seed, the probe is trained from scratch for 80 epochs using AdamW (learning rate 0.001,
-weight decay 0.0001), cosine learning-rate decay, batch size eight, and pixelwise
-binary-cross-entropy logits loss with a training-set class-balance weight equal to the
-negative-to-positive pixel ratio, clipped at 50. No probe epoch is
-selected on test data: the final epoch is evaluated once. Feature standardisation is fit on the
-support patches only and then applied unchanged to validation and test patches.
+### 3.5 PU sparse-retrieval evaluation
 
-For each fold, the support set contains exactly five or ten deterministic, nested, mixed-class
-labeled patches. A valid support patch contains at least 64 foreground and 64 background pixels;
-where the requested budget cannot be met, the frozen shot schedule records that budget as
-unavailable rather than silently downsampling it. Probabilities are computed with a sigmoid. The decision threshold is selected
-on pooled validation pixels by exhaustive F1 search from 0.001 to 0.999 in increments of 0.001 and
-is fixed once for the held-out test fold; ties select the greatest threshold. The protocol reports F1, average precision, IoU,
-ROC-AUC, precision, and recall. Aggregated comparisons will use paired spatial-block uncertainty,
-not independent-pixel intervals. Every representation within a comparison cell uses the same
-spatial split, label source, shot schedule, reader, optimiser budget, random-seed policy, and
-validation-selected threshold. A five-fold, three-probe-seed design is registered for the
-`full_150` V5 family.
+For each task, a user-facing support set consists of three connected target polygons sampled from
+the support pool. Each polygon is represented by the mean of its L2-normalised embedding vectors;
+the reader retains all three prototypes and scores each pixel by its maximum similarity to a target
+prototype. Reliable background vectors are mined from the lowest 30% foreground-similarity pixels
+outside a three-pixel dilation of the support polygons. The score subtracts 0.65 times similarity
+to the resulting background prototype. This is a positive--unlabelled reader: unlabelled pixels
+are not assumed to be negative, and no test labels are used for prototype construction.
 
-The term *shot* refers to a labelled patch, not to an independently sampled pixel. Mixed-class
-support patches make the class-balance calculation well posed for pixelwise segmentation, while
-the spatial test fold remains unseen by both the encoder and the probe. The 5- and 10-shot
-schedules are nested so that increasing the nominal label budget adds support patches rather than
-replacing the previous support set. Every unavailable schedule cell is preserved as unavailable in
-the result registry; it is never silently substituted with a smaller budget. This ensures that
-label-efficiency comparisons refer to the same unit of annotation effort.
+To avoid self-reinforcing false positives, the primary reported protocol disables test-patch Query
+adaptation. The operating threshold is selected by maximising F1 on the 25 validation patches and
+is then fixed for the 64 test patches. Building, road, and water results use five
+positive-pixel-ratio-stratified patch folds and three deterministic polygon-selection seeds (41,
+42, and 43), producing 15 paired cells per task.
+We report F1, IoU, precision, recall, AP, and ROC-AUC. The three representations in each cell use
+the same polygons, validation/test patches, PU parameters, and threshold rule.
 
-The primary V5 task family is OSM-assisted and ontology-overlapping. It can diagnose whether frozen
-fields are readable under spatial holdout, but it cannot establish ontology-independent semantic
-transfer. Independent-label evidence must be sealed and reported separately. The manuscript policy
-prohibits preliminary outputs from entering tables or figures; this policy is enforced through the
-evidence-ledger admission workflow, whose release-admission consumer must complete before any V5
-result is used.
-
-We distinguish three levels of evidence throughout the study. A registered artifact records a
-protocol-compliant computation but is still preliminary until release admission binds its hashes
-and reports. An admitted OSM-assisted result supports only an OSM-overlapping diagnostic claim.
-An independent-transfer claim additionally requires a frozen external or adjudicated label release
-whose ontology and access history are separately documented. This hierarchy avoids converting an
-engineering run record into a stronger scientific conclusion than its labels permit.
+For uncertainty, the three seed-level differences are averaged within each fold; the five randomly
+stratified patch-fold means are then resampled with replacement. This fold-clustered bootstrap does
+not treat different support selections on the same test patches as independent repetitions. Upstream P10C directly
+uses OSM semantic probes for building, major/minor road, and water, while downstream masks are the
+corresponding merged OSM task labels. The results are therefore task-aligned OSM weak-supervision
+readouts, not ontology-independent transfer.
 
 ### 3.6 Annual-AEF contextual comparator
 
-We pre-register a contextual comparison using the official AlphaEarth Foundations (AEF)
-annual-2025 embedding with label-free coverage of all 320 Haidian patches and evaluation on the
-same 272-patch V5 complete-block subset. This comparator is intentionally classified as a *contextual*,
-time-inequivalent comparison: it contrasts an annual 2025 AEF product with the XuannvEarth
-2026-04 monthly product. It does not match observation dates or sensor inputs, and it does not
-control for or establish pretraining extent, geographic overlap, or weak-supervision history. The
-planned AEF export is label-free; its official annual index, source COGs, patch coverage, output
-index, and valid-pixel masks must be hash-locked before probe training.
-
-For each of the three tasks, five folds, two support budgets, and three probe seeds, we apply the
-identical frozen Conv3x3 reader, support-only standardisation, optimizer schedule, deterministic
-support schedule, validation-only threshold rule, and held-out test metrics described above. The
-90-cell AEF matrix is therefore useful for a controlled spatial-readout context, but not for
-claims of matched temporal information, independent transfer, or global superiority. Tables,
-captions, and discussion retain this qualifier wherever the comparator appears.
+We compare against the official AEF annual-2025 embedding and a 42-channel April-2026 traditional
+multisource feature stack. AEF is a contextual, time-inequivalent comparator: its annual 2025
+product differs from XuannvEarth's monthly April-2026 product in observation period, inputs,
+pretraining scale, and likely upstream geography. The comparison holds the *reader* fixed, not the
+upstream information budget. Thus it assesses how available feature products behave under the same
+three-polygon PU mapping interface; it does not establish global superiority or matched temporal
+information.
 
 The contextual AEF comparison consequently answers a narrow implementation question: given a
-fixed spatial reader and support schedule, how do the two available feature products behave on the
+fixed PU reader and support schedule, how do the two available feature products behave on the
 same downstream folds? It does not answer whether one representation has intrinsically better
 temporal information, whether either product has seen related upstream geography, or whether a
 monthly product should dominate an annual product for all applications. These questions require
@@ -399,177 +395,113 @@ additional information-matched experiments and are kept outside the stated compa
 
 ### 3.7 Registered assets, aggregation, and reproducibility
 
-The registered protocol is identified as `rse_v5_registered_20260726`. Its immutable five-fold
-split is `haidian_spatial_5fold_complete2x2_v5_seed42.json`
-(SHA-256 `9a6d98d6d6456ce0a791ef74ac725e4d360e7d4e0a17c9cb5edfceb850093c0b`), and its nested,
-label-free 40/80/150-patch subset registry is
-`haidian_paper_subsets_40_80_150_complete2x2_v5_seed42.json`
-(SHA-256 `5477d4a3c0ca9d1dbbf343fe04ae675725479a60cafa3be67ee29fa1db500c93`). The five
-self-contained encoder configurations follow the naming pattern
-`paper_registered_v5_full_150_fold{0..4}_20260726.yaml`; the archive will bind their byte hashes,
-queue-sealed checkpoint hashes, export file indices, and the V5 export registry to the reported
-cells. All preprocessing statistics are estimated only from the full upstream training manifest
-of the corresponding fold, never from its validation, test, or buffer patches. The normalization
-registry is `haidian_paper_v5_normalization_statistics.json`
-(SHA-256 `ba1fb10bc105a29286750367dff2ab45e02f89c32f69725ab89da994d0c56929`); it records each
-training-manifest and statistics-audit hash. The archive will include all five audits and the
-source-specific mean and standard-deviation arrays.
+The P10C checkpoint, monthly embedding export, support polygons, validation/test patch identifiers,
+thresholds, feature roots, PU hyperparameters, and per-cell metrics are retained in a machine-readable
+record for each fold--seed cell. The evaluated implementation is
+`scripts/eval/run_pu_query_sparse_eval.py`; each record explicitly stores the prototype mode,
+Query mode, threshold mode, background weight, background quantile, and dilation width. The
+evaluator prohibits nonlegacy variants from writing to the
+original P10C result directory and prohibits validation-calibrated runs from using test-time Query
+adaptation. These checks keep the historical single-prototype PU+Query case study separate from
+the multi-prototype, validation-calibrated analysis reported here.
 
-For each task and labelled-patch budget, Table 3 will report the arithmetic mean and sample standard
-deviation over the three registered schedule/probe-seed means, where each condition mean averages
-the five held-out spatial folds. Each registered condition selects the support schedule and
-deterministically sets the probe initialisation. The table will retain all 15 fold-by-condition
-values in the supplement, but will not treat them as 15 independent encoder pretraining repetitions. Comparative
-intervals for F1, IoU, precision, and recall will use a registered 10,000-resample hierarchical
-paired bootstrap (random seed 20260725): spatial folds, complete 2 by 2 geographic test clusters,
-and registered schedule/probe-seed conditions are resampled in that order. The interval does not quantify uncertainty
-from an independently repeated encoder pretraining run.
-AP and ROC-AUC will be reported as point estimates with the same fold/seed aggregation but are not
-assigned this confusion-matrix bootstrap interval. The bootstrap compares only paired result cells
-with the same task, budget, fold, seed, test-patch IDs, labels, split, and protocol provenance.
-
-Reproducibility is treated as a chain rather than a collection of filenames. Before a result is
-reported, its record must identify the frozen split and support manifests, encoder checkpoint and
-configuration, embedding export index, probe configuration, normalisation artifact, validation
-threshold, per-patch predictions, metrics, aggregation report, and release-admission record. The
-chain is designed to make a failed or altered link visible. It is not a substitute for independent
-replication with new pretraining seeds or new cities, both of which remain future evidence needs.
+Reproducibility is treated as a chain rather than a collection of filenames. Each result record
+identifies the feature product, support polygons, validation and test patch IDs, final threshold,
+and PU hyperparameters. The complete 5-fold by 3-seed records remain available as supplementary
+machine-readable material. This record does not substitute for independent pretraining repeats or
+cross-city replication, both of which remain necessary for broader claims.
 
 ## 4. Results
 
-### Planned tables and figures
+### 4.1 OSM-assisted sparse mapping
 
-**Table 1. Observation sources and preprocessing.** Rows will list source, channels, native and
-working resolution, temporal coverage, quality screening, monthly compositing rule, alignment
-procedure, and encoder role. Values are populated only from source QA audits.
+**Table 3. OSM-assisted sparse PU-readout performance in Haidian.** Values are mean ± sample
+standard deviation across five positive-pixel-ratio-stratified patch folds and three deterministic
+support-polygon selections per fold (15 cells). XuannvEarth is an April-indexed output using the
+December 2025 to May 2026 six-slot context; AEF is annual 2025. The PU reader uses three positive
+polygons and a validation-only threshold selected from 25 fully labelled validation patches.
 
-**Table 2. Registered encoder and optimisation configuration.** Rows will list encoder dimensions,
-target losses, corruption schedules, optimiser, effective batch size, stopping/checkpoint policy,
-and realised computational resources. The current V5 configuration is described in Section 3.4;
-realised values remain blank until the registered runs finish.
+Table 3 reports the 15 fold--seed cells for each task. XuannvEarth exceeds the traditional
+multisource feature stack on every reported mean metric. Relative to AEF, the largest gains occur
+for road and water retrieval. Road F1 increases from 0.303 to 0.353, and water F1 increases from
+0.245 to 0.348. Building F1 is similar (0.357 versus 0.347), whereas XuannvEarth has higher
+building ranking metrics (AUC 0.793 versus 0.746; AP 0.288 versus 0.259).
 
-**Table 3. Spatially held-out OSM-assisted readout.** Columns will show task, labelled-patch
-budget, F1, IoU, AP, ROC-AUC, precision, recall, paired uncertainty, and the evidence-admission
-identifier. Rows remain blank until all five folds and three registered reader conditions are
-complete.
+| Task | Feature | F1 | AUC | AP |
+| --- | --- | ---: | ---: | ---: |
+| Building | XuannvEarth | **0.357 ± 0.063** | **0.793 ± 0.061** | **0.288 ± 0.073** |
+| Building | AEF | 0.347 ± 0.088 | 0.746 ± 0.154 | 0.259 ± 0.083 |
+| Building | Traditional multisource features | 0.204 ± 0.047 | 0.600 ± 0.106 | 0.141 ± 0.038 |
+| Road | XuannvEarth | **0.353 ± 0.061** | **0.633 ± 0.124** | **0.256 ± 0.102** |
+| Road | AEF | 0.303 ± 0.042 | 0.546 ± 0.120 | 0.186 ± 0.071 |
+| Road | Traditional multisource features | 0.290 ± 0.019 | 0.529 ± 0.100 | 0.173 ± 0.043 |
+| Water | XuannvEarth | **0.348 ± 0.195** | **0.771 ± 0.083** | **0.285 ± 0.208** |
+| Water | AEF | 0.245 ± 0.168 | 0.720 ± 0.172 | 0.183 ± 0.174 |
+| Water | Traditional multisource features | 0.158 ± 0.097 | 0.655 ± 0.133 | 0.099 ± 0.073 |
 
-**Table 4. Contextual annual-AEF comparison.** This table will use the same columns as Table 3,
-plus a paired difference. Its caption will state that AEF annual-2025 and XuannvEarth monthly-2026
-inputs are time-inequivalent and that the OSM-assisted readout is not independent-transfer evidence.
+The standard deviations in Table 3 are descriptive variation across random stratified folds and
+support draws, not independent encoder retraining uncertainty. High variation for water reflects
+its sparse and clustered occurrence in some folds.
 
-**Figure 1. Study design and data provenance.** Map the 320 regional patches, identify the 272
-complete-block V5 subset and 48 excluded boundary patches, then show geographic folds and buffers,
-one quality-controlled multi-source observation sheet, and the audit chain from imagery to the
-registered manifest.
+### 4.2 Contextual comparison with AEF
 
-**Figure 2. XuannvEarth learning and readout pipeline.** Show sensor-specific inputs, validity
-masks, temporal fusion, high-resolution pathways, bottleneck, reconstruction/weak-semantic heads,
-and the frozen Conv3x3 downstream reader.
+**Table 4. Paired XuannvEarth minus AEF differences under the fixed PU-reader protocol.** Brackets
+give 95% percentile intervals from fold-clustered resampling: the three support-selection
+differences are averaged within each fold, and the five fold means are resampled with replacement.
+These intervals do not quantify independent pretraining, independent city, or multiple-comparison
+uncertainty.
 
-**Figure 3. Held-out readout examples.** For each admitted task, show high-resolution imagery,
-reference mask, probability, and validation-thresholded prediction for the same held-out patch.
-Every panel will identify the task, support budget, fold, and evidence-admission identifier.
+Table 4 reports paired differences using fold-clustered uncertainty. For roads, the F1,
+AUC, and AP intervals are all positive: +0.050 [0.023, 0.093], +0.087 [0.044, 0.142], and +0.071
+[0.030, 0.128], respectively. Water shows the same direction: +0.103 [0.033, 0.181] F1, +0.051
+[0.008, 0.090] AUC, and +0.102 [0.027, 0.179] AP. For buildings, F1 is inconclusive (+0.010,
+[-0.008, 0.033]), although AUC (+0.047 [0.016, 0.078]) and AP (+0.029 [0.005, 0.051]) are higher.
 
-**Figure 4. Aggregate support-budget and readout comparison.** Plot only admitted fold/seed
-aggregates with spatial-block uncertainty. Any contextual AEF panel will retain its
-time-inequivalence qualifier and will not be described as a labelled-patch-efficiency comparison.
+| Task | F1 difference | AUC difference | AP difference |
+| --- | ---: | ---: | ---: |
+| Building | +0.010 [-0.008, 0.033] | +0.047 [0.016, 0.078] | +0.029 [0.005, 0.051] |
+| Road | +0.050 [0.023, 0.093] | +0.087 [0.044, 0.142] | +0.071 [0.030, 0.128] |
+| Water | +0.103 [0.033, 0.181] | +0.051 [0.008, 0.090] | +0.102 [0.027, 0.179] |
 
-**Table S1. Data and label-provenance audit.** Report the source-specific quality-control records,
-valid-pixel and source-availability summaries, alignment checks, OSM provenance limitations, and
-the precise status of each label family. This table makes clear which labels are auxiliary,
-OSM-overlapping, temporally mismatched, or independently adjudicated.
+These results establish a constrained feature-readout finding, not a globally matched model
+ranking. AEF is annual-2025 while XuannvEarth and the traditional comparator are April-2026
+products, and the readout labels overlap the OSM ontology used for auxiliary semantic training.
+The experiments therefore show that the P10C feature product can support this sparse urban mapping
+workflow; they do not establish independent semantic transfer, spatial generalisation, or universal
+superiority.
 
-**Table S2. Per-fold and per-seed readout records.** Report support-patch identifiers, foreground
-and background pixel counts, validation-selected thresholds, test-patch identifiers, and all six
-metrics for every admitted cell. The main text will show aggregates; the supplement will retain the
-cells required to audit their construction.
+![Figure 3. OSM-assisted sparse-readout metrics for XuannvEarth, AEF, and traditional multisource features. Each bar aggregates the same 15 fold--seed cells reported in Table 3; error bars are descriptive sample standard deviations, not independent encoder-retraining uncertainty.](assets/figure_3_p10c_pu_readout.png)
 
-**Figure S1. Data-quality sheets.** Show randomly selected, pre-specified patches across the full
-input window with source availability and validity masks. The figure is a quality-control audit,
-not a curated performance illustration.
+**Figure 3. Contextual sparse-readout comparison.** XuannvEarth is the April 2026 output of the
+P10C six-slot contextual encoder; AEF is the official annual 2025 product; traditional features
+are an April 2026 42-channel multisource stack. Every bar uses the same three positive polygons,
+validation/test patches, PU hyperparameters, and validation-only threshold selection. The figure is
+an OSM-assisted, time-inequivalent feature-readout comparison, not an information-matched or
+independent-label benchmark.
 
-### 4.1 Spatially held-out OSM-assisted diagnostic readout
+### 4.3 Interpretation of the comparison
 
-**[Populate only after all five encoder folds, embedding exports, 90 registered probe jobs,
-aggregation, spatial bootstrap, and release admission complete.]** Report this section as
-“OSM-assisted, ontology-overlapping diagnostic readout.” Do not use it as independent transfer or
-general semantic generalisation evidence.
+The strongest contrast is against the traditional multisource stack, for which XuannvEarth has the
+highest mean F1, AUC, and AP for all three tasks. The AEF comparison is more nuanced. The
+fold-clustered intervals are positive for all three road and water metrics, while building F1 spans
+zero. The ranking metrics for building nevertheless favour XuannvEarth. Because only five
+stratified folds form the bootstrap unit and nine task--metric comparisons are reported without a
+multiple-comparison correction, these intervals are descriptive paired evidence rather than a
+claim of formal statistical significance.
 
-The completed section will first state the exact encoder family, checkpoint-selection rule, label
-provenance, support budget, and number of admitted fold/seed cells. It will then report all primary
-metrics together, rather than selecting a single favorable metric. Qualitative panels will be chosen
-by a pre-specified sampling rule from held-out patches and will include both probability maps and
-the validation-thresholded binary prediction. Errors such as boundary displacement, omission, and
-false positives will be described alongside successful examples.
-
-**[Insert Table 3: admitted five-fold/three-seed metrics.]**<br>
-**[Insert Figure 3: admitted held-out imagery, label, probability, and prediction examples.]**
-
-### 4.2 Annual-AEF contextual comparison
-
-**[Populate only after all 90 AEF probe cells, paired aggregation, bootstrap analysis, and
-evidence-ledger admission complete.]** This section will report the annual-2025 AEF versus
-monthly-2026-04 XuannvEarth comparison exclusively as a time-inequivalent, OSM-assisted spatial
-readout. It will use the same 15 fold-seed observations per task and support budget as Section
-4.1, retain the fixed caveat in every table and caption, and omit any interpretation as an
-information-matched or independent-transfer benchmark.
-
-The reported paired difference will be interpreted only at the feature-readout level. Any apparent
-advantage or disadvantage must be accompanied by the corresponding uncertainty estimate and by the
-time-inequivalence qualifier. The section will not aggregate this comparison with raw-image or
-other foundation-model baselines unless their input window, support schedule, split, reader, and
-threshold policy are documented as matched.
-
-**[Insert Table 4: admitted contextual AEF comparison with F1, IoU, AP, ROC-AUC, and paired
-uncertainty where applicable.]**
-
-### 4.3 Scale and recipe ablations
-
-**[Omit unless every requested comparator is trained, evaluated, and admitted.]** Strictly nested
-40/80/150 scale and matched recipe ablations can be reported only as registered foldwise
-comparisons. One-encoder-seed ablations must be described as exploratory. A combined
-higher-resolution pathway effect cannot be attributed separately to fusion or reconstruction
-without factorial evidence.
-
-For data scale, the horizontal axis will be the registered number of upstream training patches and
-the vertical axis will contain the same held-out metric used in the primary analysis. The narrative
-will describe the curve as an association under one encoder initialisation per fold, not an estimate
-of a universal scaling law. For recipe comparisons, each row will state exactly what was removed
-and what remained: for example, the historical `no_osm_150` setting removes both merged OSM land
-cover and fine OSM probes, so it cannot isolate the fine-probe contribution.
-
-### 4.4 Quality, temporal, and geographic robustness
-
-**[Omit unless information-matched experiments are complete and admitted.]** A test-time source
-deletion or month shuffling experiment is a distribution-shift diagnosis, not a causal temporal
-ablation. Claims about temporal context require independently trained 1/3/6-month encoders with
-matched information budgets. A second-city result requires clean-from-scratch training and the
-same registered protocol.
-
-When completed, robustness analyses will stratify results with a predeclared quality or availability
-definition and retain the same held-out geography. A source-deletion result will be called a stress
-test of an already trained representation. It will not be relabeled as proof that temporal context
-or a modality was causally learned, because the test-time intervention changes the input
-distribution without retraining the encoder.
-
-### 4.5 Full-region product case study
-
-**[Omit unless P10C provenance is bound and admitted.]** Full-region PCA mosaics, retrieval
-examples, and product maps may be shown only as transductive qualitative illustrations. They cannot
-support the spatial-generalisation result table or an independent-transfer claim.
-
-If retained, this section will explain how the full-region output differs from the inductive study:
-P10C has access to the complete regional training geography and is therefore useful for inspecting
-map continuity, retrieval behavior, and operational workflow, but not for estimating performance
-on unseen regions. PCA colours will be described as a visualization of a projection, not as class
-labels or quantitative evidence of semantic separation.
+The result also should not be interpreted as a controlled upstream-model comparison. The P10C
+encoder used the complete Haidian archive and task-aligned OSM auxiliary supervision; AEF is an
+annual 2025 public product, while the April-indexed P10C field has a six-slot 2025-12 to 2026-05
+context. The common element is the frozen feature readout protocol. This makes the study useful for
+the operational question of sparse urban mapping from available feature products, but insufficient
+for a claim about information-matched representation quality.
 
 ## 5. Discussion
 
-The central interpretation will be limited to admitted comparisons. If the registered diagnostics
-show utility, they support the narrower claim that a frozen monthly field can be read by a
-lightweight spatial probe in the measured OSM-assisted setting. They do not demonstrate a universal
-land-surface ontology, transfer independent of OSM, or parity with globally trained products.
+The central interpretation is limited to the preliminary case-study comparisons. They support the
+narrower claim that a frozen monthly field can be read by a lightweight sparse PU reader in the
+measured OSM-assisted setting. They do not demonstrate a universal land-surface ontology, transfer
+independent of OSM, or parity with globally trained products.
 
 The proposed interface is most naturally interpreted as an amortisation of upstream learning. Once
 an embedding field is exported, a new mapping request can begin from a common spatial feature
@@ -596,53 +528,46 @@ factorial high-resolution experiments and repeated encoder initialisations would
 effects from training variation. These are not cosmetic additions: each changes the type of claim
 the study can support.
 
-The design has several limitations. The present protocol is based on one urban region; spatial
-holdout within Haidian is not second-city validation. OSM labels are incomplete, temporally
+The design has several limitations. The present protocol is based on one urban region and randomly
+stratified patch folds; it is not geographically blocked validation or second-city validation. OSM labels are incomplete, temporally
 uncertain, and semantically related to downstream categories. Monthly observations have limited
 temporal redundancy and can retain cloud, haze, source-missingness, radar speckle, and registration
 artifacts. Sparse higher-resolution inputs are availability-masked and may be reused across target
 months. Finally, a hyperspherical bottleneck does not guarantee uniformly distributed or linearly
 separable semantic categories.
 
-The reporting discipline has a practical cost: it postpones attractive numerical claims until all
-folds, artifacts, and release records are complete. We consider this cost preferable to reporting a
-convenient subset of folds, a threshold tuned on test labels, or a qualitative full-region map as
-if it were independent validation. In this study, the evidence ledger is therefore part of the
-scientific method, not merely a software release checklist.
+The reporting discipline has a practical cost: the current figures are a preliminary working-draft
+case study until immutable archival admission binds the result records. We consider that boundary
+preferable to reporting a convenient subset of folds, a threshold tuned on test labels, or a
+qualitative full-region map as if it were independent validation.
 
 ## 6. Conclusion
 
 XuannvEarth is a reusable monthly embedding framework for heterogeneous urban Earth observations.
 It produces a 64-dimensional dense field at a 10 m grid and is designed for frozen-feature,
-label-efficient readout. **[Insert one verified and evidence-ledger-admitted conclusion after V5
-release admission.]** Until then, the supported conclusion is methodological: provenance-bound
-spatial evaluation is necessary to distinguish a useful reusable representation from a visually
-plausible but unverified urban mapping product.
-
-Its final empirical contribution will be defined by the released V5 evidence rather than by the
-existence of a registered training run. The paper therefore presents the representation, protocol,
-and limitations in sufficient detail for the final admitted results to be interpreted narrowly and
-reproduced. The intended outcome is a reusable urban mapping interface whose claims grow only as
-its geographically valid, label-provenance-aware evidence grows.
+label-efficient readout. In a five-fold, three-support-selection OSM-assisted retrieval protocol,
+the P10C embedding yields higher road and water metrics under this matched PU reader protocol, with
+positive fold-clustered intervals; building F1 is comparable to AEF and its ranking metrics are
+higher. These results are deliberately bounded: they use one city, a
+transductive regional encoder, OSM-overlapping labels, and an annual-versus-monthly comparison.
+Independent labels, matched-time comparators, repeated pretraining, and cross-city replication are
+needed before making claims about general transfer or global foundation-model performance.
 
 ## Data and code availability
 
-The archival release will contain: source code; exact self-contained encoder and probe
-configurations; frozen spatial split, buffer, subset and shot-schedule manifests; normalisation
-statistics; environment and command records; checkpoint/configuration hashes; embedding-export
-file indices and provenance; frozen probe weights; per-patch validation and test predictions;
-metrics, aggregation and spatial-bootstrap reports; and the release-admission registry that binds
-each reported result to these artifacts. The release DOI, version, licence, repository URL, and
-artifact manifest will be inserted here before submission. Checkpoints, embedding products, and
-downstream artifacts will additionally be versioned on ModelScope, with the exact version and
-content manifest cited here.
+The project code, self-contained P10C configuration, evaluation reader, and figure-generation
+script are maintained in the XuannvEarth repository. P10C checkpoint and embedding artifacts are
+distributed through the `WeijieWu/xuannv_haidian_embdding` ModelScope dataset. Before submission,
+an immutable release must bind the exact checkpoint, embedding export, OSM-rasterisation snapshot,
+support polygons, patch splits, thresholds, per-cell predictions, aggregation report, and figure
+inputs to a versioned manifest and a public archive identifier. This working draft does not yet
+claim that this admission gate has been completed.
 
-The release will also document software and hardware environments sufficiently to rerun each
-stage: preprocessing, encoder training, embedding export, probe fitting, aggregation, and report
-generation. Public code will exclude credentials and third-party imagery. Where a computation
-depends on a restricted asset, the artifact manifest will name the dependency and state whether it
-can be reproduced from public inputs, requested under a license, or only inspected through a
-derived release product.
+The release will document software and hardware environments sufficiently to rerun preprocessing,
+encoder training, embedding export, PU-reader fitting, aggregation, and figure generation. Public
+code excludes credentials and third-party imagery. Where a computation depends on a restricted
+asset, the artifact manifest will state whether it can be reproduced from public inputs, requested
+under a licence, or only inspected through a derived release product.
 
 The OSM-derived training and readout masks can be released as derived rasters and documented
 rasterisation rules where their source terms permit. Sentinel-1, Sentinel-2, and Landsat inputs
@@ -672,14 +597,13 @@ confirmed.
 ## Supplementary material
 
 The supplementary material will contain: (S1) acquisition, quality-mask, mosaicking,
-reprojection, alignment, source-availability, and OSM-rasterisation audits; (S2) the five-fold
-split, buffer, training-subset, and downstream-shot manifests; (S3) fold-specific normalization
-statistics and audits; (S4) self-contained encoder/probe configurations, training and inference
-commands, environment records, and checkpoint/export provenance; (S5) per-fold/seed metrics,
-validation thresholds, prediction-file schemas, and held-out qualitative examples; and (S6) the
-release-admission records, aggregation output, and paired spatial-bootstrap reports. Exact archive
-paths, version identifiers, and file hashes will be inserted when the final immutable release is
-created.
+reprojection, alignment, source-availability, and OSM-rasterisation audits; (S2) the stratified
+five-fold split and three-polygon support manifests; (S3) self-contained P10C and PU-reader
+configurations, commands, environment records, and checkpoint/export provenance; (S4) per-fold/
+seed metrics, validation thresholds, prediction-file schemas, and held-out qualitative examples;
+and (S5) the release-admission record, aggregation output, and fold-clustered bootstrap report.
+Exact archive paths, version identifiers, and hashes will be inserted when the final immutable
+release is created.
 
 ## CRediT authorship contribution statement
 

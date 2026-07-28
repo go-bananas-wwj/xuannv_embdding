@@ -1,12 +1,14 @@
 # XuannvEarth RSE Evidence Ledger
 
-Status convention: only a row marked **verified** may support the Abstract, Results, or
-Conclusion. Registered probe artifacts remain immutable preliminary records
-(`paper_eligible=false`); they become admissible paper evidence only when an immutable
-release-admission record binds their exact registry, metric, artifact, and report hashes.
+Status convention: only a row marked **verified** may support a submission-ready Abstract,
+Results, or Conclusion. Registered probe artifacts remain immutable preliminary records
+(`paper_eligible=false`) until an immutable release-admission record binds their exact registry,
+metric, artifact, and report hashes. A clearly labelled preliminary working draft may discuss such
+records, but it must not be submitted or represented as an admitted result.
 
 | Claim | Required evidence | Required statistical evidence | Status | Use in manuscript |
 |---|---|---|---|---|
+| P10C transductive OSM-assisted PU retrieval case study | P10C epoch800 export; 5 stratified patch folds; 3 support seeds; fixed PU reader and validation calibration | Fold-clustered bootstrap; disclose OSM task alignment, transductive training, and time mismatch | preliminary working draft | Draft Results only; immutable archival admission required before submission |
 | Frozen monthly embeddings support buildings, roads, and water under spatial holdout | Five folds, three probe seeds, fixed Conv3x3 head, frozen registered split and validation threshold | F1, AP, IoU, ROC-AUC, precision and recall; paired spatial-block CI | pending | Main Results only after admission |
 | A particular labelled-patch budget is more efficient than a matched baseline | Same fold, shot schedule, head, optimiser, threshold rule, and information window for every representation | Paired effect size and hierarchical spatial bootstrap CI | pending | Main Results only after admission |
 | Training-set scale is associated with transfer quality | Strictly nested 40/80/150 subsets in every fold | Foldwise curves and uncertainty; one encoder seed described as exploratory | pending | Exploratory scaling subsection |
