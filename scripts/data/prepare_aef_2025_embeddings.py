@@ -124,7 +124,11 @@ def find_reference_raster(processed_region_root: Path, patch_id: str) -> Path:
 
 def load_aef_index(index_path: str) -> gpd.GeoDataFrame:
     LOGGER.info("Loading AEF COG index: %s", index_path)
-    index = gpd.read_parquet(index_path, storage_options={"anon": True})
+    storage_options = {"anon": True} if index_path.startswith("s3://") else None
+    if storage_options is None:
+        index = gpd.read_parquet(index_path)
+    else:
+        index = gpd.read_parquet(index_path, storage_options=storage_options)
     if "datetime" in index.columns:
         index = index[index["datetime"].dt.year == AEF_YEAR].copy()
     elif "year" in index.columns:
