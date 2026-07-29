@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import json
 import sys
 from pathlib import Path
@@ -77,3 +78,10 @@ def test_result_is_published_only_after_metrics_and_predictions_exist(tmp_path: 
     assert (output / "metrics.json").is_file()
     assert (output / "predictions_test.npz").is_file()
     assert (output / "predictions_validation.npz").is_file()
+
+
+def test_reader_cell_accepts_the_task_field_emitted_by_matrix_jobs() -> None:
+    """Worker expansion must pass every job field into the reader-cell interface."""
+    module = _load_module()
+
+    assert "task" in inspect.signature(module.run_reader_cell).parameters

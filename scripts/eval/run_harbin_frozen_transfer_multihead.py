@@ -341,7 +341,7 @@ def _load_worker_prepared(config_path: Path, output_root: Path) -> PreparedMulti
 def run_reader_cell(
     prepared: PreparedMultihead,
     family: str,
-    task_name: str,
+    task: str,
     fold: int,
     shot: int,
     seed: int,
@@ -351,7 +351,7 @@ def run_reader_cell(
     """Train one matched reader from support only and score it with validation calibration."""
     job = {
         "family": family,
-        "task": task_name,
+        "task": task,
         "fold": fold,
         "shot": shot,
         "seed": seed,
@@ -375,20 +375,20 @@ def run_reader_cell(
         raise ValueError("reader cell head is outside the matched contract")
     split_path = strict.repo_path(prepared.matrix["spatial_split"]["path"])
     split = json.loads(split_path.read_text(encoding="utf-8"))["folds"][fold]
-    task = task_spec(task_name, Path(str(prepared.matrix["label_root"])))
+    task_specification = task_spec(task, Path(str(prepared.matrix["label_root"])))
     schedule_path = (
-        prepared.lock_path.parent
-        / "frozen_shot_schedules"
-        / f"{task_name}_fold{fold}_seed{seed}.json"
+        prepared.lock_path.parent / "frozen_shot_schedules" / f"{task}_fold{fold}_seed{seed}.json"
     )
     expected_schedule = build_registered_mixed_shot_schedule(
-        task_name,
+        task,
         list(split["train"]),
         fold,
         seed,
-        _label_tree_hash(task.label_roots),
+        _label_tree_hash(task_specification.label_roots),
         strict.sha256_file(split_path),
-        lambda patch_id: strict.label_pixel_counts(task, prepared.label_ids, patch_id),
+        lambda patch_id: strict.label_pixel_counts(
+            task_specification, prepared.label_ids, patch_id
+        ),
         budgets=tuple(prepared.config["shots"]),
         protocol_id=prepared.config["protocol_id"],
     )
@@ -399,20 +399,20 @@ def run_reader_cell(
         protocol_id=prepared.config["protocol_id"],
     )
     probe_seed = int.from_bytes(
-        hashlib.sha256(f"{fold}|{task_name}|{seed}|{head}".encode()).digest()[:4], "little"
+        hashlib.sha256(f"{fold}|{task}|{seed}|{head}".encode()).digest()[:4], "little"
     )
     _set_seed(probe_seed)
     spec = family_specs[family]
     embedding_root = Path(str(spec["embedding_root"]))
     month = str(spec["month"])
     train_items = strict.load_harbin_items(
-        task, train_ids, prepared.label_ids, embedding_root, month
+        task_specification, train_ids, prepared.label_ids, embedding_root, month
     )
     validation_items = strict.load_harbin_items(
-        task, list(split["val"]), prepared.label_ids, embedding_root, month
+        task_specification, list(split["val"]), prepared.label_ids, embedding_root, month
     )
     test_items = strict.load_harbin_items(
-        task, list(split["test"]), prepared.label_ids, embedding_root, month
+        task_specification, list(split["test"]), prepared.label_ids, embedding_root, month
     )
     mean, std = _fit_train_standardizer(train_items)
     train_items = _normalize_items(train_items, mean, std)
