@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "protocol_id": "harbin_pu_query_transfer_20260729",
+  "protocol_id": "harbin_pu_query_transfer_bg64_20260729",
   "scientific_status": "strict_paired_polygon_prompt_readout_preliminary",
   "base_matrix": {
     "path": "configs/eval/harbin_strict_conv3x3_matrix_20260728.json",
@@ -15,6 +15,7 @@
   "prototype_modes": ["single", "max"],
   "query_modes": ["disabled", "adaptive"],
   "minimum_component_area": 5,
-  "support_sampling": "deterministic_train_polygon_prefix",
+  "minimum_reliable_background_pixels": 64,
+  "support_sampling": "deterministic_train_polygon_prefix_distinct_patch",
   "threshold_rule": "validation_f1_only"
 }

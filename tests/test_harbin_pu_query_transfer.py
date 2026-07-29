@@ -6,7 +6,10 @@ import sys
 import time
 from pathlib import Path
 
+import numpy as np
 import pytest
+import rasterio
+from rasterio.transform import from_origin
 
 SCRIPT_PATH = Path(__file__).parents[1] / "scripts/eval/run_harbin_pu_query_transfer.py"
 
@@ -57,6 +60,36 @@ def test_label_resolution_uses_locked_source_patch_id() -> None:
     assert module.resolve_label_id("harbin_patch_000001", mapping) == "patch_000001"
     with pytest.raises(KeyError, match="unlocked"):
         module.resolve_label_id("harbin_patch_000002", mapping)
+
+
+def test_full_patch_component_is_rejected_before_schedule_generation(tmp_path: Path) -> None:
+    """A dilated full-patch support must never reach PU background fitting."""
+    module = _load_module()
+    mask_path = tmp_path / "masks" / "patch_000001.tif"
+    mask_path.parent.mkdir()
+    with rasterio.open(
+        mask_path,
+        "w",
+        driver="GTiff",
+        width=128,
+        height=128,
+        count=1,
+        dtype="uint8",
+        transform=from_origin(0, 128, 1, 1),
+    ) as dataset:
+        dataset.write(np.ones((1, 128, 128), dtype=np.uint8))
+
+    candidates, audit = module.polygon_candidates(
+        tmp_path,
+        ["harbin_patch_000001"],
+        {"harbin_patch_000001": "patch_000001"},
+        minimum_area=5,
+        minimum_reliable_background_pixels=64,
+    )
+
+    assert candidates == []
+    assert audit["rejected_insufficient_reliable_background"] == 1
+    assert audit["eligible_component_count"] == 0
 
 
 def test_validation_threshold_is_selected_without_test_labels() -> None:

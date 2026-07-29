@@ -177,25 +177,53 @@ def polygon_candidates(
     train_patch_ids: list[str],
     label_ids: dict[str, str],
     minimum_area: int,
-) -> list[dict[str, Any]]:
+    minimum_reliable_background_pixels: int,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Return only support components that retain dilated local background.
+
+    Each frozen support set is restricted to one component per patch below, so
+    this component-level audit is also the reliable-background guarantee used
+    by ``fit_pu_model``.  It never draws a background sample from validation
+    or test patches.
+    """
     candidates: list[dict[str, Any]] = []
+    audit = {
+        "minimum_component_area": minimum_area,
+        "minimum_reliable_background_pixels": minimum_reliable_background_pixels,
+        "components_seen": 0,
+        "rejected_below_minimum_area": 0,
+        "rejected_insufficient_reliable_background": 0,
+        "eligible_component_count": 0,
+    }
     for patch_id in sorted(train_patch_ids):
         source_patch_id = resolve_label_id(patch_id, label_ids)
         components, count = label(
             read_mask(label_root, source_patch_id), structure=np.ones((3, 3), dtype=np.uint8)
         )
         for component_index in range(1, count + 1):
-            area = int((components == component_index).sum())
-            if area >= minimum_area:
-                candidates.append(
-                    {
-                        "patch_id": patch_id,
-                        "source_patch_id": source_patch_id,
-                        "component_index": component_index,
-                        "area_pixels": area,
-                    }
-                )
-    return candidates
+            component = components == component_index
+            area = int(component.sum())
+            audit["components_seen"] += 1
+            if area < minimum_area:
+                audit["rejected_below_minimum_area"] += 1
+                continue
+            reliable_background_pixels = int(
+                (~dilate(component, BACKGROUND_EXCLUSION_PIXELS)).sum()
+            )
+            if reliable_background_pixels < minimum_reliable_background_pixels:
+                audit["rejected_insufficient_reliable_background"] += 1
+                continue
+            candidates.append(
+                {
+                    "patch_id": patch_id,
+                    "source_patch_id": source_patch_id,
+                    "component_index": component_index,
+                    "area_pixels": area,
+                    "reliable_background_pixels": reliable_background_pixels,
+                }
+            )
+            audit["eligible_component_count"] += 1
+    return candidates, audit
 
 
 def build_schedule(
@@ -205,6 +233,7 @@ def build_schedule(
     fold: int,
     seed: int,
     polygon_counts: list[int],
+    eligibility_audit: dict[str, int],
 ) -> dict[str, dict[str, Any]]:
     if not candidates:
         raise ValueError(f"{task}/fold{fold} has no usable train polygons")
@@ -213,19 +242,42 @@ def build_schedule(
     )
     ordered = [candidates[int(index)] for index in order]
     largest = max(polygon_counts)
-    if len(ordered) < largest:
-        raise ValueError(f"{task}/fold{fold} has {len(ordered)} polygons, below required {largest}")
+    selected: list[dict[str, Any]] = []
+    seen_patch_ids: set[str] = set()
+    for candidate in ordered:
+        patch_id = str(candidate["patch_id"])
+        if patch_id in seen_patch_ids:
+            continue
+        selected.append(candidate)
+        seen_patch_ids.add(patch_id)
+        if len(selected) == largest:
+            break
+    if len(selected) < largest:
+        raise ValueError(
+            f"{task}/fold{fold} has {len(selected)} eligible distinct support patches, "
+            f"below required {largest}"
+        )
+    schedule_audit = {
+        **eligibility_audit,
+        "eligible_distinct_patch_count": len({str(item["patch_id"]) for item in candidates}),
+        "selection_skipped_duplicate_patch_count": len(ordered) - len(selected),
+        "selection_rule": "deterministic_train_polygon_prefix_distinct_patch",
+    }
     schedules: dict[str, dict[str, Any]] = {}
     for polygon_count in polygon_counts:
-        selected = ordered[:polygon_count]
+        prompt_polygons = selected[:polygon_count]
         schedules[f"{task}|{fold}|{seed}|{polygon_count}"] = {
             "task": task,
             "fold": fold,
             "seed": seed,
             "polygon_count": polygon_count,
             "candidate_count": len(ordered),
-            "support_polygons": selected,
-            "support_polygon_sha256": canonical_sha256(selected),
+            "support_polygons": prompt_polygons,
+            "support_polygon_sha256": canonical_sha256(prompt_polygons),
+            "eligibility_audit": {
+                **schedule_audit,
+                "selected_support_patch_count": len(prompt_polygons),
+            },
         }
     return schedules
 
@@ -244,7 +296,7 @@ def prepare_harbin_pu_query(config_path: Path, output_root: Path) -> PreparedPro
     config = json.loads(config_path.read_text(encoding="utf-8"))
     if config.get("coverage_patch_count") != 380:
         raise ValueError("Harbin PU+Query protocol requires exactly 380 coverage patches")
-    if config.get("protocol_id") != "harbin_pu_query_transfer_20260729":
+    if config.get("protocol_id") != "harbin_pu_query_transfer_bg64_20260729":
         raise ValueError("unexpected Harbin PU+Query protocol ID")
     matrix_path = _locked_file(config, "base_matrix")
     matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
@@ -279,6 +331,13 @@ def prepare_harbin_pu_query(config_path: Path, output_root: Path) -> PreparedPro
     polygon_counts = list(config["polygon_counts"])
     if polygon_counts != [1, 3, 5, 9]:
         raise ValueError("polygon prompt budgets must be exactly [1, 3, 5, 9]")
+    minimum_reliable_background_pixels = config.get("minimum_reliable_background_pixels")
+    if (
+        not isinstance(minimum_reliable_background_pixels, int)
+        or isinstance(minimum_reliable_background_pixels, bool)
+        or minimum_reliable_background_pixels <= 0
+    ):
+        raise ValueError("minimum_reliable_background_pixels must be a positive integer")
     schedules: dict[str, dict[str, Any]] = {}
     schedule_dir = output_root / "frozen_polygon_schedules"
     for task in matrix["tasks"]:
@@ -293,11 +352,12 @@ def prepare_harbin_pu_query(config_path: Path, output_root: Path) -> PreparedPro
             )
             if universe != set(patch_ids):
                 raise ValueError(f"fold {fold_index} does not partition the 380 locked patches")
-            candidates = polygon_candidates(
+            candidates, eligibility_audit = polygon_candidates(
                 task_root,
                 list(fold["train"]),
                 label_ids,
                 int(config["minimum_component_area"]),
+                minimum_reliable_background_pixels,
             )
             for seed in matrix["seeds"]:
                 schedules.update(
@@ -307,6 +367,7 @@ def prepare_harbin_pu_query(config_path: Path, output_root: Path) -> PreparedPro
                         fold=fold_index,
                         seed=seed,
                         polygon_counts=polygon_counts,
+                        eligibility_audit=eligibility_audit,
                     )
                 )
                 payload = {
@@ -317,6 +378,7 @@ def prepare_harbin_pu_query(config_path: Path, output_root: Path) -> PreparedPro
                     "task": task,
                     "fold": fold_index,
                     "seed": seed,
+                    "eligibility_audit": eligibility_audit,
                     "sets": {
                         str(count): schedules[f"{task}|{fold_index}|{seed}|{count}"]
                         for count in polygon_counts
