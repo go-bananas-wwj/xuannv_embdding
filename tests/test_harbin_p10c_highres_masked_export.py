@@ -48,6 +48,16 @@ def test_mask_contract_zeros_optical_and_records_missing_sar() -> None:
     }
 
 
+def test_paper_export_helper_is_bound_to_repository_path() -> None:
+    """The standalone exporter must not resolve the unrelated downstreams/scripts package."""
+    module = _load_module()
+
+    assert (
+        Path(module.paper_export.__file__).resolve()
+        == (REPO_ROOT / "scripts/eval/export_p10c_harbin_paper_embeddings.py").resolve()
+    )
+
+
 def test_availability_audit_rejects_any_nonzero_mask_after_export(tmp_path: Path) -> None:
     """A sealed masked export cannot accept an optical or SAR availability leak."""
     module = _load_module()

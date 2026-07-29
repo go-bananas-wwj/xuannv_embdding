@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -12,9 +13,15 @@ from typing import Any
 
 import torch
 
-from scripts.eval import export_p10c_harbin_paper_embeddings as paper_export
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
+_PAPER_EXPORT_PATH = REPO_ROOT / "scripts/eval/export_p10c_harbin_paper_embeddings.py"
+_PAPER_EXPORT_SPEC = importlib.util.spec_from_file_location("paper_export", _PAPER_EXPORT_PATH)
+if _PAPER_EXPORT_SPEC is None or _PAPER_EXPORT_SPEC.loader is None:
+    raise ImportError(f"cannot load {_PAPER_EXPORT_PATH}")
+paper_export = importlib.util.module_from_spec(_PAPER_EXPORT_SPEC)
+sys.modules[_PAPER_EXPORT_SPEC.name] = paper_export
+_PAPER_EXPORT_SPEC.loader.exec_module(paper_export)
+
 DISABLED_HIGHRES_SOURCES = ("highres_optical_haidian", "highres_sar_haidian")
 EXPECTED_SHAPE = (64, 128, 128)
 
