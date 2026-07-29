@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "kind": "harbin_p10c_highres_mask_diagnostic",
+  "protocol_id": "harbin_p10c_highres_mask_diagnostic_20260729",
+  "region": "harbin",
+  "month": "202604",
+  "family": "p10c_haidian_frozen_harbin",
+  "encoder_frozen": true,
+  "checkpoint": "/data/xuannv_embedding/outputs/v2_p10c_haidian_202512_202605_osm_semantic_hardneg_20260704/epoch_800.pt",
+  "model_config": "configs/v2_p10c_haidian_202512_202605_osm_semantic_hardneg_20260704.yaml",
+  "source_manifest": "/data/xuannv_embedding/processed/harbin/manifest_p10c_haidian_frozen_to_harbin_20260728.json",
+  "coverage_inventory": "configs/eval/harbin_aef_annual_2025_coverage_inventory_20260728.json",
+  "disabled_highres_sources": [
+    "highres_optical_haidian",
+    "highres_sar_haidian"
+  ],
+  "prohibited_evidence": [
+    "unmasked_embedding_as_masked_result",
+    "aef_embedding_as_p10c_masked_result"
+  ],
+  "downstream_matrix": {
+    "status": "blocked_until_new_masked_export_is_sealed",
+    "families": ["p10c_haidian_frozen_harbin_highres_masked"],
+    "base_protocol": "harbin_frozen_transfer_multihead_20260729"
+  }
+}
