@@ -83,7 +83,7 @@ def build_document() -> None:
         text = raw.strip()
         if not text:
             continue
-        if text == "[[TECH_ROUTE]]":
+        if text.startswith("图1 技术路线："):
             add_route_table(document)
             continue
         if text.startswith("## "):
