@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "protocol_id": "harbin_pu_query_transfer_20260729",
+  "scientific_status": "strict_paired_polygon_prompt_readout_preliminary",
+  "base_matrix": {
+    "path": "configs/eval/harbin_strict_conv3x3_matrix_20260728.json",
+    "sha256": "3af8f024cf57923017044d61733c9213dd459e61814c7dc1d6cb84ece17830c7"
+  },
+  "base_matrix_input_lock": {
+    "path": "/data/xuannv_embedding/outputs/paper_p10c_haidian_harbin_20260728/harbin_strict_conv3x3_matrix/matrix_input_lock.json",
+    "sha256": "2933ca130440dbb2b41fb76cdb757dc6a1cf52325bc73bd6d72a7df3a0cc8eed"
+  },
+  "coverage_patch_count": 380,
+  "polygon_counts": [1, 3, 5, 9],
+  "prototype_modes": ["single", "max"],
+  "query_modes": ["disabled", "adaptive"],
+  "minimum_component_area": 5,
+  "support_sampling": "deterministic_train_polygon_prefix",
+  "threshold_rule": "validation_f1_only"
+}
