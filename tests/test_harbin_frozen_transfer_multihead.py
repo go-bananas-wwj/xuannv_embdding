@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 SCRIPT_PATH = Path(__file__).parents[1] / "scripts/eval/run_harbin_frozen_transfer_multihead.py"
@@ -52,3 +53,27 @@ def test_primary_matrix_has_matched_readers(tmp_path: Path) -> None:
         "p10c_haidian_frozen_harbin",
         "aef_annual_2025",
     )
+
+
+def test_linear_reader_has_no_spatial_kernel() -> None:
+    """The linear probe is exactly a 1×1 pixelwise readout."""
+    module = _load_module()
+
+    assert module.build_reader("linear", 64).kernel_size == (1, 1)
+
+
+def test_result_is_published_only_after_metrics_and_predictions_exist(tmp_path: Path) -> None:
+    """A finished cell appears only as a complete metrics/predictions bundle."""
+    module = _load_module()
+    output = tmp_path / "cell"
+    metrics = {"f1": 0.5}
+    predictions = {
+        "validation": {"patch_ids": ["val"], "probabilities": np.zeros((1, 2, 2))},
+        "test": {"patch_ids": ["test"], "probabilities": np.ones((1, 2, 2))},
+    }
+
+    module.write_cell_atomically(output, metrics, predictions)
+
+    assert (output / "metrics.json").is_file()
+    assert (output / "predictions_test.npz").is_file()
+    assert (output / "predictions_validation.npz").is_file()
