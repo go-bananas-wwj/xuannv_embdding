@@ -64,6 +64,35 @@ def write_markdown_to_cell(cell, lines: list[str]) -> None:
         set_paragraph(paragraph, text, size=size, bold=bold)
 
 
+def remove_template_drawings(document: Document) -> None:
+    drawing_tags = {qn("w:drawing"), qn("w:pict")}
+    for element in list(document._element.body.iter()):
+        if element.tag in drawing_tags:
+            parent = element.getparent()
+            if parent is not None:
+                parent.remove(element)
+
+
+def add_route_table(cell) -> None:
+    heading = cell.add_paragraph()
+    set_paragraph(heading, "技术路线图", size=Pt(10.5), bold=True)
+    table = cell.add_table(rows=1, cols=6)
+    labels = [
+        "多源遥感与生态辅助数据",
+        "质量控制与时空对齐",
+        "月度生态状态基础产品",
+        "过程单元核算与独立验证",
+        "标准价值量核算",
+        "试点报告、专题图与核算工具",
+    ]
+    for index, label in enumerate(labels):
+        target = table.cell(0, index)
+        set_cell_text(target, label, center=True, bold=True)
+        shade = OxmlElement("w:shd")
+        shade.set(qn("w:fill"), "F2F2F2")
+        target._tc.get_or_add_tcPr().append(shade)
+
+
 def replace_cover_title(document: Document, title: str) -> None:
     for paragraph in document.paragraphs:
         if "申报项目名称：" in paragraph.text:
@@ -81,6 +110,7 @@ def build_document() -> None:
     budget = extract_section(source, "## 五、经费预算", "## 六、")
 
     document = Document(TEMPLATE)
+    remove_template_drawings(document)
     replace_cover_title(document, title)
     info = document.tables[0]
     set_cell_text(info.cell(0, 3), title, center=True)
@@ -94,6 +124,7 @@ def build_document() -> None:
     set_cell_text(info.cell(8, 3), "支撑海淀区生态空间监测、服务核算、年度更新和结果复核，提升数据整理和成果审查效率。")
 
     write_markdown_to_cell(document.tables[1].cell(0, 0), tasks)
+    add_route_table(document.tables[1].cell(0, 0))
     write_markdown_to_cell(document.tables[2].cell(0, 0), outcomes)
     write_markdown_to_cell(document.tables[3].cell(0, 0), foundation + implementation)
 

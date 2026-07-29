@@ -12,8 +12,8 @@ from docx.shared import Cm, Pt
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SOURCE = ROOT / "docs/projects/haidian_gep_xuannv_application_revision_20260729_zh.md"
-OUTPUT = ROOT / "docs/projects/haidian_gep_xuannv_application_revision_20260729_zh.docx"
+SOURCE = ROOT / "docs/projects/haidian_gep_xuannv_implementation_and_acceptance_annex_20260729_zh.md"
+OUTPUT = ROOT / "docs/projects/haidian_gep_xuannv_implementation_and_acceptance_annex_20260729_zh.docx"
 
 
 def set_run_font(run, size: Pt, bold: bool = False) -> None:
