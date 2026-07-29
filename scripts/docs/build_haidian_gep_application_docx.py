@@ -57,16 +57,16 @@ def set_table_borders(table) -> None:
     tbl_pr.append(borders)
 
 
-def add_info_table(document: Document) -> None:
+def add_info_table(document: Document, project_title: str) -> None:
     table = document.add_table(rows=5, cols=2)
     table.autofit = False
     table.columns[0].width = Cm(4.0)
     table.columns[1].width = Cm(12.5)
     entries = [
-        ("项目名称", "基于玄女月度地理嵌入的海淀区生态系统生产总值（GEP）核算与智能服务关键技术研究"),
+        ("项目名称", project_title),
         ("申报部门", "待填"),
         ("项目申报人", "待填"),
-        ("研究周期", "待填"),
+        ("研究周期", "建议2年（以正式立项文件为准）"),
         ("成果转化方式", "业务化、工程化"),
     ]
     for row, (label, value) in zip(table.rows, entries, strict=True):
@@ -102,7 +102,7 @@ def build_document() -> None:
     add_text(subtitle, "项目申报书（技术内容修订稿）", Pt(14), bold=True)
     document.add_paragraph("说明：申报部门、负责人、研究周期和经费预算需由申报单位补充。")
     document.add_page_break()
-    add_info_table(document)
+    add_info_table(document, title)
     document.add_page_break()
 
     in_info = False
