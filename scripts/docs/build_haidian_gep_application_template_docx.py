@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
+from xml.etree import ElementTree
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -97,6 +99,28 @@ def replace_cover_title(document: Document, title: str) -> None:
     for paragraph in document.paragraphs:
         if "申报项目名称：" in paragraph.text:
             set_paragraph(paragraph, f"申报项目名称： {title}", size=Pt(12), bold=False)
+        elif "预计研究时间：" in paragraph.text:
+            set_paragraph(paragraph, "预计研究时间：2026年9月1日 至 2028年8月31日", size=Pt(12))
+        elif "二○" in paragraph.text and "年" in paragraph.text and "月" in paragraph.text:
+            set_paragraph(paragraph, "二〇二六年七月", size=Pt(12), bold=False)
+
+
+def strip_template_media(path: Path) -> None:
+    """Delete unused image parts carried by the source application template."""
+    temporary = path.with_suffix(".tmp.docx")
+    with ZipFile(path) as source, ZipFile(temporary, "w", ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            if item.filename.startswith("word/media/"):
+                continue
+            data = source.read(item.filename)
+            if item.filename.endswith(".rels"):
+                root = ElementTree.fromstring(data)
+                for relationship in list(root):
+                    if relationship.attrib.get("Type", "").endswith("/image"):
+                        root.remove(relationship)
+                data = ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
+            target.writestr(item, data)
+    temporary.replace(path)
 
 
 def build_document() -> None:
@@ -119,9 +143,9 @@ def build_document() -> None:
     set_cell_text(info.cell(3, 3), "生态系统服务核算与遥感智能分析")
     set_cell_text(info.cell(4, 3), "□1年；■2年")
     set_cell_text(info.cell(5, 3), "".join(overview))
-    set_cell_text(info.cell(6, 3), "数据台账、三类调节服务价值试点、核算辅助工具、试点报告与技术附件。")
-    set_cell_text(info.cell(7, 3), "月度地理嵌入与服务专题模型协同；标准化实物量与价值量核算；可追溯核算辅助工具。")
-    set_cell_text(info.cell(8, 3), "支撑海淀区生态空间监测、服务核算、年度更新和结果复核，提升数据整理和成果审查效率。")
+    set_cell_text(info.cell(6, 3), "主要科技成果及形式：数据台账、三类调节服务价值试点、核算辅助工具、试点报告与技术附件。")
+    set_cell_text(info.cell(7, 3), "重点技术突破及产品：月度地理嵌入与服务专题模型协同；标准化实物量与价值量核算；可追溯核算辅助工具。")
+    set_cell_text(info.cell(8, 3), "效益预期：支撑海淀区生态空间监测、服务核算、年度更新和结果复核，提升数据整理和成果审查效率。")
 
     write_markdown_to_cell(document.tables[1].cell(0, 0), tasks)
     add_route_table(document.tables[1].cell(0, 0))
@@ -144,6 +168,7 @@ def build_document() -> None:
     note = document.add_paragraph()
     set_paragraph(note, "经费预算说明：" + "".join(budget), size=Pt(10.5), bold=True)
     document.save(OUTPUT)
+    strip_template_media(OUTPUT)
 
 
 if __name__ == "__main__":
