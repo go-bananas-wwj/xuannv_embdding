@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "protocol_id": "harbin_frozen_transfer_multihead_20260729",
+  "scientific_status": "strict_paired_frozen_transfer_multihead_preliminary",
+  "base_matrix": {
+    "path": "configs/eval/harbin_strict_conv3x3_matrix_20260728.json",
+    "sha256": "3af8f024cf57923017044d61733c9213dd459e61814c7dc1d6cb84ece17830c7"
+  },
+  "primary_families": [
+    {
+      "id": "p10c_haidian_frozen_harbin",
+      "embedding_root": "/data/xuannv_embedding/embeddings/paper_p10c_harbin_20260728/p10c_haidian_frozen_harbin",
+      "month": "202604",
+      "seal_file": "paper_export_provenance.json",
+      "encoder_status": "frozen_haidian_p10c"
+    },
+    {
+      "id": "aef_annual_2025",
+      "embedding_root": "/data/xuannv_embedding/embeddings/aef_official_2025_annual_harbin_20260728",
+      "month": "annual_2025",
+      "seal_file": "meta.json",
+      "encoder_status": "official_aef_annual_2025"
+    }
+  ],
+  "tasks": ["building", "road", "water"],
+  "folds": [0, 1, 2, 3, 4],
+  "shots": [5, 10],
+  "seeds": [42, 43, 44],
+  "heads": ["linear", "wide_mlp", "deep_wide_mlp", "conv3x3", "unet", "deeplab_lite"],
+  "reader": {
+    "epochs": 80,
+    "batch_size": 8,
+    "optimizer": "AdamW",
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "normalization": "support_only_channel_standardizer"
+  },
+  "threshold_rule": {
+    "selection_split": "spatial_validation_only",
+    "objective": "pooled_pixel_f1",
+    "grid_start": 0.001,
+    "grid_stop_exclusive": 1.0,
+    "grid_step": 0.001
+  },
+  "highres_mask_diagnostic": {
+    "primary_table": false,
+    "family": "p10c_haidian_frozen_harbin",
+    "status": "requires_separate_masked_embedding_export",
+    "prohibited_input": "unmasked_embedding_as_masked_result"
+  }
+}
