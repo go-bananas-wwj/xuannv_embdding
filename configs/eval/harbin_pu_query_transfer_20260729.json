@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "protocol_id": "harbin_pu_query_transfer_bg64_20260729",
+  "protocol_id": "harbin_pu_query_transfer_bg64_atomic_20260729",
   "scientific_status": "strict_paired_polygon_prompt_readout_preliminary",
   "base_matrix": {
     "path": "configs/eval/harbin_strict_conv3x3_matrix_20260728.json",

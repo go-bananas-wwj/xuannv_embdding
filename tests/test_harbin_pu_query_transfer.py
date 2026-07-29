@@ -92,6 +92,20 @@ def test_full_patch_component_is_rejected_before_schedule_generation(tmp_path: P
     assert audit["eligible_component_count"] == 0
 
 
+def test_frozen_schedule_write_is_atomic_and_idempotent(tmp_path: Path) -> None:
+    """Concurrent workers may only observe a complete immutable schedule JSON."""
+    module = _load_module()
+    destination = tmp_path / "frozen_polygon_schedules" / "water_fold0_seed42.json"
+    payload = {"protocol_id": "locked", "sets": {"1": {"polygon_count": 1}}}
+
+    module.write_frozen_schedule(destination, payload)
+    module.write_frozen_schedule(destination, payload)
+
+    assert json.loads(destination.read_text(encoding="utf-8")) == payload
+    with pytest.raises(ValueError, match="differs"):
+        module.write_frozen_schedule(destination, {"protocol_id": "different"})
+
+
 def test_validation_threshold_is_selected_without_test_labels() -> None:
     """Changing a held-out test label cannot change the validation-only threshold."""
     module = _load_module()

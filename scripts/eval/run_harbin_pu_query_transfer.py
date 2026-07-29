@@ -292,11 +292,24 @@ def _locked_file(record: dict[str, Any], key: str) -> Path:
     return path
 
 
+def write_frozen_schedule(destination: Path, payload: dict[str, Any]) -> None:
+    """Atomically publish an immutable schedule for concurrently starting workers."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        existing = json.loads(destination.read_text(encoding="utf-8"))
+        if existing != payload:
+            raise ValueError(f"existing frozen polygon schedule differs: {destination}")
+        return
+    temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    os.replace(temporary, destination)
+
+
 def prepare_harbin_pu_query(config_path: Path, output_root: Path) -> PreparedProtocol:
     config = json.loads(config_path.read_text(encoding="utf-8"))
     if config.get("coverage_patch_count") != 380:
         raise ValueError("Harbin PU+Query protocol requires exactly 380 coverage patches")
-    if config.get("protocol_id") != "harbin_pu_query_transfer_bg64_20260729":
+    if config.get("protocol_id") != "harbin_pu_query_transfer_bg64_atomic_20260729":
         raise ValueError("unexpected Harbin PU+Query protocol ID")
     matrix_path = _locked_file(config, "base_matrix")
     matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
@@ -385,13 +398,7 @@ def prepare_harbin_pu_query(config_path: Path, output_root: Path) -> PreparedPro
                     },
                 }
                 destination = schedule_dir / f"{task}_fold{fold_index}_seed{seed}.json"
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                if (
-                    destination.exists()
-                    and json.loads(destination.read_text(encoding="utf-8")) != payload
-                ):
-                    raise ValueError(f"existing frozen polygon schedule differs: {destination}")
-                destination.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+                write_frozen_schedule(destination, payload)
     return PreparedProtocol(
         patch_ids=patch_ids,
         label_ids=label_ids,
