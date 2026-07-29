@@ -76,6 +76,14 @@ def canonical_sha256(value: Any) -> str:
     ).hexdigest()
 
 
+def shot_schedule_protocol_id(config: dict[str, Any]) -> str:
+    """Return the immutable schedule identity, optionally reused by a separate diagnostic."""
+    value = config.get("shot_schedule_protocol_id", config["protocol_id"])
+    if not isinstance(value, str) or not value:
+        raise ValueError("shot schedule protocol ID must be a non-empty string")
+    return value
+
+
 def write_json_atomically(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
@@ -390,13 +398,13 @@ def run_reader_cell(
             task_specification, prepared.label_ids, patch_id
         ),
         budgets=tuple(prepared.config["shots"]),
-        protocol_id=prepared.config["protocol_id"],
+        protocol_id=shot_schedule_protocol_id(prepared.config),
     )
     train_ids, schedule = load_registered_shot_ids(
         schedule_path,
         expected_schedule=expected_schedule,
         shot=str(shot),
-        protocol_id=prepared.config["protocol_id"],
+        protocol_id=shot_schedule_protocol_id(prepared.config),
     )
     probe_seed = int.from_bytes(
         hashlib.sha256(f"{fold}|{task}|{seed}|{head}".encode()).digest()[:4], "little"

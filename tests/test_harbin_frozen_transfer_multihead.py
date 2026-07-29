@@ -63,6 +63,21 @@ def test_linear_reader_has_no_spatial_kernel() -> None:
     assert module.build_reader("linear", 64).kernel_size == (1, 1)
 
 
+def test_separate_diagnostic_can_lock_the_existing_schedule_protocol() -> None:
+    """A distinct diagnostic identity may still consume the frozen primary schedules."""
+    module = _load_module()
+
+    assert (
+        module.shot_schedule_protocol_id(
+            {
+                "protocol_id": "masked_diagnostic",
+                "shot_schedule_protocol_id": "harbin_frozen_transfer_multihead_20260729",
+            }
+        )
+        == "harbin_frozen_transfer_multihead_20260729"
+    )
+
+
 def test_result_is_published_only_after_metrics_and_predictions_exist(tmp_path: Path) -> None:
     """A finished cell appears only as a complete metrics/predictions bundle."""
     module = _load_module()
