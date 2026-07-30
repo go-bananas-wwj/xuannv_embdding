@@ -19,8 +19,13 @@
     "aef_embedding_as_p10c_masked_result"
   ],
   "downstream_matrix": {
-    "status": "blocked_until_new_masked_export_is_sealed",
+    "status": "ready_after_masked_export_seal",
     "families": ["p10c_haidian_frozen_harbin_highres_masked"],
-    "base_protocol": "harbin_frozen_transfer_multihead_20260729"
+    "base_protocol": "harbin_frozen_transfer_multihead_20260729",
+    "primary_config": "configs/eval/harbin_frozen_transfer_multihead_20260729.json",
+    "primary_config_sha256": "7a8ff97b06265a4dbdca5a94b1463aa7e87edcceb7d645a1a7b1b8aa0895b5c2",
+    "primary_output_root": "/data/xuannv_embedding/outputs/paper_p10c_haidian_harbin_20260728/harbin_frozen_transfer_multihead_v1",
+    "primary_matrix_lock_sha256": "40602bbdab5b3b29972de3260f019cb1c01fb6d404d87e9f790c05f2f098a494",
+    "masked_embedding_root": "/data/xuannv_embedding/embeddings/paper_p10c_harbin_highres_masked_20260729/full_380"
   }
 }
