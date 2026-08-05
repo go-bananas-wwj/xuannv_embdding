@@ -10,13 +10,20 @@ from typing import Any, Iterator, Mapping
 from pyproj import Transformer
 from shapely.geometry import Point
 
+PARENT_SIDE_METERS = 1280
+CHINA_OWNER_EPSGS = frozenset(range(32643, 32654))
+
 
 @dataclass(frozen=True)
 class GridSpec:
-    side_m: int = 1280
+    side_m: int = PARENT_SIDE_METERS
     macro_side_patches: int = 10
     boundary_version: str = "geoBoundaries-CHN-ADM0-frozen-20260726"
     atlas_version: str = "china-full-1280m-v1-20260805"
+
+    def __post_init__(self) -> None:
+        if self.side_m != PARENT_SIDE_METERS:
+            raise ValueError(f"side_m must be exactly {PARENT_SIDE_METERS}")
 
 
 def parent_key(grid_epsg: int, grid_col: int, grid_row: int) -> str:
@@ -28,6 +35,11 @@ def utm_owner_epsg(longitude: float, latitude: float) -> int:
     """Return the EPSG code for the unique half-open UTM zone at a point."""
     zone = max(1, min(60, math.floor((float(longitude) + 180.0) / 6.0) + 1))
     return (32600 if float(latitude) >= 0 else 32700) + zone
+
+
+def _validate_china_owner_epsg(grid_epsg: int) -> None:
+    if grid_epsg not in CHINA_OWNER_EPSGS:
+        raise ValueError("grid_epsg must be within China owner EPSGs 32643 through 32653")
 
 
 def build_patch_record(
@@ -72,6 +84,7 @@ def enumerate_macro_patch_records(
 ) -> Iterator[dict[str, Any]]:
     """Yield owner-zone-valid parent cells whose centers are covered by ADM0."""
     grid_epsg = int(macro["grid_epsg"])
+    _validate_china_owner_epsg(grid_epsg)
     macro_col = int(macro["macro_col"])
     macro_row = int(macro["macro_row"])
     to_wgs84 = Transformer.from_crs(grid_epsg, 4326, always_xy=True)
@@ -116,6 +129,7 @@ def validate_patch_record(record: Mapping[str, Any], spec: GridSpec) -> None:
     grid_row = record["grid_row"]
     if not all(isinstance(value, int) for value in (grid_epsg, grid_col, grid_row)):
         raise ValueError("grid_epsg, grid_col, and grid_row must be integers")
+    _validate_china_owner_epsg(grid_epsg)
     expected_key = parent_key(grid_epsg, grid_col, grid_row)
     if record["parent_key"] != expected_key or record["patch_id"] != f"parent_{expected_key}":
         raise ValueError("parent_key and patch_id must match integer grid coordinates")

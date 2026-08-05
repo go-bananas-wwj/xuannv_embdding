@@ -30,6 +30,11 @@ def _boundary():
     return box(116.28, 39.83, 116.31, 39.86)
 
 
+def test_grid_spec_rejects_noncanonical_parent_cell_size() -> None:
+    with pytest.raises(ValueError, match="side_m must be exactly 1280"):
+        MODULE.GridSpec(side_m=640)
+
+
 def test_enumerator_emits_exact_1280m_parent_cells() -> None:
     spec = MODULE.GridSpec(side_m=1280, macro_side_patches=10, boundary_version="test")
     records = list(MODULE.enumerate_macro_patch_records(_macro(), _boundary(), spec))
@@ -86,6 +91,13 @@ def test_enumerator_filters_cells_owned_by_another_utm_zone() -> None:
     assert records == []
 
 
+def test_enumerator_rejects_epsg_outside_china_owner_range() -> None:
+    macro = {**_macro(), "grid_epsg": 32642, "grid_id": "utm42n"}
+
+    with pytest.raises(ValueError, match="32643 through 32653"):
+        list(MODULE.enumerate_macro_patch_records(macro, _boundary(), MODULE.GridSpec()))
+
+
 def test_enumerator_preserves_wgs84_longitude_latitude_axis_order() -> None:
     spec = MODULE.GridSpec(boundary_version="test")
     records = list(MODULE.enumerate_macro_patch_records(_macro(), _boundary(), spec))
@@ -102,4 +114,22 @@ def test_validate_patch_record_rejects_misaligned_bounds() -> None:
     record["utm_bounds"][0] += 1
 
     with pytest.raises(ValueError, match="utm_bounds"):
+        MODULE.validate_patch_record(record, spec)
+
+
+def test_validate_patch_record_rejects_epsg_outside_china_owner_range() -> None:
+    spec = MODULE.GridSpec(boundary_version="test")
+    to_utm42 = Transformer.from_crs(4326, 32642, always_xy=True)
+    easting, northing = to_utm42.transform(69.0, 30.0)
+    grid_col = math.floor(easting / 1280)
+    grid_row = math.floor(northing / 1280)
+    macro = {
+        "grid_epsg": 32642,
+        "grid_id": "utm42n",
+        "macro_col": grid_col // 10,
+        "macro_row": grid_row // 10,
+    }
+    record = MODULE.build_patch_record(macro, grid_col, grid_row, 69.0, 30.0, spec)
+
+    with pytest.raises(ValueError, match="32643 through 32653"):
         MODULE.validate_patch_record(record, spec)
