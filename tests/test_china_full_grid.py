@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import subprocess
 import sys
 from pathlib import Path
 
+import geopandas as gpd
+import pandas as pd
 import pytest
 from pyproj import Transformer
 from shapely.geometry import box
@@ -28,6 +31,121 @@ def _macro() -> dict[str, int | str]:
 
 def _boundary():
     return box(116.28, 39.83, 116.31, 39.86)
+
+
+def synthetic_parent_records(count: int) -> list[dict[str, object]]:
+    """Return canonical records spanning two macro cells for writer tests."""
+    spec = MODULE.GridSpec(boundary_version="test")
+    first_macro = _macro()
+    second_macro = {**first_macro, "macro_col": first_macro["macro_col"] + 1}
+    records: list[dict[str, object]] = []
+    for index in range(count):
+        macro = first_macro if index < count // 2 else second_macro
+        grid_col = int(macro["macro_col"]) * spec.macro_side_patches + index % 10
+        grid_row = int(macro["macro_row"]) * spec.macro_side_patches + index // 10
+        records.append(
+            MODULE.build_patch_record(
+                macro,
+                grid_col,
+                grid_row,
+                116.28 + index * 0.001,
+                39.83 + index * 0.001,
+                spec,
+            )
+        )
+    return records
+
+
+def test_writer_partitions_all_sampled_and_unsampled(tmp_path: Path) -> None:
+    records = synthetic_parent_records(count=12)
+    sampled = {str(records[1]["parent_key"]), str(records[7]["parent_key"])}
+
+    summary = MODULE.write_zone_records(iter(records), sampled, tmp_path, batch_size=5)
+
+    assert summary.all_count == 12
+    assert summary.sampled_count == 2
+    assert summary.unsampled_count == 10
+    assert summary.sampled_count + summary.unsampled_count == summary.all_count
+
+    def read_partition(name: str) -> gpd.GeoDataFrame:
+        parts = sorted((tmp_path / name / "utm50n").glob("*.parquet"))
+        frames = [gpd.read_parquet(part) for part in parts]
+        return gpd.GeoDataFrame(pd.concat(frames), crs="EPSG:4326")
+
+    all_records = read_partition("all")
+    sampled_records = read_partition("sampled")
+    unsampled_records = read_partition("unsampled")
+
+    assert all_records.crs.to_epsg() == 4326
+    assert set(sampled_records["parent_key"]).isdisjoint(unsampled_records["parent_key"])
+    assert set(sampled_records["parent_key"]) == sampled
+    assert len(all_records) == len(sampled_records) + len(unsampled_records)
+    assert {"patch_id", "parent_key", "schema_version", "atlas_version", "boundary_version"} <= set(
+        all_records.columns
+    )
+    assert all_records.geometry.geom_type.eq("Polygon").all()
+
+    shapefile = tmp_path / "all" / "utm50n" / "utm50n_all.shp"
+    shapefile_records = gpd.read_file(shapefile)
+    assert shapefile_records.crs.to_epsg() == 4326
+    assert len(shapefile_records) == 12
+    assert {"PATCH_ID", "UTM_EPSG", "GRID_COL", "GRID_ROW", "MACRO_ID", "SAMPLED"} <= set(
+        shapefile_records.columns
+    )
+
+
+def test_writer_rejects_shapefile_larger_than_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(MODULE, "SHAPEFILE_MAX_BYTES", 1)
+
+    with pytest.raises(ValueError, match="size cap exceeded"):
+        MODULE.write_zone_records(synthetic_parent_records(count=1), set(), tmp_path, batch_size=1)
+
+    assert not (tmp_path / "all" / "utm50n" / "utm50n_all.shp").exists()
+
+
+def test_cli_writes_requested_zone_from_small_local_inputs(tmp_path: Path) -> None:
+    record = next(MODULE.enumerate_macro_patch_records(_macro(), _boundary(), MODULE.GridSpec()))
+    boundary_path = tmp_path / "boundary.geojson"
+    macro_path = tmp_path / "macros.json"
+    sampled_path = tmp_path / "sampled.json"
+    output_root = tmp_path / "output"
+    boundary_frame = gpd.GeoDataFrame(geometry=[_boundary()], crs="EPSG:4326")
+    boundary_frame.to_file(boundary_path, driver="GeoJSON")
+    macro_path.write_text(
+        '[{"grid_epsg": 32650, "grid_id": "utm50n", "macro_col": 34, "macro_row": 344}]',
+        encoding="utf-8",
+    )
+    sampled_key = record["parent_key"]
+    sampled_path.write_text(f'["{sampled_key}"]', encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/data/build_china_full_grid.py",
+            "--boundary",
+            str(boundary_path),
+            "--macrocells",
+            str(macro_path),
+            "--sampled-parent-keys",
+            str(sampled_path),
+            "--output-root",
+            str(output_root),
+            "--grid-id",
+            "utm50n",
+            "--batch-size",
+            "100",
+        ],
+        cwd=MODULE_PATH.parents[2],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert '"sampled_count": 1' in result.stdout
+    assert (output_root / "all" / "utm50n" / "utm50n_all.shp").exists()
 
 
 def test_grid_spec_rejects_noncanonical_parent_cell_size() -> None:
