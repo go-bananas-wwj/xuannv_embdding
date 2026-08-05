@@ -12,6 +12,8 @@ import geopandas as gpd
 import pandas as pd
 import pyarrow.parquet as pq
 import pytest
+from docx import Document
+from docx.oxml.ns import qn
 from pyproj import Transformer
 from shapely import normalize, set_precision
 from shapely.affinity import translate
@@ -23,6 +25,22 @@ assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
+
+DOCX_MODULE_PATH = Path(__file__).parents[1] / "scripts/docs/build_china_full_grid_package_docx.py"
+PACKAGE_README_PATH = (
+    Path(__file__).parents[1] / "docs/data/china_full_1280m_grid_package_readme_20260805.md"
+)
+BUILDER_MODULE_PATH = Path(__file__).parents[1] / "scripts/data/build_china_full_grid.py"
+
+
+def _load_module(path: Path, name: str):
+    assert path.exists(), f"expected Task 4 module at {path}"
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _macro() -> dict[str, int | str]:
@@ -59,6 +77,112 @@ def synthetic_parent_records(count: int) -> list[dict[str, object]]:
             )
         )
     return records
+
+
+def test_package_docs_explain_parent_sampled_and_unsampled(tmp_path: Path) -> None:
+    docx_module = _load_module(DOCX_MODULE_PATH, "china_full_grid_package_docx")
+    assert PACKAGE_README_PATH.exists()
+    readme_text = PACKAGE_README_PATH.read_text(encoding="utf-8")
+    assert "全国完整父网格" in readme_text
+    assert "已采样 patch" in readme_text
+    assert "未采样 patch" in readme_text
+    prior_sampling_path = tmp_path / "prior_sampling.md"
+    prior_sampling_path.write_text(
+        "# 先前采样说明\n\n版本：2026-07-27\n\n62,000 个候选位置用于数据获取和质量复核。\n",
+        encoding="utf-8",
+    )
+    docx_path = docx_module.build_package_docx(
+        tmp_path / "先读我.docx",
+        package_metadata={
+            "all_count": 12,
+            "sampled_count": 2,
+            "unsampled_count": 10,
+            "membership_audit": {"passed": True, "matched": 2},
+        },
+        prior_sampling_source=prior_sampling_path,
+    )
+
+    document = Document(docx_path)
+    text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+    assert "全国完整父网格" in text
+    assert "已采样 patch" in text
+    assert "未采样 patch" in text
+    assert "EPSG:32643" in text
+    assert "X=经度、Y=纬度" in text
+    assert "62,000 个候选位置" in text
+
+    title = document.styles["Title"]
+    heading = document.styles["Heading 1"]
+    normal = document.styles["Normal"]
+    assert title.font.size.pt == 16
+    assert heading.font.size.pt == 14
+    assert normal.font.size.pt == 12
+    for style in (title, heading, normal):
+        fonts = style._element.rPr.rFonts
+        assert fonts.get(qn("w:ascii")) == "Times New Roman"
+        assert fonts.get(qn("w:eastAsia")) == "SimSun"
+    for paragraph in document.paragraphs:
+        for run in paragraph.runs:
+            assert str(run.font.color.rgb) == "000000"
+
+
+def test_package_artifacts_build_index_previews_and_manifest_from_synthetic_grid(
+    tmp_path: Path,
+) -> None:
+    builder = _load_module(BUILDER_MODULE_PATH, "build_china_full_grid")
+    records = synthetic_parent_records(count=12)
+    output_root = tmp_path / "package"
+    MODULE.write_zone_records(
+        records,
+        {str(records[1]["parent_key"]), str(records[7]["parent_key"])},
+        output_root,
+        batch_size=5,
+    )
+    audit_path = tmp_path / "membership_audit.json"
+    audit_path.write_text(
+        json.dumps(
+            {
+                "passed": True,
+                "all_count": 12,
+                "sampled_count": 2,
+                "unsampled_count": 10,
+                "matched": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+    prior_sampling_path = tmp_path / "prior_sampling.md"
+    prior_sampling_path.write_text(
+        "# 先前采样说明\n\n62,000 个候选位置用于数据获取和质量复核。\n",
+        encoding="utf-8",
+    )
+
+    manifest_path = builder.build_package_artifacts(
+        output_root=output_root,
+        boundary_wgs84=box(113.95, 39.7, 114.05, 40.0),
+        membership_audit_path=audit_path,
+        prior_sampling_source=prior_sampling_path,
+    )
+
+    index_path = output_root / "china_full_1280m_macrocell_index.gpkg"
+    assert index_path.exists()
+    macrocells = gpd.read_file(index_path, layer="macrocells")
+    utm_zones = gpd.read_file(index_path, layer="utm_zones")
+    assert len(macrocells) == 2
+    assert set(utm_zones["GRID_ID"]) == {"utm50n"}
+    assert int(macrocells["ALL_COUNT"].sum()) == 12
+    assert int(utm_zones["ALL_COUNT"].sum()) == 12
+    assert int(macrocells["SAMPLED"].sum()) == 2
+    assert int(macrocells["UNSAMPLED"].sum()) == 10
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["counts"] == {"all": 12, "sampled": 2, "unsampled": 10}
+    assert manifest["membership_audit"]["passed"] is True
+    for preview in manifest["previews"].values():
+        preview_path = output_root / preview
+        assert preview_path.exists()
+        assert preview_path.stat().st_size > 0
+    assert (output_root / "先读我.docx").exists()
 
 
 def test_writer_partitions_all_sampled_and_unsampled(tmp_path: Path) -> None:
