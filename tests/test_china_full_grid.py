@@ -712,6 +712,88 @@ def test_cli_writes_requested_zone_from_small_local_inputs(tmp_path: Path) -> No
     assert list((output_root / "all" / "utm50n").glob("*.shp"))
 
 
+def test_production_cli_streams_jsonl_inputs_from_config_and_verifies(tmp_path: Path) -> None:
+    record = next(MODULE.enumerate_macro_patch_records(_macro(), _boundary(), MODULE.GridSpec()))
+    boundary_path = tmp_path / "boundary.geojson"
+    inventory_path = tmp_path / "national_macrocell_inventory.jsonl"
+    registry_path = tmp_path / "china_quarterly_62000_candidate_registry.jsonl"
+    config_path = tmp_path / "china_full_1280m_grid.json"
+    output_root = tmp_path / "output"
+    boundary_frame = gpd.GeoDataFrame(geometry=[_boundary()], crs="EPSG:4326")
+    boundary_frame.to_file(boundary_path, driver="GeoJSON")
+    inventory_path.write_text(json.dumps(_macro()) + "\n", encoding="utf-8")
+    registry_path.write_text(
+        json.dumps(
+            {
+                "grid_id": record["grid_id"],
+                "grid_epsg": record["grid_epsg"],
+                "grid_col": record["grid_col"],
+                "grid_row": record["grid_row"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    config_path.write_text(
+        json.dumps(
+            {
+                "inputs": {
+                    "boundary": str(boundary_path),
+                    "macro_inventory": str(inventory_path),
+                    "sampled_registry": str(registry_path),
+                },
+                "output": {
+                    "batch_size": 100,
+                    "shapefile_component_cap_bytes": 1_800_000_000,
+                    "shapefile_safe_fraction": 0.95,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    generation = subprocess.run(
+        [
+            sys.executable,
+            "scripts/data/build_china_full_grid.py",
+            "--config",
+            str(config_path),
+            "--zones",
+            "50",
+            "--output",
+            str(output_root),
+        ],
+        cwd=MODULE_PATH.parents[2],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert generation.returncode == 0, generation.stderr
+    summary = json.loads(generation.stdout)
+    assert summary["zones"][0]["grid_id"] == "utm50n"
+    assert summary["zones"][0]["sampled_count"] == 1
+
+    verification = subprocess.run(
+        [
+            sys.executable,
+            "scripts/data/build_china_full_grid.py",
+            "--config",
+            str(config_path),
+            "--output",
+            str(output_root),
+            "--verify-only",
+        ],
+        cwd=MODULE_PATH.parents[2],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert verification.returncode == 0, verification.stderr
+    assert json.loads(verification.stdout)["passed"] is True
+
+
 def test_grid_spec_rejects_noncanonical_parent_cell_size() -> None:
     with pytest.raises(ValueError, match="side_m must be exactly 1280"):
         MODULE.GridSpec(side_m=640)

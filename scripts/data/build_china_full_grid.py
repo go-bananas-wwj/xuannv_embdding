@@ -17,10 +17,13 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from china_full_grid import (
+    SHAPEFILE_MAX_BYTES,
+    SHAPEFILE_SAFE_FRACTION,
     GridSpec,
     audit_grid_package,
     enumerate_macro_patch_records,
     read_sampled_registry_jsonl,
+    sampled_registry_key,
     write_grid_package_audit,
     write_zone_records,
 )
@@ -85,10 +88,105 @@ def _sampled_keys(path: Path) -> set[str]:
 
 
 def _macros(path: Path) -> list[dict[str, Any]]:
+    """Read the legacy test-only JSON macrocell format."""
     data = _read_json(path)
     if not isinstance(data, list) or not all(isinstance(macro, dict) for macro in data):
         raise ValueError("macrocells JSON must be a list of macrocell objects")
     return data
+
+
+def _iter_jsonl_objects(path: Path, description: str):
+    """Yield JSONL objects with a precise error before any large materialization."""
+    with path.open(encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise ValueError(f"invalid {description} JSONL at line {line_number}") from error
+            if not isinstance(record, dict):
+                raise ValueError(f"{description} JSONL line {line_number} must be an object")
+            yield record
+
+
+def _iter_macros_jsonl(path: Path, grid_ids: set[str]):
+    """Stream only selected UTM macrocells from the production inventory."""
+    for macro in _iter_jsonl_objects(path, "macrocell inventory"):
+        if str(macro.get("grid_id")) in grid_ids:
+            yield macro
+
+
+def _sampled_registry_records(path: Path, grid_ids: set[str]) -> list[dict[str, Any]]:
+    """Read the bounded sampled registry directly from JSONL for selected owner zones."""
+    records = []
+    for record in _iter_jsonl_objects(path, "sampled registry"):
+        if str(record.get("grid_id")) not in grid_ids:
+            continue
+        sampled_registry_key(record)
+        records.append(record)
+    return records
+
+
+def _config_path(config_path: Path, value: Any, field: str) -> Path:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"config {field} must be a non-empty path string")
+    path = Path(value)
+    return path if path.is_absolute() else config_path.parent / path
+
+
+def _load_production_config(config_path: Path) -> dict[str, Any]:
+    config = _read_json(config_path)
+    if not isinstance(config, dict):
+        raise ValueError("production config must be a JSON object")
+    inputs = config.get("inputs")
+    output = config.get("output")
+    if not isinstance(inputs, dict) or not isinstance(output, dict):
+        raise ValueError("production config requires inputs and output objects")
+    paths = {
+        name: _config_path(config_path, inputs.get(name), f"inputs.{name}")
+        for name in ("boundary", "macro_inventory", "sampled_registry")
+    }
+    for name, path in paths.items():
+        if not path.is_file():
+            raise FileNotFoundError(f"config inputs.{name} does not exist: {path}")
+    batch_size = output.get("batch_size")
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
+        raise ValueError("config output.batch_size must be a positive integer")
+    component_cap = output.get("shapefile_component_cap_bytes")
+    if component_cap != SHAPEFILE_MAX_BYTES:
+        raise ValueError(
+            f"config output.shapefile_component_cap_bytes must remain {SHAPEFILE_MAX_BYTES}"
+        )
+    if output.get("shapefile_safe_fraction") != SHAPEFILE_SAFE_FRACTION:
+        raise ValueError(
+            f"config output.shapefile_safe_fraction must remain {SHAPEFILE_SAFE_FRACTION}"
+        )
+    return {"paths": paths, "batch_size": batch_size}
+
+
+def _parse_zone_numbers(value: str) -> list[int]:
+    """Parse compact production zone selectors such as ``50`` and ``43-53``."""
+    zones: set[int] = set()
+    for item in value.split(","):
+        item = item.strip()
+        if not item:
+            raise ValueError("--zones must not contain an empty selector")
+        bounds = item.split("-", maxsplit=1)
+        try:
+            start = end = int(bounds[0])
+            if len(bounds) == 2:
+                end = int(bounds[1])
+        except ValueError as error:
+            raise ValueError(f"invalid UTM zone selector: {item}") from error
+        if start > end or start < 43 or end > 53:
+            raise ValueError("--zones must select only China owner zones 43 through 53")
+        zones.update(range(start, end + 1))
+    return sorted(zones)
+
+
+def _production_grid_ids(zones: Iterable[int]) -> set[str]:
+    return {f"utm{zone}n" for zone in zones}
 
 
 def validate_membership_audit(audit: Any) -> dict[str, Any]:
@@ -471,10 +569,22 @@ def build_package_artifacts(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--config",
+        type=Path,
+        help=(
+            "Production JSON config with frozen boundary, JSONL inventory, and JSONL registry paths"
+        ),
+    )
+    parser.add_argument(
+        "--zones",
+        help="Production UTM owner zones, for example 50 or 43-53 (requires --config)",
+    )
     parser.add_argument("--boundary", type=Path, help="WGS84 boundary vector file")
     parser.add_argument("--macrocells", type=Path, help="Task 1 macrocell JSON")
     parser.add_argument("--sampled-parent-keys", type=Path, help="62k sampled key map JSON")
-    parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument("--output-root", type=Path, help="Legacy output root")
+    parser.add_argument("--output", type=Path, help="Production output root (requires --config)")
     parser.add_argument("--grid-id", help="One UTM grid_id to write")
     parser.add_argument("--batch-size", type=int, default=100_000)
     parser.add_argument(
@@ -502,11 +612,74 @@ def parse_args() -> argparse.Namespace:
             "(default: <output-root>/china_full_grid_membership_audit.json)"
         ),
     )
+    parser.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="Audit an existing production output using the configured sampled registry",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    if args.config is not None:
+        if args.output is None:
+            raise ValueError("--config requires --output")
+        if args.output_root is not None:
+            raise ValueError("use --output, not --output-root, with --config")
+        if args.build_package_artifacts or args.audit_only:
+            raise ValueError("--config cannot be combined with legacy package or audit modes")
+        config = _load_production_config(args.config)
+        output_root = args.output
+        if args.verify_only:
+            if args.zones is not None:
+                grid_ids = _production_grid_ids(_parse_zone_numbers(args.zones))
+            else:
+                grid_ids = {
+                    path.name for path in (output_root / "all").glob("utm*n") if path.is_dir()
+                }
+            if not grid_ids:
+                raise ValueError("--verify-only found no generated UTM zone partitions")
+            audit = audit_grid_package(
+                output_root,
+                _sampled_registry_records(config["paths"]["sampled_registry"], grid_ids),
+                batch_size=config["batch_size"],
+            )
+            audit_path = write_grid_package_audit(
+                audit, output_root / "china_full_grid_membership_audit.json"
+            )
+            print(
+                json.dumps(
+                    {"audit_path": str(audit_path), **audit}, ensure_ascii=False, sort_keys=True
+                )
+            )
+            return 0 if audit["passed"] else 2
+        if args.zones is None:
+            raise ValueError("production generation requires --zones")
+        grid_ids = _production_grid_ids(_parse_zone_numbers(args.zones))
+        boundary = gpd.read_file(config["paths"]["boundary"]).to_crs(4326).geometry.unary_union
+        sampled_records = _sampled_registry_records(config["paths"]["sampled_registry"], grid_ids)
+        sampled_keys = {sampled_registry_key(record) for record in sampled_records}
+        summaries = []
+        for grid_id in sorted(grid_ids):
+            summary = write_zone_records(
+                _zone_records(
+                    _iter_macros_jsonl(config["paths"]["macro_inventory"], {grid_id}),
+                    boundary,
+                    GridSpec(),
+                    grid_id,
+                ),
+                sampled_keys,
+                output_root,
+                config["batch_size"],
+            )
+            summaries.append(summary.__dict__)
+        print(json.dumps({"zones": summaries}, ensure_ascii=False, sort_keys=True))
+        return 0
+    if args.verify_only:
+        raise ValueError("--verify-only requires --config")
+    if args.output_root is None:
+        raise ValueError("--output-root is required without --config")
     if args.build_package_artifacts:
         if args.boundary is None or args.membership_audit is None:
             raise ValueError("--build-package-artifacts requires --boundary and --membership-audit")

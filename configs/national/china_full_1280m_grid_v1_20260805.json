@@ -16,7 +16,13 @@
     "owner_zone_rule": "the WGS84 center must belong to the half-open UTM longitude zone matching grid_epsg"
   },
   "inputs": {
-    "boundary": "frozen ADM0 GeoJSON",
-    "macro_inventory": "national_macrocell_inventory.jsonl"
+    "boundary": "/data/xuannv_embedding/raw/china_v1/geoboundaries/geoBoundaries-CHN-ADM0.geojson",
+    "macro_inventory": "/data/xuannv_embedding/raw/china_v1/national_macrocell_inventory.jsonl",
+    "sampled_registry": "/data/xuannv_embedding/outputs/china_quarterly_sampling_62000_candidate_20260726/china_quarterly_62000_candidate_registry.jsonl"
+  },
+  "output": {
+    "batch_size": 100000,
+    "shapefile_component_cap_bytes": 1800000000,
+    "shapefile_safe_fraction": 0.95
   }
 }
