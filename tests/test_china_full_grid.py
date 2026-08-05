@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 import math
 import subprocess
 import sys
@@ -13,6 +14,7 @@ import pyarrow.parquet as pq
 import pytest
 from pyproj import Transformer
 from shapely import normalize, set_precision
+from shapely.affinity import translate
 from shapely.geometry import box
 
 MODULE_PATH = Path(__file__).parents[1] / "scripts/data/china_full_grid.py"
@@ -157,6 +159,189 @@ def test_geoparquet_has_canonical_fields_and_zstd_metadata(tmp_path: Path) -> No
         metadata.row_group(0).column(column).compression
         for column in range(metadata.row_group(0).num_columns)
     } == {"ZSTD"}
+
+
+def test_membership_audit_requires_every_sample_exactly_once() -> None:
+    atlas = ["32650:1:1", "32650:1:2", "32650:1:3"]
+    sampled = ["32650:1:1", "32650:1:3"]
+
+    audit = MODULE.audit_sample_membership(atlas, sampled)
+
+    assert audit["all_count"] == 3
+    assert audit["sampled_count"] == 2
+    assert audit["unsampled_count"] == 1
+    assert audit["matched"] == 2
+    assert audit["missing"] == []
+    assert audit["duplicate_atlas_keys"] == []
+
+
+def test_membership_audit_reports_missing_and_duplicated_sampled_cells() -> None:
+    atlas = ["32650:1:1", "32650:1:1", "32650:1:2"]
+    sampled = ["32650:1:1", "32650:1:3", "32650:1:3"]
+
+    audit = MODULE.audit_sample_membership(atlas, sampled)
+
+    assert audit["matched"] == 0
+    assert audit["missing"] == ["32650:1:3"]
+    assert audit["duplicate_atlas_keys"] == ["32650:1:1"]
+    assert audit["duplicate_sampled_keys"] == ["32650:1:3"]
+
+
+def test_partitioned_audit_detects_altered_footprints_and_cross_zone_overlap(
+    tmp_path: Path,
+) -> None:
+    records = synthetic_parent_records(count=2)
+    sampled_registry = []
+    for record in records:
+        geometry = MODULE._wgs84_geometry(record)
+        sampled_registry.append(
+            {
+                "grid_epsg": record["grid_epsg"],
+                "grid_col": record["grid_col"],
+                "grid_row": record["grid_row"],
+                "canonical_wgs84_footprint_hash": hashlib.sha256(
+                    normalize(set_precision(geometry, 1e-9)).wkb
+                ).hexdigest(),
+            }
+        )
+    MODULE.write_zone_records(records, {str(records[0]["parent_key"])}, tmp_path, batch_size=1)
+
+    parquet_path = next((tmp_path / "all" / "utm50n").glob("*.parquet"))
+    frame = gpd.read_parquet(parquet_path)
+    frame.loc[0, "footprint_hash"] = "0" * 64
+    frame.loc[0, "geometry"] = frame.loc[0, "geometry"].buffer(0.0001)
+    frame.to_parquet(parquet_path, index=False, compression="zstd")
+
+    audit = MODULE.audit_grid_package(tmp_path, sampled_registry, batch_size=1)
+
+    assert audit["all_count"] == 2
+    assert audit["sampled_count"] == 1
+    assert audit["unsampled_count"] == 1
+    assert audit["hash_mismatches"]["footprint_hash"] == 1
+    assert audit["hash_mismatches"]["sampled_registry_footprint_hash"] == 1
+    assert audit["max_footprint_coordinate_difference"] > 0
+    assert audit["invalid_geometry_count"] == 1
+
+
+def test_partitioned_audit_reports_same_and_cross_zone_positive_area_overlaps(
+    tmp_path: Path,
+) -> None:
+    first = synthetic_parent_records(count=1)[0]
+    to_utm49 = Transformer.from_crs(4326, 32649, always_xy=True)
+    to_wgs84 = Transformer.from_crs(32649, 4326, always_xy=True)
+    easting, northing = to_utm49.transform(111.0, 39.84)
+    grid_col = math.floor(easting / MODULE.PARENT_SIDE_METERS)
+    grid_row = math.floor(northing / MODULE.PARENT_SIDE_METERS)
+    longitude, latitude = to_wgs84.transform(
+        (grid_col + 0.5) * MODULE.PARENT_SIDE_METERS,
+        (grid_row + 0.5) * MODULE.PARENT_SIDE_METERS,
+    )
+    second = MODULE.build_patch_record(
+        {
+            "grid_epsg": 32649,
+            "grid_id": "utm49n",
+            "macro_col": grid_col // 10,
+            "macro_row": grid_row // 10,
+        },
+        grid_col,
+        grid_row,
+        longitude,
+        latitude,
+        MODULE.GridSpec(boundary_version="test"),
+    )
+    records = [first, second]
+    for record in records:
+        MODULE.write_zone_records([record], set(), tmp_path, batch_size=1)
+
+    first_path = next((tmp_path / "all" / "utm50n").glob("*.parquet"))
+    second_path = next((tmp_path / "all" / "utm49n").glob("*.parquet"))
+    first_frame = gpd.read_parquet(first_path)
+    second_frame = gpd.read_parquet(second_path)
+    second_frame.loc[0, "geometry"] = first_frame.loc[0, "geometry"]
+    second_frame.to_parquet(second_path, index=False, compression="zstd")
+
+    audit = MODULE.audit_grid_package(tmp_path, [], batch_size=1)
+
+    assert audit["same_zone_positive_overlap_count"] == 0
+    assert audit["cross_zone_overlap_violation_count"] == 1
+    assert audit["max_cross_zone_overlap_fraction"] == pytest.approx(1.0)
+
+
+def test_partitioned_audit_reports_same_zone_positive_area_overlap(tmp_path: Path) -> None:
+    records = synthetic_parent_records(count=2)
+    MODULE.write_zone_records(records, set(), tmp_path, batch_size=1)
+    paths = sorted((tmp_path / "all" / "utm50n").glob("*.parquet"))
+    frame = gpd.read_parquet(paths[0])
+    frame.loc[1, "geometry"] = frame.loc[0, "geometry"]
+    frame.to_parquet(paths[0], index=False, compression="zstd")
+
+    audit = MODULE.audit_grid_package(tmp_path, [], batch_size=1)
+
+    assert audit["same_zone_positive_overlap_count"] == 1
+
+
+def test_partitioned_audit_rejects_shifted_footprint_with_recomputed_hash(tmp_path: Path) -> None:
+    record = synthetic_parent_records(count=1)[0]
+    MODULE.write_zone_records([record], set(), tmp_path, batch_size=1)
+    parquet_path = next((tmp_path / "all" / "utm50n").glob("*.parquet"))
+    frame = gpd.read_parquet(parquet_path)
+    shifted_geometry = translate(frame.loc[0, "geometry"], xoff=0.0001)
+    frame.loc[0, "geometry"] = shifted_geometry
+    frame.loc[0, "footprint_hash"] = hashlib.sha256(
+        normalize(set_precision(shifted_geometry, 1e-9)).wkb
+    ).hexdigest()
+    frame.to_parquet(parquet_path, index=False, compression="zstd")
+
+    audit = MODULE.audit_grid_package(tmp_path, [], batch_size=1)
+
+    assert audit["hash_mismatches"]["footprint_hash"] == 0
+    assert audit["footprint_coordinate_mismatch_count"] == 1
+    assert audit["passed"] is False
+
+
+def test_cli_writes_json_membership_audit_from_jsonl_registry(tmp_path: Path) -> None:
+    records = synthetic_parent_records(count=2)
+    output_root = tmp_path / "output"
+    registry_path = tmp_path / "sampled-registry.jsonl"
+    audit_path = tmp_path / "china_full_grid_membership_audit.json"
+    MODULE.write_zone_records(records, {str(records[0]["parent_key"])}, output_root, batch_size=1)
+    registry_path.write_text(
+        json.dumps(
+            {
+                "grid_epsg": records[0]["grid_epsg"],
+                "grid_col": records[0]["grid_col"],
+                "grid_row": records[0]["grid_row"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/data/build_china_full_grid.py",
+            "--audit-only",
+            "--output-root",
+            str(output_root),
+            "--sampled-registry",
+            str(registry_path),
+            "--audit-output",
+            str(audit_path),
+            "--batch-size",
+            "1",
+        ],
+        cwd=MODULE_PATH.parents[2],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert audit_path.exists()
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert audit["passed"] is True
+    assert audit["matched"] == 1
 
 
 def test_writer_keeps_output_empty_when_a_later_partition_write_fails(

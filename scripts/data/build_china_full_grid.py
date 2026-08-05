@@ -10,7 +10,14 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import geopandas as gpd
-from china_full_grid import GridSpec, enumerate_macro_patch_records, write_zone_records
+from china_full_grid import (
+    GridSpec,
+    audit_grid_package,
+    enumerate_macro_patch_records,
+    read_sampled_registry_jsonl,
+    write_grid_package_audit,
+    write_zone_records,
+)
 
 
 def _read_json(path: Path) -> Any:
@@ -44,19 +51,48 @@ def _zone_records(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--boundary", type=Path, required=True, help="WGS84 boundary vector file")
-    parser.add_argument("--macrocells", type=Path, required=True, help="Task 1 macrocell JSON")
-    parser.add_argument(
-        "--sampled-parent-keys", type=Path, required=True, help="62k sampled key map JSON"
-    )
+    parser.add_argument("--boundary", type=Path, help="WGS84 boundary vector file")
+    parser.add_argument("--macrocells", type=Path, help="Task 1 macrocell JSON")
+    parser.add_argument("--sampled-parent-keys", type=Path, help="62k sampled key map JSON")
     parser.add_argument("--output-root", type=Path, required=True)
-    parser.add_argument("--grid-id", required=True, help="One UTM grid_id to write")
+    parser.add_argument("--grid-id", help="One UTM grid_id to write")
     parser.add_argument("--batch-size", type=int, default=100_000)
+    parser.add_argument("--audit-only", action="store_true")
+    parser.add_argument("--sampled-registry", type=Path, help="Sampled registry JSONL for audit")
+    parser.add_argument(
+        "--audit-output",
+        type=Path,
+        help=(
+            "Audit JSON destination "
+            "(default: <output-root>/china_full_grid_membership_audit.json)"
+        ),
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    if args.audit_only:
+        if args.sampled_registry is None:
+            raise ValueError("--audit-only requires --sampled-registry")
+        audit = audit_grid_package(
+            args.output_root,
+            read_sampled_registry_jsonl(args.sampled_registry),
+            batch_size=args.batch_size,
+        )
+        audit_path = write_grid_package_audit(
+            audit,
+            args.audit_output or args.output_root / "china_full_grid_membership_audit.json",
+        )
+        print(
+            json.dumps({"audit_path": str(audit_path), **audit}, ensure_ascii=False, sort_keys=True)
+        )
+        return 0 if audit["passed"] else 2
+    if None in (args.boundary, args.macrocells, args.sampled_parent_keys, args.grid_id):
+        raise ValueError(
+            "grid generation requires --boundary, --macrocells, --sampled-parent-keys, "
+            "and --grid-id"
+        )
     boundary = gpd.read_file(args.boundary).to_crs(4326).geometry.unary_union
     macros = _macros(args.macrocells)
     summary = write_zone_records(

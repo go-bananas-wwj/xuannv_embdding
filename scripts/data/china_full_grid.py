@@ -4,17 +4,20 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import shutil
+import sqlite3
+import tempfile
 import uuid
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping
 
 from pyproj import Transformer
+from shapely import from_wkb, set_precision
 from shapely import normalize as normalize_geometry
-from shapely import set_precision
 from shapely.geometry import Point, box
 from shapely.ops import transform as transform_geometry
 
@@ -24,6 +27,11 @@ SHAPEFILE_MAX_BYTES = 1_800_000_000
 SHAPEFILE_SAFE_FRACTION = 0.95
 SHAPEFILE_ROW_BLOCK_ROWS = 1_000
 SHAPEFILE_COMPONENT_SUFFIXES = (".shp", ".shx", ".dbf", ".prj", ".cpg")
+AUDIT_BATCH_SIZE = 100_000
+AUDIT_DIMENSION_TOLERANCE_M = 0.001
+AUDIT_AREA_TOLERANCE_M2 = 1.0
+CROSS_ZONE_OVERLAP_FRACTION = 0.01
+AUDIT_EXAMPLE_LIMIT = 100
 
 
 @dataclass(frozen=True)
@@ -409,3 +417,412 @@ def write_zone_records(
     if summary.all_count != summary.sampled_count + summary.unsampled_count:
         raise ValueError(f"partition mismatch for {summary.grid_id}: {summary}")
     return summary
+
+
+def audit_sample_membership(
+    atlas_keys: Iterable[str], sampled_keys: Iterable[str]
+) -> dict[str, Any]:
+    """Audit whether every sampled parent key appears in the parent atlas exactly once."""
+    atlas_counts = Counter(str(key) for key in atlas_keys)
+    sampled_counts = Counter(str(key) for key in sampled_keys)
+    sampled_key_set = set(sampled_counts)
+    duplicate_atlas_keys = sorted(key for key, count in atlas_counts.items() if count > 1)
+    duplicate_sampled_keys = sorted(key for key, count in sampled_counts.items() if count > 1)
+    missing = sorted(key for key in sampled_counts if atlas_counts[key] == 0)
+    matched = sum(
+        1 for key, count in sampled_counts.items() if count == 1 and atlas_counts.get(key, 0) == 1
+    )
+    return {
+        "all_count": sum(atlas_counts.values()),
+        "sampled_count": sum(sampled_counts.values()),
+        "unsampled_count": sum(
+            count for key, count in atlas_counts.items() if key not in sampled_key_set
+        ),
+        "matched": matched,
+        "missing": missing,
+        "duplicate_atlas_keys": duplicate_atlas_keys,
+        "duplicate_sampled_keys": duplicate_sampled_keys,
+    }
+
+
+def sampled_registry_key(record: Mapping[str, Any]) -> str:
+    """Return a sampled-registry parent key from either explicit or coordinate fields."""
+    if "parent_key" in record:
+        return str(record["parent_key"])
+    try:
+        return parent_key(
+            int(record["grid_epsg"]), int(record["grid_col"]), int(record["grid_row"])
+        )
+    except KeyError as error:
+        raise ValueError(
+            "sampled registry record needs parent_key or grid_epsg/grid_col/grid_row"
+        ) from error
+
+
+def read_sampled_registry_jsonl(path: str | Path) -> list[dict[str, Any]]:
+    """Read the bounded sampled registry without loading the nationwide parent atlas."""
+    records: list[dict[str, Any]] = []
+    with Path(path).open(encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise ValueError(f"invalid sampled registry JSONL at line {line_number}") from error
+            if not isinstance(record, dict):
+                raise ValueError(f"sampled registry JSONL line {line_number} must be an object")
+            sampled_registry_key(record)
+            records.append(record)
+    return records
+
+
+def _parquet_paths(output_root: Path, partition: str) -> list[Path]:
+    return sorted((output_root / partition).rglob("*.parquet"))
+
+
+def _iter_parquet_rows(
+    paths: Iterable[Path], columns: list[str], batch_size: int
+) -> Iterator[dict[str, Any]]:
+    import pyarrow.parquet as pq
+
+    for path in paths:
+        parquet_file = pq.ParquetFile(path)
+        missing_columns = set(columns) - set(parquet_file.schema_arrow.names)
+        if missing_columns:
+            raise ValueError(f"{path} is missing audit columns: {sorted(missing_columns)}")
+        for batch in parquet_file.iter_batches(columns=columns, batch_size=batch_size):
+            yield from batch.to_pylist()
+
+
+def _normalized_footprint_hash(geometry: Any) -> str:
+    return hashlib.sha256(normalize_geometry(set_precision(geometry, 1e-9)).wkb).hexdigest()
+
+
+def _maximum_footprint_coordinate_difference(expected: Any, actual: Any) -> float:
+    """Return the largest normalized exterior-coordinate difference in WGS84 degrees."""
+    expected = normalize_geometry(set_precision(expected, 1e-9))
+    actual = normalize_geometry(set_precision(actual, 1e-9))
+    if expected.geom_type != "Polygon" or actual.geom_type != "Polygon":
+        return float(max(expected.hausdorff_distance(actual), actual.hausdorff_distance(expected)))
+    expected_coordinates = list(expected.exterior.coords)
+    actual_coordinates = list(actual.exterior.coords)
+    if len(expected_coordinates) != len(actual_coordinates):
+        return float(max(expected.hausdorff_distance(actual), actual.hausdorff_distance(expected)))
+    return max(
+        max(abs(expected_x - actual_x), abs(expected_y - actual_y))
+        for (expected_x, expected_y), (actual_x, actual_y) in zip(
+            expected_coordinates, actual_coordinates, strict=True
+        )
+    )
+
+
+def _audit_database(path: Path) -> sqlite3.Connection:
+    connection = sqlite3.connect(path)
+    connection.executescript("""
+        PRAGMA journal_mode=OFF;
+        PRAGMA synchronous=OFF;
+        CREATE TABLE partition_keys (
+            parent_key TEXT PRIMARY KEY,
+            all_count INTEGER NOT NULL DEFAULT 0,
+            sampled_partition_count INTEGER NOT NULL DEFAULT 0,
+            unsampled_partition_count INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE geometries (
+            geometry_id INTEGER PRIMARY KEY,
+            grid_epsg INTEGER NOT NULL,
+            parent_key TEXT NOT NULL,
+            geometry_wkb BLOB NOT NULL
+        );
+        CREATE VIRTUAL TABLE geometry_bounds USING rtree(
+            geometry_id, minx, maxx, miny, maxy
+        );
+        """)
+    return connection
+
+
+def _record_partition_key(
+    connection: sqlite3.Connection, parent_key_value: str, partition: str
+) -> None:
+    field = {
+        "all": "all_count",
+        "sampled": "sampled_partition_count",
+        "unsampled": "unsampled_partition_count",
+    }[partition]
+    connection.execute(
+        f"""
+        INSERT INTO partition_keys(parent_key, {field}) VALUES (?, 1)
+        ON CONFLICT(parent_key) DO UPDATE SET {field} = {field} + 1
+        """,
+        (parent_key_value,),
+    )
+
+
+def _audit_overlap(
+    connection: sqlite3.Connection,
+    geometry: Any,
+    grid_epsg: int,
+    parent_key_value: str,
+    to_equal_area: Transformer,
+) -> tuple[int, int, float]:
+    """Compare one footprint with prior streamed footprints retained on disk."""
+    minx, miny, maxx, maxy = geometry.bounds
+    candidates = connection.execute(
+        """
+        SELECT geometries.grid_epsg, geometries.geometry_wkb
+        FROM geometry_bounds
+        JOIN geometries USING (geometry_id)
+        WHERE minx <= ? AND maxx >= ? AND miny <= ? AND maxy >= ?
+        """,
+        (maxx, minx, maxy, miny),
+    )
+    projected_geometry = transform_geometry(to_equal_area.transform, geometry)
+    same_zone_positive_overlap_count = 0
+    cross_zone_overlap_violation_count = 0
+    max_cross_zone_overlap_fraction = 0.0
+    for candidate_epsg, candidate_wkb in candidates:
+        candidate_geometry = from_wkb(candidate_wkb)
+        candidate_projected = transform_geometry(to_equal_area.transform, candidate_geometry)
+        overlap_area = projected_geometry.intersection(candidate_projected).area
+        if overlap_area <= 0:
+            continue
+        if int(candidate_epsg) == grid_epsg:
+            same_zone_positive_overlap_count += 1
+            continue
+        overlap_fraction = overlap_area / min(projected_geometry.area, candidate_projected.area)
+        max_cross_zone_overlap_fraction = max(max_cross_zone_overlap_fraction, overlap_fraction)
+        if overlap_fraction > CROSS_ZONE_OVERLAP_FRACTION:
+            cross_zone_overlap_violation_count += 1
+    cursor = connection.execute(
+        "INSERT INTO geometries(grid_epsg, parent_key, geometry_wkb) VALUES (?, ?, ?)",
+        (grid_epsg, parent_key_value, geometry.wkb),
+    )
+    geometry_id = int(cursor.lastrowid)
+    connection.execute(
+        "INSERT INTO geometry_bounds VALUES (?, ?, ?, ?, ?)",
+        (geometry_id, minx, maxx, miny, maxy),
+    )
+    return (
+        same_zone_positive_overlap_count,
+        cross_zone_overlap_violation_count,
+        max_cross_zone_overlap_fraction,
+    )
+
+
+def audit_grid_package(
+    output_root: str | Path,
+    sampled_registry: Iterable[Mapping[str, Any]],
+    *,
+    batch_size: int = AUDIT_BATCH_SIZE,
+) -> dict[str, Any]:
+    """Stream a partitioned parent atlas and return reproducible membership/geometry audits."""
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    output_root = Path(output_root)
+    all_paths = _parquet_paths(output_root, "all")
+    if not all_paths:
+        raise ValueError(f"no all-partition GeoParquet files found below {output_root}")
+
+    registry_records = list(sampled_registry)
+    registry_keys = [sampled_registry_key(record) for record in registry_records]
+    registry_audit = audit_sample_membership([], registry_keys)
+    registry_key_counts = Counter(registry_keys)
+    registry_by_key = {
+        sampled_registry_key(record): record
+        for record in registry_records
+        if registry_key_counts[sampled_registry_key(record)] == 1
+    }
+    sampled_key_set = set(registry_by_key)
+
+    counters = Counter()
+    max_footprint_coordinate_difference = 0.0
+    to_equal_area = Transformer.from_crs(4326, 6933, always_xy=True)
+    temporary_parent = output_root.parent if output_root.parent.exists() else None
+    with tempfile.TemporaryDirectory(
+        prefix=".china-full-grid-audit-", dir=temporary_parent
+    ) as temporary_dir:
+        connection = _audit_database(Path(temporary_dir) / "audit.sqlite")
+        try:
+            all_columns = [
+                "parent_key",
+                "sampled",
+                "grid_epsg",
+                "grid_col",
+                "grid_row",
+                "utm_bounds",
+                "longitude",
+                "latitude",
+                "atlas_version",
+                "identity_hash",
+                "footprint_hash",
+                "geometry",
+            ]
+            transformers: dict[int, Transformer] = {}
+            for row in _iter_parquet_rows(all_paths, all_columns, batch_size):
+                parent_key_value = str(row["parent_key"])
+                grid_epsg = int(row["grid_epsg"])
+                geometry = from_wkb(row["geometry"])
+                _record_partition_key(connection, parent_key_value, "all")
+                counters["all_count"] += 1
+                if bool(row["sampled"]):
+                    counters["sampled_count"] += 1
+                else:
+                    counters["unsampled_count"] += 1
+                if (parent_key_value in sampled_key_set) != bool(row["sampled"]):
+                    counters["sampled_flag_mismatch_count"] += 1
+                if utm_owner_epsg(float(row["longitude"]), float(row["latitude"])) != grid_epsg:
+                    counters["owner_zone_mismatch_count"] += 1
+
+                expected_identity = (
+                    f"{row['atlas_version']}:{grid_epsg}:"
+                    f"{int(row['grid_col'])}:{int(row['grid_row'])}"
+                )
+                expected_identity_hash = hashlib.sha256(
+                    expected_identity.encode("utf-8")
+                ).hexdigest()
+                if row["identity_hash"] != expected_identity_hash:
+                    counters["identity_hash_mismatch_count"] += 1
+                if row["footprint_hash"] != _normalized_footprint_hash(geometry):
+                    counters["footprint_hash_mismatch_count"] += 1
+                registry_record = registry_by_key.get(parent_key_value)
+                if registry_record is not None:
+                    registry_footprint_hash = registry_record.get(
+                        "canonical_wgs84_footprint_hash", registry_record.get("footprint_hash")
+                    )
+                    if registry_footprint_hash is not None and str(
+                        registry_footprint_hash
+                    ) != _normalized_footprint_hash(geometry):
+                        counters["sampled_registry_footprint_hash_mismatch_count"] += 1
+
+                expected_geometry = _wgs84_geometry(row)
+                coordinate_difference = _maximum_footprint_coordinate_difference(
+                    expected_geometry, geometry
+                )
+                max_footprint_coordinate_difference = max(
+                    max_footprint_coordinate_difference, coordinate_difference
+                )
+                if coordinate_difference > 1e-9:
+                    counters["footprint_coordinate_mismatch_count"] += 1
+                transformer = transformers.setdefault(
+                    grid_epsg, Transformer.from_crs(4326, grid_epsg, always_xy=True)
+                )
+                projected_geometry = transform_geometry(transformer.transform, geometry)
+                minx, miny, maxx, maxy = projected_geometry.bounds
+                if (
+                    abs((maxx - minx) - PARENT_SIDE_METERS) > AUDIT_DIMENSION_TOLERANCE_M
+                    or abs((maxy - miny) - PARENT_SIDE_METERS) > AUDIT_DIMENSION_TOLERANCE_M
+                    or abs(projected_geometry.area - PARENT_SIDE_METERS**2)
+                    > AUDIT_AREA_TOLERANCE_M2
+                ):
+                    counters["invalid_geometry_count"] += 1
+                same_zone_count, cross_zone_count, overlap_fraction = _audit_overlap(
+                    connection, geometry, grid_epsg, parent_key_value, to_equal_area
+                )
+                counters["same_zone_positive_overlap_count"] += same_zone_count
+                counters["cross_zone_overlap_violation_count"] += cross_zone_count
+                counters["max_cross_zone_overlap_fraction"] = max(
+                    counters["max_cross_zone_overlap_fraction"], overlap_fraction
+                )
+            connection.commit()
+
+            for partition in ("sampled", "unsampled"):
+                for row in _iter_parquet_rows(
+                    _parquet_paths(output_root, partition), ["parent_key"], batch_size
+                ):
+                    _record_partition_key(connection, str(row["parent_key"]), partition)
+            connection.commit()
+
+            duplicate_parent_keys = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT parent_key FROM partition_keys WHERE all_count > 1 ORDER BY parent_key "
+                    "LIMIT ?",
+                    (AUDIT_EXAMPLE_LIMIT,),
+                )
+            ]
+            counters["duplicate_parent_key_count"] = connection.execute(
+                "SELECT COUNT(*) FROM partition_keys WHERE all_count > 1"
+            ).fetchone()[0]
+            counters["partition_mismatch_count"] = connection.execute("""
+                SELECT COUNT(*) FROM partition_keys
+                WHERE all_count != 1
+                   OR sampled_partition_count + unsampled_partition_count != all_count
+                """).fetchone()[0]
+            counters["sampled_unsampled_intersection_count"] = connection.execute("""
+                SELECT COUNT(*) FROM partition_keys
+                WHERE sampled_partition_count > 0 AND unsampled_partition_count > 0
+                """).fetchone()[0]
+            missing = []
+            matched = 0
+            for key in sampled_key_set:
+                all_count = connection.execute(
+                    "SELECT all_count FROM partition_keys WHERE parent_key = ?", (key,)
+                ).fetchone()
+                if all_count is None or all_count[0] == 0:
+                    missing.append(key)
+                elif all_count[0] == 1:
+                    matched += 1
+            missing.sort()
+        finally:
+            connection.close()
+
+    hash_mismatches = {
+        "identity_hash": counters["identity_hash_mismatch_count"],
+        "footprint_hash": counters["footprint_hash_mismatch_count"],
+        "sampled_registry_footprint_hash": counters[
+            "sampled_registry_footprint_hash_mismatch_count"
+        ],
+    }
+    passed = not any(
+        (
+            missing,
+            registry_audit["duplicate_sampled_keys"],
+            counters["duplicate_parent_key_count"],
+            counters["sampled_flag_mismatch_count"],
+            counters["partition_mismatch_count"],
+            counters["sampled_unsampled_intersection_count"],
+            counters["identity_hash_mismatch_count"],
+            counters["footprint_hash_mismatch_count"],
+            counters["sampled_registry_footprint_hash_mismatch_count"],
+            counters["footprint_coordinate_mismatch_count"],
+            counters["invalid_geometry_count"],
+            counters["owner_zone_mismatch_count"],
+            counters["same_zone_positive_overlap_count"],
+            counters["cross_zone_overlap_violation_count"],
+        )
+    )
+    return {
+        "schema_version": "china_full_1280m_membership_audit_v1",
+        "all_count": counters["all_count"],
+        "sampled_count": counters["sampled_count"],
+        "unsampled_count": counters["unsampled_count"],
+        "matched": matched,
+        "missing": missing,
+        "missing_sampled_count": len(missing),
+        "duplicate_atlas_keys": duplicate_parent_keys,
+        "duplicate_parent_key_count": counters["duplicate_parent_key_count"],
+        "duplicate_sampled_keys": registry_audit["duplicate_sampled_keys"],
+        "sampled_unsampled_intersection_count": counters["sampled_unsampled_intersection_count"],
+        "sampled_flag_mismatch_count": counters["sampled_flag_mismatch_count"],
+        "partition_mismatch_count": counters["partition_mismatch_count"],
+        "hash_mismatches": hash_mismatches,
+        "max_footprint_coordinate_difference": max_footprint_coordinate_difference,
+        "footprint_coordinate_mismatch_count": counters["footprint_coordinate_mismatch_count"],
+        "invalid_geometry_count": counters["invalid_geometry_count"],
+        "owner_zone_mismatch_count": counters["owner_zone_mismatch_count"],
+        "same_zone_positive_overlap_count": counters["same_zone_positive_overlap_count"],
+        "cross_zone_overlap_violation_count": counters["cross_zone_overlap_violation_count"],
+        "max_cross_zone_overlap_fraction": counters["max_cross_zone_overlap_fraction"],
+        "passed": passed,
+    }
+
+
+def write_grid_package_audit(audit: Mapping[str, Any], output_path: str | Path) -> Path:
+    """Persist an audit result as stable, human-readable JSON."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return output_path
