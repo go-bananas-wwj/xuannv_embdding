@@ -3,19 +3,27 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
+import shutil
 import uuid
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping
 
 from pyproj import Transformer
+from shapely import normalize as normalize_geometry
+from shapely import set_precision
 from shapely.geometry import Point, box
 from shapely.ops import transform as transform_geometry
 
 PARENT_SIDE_METERS = 1280
 CHINA_OWNER_EPSGS = frozenset(range(32643, 32654))
 SHAPEFILE_MAX_BYTES = 1_800_000_000
+SHAPEFILE_SAFE_FRACTION = 0.95
+SHAPEFILE_ROW_BLOCK_ROWS = 1_000
+SHAPEFILE_COMPONENT_SUFFIXES = (".shp", ".shx", ".dbf", ".prj", ".cpg")
 
 
 @dataclass(frozen=True)
@@ -39,6 +47,7 @@ class ZoneWriteSummary:
     sampled_count: int = 0
     unsampled_count: int = 0
     parquet_parts: list[str] = field(default_factory=list)
+    shapefile_parts: list[str] = field(default_factory=list)
     batch_count: int = 0
 
 
@@ -184,8 +193,18 @@ def _geoparquet_records(records: Iterable[Mapping[str, Any]], sampled_keys: set[
     rows = []
     for record in records:
         row = dict(record)
+        geometry = _wgs84_geometry(record)
+        identity = (
+            f"{record['atlas_version']}:{record['grid_epsg']}:"
+            f"{record['grid_col']}:{record['grid_row']}"
+        )
         row["sampled"] = str(record["parent_key"]) in sampled_keys
-        row["geometry"] = _wgs84_geometry(record)
+        row["wgs84_bounds"] = list(geometry.bounds)
+        row["identity_hash"] = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        row["footprint_hash"] = hashlib.sha256(
+            normalize_geometry(set_precision(geometry, 1e-9)).wkb
+        ).hexdigest()
+        row["geometry"] = geometry
         rows.append(row)
     return gpd.GeoDataFrame(rows, geometry="geometry", crs="EPSG:4326")
 
@@ -209,49 +228,102 @@ def _shapefile_records(records: Iterable[Mapping[str, Any]], sampled_keys: set[s
     return gpd.GeoDataFrame(rows, geometry="geometry", crs="EPSG:4326")
 
 
-def _shapefile_size(path: Path) -> int:
-    return sum(
-        path.with_suffix(suffix).stat().st_size
-        for suffix in (".shp", ".shx", ".dbf")
+def _shapefile_component_sizes(path: Path) -> dict[str, int]:
+    return {
+        suffix: path.with_suffix(suffix).stat().st_size
+        for suffix in SHAPEFILE_COMPONENT_SUFFIXES
         if path.with_suffix(suffix).exists()
-    )
+    }
 
 
 def _remove_shapefile(path: Path) -> None:
-    for suffix in (".shp", ".shx", ".dbf", ".prj", ".cpg"):
+    for suffix in SHAPEFILE_COMPONENT_SUFFIXES:
         path.with_suffix(suffix).unlink(missing_ok=True)
 
 
-def _write_shapefile_partition(
+def _shapefile_component_limit() -> int:
+    return max(1, math.floor(SHAPEFILE_MAX_BYTES * SHAPEFILE_SAFE_FRACTION))
+
+
+def _fits_shapefile_component_cap(
     records: list[Mapping[str, Any]],
     sampled_keys: set[str],
-    output_root: Path,
+    probe_path: Path,
+) -> bool:
+    frame = _shapefile_records(records, sampled_keys)
+    try:
+        frame.to_file(probe_path, index=False)
+        sizes = _shapefile_component_sizes(probe_path).values()
+        return all(size < _shapefile_component_limit() for size in sizes)
+    finally:
+        _remove_shapefile(probe_path)
+
+
+def _split_shapefile_records(
+    records: list[Mapping[str, Any]], sampled_keys: set[str], staging_dir: Path
+) -> list[list[Mapping[str, Any]]]:
+    probe_path = staging_dir / f".cap-probe-{uuid.uuid4().hex}.shp"
+    if _fits_shapefile_component_cap(records, sampled_keys, probe_path):
+        return [records]
+    if len(records) == 1:
+        raise ValueError(
+            f"one Shapefile feature exceeds the {SHAPEFILE_MAX_BYTES} byte component cap"
+        )
+    midpoint = len(records) // 2
+    first_half = _split_shapefile_records(records[:midpoint], sampled_keys, staging_dir)
+    second_half = _split_shapefile_records(records[midpoint:], sampled_keys, staging_dir)
+    return first_half + second_half
+
+
+def _stage_shapefile_partition(
+    records: list[Mapping[str, Any]],
+    sampled_keys: set[str],
+    staging_root: Path,
     grid_id: str,
     partition: str,
-) -> None:
-    if not records:
-        return
-    path = output_root / partition / grid_id / f"{grid_id}_{partition}.shp"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    frame = _shapefile_records(records, sampled_keys)
-    staged_path = path.with_name(f".{path.stem}-{uuid.uuid4().hex}.shp")
-    try:
-        frame.to_file(staged_path, index=False)
-        projected_size = _shapefile_size(path) + _shapefile_size(staged_path)
-        if projected_size > SHAPEFILE_MAX_BYTES:
-            raise ValueError(
-                f"Shapefile size cap exceeded for {grid_id}/{partition}: "
-                f"{projected_size} bytes > {SHAPEFILE_MAX_BYTES} bytes"
+    batch_index: int,
+) -> list[Path]:
+    records_by_row_block: dict[int, list[Mapping[str, Any]]] = defaultdict(list)
+    for record in sorted(
+        records,
+        key=lambda item: (int(item["grid_row"]), int(item["grid_col"]), str(item["parent_key"])),
+    ):
+        records_by_row_block[int(record["grid_row"]) // SHAPEFILE_ROW_BLOCK_ROWS].append(record)
+
+    staging_dir = staging_root / partition / grid_id
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for row_block, block_records in sorted(records_by_row_block.items()):
+        for part_index, part_records in enumerate(
+            _split_shapefile_records(block_records, sampled_keys, staging_dir)
+        ):
+            path = staging_dir / (
+                f"{grid_id}_{partition}_rowblock-{row_block:06d}_part-{batch_index:05d}-{part_index:03d}.shp"
             )
-        if path.exists():
-            frame.to_file(path, index=False, mode="a")
-        else:
-            for suffix in (".shp", ".shx", ".dbf", ".prj", ".cpg"):
-                staged_file = staged_path.with_suffix(suffix)
-                if staged_file.exists():
-                    staged_file.replace(path.with_suffix(suffix))
-    finally:
-        _remove_shapefile(staged_path)
+            _shapefile_records(part_records, sampled_keys).to_file(path, index=False)
+            sizes = _shapefile_component_sizes(path).values()
+            if not all(size < _shapefile_component_limit() for size in sizes):
+                raise ValueError(f"Shapefile cap check failed for {path}")
+            paths.append(path)
+    return paths
+
+
+def _publish_staged_files(staging_root: Path, output_root: Path) -> list[Path]:
+    staged_files = sorted(path for path in staging_root.rglob("*") if path.is_file())
+    published = []
+    try:
+        for staged_path in staged_files:
+            destination = output_root / staged_path.relative_to(staging_root)
+            if destination.exists():
+                raise FileExistsError(f"refusing to overwrite existing output: {destination}")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            staged_path.replace(destination)
+            published.append(destination)
+    except Exception:
+        for destination in published:
+            destination.unlink(missing_ok=True)
+        raise
+    return published
 
 
 def write_zone_batch(
@@ -274,20 +346,43 @@ def write_zone_batch(
         "sampled": [record for record in batch if str(record["parent_key"]) in sampled_keys],
         "unsampled": [record for record in batch if str(record["parent_key"]) not in sampled_keys],
     }
-    part_index = summary.batch_count
-    for partition, records in partitions.items():
-        if not records:
-            continue
-        partition_dir = output_root / partition / summary.grid_id
-        partition_dir.mkdir(parents=True, exist_ok=True)
-        parquet_path = partition_dir / f"part-{part_index:05d}.parquet"
-        _geoparquet_records(records, sampled_keys).to_parquet(parquet_path, index=False)
-        summary.parquet_parts.append(str(parquet_path))
-        _write_shapefile_partition(records, sampled_keys, output_root, summary.grid_id, partition)
+    staging_root = output_root.parent / f".{output_root.name}.batch-{uuid.uuid4().hex}"
+    staged_parquet_paths: list[Path] = []
+    staged_shapefile_paths: list[Path] = []
+    try:
+        for partition, partition_records in partitions.items():
+            if not partition_records:
+                continue
+            partition_dir = staging_root / partition / summary.grid_id
+            partition_dir.mkdir(parents=True, exist_ok=True)
+            parquet_path = partition_dir / f"part-{summary.batch_count:05d}.parquet"
+            _geoparquet_records(partition_records, sampled_keys).to_parquet(
+                parquet_path, index=False, compression="zstd"
+            )
+            staged_parquet_paths.append(parquet_path)
+            staged_shapefile_paths.extend(
+                _stage_shapefile_partition(
+                    partition_records,
+                    sampled_keys,
+                    staging_root,
+                    summary.grid_id,
+                    partition,
+                    summary.batch_count,
+                )
+            )
+        _publish_staged_files(staging_root, output_root)
+    finally:
+        shutil.rmtree(staging_root, ignore_errors=True)
 
     summary.all_count += len(batch)
     summary.sampled_count += len(partitions["sampled"])
     summary.unsampled_count += len(partitions["unsampled"])
+    summary.parquet_parts.extend(
+        str(output_root / path.relative_to(staging_root)) for path in staged_parquet_paths
+    )
+    summary.shapefile_parts.extend(
+        str(output_root / path.relative_to(staging_root)) for path in staged_shapefile_paths
+    )
     summary.batch_count += 1
 
 

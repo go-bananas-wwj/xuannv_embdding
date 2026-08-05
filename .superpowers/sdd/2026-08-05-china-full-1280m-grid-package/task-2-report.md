@@ -51,3 +51,36 @@ Implemented Task 2 only in the requested worktree and branch. No nationwide grid
   step and was intentionally not performed for this task.
 - The writer depends on the repository's declared GeoPandas/pyarrow vector stack. Production
   execution should retain the same environment used by the verification command.
+
+## Review Fix Round 1
+
+### Implemented
+
+- Replaced each mutable per-zone Shapefile with deterministic row-block part files named
+  `<grid>_<partition>_rowblock-<block>_part-<batch>-<part>.shp`. Records are sorted by
+  `grid_row`, `grid_col`, and `parent_key`, assigned to fixed 1,000-row blocks, and recursively
+  split into deterministic parts whenever a component reaches the 95% safety threshold of the
+  1,800,000,000-byte limit. Every `.shp`, `.shx`, `.dbf`, `.prj`, and `.cpg` component is
+  checked before publish.
+- Added canonical GeoParquet fields `wgs84_bounds`, `identity_hash`, and `footprint_hash`.
+  The identity hash is SHA-256 of atlas version, EPSG, column, and row; the footprint hash is
+  SHA-256 of normalized, precision-stabilized WGS84 polygon WKB.
+- GeoParquet writes now explicitly use `compression="zstd"`.
+- A batch now stages every GeoParquet part and Shapefile component outside the output root. Only
+  after all partitions write and cap-check successfully are files moved into their final paths.
+  Any staging or publication error removes files already moved for that batch and leaves summary
+  counts unchanged.
+
+### Regression Evidence
+
+1. Added the cap-splitting regression before implementation; the old writer failed with
+   `ValueError: Shapefile size cap exceeded` instead of producing parts.
+2. Added canonical-field/ZSTD metadata assertions before implementation; the old GeoParquet
+   lacked `wgs84_bounds`, `identity_hash`, and `footprint_hash`.
+3. Added a later-partition write-failure test before implementation; the old writer left
+   `all/.../part-00000.parquet` published after the second partition failed.
+4. Final verification after the fixes:
+   - `python -m pytest tests/test_china_full_grid.py -v` -> 15 passed.
+   - `ruff check scripts/data/china_full_grid.py scripts/data/build_china_full_grid.py tests/test_china_full_grid.py` -> passed.
+   - `black --check scripts/data/china_full_grid.py scripts/data/build_china_full_grid.py tests/test_china_full_grid.py` -> passed.
+   - `git diff --check` -> passed.

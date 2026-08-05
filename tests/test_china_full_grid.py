@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import math
 import subprocess
@@ -8,8 +9,10 @@ from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
+import pyarrow.parquet as pq
 import pytest
 from pyproj import Transformer
+from shapely import normalize, set_precision
 from shapely.geometry import box
 
 MODULE_PATH = Path(__file__).parents[1] / "scripts/data/china_full_grid.py"
@@ -85,8 +88,10 @@ def test_writer_partitions_all_sampled_and_unsampled(tmp_path: Path) -> None:
     )
     assert all_records.geometry.geom_type.eq("Polygon").all()
 
-    shapefile = tmp_path / "all" / "utm50n" / "utm50n_all.shp"
-    shapefile_records = gpd.read_file(shapefile)
+    shapefile_parts = sorted((tmp_path / "all" / "utm50n").glob("*.shp"))
+    shapefile_records = gpd.GeoDataFrame(
+        pd.concat([gpd.read_file(part) for part in shapefile_parts]), crs="EPSG:4326"
+    )
     assert shapefile_records.crs.to_epsg() == 4326
     assert len(shapefile_records) == 12
     assert {"PATCH_ID", "UTM_EPSG", "GRID_COL", "GRID_ROW", "MACRO_ID", "SAMPLED"} <= set(
@@ -99,10 +104,83 @@ def test_writer_rejects_shapefile_larger_than_cap(
 ) -> None:
     monkeypatch.setattr(MODULE, "SHAPEFILE_MAX_BYTES", 1)
 
-    with pytest.raises(ValueError, match="size cap exceeded"):
+    with pytest.raises(ValueError, match="one Shapefile feature exceeds"):
         MODULE.write_zone_records(synthetic_parent_records(count=1), set(), tmp_path, batch_size=1)
 
-    assert not (tmp_path / "all" / "utm50n" / "utm50n_all.shp").exists()
+    assert not list(tmp_path.rglob("*.shp"))
+    assert not list(tmp_path.rglob("*.parquet"))
+
+
+def test_writer_splits_shapefiles_at_component_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    records = synthetic_parent_records(count=12)
+    probe = tmp_path / "probe.shp"
+    MODULE._shapefile_records(records[:1], set()).to_file(probe, index=False)
+    one_record_component = max(
+        probe.with_suffix(suffix).stat().st_size for suffix in (".shp", ".shx", ".dbf")
+    )
+    component_cap = math.ceil(one_record_component / 0.9)
+    monkeypatch.setattr(MODULE, "SHAPEFILE_MAX_BYTES", component_cap)
+
+    MODULE.write_zone_records(records, set(), tmp_path / "output", batch_size=12)
+
+    parts = sorted((tmp_path / "output" / "all" / "utm50n").glob("*.shp"))
+    assert len(parts) > 1
+    assert all("rowblock-" in part.name and "part-" in part.name for part in parts)
+    for part in parts:
+        assert all(
+            part.with_suffix(suffix).stat().st_size < component_cap
+            for suffix in (".shp", ".shx", ".dbf", ".prj", ".cpg")
+            if part.with_suffix(suffix).exists()
+        )
+
+
+def test_geoparquet_has_canonical_fields_and_zstd_metadata(tmp_path: Path) -> None:
+    record = synthetic_parent_records(count=1)[0]
+    MODULE.write_zone_records([record], set(), tmp_path, batch_size=1)
+    parquet_path = next((tmp_path / "all" / "utm50n").glob("*.parquet"))
+    result = gpd.read_parquet(parquet_path)
+    row = result.iloc[0]
+
+    assert {"wgs84_bounds", "identity_hash", "footprint_hash"} <= set(result.columns)
+    assert tuple(row["wgs84_bounds"]) == pytest.approx(row.geometry.bounds)
+    expected_identity = (
+        f"{row['atlas_version']}:{row['grid_epsg']}:{row['grid_col']}:{row['grid_row']}"
+    )
+    assert row["identity_hash"] == hashlib.sha256(expected_identity.encode("utf-8")).hexdigest()
+    expected_footprint = normalize(set_precision(row.geometry, 1e-9)).wkb
+    assert row["footprint_hash"] == hashlib.sha256(expected_footprint).hexdigest()
+
+    metadata = pq.ParquetFile(parquet_path).metadata
+    assert {
+        metadata.row_group(0).column(column).compression
+        for column in range(metadata.row_group(0).num_columns)
+    } == {"ZSTD"}
+
+
+def test_writer_keeps_output_empty_when_a_later_partition_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    records = synthetic_parent_records(count=2)
+    sampled = {str(records[0]["parent_key"])}
+    original_to_parquet = gpd.GeoDataFrame.to_parquet
+    calls = 0
+
+    def fail_second_parquet_write(self, path, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("synthetic second partition failure")
+        return original_to_parquet(self, path, *args, **kwargs)
+
+    monkeypatch.setattr(gpd.GeoDataFrame, "to_parquet", fail_second_parquet_write)
+
+    with pytest.raises(OSError, match="synthetic second partition failure"):
+        MODULE.write_zone_records(records, sampled, tmp_path, batch_size=2)
+
+    assert not list(tmp_path.rglob("*.parquet"))
+    assert not list(tmp_path.rglob("*.shp"))
 
 
 def test_cli_writes_requested_zone_from_small_local_inputs(tmp_path: Path) -> None:
@@ -145,7 +223,7 @@ def test_cli_writes_requested_zone_from_small_local_inputs(tmp_path: Path) -> No
 
     assert result.returncode == 0, result.stderr
     assert '"sampled_count": 1' in result.stdout
-    assert (output_root / "all" / "utm50n" / "utm50n_all.shp").exists()
+    assert list((output_root / "all" / "utm50n").glob("*.shp"))
 
 
 def test_grid_spec_rejects_noncanonical_parent_cell_size() -> None:
