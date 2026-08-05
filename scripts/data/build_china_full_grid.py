@@ -39,6 +39,35 @@ PACKAGE_PREVIEWS = {
     "local_grid": "local_1280m_grid_sampled_unsampled.png",
     "utm_seams": "utm_owner_zone_seams.png",
 }
+MEMBERSHIP_AUDIT_SCHEMA_VERSION = "china_full_1280m_membership_audit_v1"
+MEMBERSHIP_AUDIT_COUNT_FIELDS = (
+    "all_count",
+    "sampled_count",
+    "unsampled_count",
+    "matched",
+    "missing_sampled_count",
+    "duplicate_parent_key_count",
+    "sampled_unsampled_intersection_count",
+    "sampled_flag_mismatch_count",
+    "partition_mismatch_count",
+    "exact_partition_membership_mismatch_count",
+    "child_partition_unknown_parent_key_count",
+    "child_partition_metadata_mismatch_count",
+    "child_partition_geometry_mismatch_count",
+    "footprint_coordinate_mismatch_count",
+    "stored_utm_bounds_mismatch_count",
+    "stored_wgs84_bounds_mismatch_count",
+    "invalid_geometry_count",
+    "owner_zone_mismatch_count",
+    "same_zone_positive_overlap_count",
+    "cross_zone_overlap_violation_count",
+)
+MEMBERSHIP_AUDIT_FAILURE_COUNT_FIELDS = MEMBERSHIP_AUDIT_COUNT_FIELDS[4:]
+MEMBERSHIP_AUDIT_HASH_FIELDS = (
+    "identity_hash",
+    "footprint_hash",
+    "sampled_registry_footprint_hash",
+)
 
 
 def _read_json(path: Path) -> Any:
@@ -60,6 +89,48 @@ def _macros(path: Path) -> list[dict[str, Any]]:
     if not isinstance(data, list) or not all(isinstance(macro, dict) for macro in data):
         raise ValueError("macrocells JSON must be a list of macrocell objects")
     return data
+
+
+def validate_membership_audit(audit: Any) -> dict[str, Any]:
+    """Reject incomplete or failed membership audits before package publication starts."""
+    if not isinstance(audit, dict):
+        raise ValueError("membership audit must be a JSON object")
+    if audit.get("schema_version") != MEMBERSHIP_AUDIT_SCHEMA_VERSION:
+        raise ValueError("membership audit has an unsupported schema_version")
+    if audit.get("passed") is not True:
+        raise ValueError("membership audit passed must be exactly True")
+
+    missing = [field for field in MEMBERSHIP_AUDIT_COUNT_FIELDS if field not in audit]
+    if missing:
+        raise ValueError(f"membership audit is missing required fields: {', '.join(missing)}")
+    for field in MEMBERSHIP_AUDIT_COUNT_FIELDS:
+        value = audit[field]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"membership audit {field} must be a non-negative integer")
+
+    if audit["all_count"] != audit["sampled_count"] + audit["unsampled_count"]:
+        raise ValueError("membership audit counts do not partition the parent atlas")
+    if audit["matched"] != audit["sampled_count"]:
+        raise ValueError("membership audit matched count must equal sampled_count")
+    if any(audit[field] != 0 for field in MEMBERSHIP_AUDIT_FAILURE_COUNT_FIELDS):
+        raise ValueError("membership audit passed status conflicts with non-zero failure counts")
+
+    hash_mismatches = audit.get("hash_mismatches")
+    if not isinstance(hash_mismatches, dict):
+        raise ValueError("membership audit hash_mismatches must be an object")
+    missing_hash_fields = [
+        field for field in MEMBERSHIP_AUDIT_HASH_FIELDS if field not in hash_mismatches
+    ]
+    if missing_hash_fields:
+        raise ValueError(
+            "membership audit hash_mismatches is missing required fields: "
+            f"{', '.join(missing_hash_fields)}"
+        )
+    for field in MEMBERSHIP_AUDIT_HASH_FIELDS:
+        value = hash_mismatches[field]
+        if isinstance(value, bool) or not isinstance(value, int) or value != 0:
+            raise ValueError(f"membership audit hash_mismatches.{field} must be zero")
+    return audit
 
 
 def _zone_records(
@@ -343,9 +414,7 @@ def build_package_artifacts(
     """Build index, previews, README, DOCX, and manifest after all partitions are written."""
     output_root = Path(output_root)
     audit_path = Path(membership_audit_path)
-    audit = _read_json(audit_path)
-    if not isinstance(audit, dict):
-        raise ValueError("membership audit must be a JSON object")
+    audit = validate_membership_audit(_read_json(audit_path))
     macros, zones = summarize_grid_partitions(output_root)
     counts = {
         "all": sum(row["all_count"] for row in zones),

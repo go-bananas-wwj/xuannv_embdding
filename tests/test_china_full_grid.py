@@ -79,6 +79,53 @@ def synthetic_parent_records(count: int) -> list[dict[str, object]]:
     return records
 
 
+def _valid_package_audit(
+    *, all_count: int = 12, sampled_count: int = 2, unsampled_count: int = 10
+) -> dict[str, object]:
+    return {
+        "schema_version": "china_full_1280m_membership_audit_v1",
+        "passed": True,
+        "all_count": all_count,
+        "sampled_count": sampled_count,
+        "unsampled_count": unsampled_count,
+        "matched": sampled_count,
+        "missing_sampled_count": 0,
+        "duplicate_parent_key_count": 0,
+        "sampled_unsampled_intersection_count": 0,
+        "sampled_flag_mismatch_count": 0,
+        "partition_mismatch_count": 0,
+        "exact_partition_membership_mismatch_count": 0,
+        "child_partition_unknown_parent_key_count": 0,
+        "child_partition_metadata_mismatch_count": 0,
+        "child_partition_geometry_mismatch_count": 0,
+        "footprint_coordinate_mismatch_count": 0,
+        "stored_utm_bounds_mismatch_count": 0,
+        "stored_wgs84_bounds_mismatch_count": 0,
+        "invalid_geometry_count": 0,
+        "owner_zone_mismatch_count": 0,
+        "same_zone_positive_overlap_count": 0,
+        "cross_zone_overlap_violation_count": 0,
+        "hash_mismatches": {
+            "identity_hash": 0,
+            "footprint_hash": 0,
+            "sampled_registry_footprint_hash": 0,
+        },
+    }
+
+
+def _assert_package_artifacts_absent(output_root: Path) -> None:
+    names = {
+        "china_full_1280m_macrocell_index.gpkg",
+        "national_patch_density_by_utm_zone.png",
+        "local_1280m_grid_sampled_unsampled.png",
+        "utm_owner_zone_seams.png",
+        "README.md",
+        "先读我.docx",
+        "china_full_1280m_grid_package_manifest.json",
+    }
+    assert all(not (output_root / name).exists() for name in names)
+
+
 def test_package_docs_explain_parent_sampled_and_unsampled(tmp_path: Path) -> None:
     docx_module = _load_module(DOCX_MODULE_PATH, "china_full_grid_package_docx")
     assert PACKAGE_README_PATH.exists()
@@ -126,6 +173,24 @@ def test_package_docs_explain_parent_sampled_and_unsampled(tmp_path: Path) -> No
             assert str(run.font.color.rgb) == "000000"
 
 
+def test_package_docs_use_default_prior_sampling_source_in_clean_checkout(tmp_path: Path) -> None:
+    docx_module = _load_module(DOCX_MODULE_PATH, "china_full_grid_package_docx_default")
+
+    assert docx_module.DEFAULT_PRIOR_SAMPLING_SOURCE.exists()
+    docx_path = docx_module.build_package_docx(
+        tmp_path / "先读我.docx",
+        package_metadata={
+            "all_count": 12,
+            "sampled_count": 2,
+            "unsampled_count": 10,
+            "membership_audit": {"passed": True, "matched": 2},
+        },
+    )
+
+    text = "\n".join(paragraph.text for paragraph in Document(docx_path).paragraphs)
+    assert "62,000 个全国采样候选位置" in text
+
+
 def test_package_artifacts_build_index_previews_and_manifest_from_synthetic_grid(
     tmp_path: Path,
 ) -> None:
@@ -140,15 +205,7 @@ def test_package_artifacts_build_index_previews_and_manifest_from_synthetic_grid
     )
     audit_path = tmp_path / "membership_audit.json"
     audit_path.write_text(
-        json.dumps(
-            {
-                "passed": True,
-                "all_count": 12,
-                "sampled_count": 2,
-                "unsampled_count": 10,
-                "matched": 2,
-            }
-        ),
+        json.dumps(_valid_package_audit()),
         encoding="utf-8",
     )
     prior_sampling_path = tmp_path / "prior_sampling.md"
@@ -183,6 +240,43 @@ def test_package_artifacts_build_index_previews_and_manifest_from_synthetic_grid
         assert preview_path.exists()
         assert preview_path.stat().st_size > 0
     assert (output_root / "先读我.docx").exists()
+
+
+@pytest.mark.parametrize(
+    ("audit", "message"),
+    (
+        (_valid_package_audit() | {"passed": False}, "passed must be exactly True"),
+        (_valid_package_audit() | {"all_count": "12"}, "all_count must be a non-negative integer"),
+        (
+            {key: value for key, value in _valid_package_audit().items() if key != "matched"},
+            "missing required fields: matched",
+        ),
+    ),
+)
+def test_package_artifacts_reject_invalid_audit_before_publishing(
+    tmp_path: Path, audit: dict[str, object], message: str
+) -> None:
+    builder = _load_module(BUILDER_MODULE_PATH, "build_china_full_grid_invalid_audit")
+    records = synthetic_parent_records(count=12)
+    output_root = tmp_path / "package"
+    MODULE.write_zone_records(
+        records,
+        {str(records[1]["parent_key"]), str(records[7]["parent_key"])},
+        output_root,
+        batch_size=5,
+    )
+    audit_path = tmp_path / "membership_audit.json"
+    audit_path.write_text(json.dumps(audit), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        builder.build_package_artifacts(
+            output_root=output_root,
+            boundary_wgs84=box(113.95, 39.7, 114.05, 40.0),
+            membership_audit_path=audit_path,
+            prior_sampling_source=tmp_path / "unused.md",
+        )
+
+    _assert_package_artifacts_absent(output_root)
 
 
 def test_writer_partitions_all_sampled_and_unsampled(tmp_path: Path) -> None:
