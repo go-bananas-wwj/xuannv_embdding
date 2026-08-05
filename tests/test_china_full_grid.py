@@ -294,8 +294,91 @@ def test_partitioned_audit_rejects_shifted_footprint_with_recomputed_hash(tmp_pa
 
     audit = MODULE.audit_grid_package(tmp_path, [], batch_size=1)
 
-    assert audit["hash_mismatches"]["footprint_hash"] == 0
+    assert audit["hash_mismatches"]["footprint_hash"] == 1
     assert audit["footprint_coordinate_mismatch_count"] == 1
+    assert audit["passed"] is False
+
+
+def test_partitioned_audit_derives_all_footprint_from_integer_grid_coordinates(
+    tmp_path: Path,
+) -> None:
+    record = synthetic_parent_records(count=1)[0]
+    MODULE.write_zone_records([record], set(), tmp_path, batch_size=1)
+    parquet_path = next((tmp_path / "all" / "utm50n").glob("*.parquet"))
+    frame = gpd.read_parquet(parquet_path)
+    shifted_bounds = [value + MODULE.PARENT_SIDE_METERS for value in frame.loc[0, "utm_bounds"]]
+    shifted_geometry = MODULE._wgs84_geometry(
+        {"grid_epsg": frame.loc[0, "grid_epsg"], "utm_bounds": shifted_bounds}
+    )
+    frame.at[0, "utm_bounds"] = shifted_bounds
+    frame.at[0, "wgs84_bounds"] = list(shifted_geometry.bounds)
+    frame.loc[0, "geometry"] = shifted_geometry
+    frame.loc[0, "footprint_hash"] = hashlib.sha256(
+        normalize(set_precision(shifted_geometry, 1e-9)).wkb
+    ).hexdigest()
+    frame.to_parquet(parquet_path, index=False, compression="zstd")
+
+    audit = MODULE.audit_grid_package(tmp_path, [], batch_size=1)
+
+    assert audit["stored_utm_bounds_mismatch_count"] == 1
+    assert audit["hash_mismatches"]["footprint_hash"] == 1
+    assert audit["passed"] is False
+
+
+def test_partitioned_audit_rejects_swapped_sampled_and_unsampled_children(tmp_path: Path) -> None:
+    records = synthetic_parent_records(count=2)
+    sampled_key = str(records[0]["parent_key"])
+    MODULE.write_zone_records(records, {sampled_key}, tmp_path, batch_size=2)
+    sampled_path = next((tmp_path / "sampled" / "utm50n").glob("*.parquet"))
+    unsampled_path = next((tmp_path / "unsampled" / "utm50n").glob("*.parquet"))
+    sampled_payload = sampled_path.read_bytes()
+    unsampled_payload = unsampled_path.read_bytes()
+    sampled_path.write_bytes(unsampled_payload)
+    unsampled_path.write_bytes(sampled_payload)
+
+    audit = MODULE.audit_grid_package(
+        tmp_path,
+        [
+            {
+                "grid_epsg": records[0]["grid_epsg"],
+                "grid_col": records[0]["grid_col"],
+                "grid_row": records[0]["grid_row"],
+            }
+        ],
+        batch_size=1,
+    )
+
+    assert audit["exact_partition_membership_mismatch_count"] == 2
+    assert audit["passed"] is False
+
+
+def test_partitioned_audit_rejects_rehashed_child_metadata_and_geometry(tmp_path: Path) -> None:
+    record = synthetic_parent_records(count=1)[0]
+    MODULE.write_zone_records([record], {str(record["parent_key"])}, tmp_path, batch_size=1)
+    parquet_path = next((tmp_path / "sampled" / "utm50n").glob("*.parquet"))
+    frame = gpd.read_parquet(parquet_path)
+    shifted_geometry = translate(frame.loc[0, "geometry"], xoff=0.0001)
+    frame.loc[0, "geometry"] = shifted_geometry
+    frame.at[0, "wgs84_bounds"] = list(shifted_geometry.bounds)
+    frame.loc[0, "footprint_hash"] = hashlib.sha256(
+        normalize(set_precision(shifted_geometry, 1e-9)).wkb
+    ).hexdigest()
+    frame.to_parquet(parquet_path, index=False, compression="zstd")
+
+    audit = MODULE.audit_grid_package(
+        tmp_path,
+        [
+            {
+                "grid_epsg": record["grid_epsg"],
+                "grid_col": record["grid_col"],
+                "grid_row": record["grid_row"],
+            }
+        ],
+        batch_size=1,
+    )
+
+    assert audit["child_partition_metadata_mismatch_count"] == 1
+    assert audit["child_partition_geometry_mismatch_count"] == 1
     assert audit["passed"] is False
 
 

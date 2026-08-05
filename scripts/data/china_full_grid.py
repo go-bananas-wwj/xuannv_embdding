@@ -32,6 +32,28 @@ AUDIT_DIMENSION_TOLERANCE_M = 0.001
 AUDIT_AREA_TOLERANCE_M2 = 1.0
 CROSS_ZONE_OVERLAP_FRACTION = 0.01
 AUDIT_EXAMPLE_LIMIT = 100
+AUDIT_COORDINATE_TOLERANCE = 1e-9
+CANONICAL_METADATA_FIELDS = (
+    "schema_version",
+    "atlas_version",
+    "boundary_version",
+    "patch_id",
+    "parent_key",
+    "macro_id",
+    "macro_local_col",
+    "macro_local_row",
+    "grid_id",
+    "grid_epsg",
+    "grid_col",
+    "grid_row",
+    "utm_bounds",
+    "wgs84_bounds",
+    "longitude",
+    "latitude",
+    "sampled",
+    "identity_hash",
+    "footprint_hash",
+)
 
 
 @dataclass(frozen=True)
@@ -499,6 +521,40 @@ def _normalized_footprint_hash(geometry: Any) -> str:
     return hashlib.sha256(normalize_geometry(set_precision(geometry, 1e-9)).wkb).hexdigest()
 
 
+def _canonical_utm_bounds(grid_col: int, grid_row: int) -> list[int]:
+    return [
+        grid_col * PARENT_SIDE_METERS,
+        grid_row * PARENT_SIDE_METERS,
+        (grid_col + 1) * PARENT_SIDE_METERS,
+        (grid_row + 1) * PARENT_SIDE_METERS,
+    ]
+
+
+def _canonical_wgs84_geometry(row: Mapping[str, Any]):
+    return _wgs84_geometry(
+        {
+            "grid_epsg": int(row["grid_epsg"]),
+            "utm_bounds": _canonical_utm_bounds(int(row["grid_col"]), int(row["grid_row"])),
+        }
+    )
+
+
+def _metadata_hash(row: Mapping[str, Any]) -> str:
+    metadata = {field: row[field] for field in CANONICAL_METADATA_FIELDS}
+    return hashlib.sha256(
+        json.dumps(metadata, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+
+
+def _bounds_match(actual: Iterable[float], expected: Iterable[float]) -> bool:
+    return all(
+        abs(float(actual_value) - float(expected_value)) <= AUDIT_COORDINATE_TOLERANCE
+        for actual_value, expected_value in zip(actual, expected, strict=True)
+    )
+
+
 def _maximum_footprint_coordinate_difference(expected: Any, actual: Any) -> float:
     """Return the largest normalized exterior-coordinate difference in WGS84 degrees."""
     expected = normalize_geometry(set_precision(expected, 1e-9))
@@ -533,6 +589,14 @@ def _audit_database(path: Path) -> sqlite3.Connection:
             grid_epsg INTEGER NOT NULL,
             parent_key TEXT NOT NULL,
             geometry_wkb BLOB NOT NULL
+        );
+        CREATE TABLE canonical_rows (
+            parent_key TEXT PRIMARY KEY,
+            metadata_hash TEXT NOT NULL,
+            geometry_hash TEXT NOT NULL
+        );
+        CREATE TABLE sampled_registry_keys (
+            parent_key TEXT PRIMARY KEY
         );
         CREATE VIRTUAL TABLE geometry_bounds USING rtree(
             geometry_id, minx, maxx, miny, maxy
@@ -643,25 +707,19 @@ def audit_grid_package(
     ) as temporary_dir:
         connection = _audit_database(Path(temporary_dir) / "audit.sqlite")
         try:
-            all_columns = [
-                "parent_key",
-                "sampled",
-                "grid_epsg",
-                "grid_col",
-                "grid_row",
-                "utm_bounds",
-                "longitude",
-                "latitude",
-                "atlas_version",
-                "identity_hash",
-                "footprint_hash",
-                "geometry",
-            ]
+            connection.executemany(
+                "INSERT INTO sampled_registry_keys(parent_key) VALUES (?)",
+                ((key,) for key in sampled_key_set),
+            )
+            all_columns = [*CANONICAL_METADATA_FIELDS, "geometry"]
             transformers: dict[int, Transformer] = {}
             for row in _iter_parquet_rows(all_paths, all_columns, batch_size):
                 parent_key_value = str(row["parent_key"])
                 grid_epsg = int(row["grid_epsg"])
                 geometry = from_wkb(row["geometry"])
+                canonical_bounds = _canonical_utm_bounds(int(row["grid_col"]), int(row["grid_row"]))
+                canonical_geometry = _canonical_wgs84_geometry(row)
+                canonical_footprint_hash = _normalized_footprint_hash(canonical_geometry)
                 _record_partition_key(connection, parent_key_value, "all")
                 counters["all_count"] += 1
                 if bool(row["sampled"]):
@@ -682,7 +740,11 @@ def audit_grid_package(
                 ).hexdigest()
                 if row["identity_hash"] != expected_identity_hash:
                     counters["identity_hash_mismatch_count"] += 1
-                if row["footprint_hash"] != _normalized_footprint_hash(geometry):
+                if list(row["utm_bounds"]) != canonical_bounds:
+                    counters["stored_utm_bounds_mismatch_count"] += 1
+                if not _bounds_match(row["wgs84_bounds"], canonical_geometry.bounds):
+                    counters["stored_wgs84_bounds_mismatch_count"] += 1
+                if row["footprint_hash"] != canonical_footprint_hash:
                     counters["footprint_hash_mismatch_count"] += 1
                 registry_record = registry_by_key.get(parent_key_value)
                 if registry_record is not None:
@@ -694,14 +756,13 @@ def audit_grid_package(
                     ) != _normalized_footprint_hash(geometry):
                         counters["sampled_registry_footprint_hash_mismatch_count"] += 1
 
-                expected_geometry = _wgs84_geometry(row)
                 coordinate_difference = _maximum_footprint_coordinate_difference(
-                    expected_geometry, geometry
+                    canonical_geometry, geometry
                 )
                 max_footprint_coordinate_difference = max(
                     max_footprint_coordinate_difference, coordinate_difference
                 )
-                if coordinate_difference > 1e-9:
+                if coordinate_difference > AUDIT_COORDINATE_TOLERANCE:
                     counters["footprint_coordinate_mismatch_count"] += 1
                 transformer = transformers.setdefault(
                     grid_epsg, Transformer.from_crs(4326, grid_epsg, always_xy=True)
@@ -723,13 +784,35 @@ def audit_grid_package(
                 counters["max_cross_zone_overlap_fraction"] = max(
                     counters["max_cross_zone_overlap_fraction"], overlap_fraction
                 )
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO canonical_rows(parent_key, metadata_hash, geometry_hash)
+                    VALUES (?, ?, ?)
+                    """,
+                    (parent_key_value, _metadata_hash(row), _normalized_footprint_hash(geometry)),
+                )
             connection.commit()
 
             for partition in ("sampled", "unsampled"):
                 for row in _iter_parquet_rows(
-                    _parquet_paths(output_root, partition), ["parent_key"], batch_size
+                    _parquet_paths(output_root, partition), all_columns, batch_size
                 ):
-                    _record_partition_key(connection, str(row["parent_key"]), partition)
+                    parent_key_value = str(row["parent_key"])
+                    _record_partition_key(connection, parent_key_value, partition)
+                    canonical_row = connection.execute(
+                        """
+                        SELECT metadata_hash, geometry_hash FROM canonical_rows
+                        WHERE parent_key = ?
+                        """,
+                        (parent_key_value,),
+                    ).fetchone()
+                    if canonical_row is None:
+                        counters["child_partition_unknown_parent_key_count"] += 1
+                        continue
+                    if _metadata_hash(row) != canonical_row[0]:
+                        counters["child_partition_metadata_mismatch_count"] += 1
+                    if _normalized_footprint_hash(from_wkb(row["geometry"])) != canonical_row[1]:
+                        counters["child_partition_geometry_mismatch_count"] += 1
             connection.commit()
 
             duplicate_parent_keys = [
@@ -751,6 +834,20 @@ def audit_grid_package(
             counters["sampled_unsampled_intersection_count"] = connection.execute("""
                 SELECT COUNT(*) FROM partition_keys
                 WHERE sampled_partition_count > 0 AND unsampled_partition_count > 0
+                """).fetchone()[0]
+            counters["exact_partition_membership_mismatch_count"] = connection.execute("""
+                SELECT COUNT(*)
+                FROM partition_keys
+                LEFT JOIN sampled_registry_keys USING (parent_key)
+                WHERE all_count != 1
+                   OR (
+                        sampled_registry_keys.parent_key IS NOT NULL
+                        AND (sampled_partition_count != 1 OR unsampled_partition_count != 0)
+                   )
+                   OR (
+                        sampled_registry_keys.parent_key IS NULL
+                        AND (sampled_partition_count != 0 OR unsampled_partition_count != 1)
+                   )
                 """).fetchone()[0]
             missing = []
             matched = 0
@@ -781,9 +878,15 @@ def audit_grid_package(
             counters["sampled_flag_mismatch_count"],
             counters["partition_mismatch_count"],
             counters["sampled_unsampled_intersection_count"],
+            counters["exact_partition_membership_mismatch_count"],
+            counters["child_partition_unknown_parent_key_count"],
+            counters["child_partition_metadata_mismatch_count"],
+            counters["child_partition_geometry_mismatch_count"],
             counters["identity_hash_mismatch_count"],
             counters["footprint_hash_mismatch_count"],
             counters["sampled_registry_footprint_hash_mismatch_count"],
+            counters["stored_utm_bounds_mismatch_count"],
+            counters["stored_wgs84_bounds_mismatch_count"],
             counters["footprint_coordinate_mismatch_count"],
             counters["invalid_geometry_count"],
             counters["owner_zone_mismatch_count"],
@@ -805,9 +908,23 @@ def audit_grid_package(
         "sampled_unsampled_intersection_count": counters["sampled_unsampled_intersection_count"],
         "sampled_flag_mismatch_count": counters["sampled_flag_mismatch_count"],
         "partition_mismatch_count": counters["partition_mismatch_count"],
+        "exact_partition_membership_mismatch_count": counters[
+            "exact_partition_membership_mismatch_count"
+        ],
+        "child_partition_unknown_parent_key_count": counters[
+            "child_partition_unknown_parent_key_count"
+        ],
+        "child_partition_metadata_mismatch_count": counters[
+            "child_partition_metadata_mismatch_count"
+        ],
+        "child_partition_geometry_mismatch_count": counters[
+            "child_partition_geometry_mismatch_count"
+        ],
         "hash_mismatches": hash_mismatches,
         "max_footprint_coordinate_difference": max_footprint_coordinate_difference,
         "footprint_coordinate_mismatch_count": counters["footprint_coordinate_mismatch_count"],
+        "stored_utm_bounds_mismatch_count": counters["stored_utm_bounds_mismatch_count"],
+        "stored_wgs84_bounds_mismatch_count": counters["stored_wgs84_bounds_mismatch_count"],
         "invalid_geometry_count": counters["invalid_geometry_count"],
         "owner_zone_mismatch_count": counters["owner_zone_mismatch_count"],
         "same_zone_positive_overlap_count": counters["same_zone_positive_overlap_count"],
