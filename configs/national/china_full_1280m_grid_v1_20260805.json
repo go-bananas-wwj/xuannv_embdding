@@ -1,0 +1,22 @@
+{
+  "name": "xuannv_china_full_1280m_parent_grid",
+  "schema_version": "china_full_1280m_parent_grid_v1",
+  "atlas_version": "china-full-1280m-v1-20260805",
+  "boundary": {
+    "source": "frozen ADM0 GeoJSON",
+    "version": "geoBoundaries-CHN-ADM0-frozen-20260726",
+    "inclusion_rule": "include a parent cell when its WGS84 center is covered by the frozen boundary"
+  },
+  "grid": {
+    "side_m": 1280,
+    "macro_side_patches": 10,
+    "alignment": "each owning UTM zone origin",
+    "parent_key": "{grid_epsg}:{grid_col}:{grid_row}",
+    "patch_id": "parent_{grid_epsg}:{grid_col}:{grid_row}",
+    "owner_zone_rule": "the WGS84 center must belong to the half-open UTM longitude zone matching grid_epsg"
+  },
+  "inputs": {
+    "boundary": "frozen ADM0 GeoJSON",
+    "macro_inventory": "national_macrocell_inventory.jsonl"
+  }
+}
