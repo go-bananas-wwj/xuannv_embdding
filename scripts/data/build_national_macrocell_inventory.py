@@ -24,7 +24,6 @@ from shapely import segmentize
 from shapely.geometry import box
 from shapely.prepared import prep
 
-
 PATCH_SIDE_METERS = 1280
 MACRO_SIDE_PATCHES = 10
 MACRO_SIDE_METERS = PATCH_SIDE_METERS * MACRO_SIDE_PATCHES
@@ -36,7 +35,10 @@ def _hash_geometry(geometry: Any) -> str:
 
 
 def _utm_zones(min_lon: float, max_lon: float) -> range:
-    return range(max(1, math.floor((min_lon + 180) / 6) + 1), min(60, math.floor((max_lon + 180) / 6) + 1) + 1)
+    return range(
+        max(1, math.floor((min_lon + 180) / 6) + 1),
+        min(60, math.floor((max_lon + 180) / 6) + 1) + 1,
+    )
 
 
 def _admin_name(macro: Any, admin_geometries: list[tuple[str, Any]]) -> str:
@@ -52,7 +54,9 @@ def _admin_name(macro: Any, admin_geometries: list[tuple[str, Any]]) -> str:
     return best_name
 
 
-def build_inventory(adm0_path: Path, adm1_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def build_inventory(
+    adm0_path: Path, adm1_path: Path
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     country = gpd.read_file(adm0_path).to_crs("EPSG:4326")
     admin1 = gpd.read_file(adm1_path).to_crs("EPSG:4326")
     geometry_wgs84 = country.geometry.union_all()
@@ -102,22 +106,34 @@ def build_inventory(adm0_path: Path, adm1_path: Path) -> tuple[list[dict[str, An
                 west, south = to_wgs84.transform(bounds[0], bounds[1])
                 east, north = to_wgs84.transform(bounds[2], bounds[3])
                 grid_id = f"utm{zone:02d}n"
-                records.append({
-                    "schema_version": "china_v1_macrocell_inventory_v1",
-                    "macro_id": f"{grid_id}_c{macro_col}_r{macro_row}",
-                    "grid_id": grid_id,
-                    "grid_epsg": epsg,
-                    "macro_col": macro_col,
-                    "macro_row": macro_row,
-                    "utm_bounds": [round(value, 3) for value in bounds],
-                    "wgs84_bounds": [round(west, 7), round(south, 7), round(east, 7), round(north, 7)],
-                    "geometry_hash": _hash_geometry(macro),
-                    "land_fraction": round(land_fraction, 6),
-                    "estimated_patch_count": round(land_fraction * MACRO_SIDE_PATCHES**2, 3),
-                    "candidate_count_status": "estimate_only_requires_exact_quality_atlas",
-                    "admin1": _admin_name(macro, admin_geometries),
-                })
-        print(f"UTM zone {zone:02d}: {sum(record['grid_epsg'] == epsg for record in records)} macrocells", file=sys.stderr, flush=True)
+                records.append(
+                    {
+                        "schema_version": "china_v1_macrocell_inventory_v1",
+                        "macro_id": f"{grid_id}_c{macro_col}_r{macro_row}",
+                        "grid_id": grid_id,
+                        "grid_epsg": epsg,
+                        "macro_col": macro_col,
+                        "macro_row": macro_row,
+                        "utm_bounds": [round(value, 3) for value in bounds],
+                        "wgs84_bounds": [
+                            round(west, 7),
+                            round(south, 7),
+                            round(east, 7),
+                            round(north, 7),
+                        ],
+                        "geometry_hash": _hash_geometry(macro),
+                        "land_fraction": round(land_fraction, 6),
+                        "estimated_patch_count": round(land_fraction * MACRO_SIDE_PATCHES**2, 3),
+                        "candidate_count_status": "estimate_only_requires_exact_quality_atlas",
+                        "admin1": _admin_name(macro, admin_geometries),
+                    }
+                )
+        zone_macrocell_count = sum(record["grid_epsg"] == epsg for record in records)
+        print(
+            f"UTM zone {zone:02d}: {zone_macrocell_count} macrocells",
+            file=sys.stderr,
+            flush=True,
+        )
 
     records.sort(key=lambda item: item["macro_id"])
     by_zone = Counter(record["grid_id"] for record in records)
@@ -128,8 +144,12 @@ def build_inventory(adm0_path: Path, adm1_path: Path) -> tuple[list[dict[str, An
         "macro_side_patches": MACRO_SIDE_PATCHES,
         "macro_side_meters": MACRO_SIDE_METERS,
         "num_macrocells": len(records),
-        "estimated_land_patches": round(sum(record["estimated_patch_count"] for record in records), 3),
-        "estimated_one_percent_base_samples": round(sum(record["estimated_patch_count"] for record in records) / 100, 3),
+        "estimated_land_patches": round(
+            sum(record["estimated_patch_count"] for record in records), 3
+        ),
+        "estimated_one_percent_base_samples": round(
+            sum(record["estimated_patch_count"] for record in records) / 100, 3
+        ),
         "macrocells_by_grid": dict(sorted(by_zone.items())),
         "macrocells_by_admin1": dict(sorted(by_admin.items())),
         "input_files": {"adm0": str(adm0_path), "adm1": str(adm1_path)},
@@ -146,9 +166,14 @@ def main() -> None:
     args = parser.parse_args()
     records, summary = build_inventory(args.adm0, args.adm1)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text("".join(json.dumps(record, ensure_ascii=False) + "\n" for record in records), encoding="utf-8")
+    args.output.write_text(
+        "".join(json.dumps(record, ensure_ascii=False) + "\n" for record in records),
+        encoding="utf-8",
+    )
     args.summary.parent.mkdir(parents=True, exist_ok=True)
-    args.summary.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    args.summary.write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 
