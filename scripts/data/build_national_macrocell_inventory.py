@@ -20,6 +20,7 @@ from typing import Any
 
 import geopandas as gpd
 from pyproj import Transformer
+from shapely import segmentize
 from shapely.geometry import box
 from shapely.prepared import prep
 
@@ -27,6 +28,7 @@ from shapely.prepared import prep
 PATCH_SIDE_METERS = 1280
 MACRO_SIDE_PATCHES = 10
 MACRO_SIDE_METERS = PATCH_SIDE_METERS * MACRO_SIDE_PATCHES
+WGS84_PROJECTION_SEGMENT_LENGTH_DEGREES = 0.01
 
 
 def _hash_geometry(geometry: Any) -> str:
@@ -67,7 +69,12 @@ def build_inventory(adm0_path: Path, adm1_path: Path) -> tuple[list[dict[str, An
         zone_country_wgs84 = geometry_wgs84.intersection(zone_strip)
         if zone_country_wgs84.is_empty:
             continue
-        country_zone = gpd.GeoSeries([zone_country_wgs84], crs="EPSG:4326").to_crs(epsg).iloc[0]
+        # A zone-edge meridian is curved in UTM. Densify before reprojection so a
+        # long geographic edge cannot become an inward chord that drops edge cells.
+        country_zone_wgs84 = segmentize(
+            zone_country_wgs84, max_segment_length=WGS84_PROJECTION_SEGMENT_LENGTH_DEGREES
+        )
+        country_zone = gpd.GeoSeries([country_zone_wgs84], crs="EPSG:4326").to_crs(epsg).iloc[0]
         prepared_country = prep(country_zone)
         admin_zone = admin1[admin1.geometry.intersects(zone_strip)].to_crs(epsg)
         admin_geometries = [(str(row.shapeName), row.geometry) for row in admin_zone.itertuples()]
