@@ -31,6 +31,8 @@ AUDIT_BATCH_SIZE = 100_000
 AUDIT_DIMENSION_TOLERANCE_M = 0.001
 AUDIT_AREA_TOLERANCE_M2 = 1.0
 CROSS_ZONE_OVERLAP_FRACTION = 0.01
+UTM_SEAM_GLOBAL_DUPLICATE_FRACTION = 0.001
+UTM_SEAM_POLICY_VERSION = "adjacent-owner-zone-seam-v1"
 AUDIT_EXAMPLE_LIMIT = 100
 AUDIT_COORDINATE_TOLERANCE = 1e-9
 CANONICAL_METADATA_FIELDS = (
@@ -671,6 +673,103 @@ def _audit_overlap(
         cross_zone_overlap_violation_count,
         max_cross_zone_overlap_fraction,
     )
+
+
+def assess_utm_seam_overlap_policy(
+    *,
+    overlap_pair_count: int,
+    overlap_area_m2: float,
+    total_parent_count: int,
+    non_adjacent_pair_count: int,
+    owner_order_mismatch_count: int,
+    off_seam_pair_count: int,
+    max_pair_overlap_fraction: float,
+    maximum_global_duplicate_fraction: float = UTM_SEAM_GLOBAL_DUPLICATE_FRACTION,
+) -> dict[str, Any]:
+    """Assess expected overlap where independent UTM grids meet at owner-zone seams."""
+    integer_values = (
+        overlap_pair_count,
+        total_parent_count,
+        non_adjacent_pair_count,
+        owner_order_mismatch_count,
+        off_seam_pair_count,
+    )
+    if any(value < 0 for value in integer_values) or total_parent_count == 0:
+        raise ValueError("UTM seam counts must be non-negative and total_parent_count positive")
+    if overlap_area_m2 < 0 or not 0 <= max_pair_overlap_fraction <= 1:
+        raise ValueError("UTM seam area and pair-overlap fraction are invalid")
+    if not 0 < maximum_global_duplicate_fraction < 1:
+        raise ValueError("maximum_global_duplicate_fraction must be between zero and one")
+
+    global_fraction = overlap_area_m2 / (total_parent_count * PARENT_SIDE_METERS**2)
+    passed = (
+        non_adjacent_pair_count == 0
+        and owner_order_mismatch_count == 0
+        and off_seam_pair_count == 0
+        and global_fraction <= maximum_global_duplicate_fraction
+    )
+    return {
+        "schema_version": "china_full_1280m_utm_seam_audit_v1",
+        "policy_version": UTM_SEAM_POLICY_VERSION,
+        "overlap_pair_count": overlap_pair_count,
+        "overlap_area_m2": overlap_area_m2,
+        "total_parent_count": total_parent_count,
+        "global_duplicate_area_fraction": global_fraction,
+        "maximum_global_duplicate_area_fraction": maximum_global_duplicate_fraction,
+        "non_adjacent_pair_count": non_adjacent_pair_count,
+        "owner_order_mismatch_count": owner_order_mismatch_count,
+        "off_seam_pair_count": off_seam_pair_count,
+        "max_pair_overlap_fraction": max_pair_overlap_fraction,
+        "passed": passed,
+    }
+
+
+def reconcile_utm_seam_audit(
+    base_audit: Mapping[str, Any], seam_audit: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Replace the obsolete per-pair 1% gate only when every other strict gate passed."""
+    if seam_audit.get("passed") is not True:
+        raise ValueError("UTM seam audit did not pass")
+
+    blocking_count_fields = (
+        "missing_sampled_count",
+        "duplicate_parent_key_count",
+        "sampled_unsampled_intersection_count",
+        "sampled_flag_mismatch_count",
+        "partition_mismatch_count",
+        "exact_partition_membership_mismatch_count",
+        "child_partition_unknown_parent_key_count",
+        "child_partition_metadata_mismatch_count",
+        "child_partition_geometry_mismatch_count",
+        "footprint_coordinate_mismatch_count",
+        "stored_utm_bounds_mismatch_count",
+        "stored_wgs84_bounds_mismatch_count",
+        "invalid_geometry_count",
+        "owner_zone_mismatch_count",
+        "same_zone_positive_overlap_count",
+    )
+    blocking = [field for field in blocking_count_fields if int(base_audit.get(field, 0)) != 0]
+    if base_audit.get("missing") or base_audit.get("duplicate_atlas_keys"):
+        blocking.append("membership_examples")
+    if base_audit.get("duplicate_sampled_keys"):
+        blocking.append("duplicate_sampled_keys")
+    hash_mismatches = base_audit.get("hash_mismatches", {})
+    if not isinstance(hash_mismatches, Mapping) or any(
+        int(value) != 0 for value in hash_mismatches.values()
+    ):
+        blocking.append("hash_mismatches")
+    if blocking:
+        raise ValueError(f"base audit has other blocking failures: {sorted(set(blocking))}")
+
+    reconciled = dict(base_audit)
+    reconciled["legacy_cross_zone_pair_over_1pct_count"] = int(
+        reconciled.get("cross_zone_overlap_violation_count", 0)
+    )
+    reconciled["cross_zone_overlap_violation_count"] = 0
+    reconciled["cross_zone_policy_version"] = seam_audit["policy_version"]
+    reconciled["cross_zone_seam_audit"] = dict(seam_audit)
+    reconciled["passed"] = True
+    return reconciled
 
 
 def audit_grid_package(

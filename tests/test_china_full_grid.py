@@ -498,6 +498,61 @@ def test_partitioned_audit_reports_same_zone_positive_area_overlap(tmp_path: Pat
     assert audit["same_zone_positive_overlap_count"] == 1
 
 
+def test_utm_seam_policy_accepts_small_adjacent_boundary_overlap() -> None:
+    seam = MODULE.assess_utm_seam_overlap_policy(
+        overlap_pair_count=10_411,
+        overlap_area_m2=2_842_239_086.0,
+        total_parent_count=5_785_781,
+        non_adjacent_pair_count=0,
+        owner_order_mismatch_count=0,
+        off_seam_pair_count=0,
+        max_pair_overlap_fraction=0.7419,
+    )
+
+    assert seam["passed"] is True
+    assert seam["global_duplicate_area_fraction"] == pytest.approx(0.00029983248)
+    assert seam["max_pair_overlap_fraction"] == pytest.approx(0.7419)
+
+
+def test_utm_seam_policy_rejects_non_adjacent_or_excessive_overlap() -> None:
+    seam = MODULE.assess_utm_seam_overlap_policy(
+        overlap_pair_count=2,
+        overlap_area_m2=20_000_000.0,
+        total_parent_count=100,
+        non_adjacent_pair_count=1,
+        owner_order_mismatch_count=0,
+        off_seam_pair_count=0,
+        max_pair_overlap_fraction=0.9,
+    )
+
+    assert seam["passed"] is False
+
+
+def test_reconcile_utm_seam_audit_does_not_mask_other_failures() -> None:
+    base = {
+        "passed": False,
+        "missing_sampled_count": 1,
+        "cross_zone_overlap_violation_count": 7,
+        "hash_mismatches": {
+            "identity_hash": 0,
+            "footprint_hash": 0,
+            "sampled_registry_footprint_hash": 0,
+        },
+    }
+    seam = MODULE.assess_utm_seam_overlap_policy(
+        overlap_pair_count=7,
+        overlap_area_m2=1.0,
+        total_parent_count=100,
+        non_adjacent_pair_count=0,
+        owner_order_mismatch_count=0,
+        off_seam_pair_count=0,
+        max_pair_overlap_fraction=0.5,
+    )
+
+    with pytest.raises(ValueError, match="other blocking failures"):
+        MODULE.reconcile_utm_seam_audit(base, seam)
+
+
 def test_partitioned_audit_rejects_shifted_footprint_with_recomputed_hash(tmp_path: Path) -> None:
     record = synthetic_parent_records(count=1)[0]
     MODULE.write_zone_records([record], set(), tmp_path, batch_size=1)
