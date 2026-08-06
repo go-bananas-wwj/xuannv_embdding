@@ -633,11 +633,8 @@ def main() -> int:
         output_root = args.output
         if args.verify_only:
             if args.zones is not None:
-                grid_ids = _production_grid_ids(_parse_zone_numbers(args.zones))
-            else:
-                grid_ids = {
-                    path.name for path in (output_root / "all").glob("utm*n") if path.is_dir()
-                }
+                raise ValueError("--verify-only cannot be combined with --zones")
+            grid_ids = {path.name for path in (output_root / "all").glob("utm*n") if path.is_dir()}
             if not grid_ids:
                 raise ValueError("--verify-only found no generated UTM zone partitions")
             audit = audit_grid_package(

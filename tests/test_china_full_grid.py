@@ -793,6 +793,27 @@ def test_production_cli_streams_jsonl_inputs_from_config_and_verifies(tmp_path: 
     assert verification.returncode == 0, verification.stderr
     assert json.loads(verification.stdout)["passed"] is True
 
+    ambiguous_verification = subprocess.run(
+        [
+            sys.executable,
+            "scripts/data/build_china_full_grid.py",
+            "--config",
+            str(config_path),
+            "--output",
+            str(output_root),
+            "--verify-only",
+            "--zones",
+            "50",
+        ],
+        cwd=MODULE_PATH.parents[2],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert ambiguous_verification.returncode == 2
+    assert "--verify-only cannot be combined with --zones" in ambiguous_verification.stderr
+
 
 def test_grid_spec_rejects_noncanonical_parent_cell_size() -> None:
     with pytest.raises(ValueError, match="side_m must be exactly 1280"):
