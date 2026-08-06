@@ -155,9 +155,10 @@ def build_package_docx(
     )
     _add_text(
         document,
-        "边界和 UTM 接缝附近的 footprint 可以跨出 owner-zone 边界；不同 owner zone 的"
-        "正面积 overlap 只接受不超过 1% 的情况。重新采样、下载和训练准入仍须遵循既有采样"
-        "说明及相应质量审计。",
+        "边界和 UTM 接缝附近的 footprint 可以跨出 owner-zone 边界。验收要求重叠只发生"
+        "在相邻 UTM owner zone 的边界窄带、两侧中心归属正确、非相邻重叠为零，并且全国"
+        "累计重复覆盖面积不超过父网格总面积的 0.1%。重新采样、下载和训练准入仍须遵循"
+        "既有采样说明及相应质量审计。",
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)

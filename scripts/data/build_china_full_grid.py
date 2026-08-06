@@ -478,7 +478,7 @@ def render_package_previews(output_root: str | Path, index_path: str | Path) -> 
     axis.text(
         0.01,
         0.01,
-        "Owner zone: center longitude in half-open UTM band; cross-zone overlap <= 1%",
+        "Owner zone: center longitude in half-open UTM band; national seam overlap <= 0.1%",
         transform=axis.transAxes,
         fontsize=8,
         bbox={"facecolor": "white", "edgecolor": "black", "pad": 3},
