@@ -17,7 +17,7 @@
   },
   "inputs": {
     "boundary": "/data/xuannv_embedding/raw/china_v1/geoboundaries/geoBoundaries-CHN-ADM0.geojson",
-    "macro_inventory": "/data/xuannv_embedding/raw/china_v1/national_macrocell_inventory.jsonl",
+    "macro_inventory": "/data/xuannv_embedding/raw/china_v1/national_macrocell_inventory_densified_20260806.jsonl",
     "sampled_registry": "/data/xuannv_embedding/outputs/china_quarterly_sampling_62000_candidate_20260726/china_quarterly_62000_candidate_registry.jsonl"
   },
   "output": {
