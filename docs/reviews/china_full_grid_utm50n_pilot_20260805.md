@@ -72,10 +72,10 @@ partition membership flag.
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | GeoParquet `all` | 9 | 844,345 | 9,052 / 835,293 | 0 | 0 | 0 | 0 |
 | GeoParquet `sampled` | 9 | 9,052 | 9,052 / 0 | 0 | 0 | 0 | 0 |
-| GeoParquet `unsampled` | 9 | 835,293 | 0 / 0 | 0 | 0 | 0 | 0 |
+| GeoParquet `unsampled` | 9 | 835,293 | 0 / 835,293 | 0 | 0 | 0 | 0 |
 | Shapefile `all` | 29 | 844,345 | 9,052 / 835,293 | 0 | 0 | 0 | 0 |
 | Shapefile `sampled` | 28 | 9,052 | 9,052 / 0 | 0 | 0 | 0 | 0 |
-| Shapefile `unsampled` | 29 | 835,293 | 0 / 0 | 0 | 0 | 0 | 0 |
+| Shapefile `unsampled` | 29 | 835,293 | 0 / 835,293 | 0 | 0 | 0 | 0 |
 
 All 113 read parts declare EPSG:4326. The `all` partitions intentionally contain both
 membership values; the two child partitions contain only their named membership class.
@@ -121,17 +121,24 @@ the UTM50N pilot contains exactly 8,825. The scaling multiplier is therefore
 macrocell-count extrapolation, not a promise that other zones have UTM50N's coastline,
 sampling, or Shapefile fragmentation profile.
 
-| Measure | Pilot | Macrocell-scaled national estimate |
-| --- | ---: | ---: |
-| Parent patches | 844,345 | 5,786,705.301983003 (round up: 5,786,706) |
-| Sampled patches | 9,052 | 62,037.740963173 (round up: 62,038) |
-| Unsampled patches | 835,293 | 5,724,667.561019830 (round up: 5,724,668) |
-| Generation time | 4,462.654205230065 s | 30,584.731064104792 s (8.495758628918 h) |
-| All partition bytes | 434,496,706 B | 2,977,816,404.7922946 B |
-| Sampled partition bytes | 5,493,890 B | 37,652,289.51614731 B |
-| Unsampled partition bytes | 430,844,205 B | 2,952,784,046.0974503 B |
-| Raw package bytes | 870,834,801 B | 5,968,252,740.405892 B |
-| ZIP bytes | 297,425,842 B | 2,038,403,374.0333144 B |
+The production sampled membership is not set from this density projection. Its fixed
+registry contains exactly 62,000 unique records, so the national package must contain
+exactly 62,000 sampled parent patches. The projected 62,037.740963173 below is retained
+only to describe the hypothetical result of applying the UTM50N sampled density to every
+macrocell; it is not a production target. Consequently, the final national unsampled
+count is the actual national `all_count` minus 62,000, not the pilot-density projection.
+
+| Measure | Pilot | Macrocell-scaled national estimate | Production interpretation |
+| --- | ---: | ---: | --- |
+| Parent patches | 844,345 | 5,786,705.301983003 (round up: 5,786,706) | Sizing-only projection; final count comes from the full run. |
+| Sampled patches | 9,052 | 62,037.740963173 | Hypothetical density projection only; fixed production registry target is exactly 62,000. |
+| Unsampled patches | 835,293 | 5,724,667.561019830 | Hypothetical density projection only; final count is actual national `all_count` minus 62,000. |
+| Generation time | 4,462.654205230065 s | 30,584.731064104792 s (8.495758628918 h) | Sizing-only projection. |
+| All partition bytes | 434,496,706 B | 2,977,816,404.7922946 B | Sizing-only projection. |
+| Sampled partition bytes | 5,493,890 B | 37,652,289.51614731 B | Density-projected storage only; the fixed registry governs final sampled membership. |
+| Unsampled partition bytes | 430,844,205 B | 2,952,784,046.0974503 B | Density-projected storage only. |
+| Raw package bytes | 870,834,801 B | 5,968,252,740.405892 B | Sizing-only projection. |
+| ZIP bytes | 297,425,842 B | 2,038,403,374.0333144 B | Sizing-only projection. |
 
 ## Concerns and Next Gate
 
