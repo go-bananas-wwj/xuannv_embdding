@@ -1,0 +1,396 @@
+import { writeFileSync } from "node:fs";
+
+const generatedAt = "2026-08-14T00:00:00Z";
+
+const artifact = {
+  surface: "report",
+  manifest: {
+    version: 1,
+    surface: "report",
+    title: "China V1：全国 2 米一张图与开放地球模型路线调研",
+    description: "面向 6 张 Ascend NPU、1–3 个月快速迭代的决策报告；同时给出中长期替代路线。",
+    generatedAt,
+    cards: [],
+    charts: [
+      {
+        id: "embedding_storage",
+        title: "全国 64D INT8 embedding 的理论存储下界",
+        subtitle: "2 米八季度超过 1.2 PB，因此推荐全国 10 米底座。",
+        type: "bar",
+        dataset: "embedding_storage",
+        sourceId: "capacity_estimate",
+        encodings: {
+          x: { field: "product", type: "nominal", label: "产品" },
+          y: { field: "storage_tb", type: "quantitative", label: "存储（TB）" },
+          color: { field: "resolution", type: "nominal", label: "分辨率" },
+        },
+      },
+    ],
+    tables: [],
+    sources: [
+      {
+        id: "capacity_estimate",
+        label: "全国 embedding 容量估算",
+        path: "capacity_calculations.ipynb",
+      },
+    ],
+    blocks: [
+      {
+        id: "title",
+        type: "markdown",
+        body: `# China V1：全国 2 米一张图与开放地球模型路线调研
+
+**结论先行：能用，但要换一种用法。** 全国 2 米“一张图”适合做静态或年度空间先验，用来教模型识别建筑边缘、道路形态和田块纹理；它不适合直接变成全国逐月 2 米 embedding 产品。全国主产品仍应保持 **10 米、月度、64 维**，把高分和外部基础模型的知识蒸馏进玄女，生产时只运行玄女学生模型。
+
+本报告默认资源约束为：复用当前代码与 6 张 Ascend NPU，先用 2–3 周做冻结特征比较，1–3 个月完成一个可否扩大的 POC；另列 3–6 个月的中长期路线。调研日期为 2026-08-14。`,
+      },
+      {
+        id: "executive_summary",
+        type: "markdown",
+        body: `## Executive Summary
+
+1. **数据可获得，但许可不是“看见下载按钮就能训练”。** 国家对地观测科学数据中心公开过 2021 年中国 2 米/16 米一张图系列，系列总量 19.67 TB、8,037 景；商业市场也有全国 2 米/0.8 米底图。正式采用前必须书面确认：机器学习训练、权重发布、embedding 发布、预测图发布和合同期满后的模型存续权。
+2. **多数“2 米彩色图”不是原生 2 米多光谱。** GF-1/GF-6 是 2 米全色 + 8 米多光谱，ZY-3 是约 2.1 米全色 + 5.8 米多光谱。融合、匀色和跨季节拼接会产生模型捷径，因此高分图应主要提供结构知识，而不是承担严格像素重建。
+3. **三类开放模型各司其职。** TESSERA v2-M64 最适合年度 S1/S2 时序教师；Clay v1.5 许可最干净、适合高分空间/纹理辅助；OlmoEarth v1.2 技术上最接近玄女的多源多时序架构，但定制许可会传导用途限制。
+4. **推荐路线不是“把三个模型都接上”。** 先在相同标签、fold、shot 和阈值协议下比较冻结 embedding，只选择一个主教师，最多再加一个互补教师。已有 V4/V5 实验已证明，蒸馏 loss 下降不等于下游更好，多教师盲加会损害季节性和可分性。
+5. **推荐实施：全国 10 米底座 + 静态 2 米先验 + 分阶段离线蒸馏。** 第一阶段 TESSERA v2-M64 与 Clay/DINOv3 二选一；OlmoEarth 仅在取得可接受许可后进入候选。最终删除教师头，保持 128×128×64 输出和 NPU 原生生产链路。`,
+      },
+      {
+        id: "decision",
+        type: "markdown",
+        body: `## 核心决策：什么可以做，什么不要做
+
+- **全国 2 米底图进 China V1：可以。** 作为静态/年度先验，像给学生一本高清地图，帮助看清纹理和形状。
+- **全国逐月 2 米×64D embedding：不做。** 一期就会进入 PB 级，月份还与拼接底图日期不一致。
+- **2 米影像像素级重建：谨慎。** 仅在时间匹配、配准良好区域低权重做，否则模型会学色差、接缝和锐化伪影。
+- **外部模型直接替换玄女主干：首期不做。** 输入契约、空间尺度、月度目标和 NPU 训练栈差异太大。
+- **外部模型冻结后预计算特征：优先。** 教师可以在 GPU/CPU 离线运行，玄女训练仍留在 NPU。
+- **多教师联合：最多两个，分头对齐。** 一个教时间规律、一个教空间纹理，避免三位老师同时拉扯。
+- **全国推理时携带教师：不需要。** 知识蒸馏进 64D 学生，生产成本不增加。`,
+      },
+      {
+        id: "data_findings",
+        type: "markdown",
+        body: `## 发现一：全国 2 米一张图“有”，但要按产品而不是普通开源数据理解
+
+### 已找到的候选
+
+- **科研申请型**：2021 年中国 2 米/16 米遥感一张图系列，官方称供科研人员下载使用。它与 China V1 的 2020–2021 时间窗口相符，是最值得先申请样片和许可文本的来源。
+- **国家业务数据**：GF-1/GF-6、ZY-3 等具备全国覆盖能力，可通过官方平台查询或申请；获取流程通常需要填写用途和分发范围。
+- **商业成品**：四维地球全国 2 米/0.8 米底图、吉林一号、北京三号等。商业交付更可能提供统一正射、镶嵌、匀色和 SLA，但费用与派生权必须单谈。
+
+### 必须在合同/授权中写明的八项权利
+
+1. 可用于机器学习预训练、微调和评测；
+2. 可用于商业或非商业模型；
+3. 可发布 checkpoint、embedding、下游预测图和有限样例；
+4. 权重与 embedding 不被视为禁止再分发的影像替代数据库；
+5. 境外云、协作者和开源平台是否允许接触数据或权重；
+6. 缓存、处理后 COG、备份和训练副本的保留权；
+7. 允许公开样例的分辨率、数量和区域；
+8. 合同终止后模型、权重和派生产物的存续权。
+
+### 五区域样片 QA
+
+先各取 20×20 km：京津冀城市、华南高云湿润区、东北农田/积雪区、西南山地阴影区、西北荒漠/高原。检查覆盖、云雪、逐瓦片日期、传感器、接缝、直方图、锐化 halo 和局部错位。建议 POC 几何门槛为与 S2/道路/建筑边缘的位移 **P95 < 5 m**；若从 patch 很容易预测供应商、卫星或拼接批次，说明数据痕迹太强。`,
+      },
+      {
+        id: "model_comparison",
+        type: "markdown",
+        body: `## 发现二：TESSERA、Clay、OlmoEarth 的正确角色不同
+
+> 用户所说的 “OllamaEarth”应是 **OlmoEarth**。没有查到可信的同名 OllamaEarth 遥感基础模型；Ollama 是本地大语言模型运行工具。
+
+### TESSERA v2-M64 — 首选年度时序教师
+
+21M 参数，64D Matryoshka 前缀与玄女维度吻合；代码 MIT、权重/embedding CC0。它逐像素、无空间邻域、年度而非月度且只有 S1/S2，因此应对齐玄女的“年度聚合头”，不能逐月硬对齐。
+
+### Clay v1.5 — 许可安全的空间语义辅助
+
+支持波长、GSD、位置和时间元数据，训练覆盖 S2/S1/Landsat/NAIP/LINZ 等；代码和权重 Apache-2.0。其编码器约 311M、1024D，10m 输入通常只有约 80m token，适合作为高分教师/对照，不做唯一主教师。
+
+### OlmoEarth v1.2 — 技术优先、许可条件式
+
+S1/S2/Landsat 原生多模态多时序，1280m patch 与玄女高度匹配，Nano NPU 冒烟已跑通。但自定义许可限制用途并传导到衍生模型，40/20m token 也可能损害建筑道路边缘。首轮先 Tiny，许可通过后再试 Base。
+
+### DINOv3-SAT — 现有低工程成本对照
+
+已有离线特征流水线与实验记录；但许可证为定制/gated，V4/V5 已显示任务收益不均和表征退化。保留对照，不再盲目增加蒸馏权重。
+
+### 为什么不直接拿权重初始化玄女
+
+玄女是多传感器 stem + STP + 月度上采样 + 高分融合 + vMF 64D；TESSERA 是逐像素年度双时序模型，Clay 是 MAE ViT，OlmoEarth 是 FlexiViT 多模态时序模型。参数形状和语义均不对应。**冻结教师 + 投影头蒸馏**可以复用知识，同时保留玄女的月度和 10 米输出契约。`,
+      },
+      {
+        id: "industry_practice",
+        type: "markdown",
+        body: `## 行业最佳实践：把外部模型当“老师”，不要当“零件仓库”
+
+推荐训练结构：
+
+1. **冻结并离线预计算**：教师可在最适合的 GPU/CPU 环境运行，把特征和版本元数据落盘；6 张 Ascend 只训练玄女学生。
+2. **先做冻结特征评测**：raw、当前玄女、每个教师、玄女+教师 concat 在同一评测协议下比较。教师不先证明自己有信息增量，就不进入蒸馏。
+3. **一个知识域一个头**：TESSERA 对齐年度聚合头；高分教师对齐静态空间头；每个头有独立投影、mask、损失和时间有效性。
+4. **关系损失优先于逐维 MSE**：使用 cosine、归一化 Huber、Gram/邻域关系；不要要求 vMF 学生逐维复制不同几何的教师。
+5. **教师可用性 dropout**：训练时随机缺失高分/教师，确保全国有缺口时仍能工作。
+6. **蒸馏权重后期衰减**：早期借知识，后期让月度重建、OSM 弱语义和原型目标重新主导。
+7. **用下游指标选择 checkpoint**：TESSERA v2 研究也提示预训练 loss 与下游能力相关性很弱。项目 V4/V5 已有同样教训。
+8. **生产删掉教师头**：不拼接外部 1024D/768D 表征作为正式产品，最终仍输出 64D。`,
+      },
+      {
+        id: "capacity",
+        type: "markdown",
+        body: `## 体量与成本：为什么全国主产品必须留在 10 米
+
+- 全国 2 米四波段 uint16 一张图约 **19.2 TB**，未计云掩膜、日期层、索引、临时空间与副本。
+- 全国 2 米 64D embedding 单时相：INT8 约 **153.6 TB**，FP16 约 **307.2 TB**；八季度 INT8 约 **1.23 PB**。
+- 全国 10 米 64D embedding 单时相：INT8 约 **6.14 TB**；八季度约 **49.2 TB**，仍需分区和生命周期管理。
+- 62,000 个训练 patch 的 2 米四波段原始样本约 **203 GB**；含质量层、元数据和缓存宜按 0.3–1 TB 规划。
+- 62,000 patch 的 32×32×1024 FP16 教师特征约 **130 GB**。
+- 62,000 patch 的 128×128×64 教师特征：INT8 约 **65 GB**，FP16 约 **130 GB**。这说明“只给训练样本算教师”可行，“给全国算教师”不划算。
+
+全国 2 米原始工程通常需要成品 3–6 倍的工作空间。若保留多年份、原始景、正射成品、质量层和双副本，应按 **20–120 TB** 起步规划；若进一步上 0.5 米，则会进入数百 TB 到 PB 级。`,
+      },
+      {
+        id: "embedding_storage_chart",
+        type: "chart",
+        chartId: "embedding_storage",
+        layout: "full",
+      },
+      {
+        id: "route_zero",
+        type: "markdown",
+        body: `## 路线 0：冻结特征快速判定（2–3 周，所有路线的必经门）
+
+**目的**：用最小代价回答“外部模型在中国域到底有没有增量”。
+
+### 工作包
+
+- 数据：先取 32–64 个接口样本，再扩到 200–1,000 个分层 patch；覆盖城市、农田、森林、水体、荒漠、高云和山地。
+- 模型：TESSERA v2-S/M64、Clay v1.5、OlmoEarth v1.2 Tiny；DINOv3 复用现有特征。
+- 系统：记录 CPU/NPU 余弦一致性、NaN/Inf、峰值内存、patch/s、I/O 占比和 tile seam。
+- 评测：固定海淀/异地的标签、空间 fold、5/10/50-shot、3 个 seed、阈值选择；报告 building/road/water 的 F1/AP/AUC 和可视化。
+
+### 通过门槛
+
+- 核心三任务 5/10-shot 平均 F1 相对当前玄女 **+2 个百分点**；
+- 任何单任务下降不超过 **1 个百分点**；
+- 教师特征在异地不出现明显接缝、季节泄漏或传感器捷径；
+- NPU/CPU 数值一致且离线生成工期可接受。
+
+若没有模型过门槛，停止蒸馏改造，转而优化数据抽样和现有目标；这同样是有价值的结论。`,
+      },
+      {
+        id: "route_a",
+        type: "markdown",
+        body: `## 路线 A：双教师蒸馏（6–10 周，推荐）
+
+**组合**：TESSERA v2-M64 负责全年物候/雷达时序；Clay 或已有 DINOv3 二选一，负责静态高分空间结构。OlmoEarth 只有在许可通过且冻结评测明显胜出时替换 TESSERA，不能三者全上。
+
+### 需要的最小代码扩展
+
+- 把当前硬编码的单个 teacher root、32×32×1024 形状升级为教师注册表；记录 id、版本、许可证、传感器、年份、归一化、网格和 checksum。
+- 增加年度聚合头：聚合玄女 12 个月或可用季节窗口后对齐 TESSERA，避免把全年向量复制给每个月。
+- 增加静态空间头：在有效 2 米区域对齐高分教师，使用 acquisition date、sensor、cloud、seam、registration mask。
+- 每个教师独立 adapter、loss、availability mask、dropout 和权重调度；训练完成后全部删除。
+
+### 扩容阶梯
+
+1. 200–1,000 patch 证明接口和指标；
+2. 2,000 patch 覆盖五大地理类型；
+3. 10,000 patch 验证吞吐、教师缓存和异地泛化；
+4. 只有前三关均通过，才生成 62,000 patch 教师特征并做 China V1 训练。
+
+### 主要优点与风险
+
+- 优点：最大程度复用当前数据/训练/导出流程；生产端无教师成本；能把年度时间知识和高分空间知识分开管理。
+- 风险：年度教师压平月度差异、两个目标互相冲突、低分辨率教师使道路边界变平。用时间掩膜、分头对齐、后期权重衰减和固定下游门槛控制。`,
+      },
+      {
+        id: "route_b",
+        type: "markdown",
+        body: `## 路线 B：OlmoEarth 适配或主干替换（3–5 个月，高风险高上限）
+
+**适用条件**：Ai2 书面许可或项目接受其用途限制；路线 0 显示 OlmoEarth Tiny/Base 在中国域显著领先；团队愿意维护 PyTorch/torch_npu 和多模态 tokenization 适配。
+
+### 两级做法
+
+- **B1 冻结/部分微调**：先用 v1.2 Tiny，S2+S1、T=1/3、patch=4，再试 patch=2；取目标月份 token，跨模态门控聚合，D→64 后对齐玄女。只解冻最后若干层或加 adapter。
+- **B2 新主干**：用 OlmoEarth encoder 承担多源时序编码，保留玄女的高分融合、128×128 上采样、vMF 和多目标 decoder。需要重做训练与导出链路，不再是快速迭代。
+
+### 已有可行性证据
+
+并行调研在当前 Ascend 环境完成了 v1.2 Nano 单 S2、32×32、T=1、patch=4 的整 encoder 冒烟：CPU/NPU FP32 最大绝对误差约 3.32e-4、平均约 6.20e-5，余弦相似度显示为 1.0。它仅证明核心算子路径可跑，不代表 Base、多模态、多月、BF16 或 6 卡训练已适配。
+
+### 一票否决项
+
+- 许可无法覆盖 China V1 的目标行业或无法接受限制传导；
+- patch=4/2 的 40m/20m token 使建筑道路下降超过 1 个百分点；
+- 全量微调依赖版本升级，破坏当前 NPU 稳定训练环境；
+- 端到端吞吐无法在 10,000 patch 阶段达到可扩容水平。`,
+      },
+      {
+        id: "route_c",
+        type: "markdown",
+        body: `## 路线 C：全国 10 米底座 + 区域 2 米增强产品（3–6 个月，产品化最稳）
+
+全国层保持 10 米月度 64D，优先保证覆盖、一致性和可更新；在重点城市、耕地、交通走廊或业务区叠加 2 米/5 米增强层。
+
+### 产品结构
+
+- **China V1 Base**：全国 10 米、月度、64D，S1/S2/Landsat 全覆盖；高分缺失不影响生产。
+- **China V1 Detail**：有许可的区域使用年度 2 米一张图、高分 SAR 或商业影像，输出边界增强 embedding 或任务专用高分头。
+- **统一索引**：Detail 继承 Base 的 tile id、月份和版本；API 可按区域自动返回最优层级。
+
+### 优点
+
+- 不需要为无人区和低价值区域承担 PB 级高分 embedding；
+- 能让高分许可、更新时间和质量差异按区域隔离；
+- 先从海淀、哈尔滨等已有高分区域验证，再逐城扩展；
+- 商业化时可把高分授权成本绑定具体客户/区域。
+
+这是即使路线 A 成功也值得保留的产品形态，因为“全国统一底座”和“重点区域精细边界”本来就是两种服务等级。`,
+      },
+      {
+        id: "recommended_plan",
+        type: "markdown",
+        body: `## 推荐执行顺序与里程碑
+
+### 第 0–2 周：数据与许可门
+
+- 申请 2021 全国 2 米系列的许可文本和五区域样片；并向一家商业供应商索取同区样片、正式数据字典与报价。
+- 冻结 TESSERA、Clay、OlmoEarth 的代码 commit、模型卡、权重 hash 和许可证快照。
+- 明确 OlmoEarth 限制是否与 China V1 目标冲突；未通过前不生成可发布的蒸馏模型。
+
+### 第 2–4 周：路线 0
+
+- 跑 32–64 patch 接口/NPU 验证和 200–1,000 patch 冻结特征评测。
+- 形成教师排名：核心 few-shot、异地迁移、时序敏感性、边界质量、成本与许可六项综合，而不是只看一个平均分。
+
+### 第 5–8 周：路线 A 小试
+
+- 扩展多教师注册表和年度/静态两个训练头；只接入排名第一的时序教师和一个高分教师。
+- 2,000 patch 做 A/B/C/D 高分消融：无高分、高分只输入、高分+像素重建、高分+结构/教师蒸馏。
+- 监控 effective rank、centroid AUC、月间变化幅度和 core three tasks，防止重演 V4/V5 的“训练更顺、下游更差”。
+
+### 第 9–12 周：10,000 patch 扩容决策
+
+- 验证缓存、断点、checksum、吞吐和 6 卡训练开销；离线教师特征使训练墙钟增加应控制在约 15% 内。
+- 满足指标门槛后才批准 62,000 patch；否则回退到路线 C 或保持现有 China V1。
+
+### 中长期
+
+- 路线 A 成功：训练 62,000 patch China V1 并做全国分区生产验证。
+- OlmoEarth 获特别许可且显著领先：单独立项路线 B，避免污染稳定主线。
+- 同步建设路线 C 的区域 Detail 规范，将 2 米数据的许可和质量差异隔离。`,
+      },
+      {
+        id: "acceptance",
+        type: "markdown",
+        body: `## 统一验收表
+
+- **G0 许可**：书面确认可训练、蒸馏、发布权重/embedding/预测并长期保留；接受 OlmoEarth 用途与传导限制或取得另行授权。
+- **G1 数据**：五 AOI 通过；位移 P95<5m；日期、传感器和质量层齐全；没有明显供应商捷径。
+- **G2 系统**：无 NaN/Inf；checksum 可复现；CPU/NPU 数值一致；吞吐有扩容预算。
+- **G3 表示**：核心 5/10-shot 平均 F1 +2pp；单任务不降超过 1pp；F1/AP/AUC 和可视化均报告。
+- **G4 结构**：effective rank 建议≥12；centroid AUC 下降≤0.02；月间变化未被压平。
+- **G5 规模**：离线特征使训练开销增加小于 15%；缓存、断点、存储和许可证均可承受。
+
+这些数值是首轮工程门槛，不是学术真理；可根据基线方差预注册调整，但不得在看到结果后随意改线。`,
+      },
+      {
+        id: "next_steps",
+        type: "markdown",
+        body: `## Recommended Next Steps
+
+1. **本周先拿数据许可和样片**：优先申请 2021 年 2 米一张图五个 AOI，同时询一家商业底图，比较数据和合同，而不是先全量下载。
+2. **立刻做路线 0**：TESSERA v2-M64、OlmoEarth v1.2 Tiny、Clay v1.5 加现有 DINOv3，用相同下游协议做冻结特征排行榜。
+3. **默认进入路线 A**：若 TESSERA 过门槛，用“年度时序头 + 静态高分头”的双教师蒸馏；高分教师在 Clay 与 DINOv3 中按冻结评测和许可二选一。
+4. **OlmoEarth 单独设许可门**：技术上优先，但没有明确授权时不进入可无限制发布的 China V1。
+5. **产品层提前采用路线 C 思维**：全国 10 米底座不动，2 米能力做区域增强层；避免把数据不一致和授权成本强行全国化。`,
+      },
+      {
+        id: "questions_caveats",
+        type: "markdown",
+        body: `## Further Questions 与 Caveats
+
+### 需要项目负责人确定
+
+- China V1 是否必须允许军事、能源、矿业等所有行业无限制使用？这直接决定 OlmoEarth 是否可进入。
+- 目标年份是否锁定 2020–2021？若是，2021 一张图可作同期静态先验；若做 2026 更新，必须重新定义时间有效性。
+- 首个全国业务优先级是建筑/道路，还是农业/土地覆盖？TESSERA/OlmoEarth 更可能先提升后者，高分纹理教师更可能帮助前者。
+- 是否有预算采购原生 2 米多光谱及逐瓦片日期/质量层，还是只使用科研申请数据？
+
+### 重要限制
+
+- 本报告不是法律意见；高分数据授权、模型许可证传导、测绘与跨境存储必须专项审查。
+- 对各外部模型的收益尚未在玄女同协议实测；所有“适合”都是基于架构、许可、公开基准和现有项目证据的可检验判断。
+- 体量估算未计海岛边界、重叠、压缩波动、失败重跑、索引、质量层和多副本。
+- 2021 一张图系列总量 19.67 TB 包含 2 米和 16 米多个产品，不能把总量误当成单一 2 米成品体量。
+
+**最终建议：批准路线 0；以路线 A 为默认研发主线，以路线 C 为默认产品架构；路线 B 只有在许可和实测双过关后单独立项。**`,
+      },
+    ],
+  },
+  snapshot: {
+    version: 1,
+    generatedAt,
+    status: "ready",
+    datasets: {
+      embedding_storage: [
+        { product: "10米·单时相", resolution: "10米", storage_tb: 6.144 },
+        { product: "10米·八季度", resolution: "10米", storage_tb: 49.152 },
+        { product: "2米·单时相", resolution: "2米", storage_tb: 153.6 },
+        { product: "2米·八季度", resolution: "2米", storage_tb: 1228.8 },
+      ],
+    },
+  },
+  sources: [
+    {
+      id: "capacity_estimate",
+      label: "全国 embedding 容量估算",
+      path: "capacity_calculations.ipynb",
+      query: {
+        engine: "calculation",
+        description: "按 960 万平方公里、64 维 INT8 和 2 米/10 米像元面积计算。",
+        sql: "SELECT product, resolution, storage_tb FROM embedding_storage_estimates",
+      },
+    },
+    {
+      id: "noda_2021_one_map",
+      label: "国家对地观测科学数据中心：2021 年中国高分辨率一张图系列",
+      href: "https://www.noda.ac.cn/rsgs/news/showNewsById?id=6694ccca4782da475b5c8ffa",
+      query: { engine: "web", description: "全国 2 米/16 米一张图发布范围与数据量，访问核验于 2026-08-14。" },
+    },
+    {
+      id: "tessera",
+      label: "University of Cambridge: TESSERA",
+      href: "https://github.com/ucam-eo/tessera",
+      query: { engine: "web", description: "官方代码、模型、输入输出与许可证，访问核验于 2026-08-14。" },
+    },
+    {
+      id: "clay",
+      label: "Clay Foundation Model",
+      href: "https://clay-foundation.github.io/model/",
+      query: { engine: "web", description: "官方 v1.5 文档、模型用途和许可证，访问核验于 2026-08-14。" },
+    },
+    {
+      id: "olmoearth",
+      label: "Ai2 OlmoEarth",
+      href: "https://github.com/allenai/olmoearth_pretrain",
+      query: { engine: "web", description: "官方 v1.2 仓库、模型、微调流程与 Artifact License，访问核验于 2026-08-14。" },
+    },
+    {
+      id: "internal_sources",
+      label: "Xuannv 项目内部实验与规划",
+      path: "source_notes.md",
+      query: { engine: "project", description: "China V1 计划、海淀长期记忆、V4/V5 蒸馏实验与当前单教师实现。" },
+    },
+  ],
+  package_info: {
+    generated_by: "data-analytics build-report portable artifact",
+    calculation_companion: "capacity_calculations.ipynb",
+  },
+};
+
+writeFileSync(new URL("artifact.json", import.meta.url), `${JSON.stringify(artifact, null, 2)}\n`);
