@@ -110,7 +110,8 @@ class IsolatedFusionSmokeModel(nn.Module):
             if aef is None or aef_valid is None:
                 raise ValueError("enabled AEF branch requires aef and aef_valid")
             masked_aef = torch.where(aef_valid, aef, torch.zeros_like(aef))
-            aef_delta = self.aef_adapter(masked_aef) * aef_valid.to(aef.dtype)
+            aef_delta = self.aef_adapter(masked_aef)
+            aef_delta = aef_delta * aef_valid.to(device=aef_delta.device, dtype=aef_delta.dtype)
             z = z + aef_gate * aef_delta[:, None].expand(-1, quarters, -1, -1, -1)
         if use_highres:
             if highres is None or highres_valid is None:
@@ -120,8 +121,9 @@ class IsolatedFusionSmokeModel(nn.Module):
             downsampled_valid = functional.avg_pool2d(
                 highres_valid.to(highres.dtype), kernel_size=5, stride=5
             ).eq(1.0)
-            highres_delta = self.highres_adapter(highres_features) * downsampled_valid.to(
-                highres.dtype
+            highres_delta = self.highres_adapter(highres_features)
+            highres_delta = highres_delta * downsampled_valid.to(
+                device=highres_delta.device, dtype=highres_delta.dtype
             )
             z = z + highres_gate * highres_delta[:, None].expand(-1, quarters, -1, -1, -1)
 

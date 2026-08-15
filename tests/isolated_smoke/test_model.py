@@ -57,6 +57,22 @@ def test_zero_initialized_full_matches_base() -> None:
     assert full.gates["highres"].item() == 0.0
 
 
+def test_bfloat16_autocast_zero_gate_full_matches_base_dtype_and_values() -> None:
+    """AMP 下零 gate 旁路不得把 BF16 基座提升到 FP32 或改变归一化结果。"""
+    inputs = _small_inputs()
+    model = IsolatedFusionSmokeModel(embed_dim=64).eval()
+
+    with torch.no_grad(), torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+        base = model(**inputs, use_aef=False, use_highres=False)
+        full = model(**inputs, use_aef=True, use_highres=True)
+
+    assert base.pre_vmf.dtype == torch.bfloat16
+    assert full.pre_vmf.dtype == base.pre_vmf.dtype
+    assert full.embedding.dtype == base.embedding.dtype
+    torch.testing.assert_close(full.pre_vmf, base.pre_vmf, atol=0.0, rtol=0.0)
+    torch.testing.assert_close(full.embedding, base.embedding, atol=0.0, rtol=0.0)
+
+
 def test_disabled_branches_need_no_placeholder_tensors() -> None:
     """显式关闭的旁路不得访问 AEF 或高分辨率占位输入。"""
     inputs = _small_inputs()
