@@ -167,9 +167,7 @@ def _write_evidence(sandbox: Path) -> list[Path]:
         "config_sha256": "b" * 64,
         "selected_patch_manifest_sha256": sha256(selection.read_bytes()).hexdigest(),
         "seed": 20260815,
-        "model_class": (
-            "experiments.china_v1_fusion_smoke.model.IsolatedFusionSmokeModel"
-        ),
+        "model_class": ("experiments.china_v1_fusion_smoke.model.IsolatedFusionSmokeModel"),
         "synthetic": True,
         "formal_training_allowed": False,
         "formal_evaluation_allowed": False,
@@ -280,9 +278,7 @@ def _add_prepared_evidence_declared_by_audit(sandbox: Path) -> dict[str, Path]:
     }
     entries: dict[str, list[dict[str, object]]] = {"aef": [], "highres_2m": []}
     for index, (patch_id, year) in enumerate(
-        patch_year
-        for patch_id in PATCH_IDS
-        for patch_year in ((patch_id, 2020), (patch_id, 2021))
+        patch_year for patch_id in PATCH_IDS for patch_year in ((patch_id, 2020), (patch_id, 2021))
     ):
         for kind, metadata, tensor_payload in (
             (
@@ -1263,9 +1259,7 @@ def test_seal_rejects_semantically_inconsistent_evidence_graph(
         reproducibility["max_abs_error"] = 1.0
     elif mutation == "repro-checkpoint-sha":
         reproducibility["checkpoint_sha256"] = "0" * 64
-    (tmp_sandbox / "reproducibility.json").write_text(
-        json.dumps(reproducibility), encoding="utf-8"
-    )
+    (tmp_sandbox / "reproducibility.json").write_text(json.dumps(reproducibility), encoding="utf-8")
 
     manifest_path = tmp_sandbox / "run_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))

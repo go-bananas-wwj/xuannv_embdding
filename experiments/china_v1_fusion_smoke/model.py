@@ -131,9 +131,7 @@ class IsolatedFusionSmokeModel(nn.Module):
             if aef_valid.dtype is not torch.bool:
                 raise ValueError("input contract requires a bool AEF mask")
         if use_highres:
-            if not isinstance(highres, torch.Tensor) or not isinstance(
-                highres_valid, torch.Tensor
-            ):
+            if not isinstance(highres, torch.Tensor) or not isinstance(highres_valid, torch.Tensor):
                 raise ValueError("input contract requires enabled highres tensors")
             highres_shape = (batch, 3, height * 5, width * 5)
             highres_mask_shape = (batch, 1, height * 5, width * 5)

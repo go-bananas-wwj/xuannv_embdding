@@ -1154,8 +1154,7 @@ def _run_npu_smoke(
             norm_summary = metric["pre_export_fp32_vmf_norm"]
             assert isinstance(norm_summary, Mapping)
             if any(
-                abs(float(norm_summary[key]) - 1.0) > 1.0e-5
-                for key in ("min", "median", "max")
+                abs(float(norm_summary[key]) - 1.0) > 1.0e-5 for key in ("min", "median", "max")
             ):
                 raise RunnerError("pre-export FP32 vMF norm exceeds the 1e-5 tolerance")
             output_cpu[group] = embedding
@@ -1384,9 +1383,9 @@ def _validated_ready_to_seal(
         raise RunnerError("READY_TO_SEAL preliminary path audit path is invalid")
     audit_path = validate_write_path(sandbox_root / PRELIMINARY_PATH_AUDIT, sandbox_root)
     preliminary_audit = _load_json_object(audit_path)
-    if preliminary_audit.get("stage") != "npu-smoke" or preliminary.get(
-        "sha256"
-    ) != _sha256_file(audit_path):
+    if preliminary_audit.get("stage") != "npu-smoke" or preliminary.get("sha256") != _sha256_file(
+        audit_path
+    ):
         raise RunnerError("READY_TO_SEAL does not match the preliminary path audit")
     return ready_path, audit_path
 

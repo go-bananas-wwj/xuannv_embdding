@@ -785,9 +785,7 @@ def _strict_smoke_policy(raw: Mapping[str, object], *, highres: bool = False) ->
     if any(not _exactly_equal(raw.get(key), value) for key, value in expected.items()):
         raise ExportError("semantic registry use-policy flags are invalid")
     expected_kind = (
-        "annual_s2_rgb_5x_deterministic_texture"
-        if highres
-        else "annual_s2_fixed_projection"
+        "annual_s2_rgb_5x_deterministic_texture" if highres else "annual_s2_fixed_projection"
     )
     if raw.get("synthetic_kind") != expected_kind:
         raise ExportError("semantic registry synthetic kind is invalid")
@@ -832,9 +830,7 @@ def _validate_registry_graph(
             raise ExportError(f"semantic {kind} registry must contain exactly eight entries")
         observed_pairs: list[tuple[object, object]] = []
         metadata = {
-            key: value
-            for key, value in registry.items()
-            if key not in {"entries", "projection"}
+            key: value for key, value in registry.items() if key not in {"entries", "projection"}
         }
         for index, entry in enumerate(entries):
             if not isinstance(entry, Mapping) or set(entry) != {
@@ -1061,9 +1057,7 @@ def _validate_semantic_evidence_graph(sandbox_root: Path) -> None:
     selection_sha = _sha256_file(selection_path)
     run = _read_json_evidence(sandbox_root / "run_manifest.json", sandbox_root)
     metrics = _read_json_evidence(sandbox_root / "metrics.json", sandbox_root)
-    reproducibility = _read_json_evidence(
-        sandbox_root / "reproducibility.json", sandbox_root
-    )
+    reproducibility = _read_json_evidence(sandbox_root / "reproducibility.json", sandbox_root)
     _validate_run_manifest_evidence(run, sandbox_root)
     _validate_metrics_evidence(metrics)
     if run["patch_ids"] != list(patch_ids):
@@ -1118,9 +1112,7 @@ def _validate_semantic_evidence_graph(sandbox_root: Path) -> None:
         str(run["config_sha256"]),
     )
     for group in _GROUPS:
-        actual = reopened_fp16_vmf_norm_summary(
-            sandbox_root / "outputs" / group / "embedding.zarr"
-        )
+        actual = reopened_fp16_vmf_norm_summary(sandbox_root / "outputs" / group / "embedding.zarr")
         reported = metrics["groups"][group]["reopened_fp16_zarr_vmf_norm"]
         if not _exactly_equal(actual, reported):
             raise ExportError(f"semantic persisted norm differs from metrics for {group}")

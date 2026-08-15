@@ -151,8 +151,7 @@ def test_gate_override_keeps_exact_forward_value_and_gate_parameter_gradients() 
     assert model.highres_gate.grad is not None
     assert bool(torch.isfinite(model.aef_gate.grad)) and model.aef_gate.grad.abs().item() > 0.0
     assert (
-        bool(torch.isfinite(model.highres_gate.grad))
-        and model.highres_gate.grad.abs().item() > 0.0
+        bool(torch.isfinite(model.highres_gate.grad)) and model.highres_gate.grad.abs().item() > 0.0
     )
 
 
