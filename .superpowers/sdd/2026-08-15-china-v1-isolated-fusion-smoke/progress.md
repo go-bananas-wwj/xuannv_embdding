@@ -24,3 +24,5 @@ Task 5: fix round 1/5 (4 addressed, 3 open — checkpoint apply can mutate on sp
 Task 5: fix round 2/5 (2 addressed, 1 open — checkpoint application is transactional for sparse/application failures and caller directories reject recursive symlinks; cross-group axes compare and use patch selection when present, but trusted patch selection remains optional; commits 4c90c1f..01ab4ce)
 Task 5: fix round 3/5 (1 addressed, 0 open — `manifests/patch_selection.json` is mandatory, strictly four unique patch IDs, matches all group axes, and is included in SUCCESS combined SHA-256; commits 01ab4ce..4aec329)
 Task 5: complete (commits e5f5803..2cf836e, review clean)
+Task 6: implementation RED/GREEN complete (runner import RED; 11 focused tests GREEN; commit 43daedc pushed).
+Task 6: real setup/inspect/prepare complete (four fixed patches, 8 patch-years, 48 source ZIP snapshots unchanged, 100427959-byte sandbox, no NPU started).
