@@ -58,3 +58,27 @@ def test_write_guard_allows_a_new_file_inside_the_sentinel_sandbox(tmp_path: Pat
     assert validate_write_path(root / "outputs" / "result.json", root) == (
         root / "outputs" / "result.json"
     )
+
+
+def test_ensure_sandbox_rejects_root_symlink_to_outside(tmp_path: Path) -> None:
+    """固定 sandbox 路径自身为 symlink 时不得跟随到带 sentinel 的外部目录。"""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / ".xuannv_isolated_smoke").touch()
+    root = tmp_path / "china_v1_fusion_smoke_20260815"
+    root.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(SafetyError, match="symlink"):
+        ensure_sandbox(root)
+
+
+def test_ensure_sandbox_rejects_sentinel_symlink(tmp_path: Path) -> None:
+    """sentinel 必须是 sandbox 内真实常规文件，不能是指向任意文件的 symlink。"""
+    root = tmp_path / "china_v1_fusion_smoke_20260815"
+    root.mkdir()
+    outside = tmp_path / "outside-sentinel"
+    outside.touch()
+    (root / ".xuannv_isolated_smoke").symlink_to(outside)
+
+    with pytest.raises(SafetyError, match="sentinel.*symlink"):
+        ensure_sandbox(root)
