@@ -34,6 +34,7 @@ _REQUIRED_EVIDENCE = (
     "reproducibility.json",
     "smoke_checkpoint.pt",
 )
+_PATCH_SELECTION_RELATIVE_PATH = Path("manifests") / "patch_selection.json"
 _REQUIRED_METADATA = (
     "git_commit",
     "config_sha256",
@@ -509,11 +510,13 @@ def _validate_required_evidence(sandbox_root: Path) -> None:
     _load_checkpoint_payload(checkpoint)
 
 
-def _trusted_patch_ids(sandbox_root: Path) -> tuple[str, ...] | None:
-    """读取可用的 Task 6 patch-selection 证据；未知 schema 时让跨组比对继续兜底。"""
-    selection = sandbox_root / "manifests" / "patch_selection.json"
-    if not selection.exists() and not selection.is_symlink():
-        return None
+def _required_patch_selection_ids(sandbox_root: Path) -> tuple[str, ...]:
+    """读取并严格验证封存必需的四 patch 选择证据。"""
+    selection = sandbox_root / _PATCH_SELECTION_RELATIVE_PATH
+    if selection.is_symlink():
+        _guard_non_symlink_sandbox_path(selection, sandbox_root)
+    if not selection.exists():
+        raise ExportError(f"required patch selection evidence is missing: {selection}")
     guarded = _guard_non_symlink_sandbox_path(selection, sandbox_root)
     _require_regular_evidence_file(guarded)
     try:
@@ -521,7 +524,7 @@ def _trusted_patch_ids(sandbox_root: Path) -> tuple[str, ...] | None:
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ExportError(f"patch selection evidence is malformed: {guarded}") from exc
     if not isinstance(raw, Mapping):
-        return None
+        raise ExportError("patch selection evidence schema must be a JSON object")
     values = raw.get("patch_ids")
     if not isinstance(values, list) and isinstance(raw.get("patches"), list):
         values = [
@@ -530,7 +533,11 @@ def _trusted_patch_ids(sandbox_root: Path) -> tuple[str, ...] | None:
     if not isinstance(values, list) or not all(
         isinstance(value, str) and value for value in values
     ):
-        return None
+        raise ExportError("patch selection evidence schema must provide patch_ids")
+    if len(values) != _EMBEDDING_SHAPE[0]:
+        raise ExportError("patch selection evidence must contain exactly four patch IDs")
+    if len(set(values)) != len(values):
+        raise ExportError("patch selection evidence must not contain duplicate patch IDs")
     return tuple(values)
 
 
@@ -563,7 +570,9 @@ def seal_success(sandbox_root: Path, required_files: Iterable[Path | str]) -> Pa
     mandatory_paths = [
         *(_guard_non_symlink_sandbox_path(path, root) for path in _required_group_paths(root)),
         *(_guard_non_symlink_sandbox_path(root / name, root) for name in _REQUIRED_EVIDENCE),
+        _guard_non_symlink_sandbox_path(root / _PATCH_SELECTION_RELATIVE_PATH, root),
     ]
+    trusted_patch_ids = _required_patch_selection_ids(root)
     all_paths = list(dict.fromkeys([*mandatory_paths, *supplied_paths]))
     for path in all_paths:
         if not path.exists():
@@ -578,8 +587,7 @@ def seal_success(sandbox_root: Path, required_files: Iterable[Path | str]) -> Pa
         group_axes.append(_verify_exported_group(guarded, expected_group=group))
     if any(axes != group_axes[0] for axes in group_axes[1:]):
         raise ExportError("all smoke Zarr groups must share exactly the same patch and period axes")
-    trusted_patch_ids = _trusted_patch_ids(root)
-    if trusted_patch_ids is not None and group_axes[0][0] != trusted_patch_ids:
+    if group_axes[0][0] != trusted_patch_ids:
         raise ExportError("Zarr patch axis does not match trusted patch selection evidence")
     _validate_required_evidence(root)
 

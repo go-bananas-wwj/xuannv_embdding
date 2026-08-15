@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 from hashlib import sha256
@@ -99,6 +100,27 @@ def _complete_seal_inputs(
 ) -> tuple[list[Path], list[Path]]:
     embedding, valid = tensors
     return _export_all_groups(sandbox, embedding, valid), _write_evidence(sandbox)
+
+
+def _set_group_patch_axis(groups: list[Path], patch_ids: list[str]) -> None:
+    for path in groups:
+        exported = zarr.open_group(str(path), mode="a")
+        exported["patch_id"][:] = np.asarray(patch_ids, dtype="<U9")
+        exported.attrs["patch_ids"] = patch_ids
+
+
+def _combined_digest(sandbox: Path, paths: list[Path]) -> str:
+    digest = sha256()
+    files: list[Path] = []
+    for path in paths:
+        if path.is_file():
+            files.append(path)
+        else:
+            files.extend(item for item in path.rglob("*") if item.is_file())
+    for path in sorted(files, key=lambda item: item.relative_to(sandbox).as_posix()):
+        digest.update(path.relative_to(sandbox).as_posix().encode("utf-8") + b"\0")
+        digest.update(bytes.fromhex(sha256(path.read_bytes()).hexdigest()))
+    return digest.hexdigest()
 
 
 def _unsafe_marker(marker: str) -> None:
@@ -465,10 +487,7 @@ def test_seal_success_rejects_coordinated_cross_group_patch_axis_mutation(
     """四组共同伪造自洽 patch_id/attrs 时仍须服从可信 patch selection。"""
     groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
     changed_ids = ["patch-100", "patch-101", "patch-102", "patch-103"]
-    for path in groups:
-        exported = zarr.open_group(str(path), mode="a")
-        exported["patch_id"][:] = np.asarray(changed_ids, dtype="<U9")
-        exported.attrs["patch_ids"] = changed_ids
+    _set_group_patch_axis(groups, changed_ids)
 
     with pytest.raises(ExportError, match="patch"):
         seal_success(tmp_sandbox, [*groups, *evidence])
@@ -491,3 +510,61 @@ def test_seal_success_rejects_supplied_directory_with_external_symlink_child(
     with pytest.raises(ExportError, match="symlink"):
         seal_success(tmp_sandbox, [*groups, *evidence, supplied])
     assert not (tmp_sandbox / "SUCCESS").exists()
+
+
+def test_seal_success_requires_patch_selection_even_for_self_consistent_fake_axes(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+) -> None:
+    """四组共同自报 fake IDs 时，缺失可信 selection 也必须 fail closed。"""
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    _set_group_patch_axis(groups, ["patch-100", "patch-101", "patch-102", "patch-103"])
+    (tmp_sandbox / "manifests" / "patch_selection.json").unlink()
+
+    with pytest.raises(ExportError, match="patch selection"):
+        seal_success(tmp_sandbox, [*groups, *evidence])
+    assert not (tmp_sandbox / "SUCCESS").exists()
+
+
+@pytest.mark.parametrize(
+    ("manifest", "message"),
+    [
+        ({"unknown": PATCH_IDS}, "schema"),
+        ({"patch_ids": ["patch-000", "patch-000", "patch-002", "patch-003"]}, "duplicate"),
+        ({"patch_ids": list(PATCH_IDS[:3])}, "exactly four"),
+        ({"patches": [{"id": patch_id} for patch_id in PATCH_IDS]}, "schema"),
+    ],
+    ids=["unknown_schema", "duplicate", "wrong_count", "missing_patch_id_field"],
+)
+def test_seal_success_rejects_invalid_patch_selection_manifest(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+    manifest: dict[str, object],
+    message: str,
+) -> None:
+    """selection manifest 的 schema、唯一性和四 patch 基数均属于封存硬合同。"""
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    selection = tmp_sandbox / "manifests" / "patch_selection.json"
+    selection.write_text(json.dumps(manifest), encoding="utf-8")
+    if manifest.get("patch_ids") == ["patch-000", "patch-000", "patch-002", "patch-003"]:
+        _set_group_patch_axis(groups, list(manifest["patch_ids"]))
+
+    with pytest.raises(ExportError, match=message):
+        seal_success(tmp_sandbox, [*groups, *evidence])
+    assert not (tmp_sandbox / "SUCCESS").exists()
+
+
+def test_success_combined_sha256_covers_mandatory_patch_selection(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+) -> None:
+    """SUCCESS 摘要必须包含 manifests/patch_selection.json，不能只作为读取旁证。"""
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    selection = tmp_sandbox / "manifests" / "patch_selection.json"
+
+    success = seal_success(tmp_sandbox, [*groups, *evidence])
+
+    payload = json.loads(success.read_text(encoding="utf-8"))
+    assert payload["combined_sha256"] == _combined_digest(
+        tmp_sandbox, [*groups, *evidence, selection]
+    )
