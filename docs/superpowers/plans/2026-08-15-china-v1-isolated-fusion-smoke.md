@@ -104,7 +104,7 @@ def test_write_guard_rejects_production_roots(unsafe: str, tmp_path: Path):
 
 - [ ] **Step 2: Run the tests and verify RED**
 
-Run: `PYTHONPATH=$PWD python -m pytest tests/isolated_smoke/test_safety_config.py -q`
+Run: `PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest tests/isolated_smoke/test_safety_config.py -q`
 
 Expected: FAIL during import because the isolated smoke package does not exist.
 
@@ -181,7 +181,7 @@ mkdir -p "${SANDBOX}"/{cache,synthetic/aef,synthetic/highres_2m,outputs,checkpoi
 Run:
 
 ```bash
-PYTHONPATH=$PWD python -m pytest tests/isolated_smoke/test_safety_config.py tests/test_smoke.py -q
+PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest tests/isolated_smoke/test_safety_config.py tests/test_smoke.py -q
 ```
 
 Expected: all tests PASS.
@@ -233,7 +233,7 @@ Fixtures must copy the real member convention `pc-s2/2020/01/{patch_id}.tif`. Al
 
 - [ ] **Step 2: Verify RED**
 
-Run: `PYTHONPATH=$PWD python -m pytest tests/isolated_smoke/test_archive.py -q`
+Run: `PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest tests/isolated_smoke/test_archive.py -q`
 
 Expected: FAIL because `select_complete_patches` does not exist.
 
@@ -262,7 +262,7 @@ def test_patch_year_batch_has_quarter_major_shapes(fake_complete_selection):
 
 - [ ] **Step 5: Verify RED, then implement decoding and preprocessing**
 
-Run: `PYTHONPATH=$PWD python -m pytest tests/isolated_smoke/test_data_contract.py -q`
+Run: `PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest tests/isolated_smoke/test_data_contract.py -q`
 
 Expected: FAIL because `load_patch_year_batch` does not exist.
 
@@ -280,8 +280,8 @@ quarter_index = (month - 1) // 3
 Run:
 
 ```bash
-PYTHONPATH=$PWD python -m pytest tests/isolated_smoke/test_archive.py tests/isolated_smoke/test_data_contract.py -q
-PYTHONPATH=$PWD python - <<'PY'
+PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest tests/isolated_smoke/test_archive.py tests/isolated_smoke/test_data_contract.py -q
+PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python - <<'PY'
 from pathlib import Path
 from experiments.china_v1_fusion_smoke.archive import (
     inspect_selection_headers,
@@ -339,7 +339,7 @@ def test_synthetic_context_is_deterministic_and_aligned():
 
 - [ ] **Step 2: Verify RED**
 
-Run: `PYTHONPATH=$PWD python -m pytest tests/isolated_smoke/test_synthetic.py -q`
+Run: `PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest tests/isolated_smoke/test_synthetic.py -q`
 
 Expected: FAIL because the generator is undefined.
 
@@ -380,7 +380,7 @@ Also require the highres registry to contain `contains_real_2m_information=false
 
 - [ ] **Step 5: Verify RED, then implement strict validators**
 
-Run: `PYTHONPATH=$PWD python -m pytest tests/isolated_smoke/test_registry.py -q`
+Run: `PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest tests/isolated_smoke/test_registry.py -q`
 
 Expected: FAIL because validators are undefined. Implement exact equality checks; permissive truthiness is not allowed.
 
@@ -389,7 +389,7 @@ Expected: FAIL because validators are undefined. Implement exact equality checks
 Run:
 
 ```bash
-PYTHONPATH=$PWD python -m pytest tests/isolated_smoke/test_synthetic.py tests/isolated_smoke/test_registry.py -q
+PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest tests/isolated_smoke/test_synthetic.py tests/isolated_smoke/test_registry.py -q
 ```
 
 Expected: all tests PASS.
@@ -436,7 +436,7 @@ def test_all_branches_keep_the_output_contract(use_aef, use_highres):
 
 - [ ] **Step 2: Verify RED**
 
-Run: `PYTHONPATH=$PWD python -m pytest tests/isolated_smoke/test_model.py -q`
+Run: `PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest tests/isolated_smoke/test_model.py -q`
 
 Expected: FAIL because the model is absent.
 
@@ -483,7 +483,7 @@ Run Full with `gate_override=0.1`. Backpropagate `output.pre_vmf.square().mean()
 Run:
 
 ```bash
-PYTHONPATH=$PWD python -m pytest tests/isolated_smoke/test_model.py tests/test_model.py -q
+PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest tests/isolated_smoke/test_model.py tests/test_model.py -q
 ```
 
 Expected: all tests PASS and existing `AEFModel` behavior is unchanged.
@@ -526,7 +526,7 @@ Test that `seal_success` rejects a missing manifest, partial Zarr, an output out
 
 - [ ] **Step 2: Verify RED**
 
-Run: `PYTHONPATH=$PWD python -m pytest tests/isolated_smoke/test_export.py -q`
+Run: `PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest tests/isolated_smoke/test_export.py -q`
 
 Expected: FAIL because export functions do not exist.
 
@@ -544,7 +544,7 @@ Require all four Zarr groups, `run_manifest.json`, `metrics.json`, `path_audit.j
 
 - [ ] **Step 6: Verify GREEN**
 
-Run: `PYTHONPATH=$PWD python -m pytest tests/isolated_smoke/test_export.py -q`
+Run: `PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest tests/isolated_smoke/test_export.py -q`
 
 Expected: all tests PASS.
 
@@ -585,7 +585,7 @@ Also test invalid stages, missing sentinel, more than four patches, wrong years,
 
 - [ ] **Step 2: Verify RED**
 
-Run: `PYTHONPATH=$PWD python -m pytest tests/isolated_smoke/test_runner.py -q`
+Run: `PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest tests/isolated_smoke/test_runner.py -q`
 
 Expected: FAIL because the runner is absent.
 
@@ -608,7 +608,7 @@ Walk only the sandbox before/after. Record all created or modified sandbox paths
 
 - [ ] **Step 5: Verify GREEN**
 
-Run: `PYTHONPATH=$PWD python -m pytest tests/isolated_smoke/test_runner.py -q`
+Run: `PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest tests/isolated_smoke/test_runner.py -q`
 
 Expected: all tests PASS.
 
@@ -617,7 +617,7 @@ Expected: all tests PASS.
 ```bash
 bash scripts/smoke/setup_china_v1_isolated_fusion_env.sh
 export PYTHONNOUSERSITE=1
-export PYTHONPATH=$PWD
+export PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD
 SMOKE_PY=/data/xuannv_embedding/sandboxes/china_v1_fusion_smoke_20260815/env/bin/python
 ${SMOKE_PY} -m experiments.china_v1_fusion_smoke.runner \
   --config configs/smoke/china_v1_isolated_fusion_4patch_20260815.yaml --stage inspect
@@ -632,7 +632,7 @@ Expected: four fixed patch IDs, 8 patch-years, unchanged source, all writes in s
 ```bash
 ${SMOKE_PY} -m experiments.china_v1_fusion_smoke.runner \
   --config configs/smoke/china_v1_isolated_fusion_4patch_20260815.yaml --stage cpu-contract
-PYTHONPATH=$PWD python -m pytest tests/isolated_smoke -q -m "not npu"
+PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest tests/isolated_smoke -q -m "not npu"
 ```
 
 Expected: all tests PASS; base/full zero-gate identity PASS.
@@ -676,7 +676,7 @@ Also assert exact worktree, CANN path, `PYTHONNOUSERSITE=1`, `PYTHONPATH=$WORKTR
 
 - [ ] **Step 2: Verify RED**
 
-Run: `PYTHONPATH=$PWD python -m pytest tests/isolated_smoke/test_launcher.py -q`
+Run: `PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest tests/isolated_smoke/test_launcher.py -q`
 
 Expected: FAIL because the launcher is absent.
 
@@ -728,11 +728,11 @@ def test_one_visible_npu_runs_full_branch_backward():
 - [ ] **Step 5: Run static and NPU preflight tests**
 
 ```bash
-PYTHONPATH=$PWD python -m pytest tests/isolated_smoke/test_launcher.py -q
+PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest tests/isolated_smoke/test_launcher.py -q
 source /usr/local/Ascend/cann-9.0.0/set_env.sh
 export ASCEND_RT_VISIBLE_DEVICES=2
 export RUN_XUANNV_NPU_SMOKE=1
-PYTHONPATH=$PWD python -m pytest tests/isolated_smoke/test_npu_smoke.py -q
+PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest tests/isolated_smoke/test_npu_smoke.py -q
 ```
 
 Expected: static tests PASS and NPU preflight PASS on one logical NPU.
