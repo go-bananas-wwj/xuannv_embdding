@@ -28,3 +28,8 @@ Task 6: implementation RED/GREEN complete (runner import RED; 11 focused tests G
 Task 6: real setup/inspect/prepare complete (four fixed patches, 8 patch-years, 48 source ZIP snapshots unchanged, 100427959-byte sandbox, no NPU started).
 Task 6: path-audit self-review fix complete (sequential-stage RED; cumulative audit GREEN; commit 330e133 pushed).
 Task 6: complete (real small CPU four-group contract and exact zero-gate identity passed; 98 isolated non-NPU tests passed; sandbox 100429169 bytes; no NPU started).
+Task 6: fix round 1 started for symlink-closed sandbox writes, independent NPU/launcher provenance, bounded related-source entry snapshots, and authoritative final SUCCESS audit.
+Task 6: minor (deferred): Task 2 archive pools remain bounded at 8 and are independent of data-loading `num_workers=0`.
+Task 6: minor (deferred): all 48 monthly refs retain member/CRC, but shape/CRS/transform are stored only for representative headers.
+Task 6: fix round 1/5 (4 addressed, 0 open — root/sentinel symlinks fail closed; Runner independently verifies physical NPU 2 and Task 7 ancestry; source audit covers 48 ZIPs plus 55 related directories/253 direct entries; seal validates planned final SUCCESS; commits 54f03f4..82d4e77).
+Task 6: complete after fix round 1 (109 isolated non-NPU tests passed; real inspect/prepare/cpu replay passed; source unchanged; sandbox 100518960 bytes; no NPU started).

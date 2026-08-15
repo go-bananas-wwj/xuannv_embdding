@@ -161,3 +161,120 @@ change the Task 2 implementation.
 
 The real sandbox artifacts are not tracked by Git. Task 6 did not invoke `npu-smoke`, inspect an
 NPU, export accuracy metrics, or write `SUCCESS`; those remain Task 7 responsibilities.
+
+## Fix Round 1: isolation, launcher provenance, source-tree audit, and final seal
+
+Independent review rejected the initial Task 6 result on four Important findings. All four were
+reproduced before their fixes and addressed without running NPU code.
+
+### 1. Symlink-closed sandbox and sentinel
+
+The original `ensure_sandbox` used `resolve()` and `is_file()`, so a root symlink to an outside
+directory and a symlink sentinel were both accepted. The two real-filesystem regression tests
+failed with `DID NOT RAISE SafetyError` before the fix.
+
+`ensure_sandbox` now uses lexical absolute paths and lstat-aware symlink checks for the root,
+ancestors, and sentinel. `validate_write_path` also rejects every existing symlink component and
+performs a final resolved containment check. Because all Runner writes already pass through this
+function, the stricter guard applies uniformly. Focused safety plus Runner verification returned
+`22 passed in 7.63s`.
+
+### 2. Independent physical NPU and Task 7 launcher identity
+
+The initial guard trusted four environment variables. Three device/provenance cases were RED
+before implementation: a manually forged environment without launcher ancestry, a missing
+`/dev/davinci2`, and a busy device.
+
+The Runner now independently requires:
+
+- the exact isolated worktree as current directory;
+- the exact sandbox `env/bin/python` interpreter;
+- physical `/dev/davinci2` to exist as a character device;
+- `fuser /dev/davinci2` to report no user;
+- a real `/proc` parent chain containing bash/sh executing the fixed Task 7 launcher from the
+  fixed worktree;
+- the launcher itself to be a regular, non-symlink file.
+
+A controlled `/proc` fixture verifies the positive parent-chain parser. Manually setting the four
+environment variables cannot satisfy these checks. Runner focused verification returned
+`16 passed in 7.62s`. The physical device helper was replaced only in unit tests; no real NPU
+device was inspected or started in Task 6.
+
+### 3. Bounded related-source directory snapshots
+
+The initial snapshot covered only canonical ZIP size/mtime and did not notice a new sibling
+`.forbidden.lock`. The regression inserted that file between prepare snapshots and failed because
+the old Runner did not raise.
+
+The snapshot now records:
+
+- the 48 canonical ZIPs with type, size and nanosecond mtime;
+- every canonical archive parent directory;
+- the necessary year, sensor and source-root ancestors;
+- the complete direct-entry name/type/size/mtime list for each watched directory.
+
+It does not recurse unrelated trees and does not hash any large ZIP. Both changed-ZIP and
+new-direct-entry stop-rule tests pass; the full Runner suite at that point returned `17 passed in
+7.71s`.
+
+### 4. Authoritative path audit includes the final SUCCESS seal
+
+The initial NPU path audit was written before `SUCCESS` but omitted it, while the in-memory result
+appended it later. Two RED tests proved the gap: Runner did not accept a planned final-seal
+argument, and `seal_success` accepted an empty audit.
+
+The NPU stage now writes the on-disk audit while `SUCCESS` is absent and includes:
+
+```json
+{
+  "created_or_modified": ["...", "SUCCESS"],
+  "final_seal": {
+    "path": "SUCCESS",
+    "status": "expected_last_write",
+    "exists_when_audit_written": false
+  }
+}
+```
+
+`seal_success` validates the exact stage, created-path entry, path, status and pre-write existence
+flag before hashing the audit and writing `SUCCESS` last. It never modifies the audit afterward.
+Negative tests reject a missing declaration, an altered status, and an altered path. Runner plus
+Export focused verification returned `56 passed in 19.94s`; the final Export suite returned
+`40 passed in 20.26s`.
+
+### Real replay after the fixes
+
+The authorized real `inspect`, `prepare`, and small `cpu-contract` stages were replayed. No NPU
+stage was invoked.
+
+- Stable patch IDs remained unchanged.
+- Source snapshots contain 48 archives, 55 bounded watched directories, and 253 direct-entry
+  records.
+- Before and after snapshots are exactly equal and state `hashing_performed=false`.
+- Base, Base+AEF, Base+Highres and Full CPU groups remain finite with exact zero-gate identity.
+- No `.partial` artifact or lingering Runner child process remains.
+- Final sandbox size is **100,518,960 bytes**, below 5 GiB.
+
+### Final fix-round verification
+
+```text
+isolated non-NPU: 109 passed in 33.45s
+Ruff: All checks passed!
+Black: 6 files would be left unchanged.
+git diff --check: exit 0
+```
+
+Fix-round commits, all pushed to `origin/codex/china-v1-fusion-smoke`:
+
+- `82147db fix: reject symlink smoke sandbox paths`
+- `51b919d fix: verify physical NPU launcher provenance`
+- `a7a1605 fix: audit related source directory entries`
+- `31fa2b5 fix: seal authoritative smoke path audit`
+- `82d4e77 test: reject tampered final smoke seal audit`
+
+### Deferred Minor findings
+
+- Task 2 archive metadata/header pools remain bounded at eight processes and are independent of
+  data-loading `num_workers=0`; changing that reviewed Task 2 implementation is deferred.
+- `patch_selection.json` keeps all 48 member paths and CRCs but only representative headers, not
+  per-entry shape/CRS/transform for all 48 references; expanding that manifest is deferred.
