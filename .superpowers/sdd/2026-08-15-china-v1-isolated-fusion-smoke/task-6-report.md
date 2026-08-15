@@ -39,6 +39,21 @@ The same focused command after the minimum implementation returned:
 
 Ruff, Black check, and `git diff --check` also passed before the implementation commit.
 
+### Path-audit regression RED/GREEN
+
+The first real CPU run exposed that a later stage replaced, rather than accumulated, the prior
+prepare path list. A regression test ran `prepare` followed by `cpu-contract` and failed before
+the fix with:
+
+```text
+KeyError: 'stages'
+1 failed in 7.02s
+```
+
+The minimal fix validates and merges prior relative paths/stages before atomically rewriting the
+audit. The regression then passed (`1 passed in 6.89s`), and the focused runner suite passed with
+`12 passed in 7.66s`.
+
 ## Real setup and inspect evidence
 
 The required sandbox bootstrap completed without installation or writes outside the exact root.
@@ -70,17 +85,64 @@ created paths.
 - `manifests/aef_registry.json` and `highres_2m_registry.json`: 8 ordered entries each;
 - `manifests/prepare_manifest.json`: `patch_years=8`, `source_unchanged=true` and explicit
   no-accuracy-conclusion policy;
-- `path_audit.json`: 26 created or modified sandbox paths and no `.partial` artifact.
+- `path_audit.json`: the first prepare observed 26 created or modified sandbox paths and no
+  `.partial` artifact.
 
 Both registries require `synthetic=true`, `allowed_use=smoke_test_only`,
 `formal_training_allowed=false`, and `formal_evaluation_allowed=false`. The high-resolution
 registry additionally records `claimed_native_gsd_m=null` and
 `contains_real_2m_information=false`.
 
-The measured sandbox size after prepare is **100,427,959 bytes**, below the 5 GiB stop limit.
+The measured sandbox size after the first prepare was **100,427,959 bytes**, below the 5 GiB stop
+limit.
 No accuracy, official AEF semantics, or real 2 m quality conclusion is made.
 
-## CPU and concurrency notes
+## Real CPU contract evidence
+
+The sandbox Python ran the default small fixture, not `--full-shape`. All four required groups
+completed:
+
+| Group | Shape | Finite | Maximum vMF norm error |
+| --- | --- | --- | ---: |
+| `base` | `[2,4,64,16,16]` | true | `2.980232238769531e-07` |
+| `base_aef` | `[2,4,64,16,16]` | true | `2.980232238769531e-07` |
+| `base_highres` | `[2,4,64,16,16]` | true | `2.980232238769531e-07` |
+| `full` | `[2,4,64,16,16]` | true | `2.980232238769531e-07` |
+
+`full_zero_gate_matches_base=true` used exact tensor equality for both `pre_vmf` and normalized
+embedding. The evidence is in `manifests/cpu_contract.json`; it explicitly forbids an accuracy
+conclusion.
+
+After the cumulative-audit fix, `prepare` and `cpu-contract` were replayed without NPU access so
+the actual evidence uses the corrected schema. Current `path_audit.json` contains 27 cumulative
+paths and transparently records the stage history
+`["cpu-contract", "prepare", "cpu-contract"]`: the initial CPU run, preparation replay, and final
+CPU replay. The replay again found all 48 source ZIP size/mtime records unchanged. Current sandbox
+size is **100,429,169 bytes**, still below 5 GiB.
+
+## Final test and static verification
+
+Fresh completion commands used `PYTHONNOUSERSITE=1` and the explicit worktree `PYTHONPATH`:
+
+```bash
+PYTHONNOUSERSITE=1 PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD \
+  python -m pytest tests/isolated_smoke -q -m 'not npu'
+python -m ruff check experiments/china_v1_fusion_smoke tests/isolated_smoke
+python -m black --check experiments/china_v1_fusion_smoke/runner.py \
+  tests/isolated_smoke/test_runner.py
+git diff --check
+```
+
+Results:
+
+```text
+98 passed in 32.14s
+All checks passed!
+2 files would be left unchanged.
+git diff --check: exit 0
+```
+
+## Concurrency note
 
 `runtime.num_workers` remains exactly zero, and the real patch-year TIFF loader is serial. During
 selection/header inspection, Task 2 uses a bounded `ProcessPoolExecutor` over at most eight ZIP
@@ -93,7 +155,9 @@ change the Task 2 implementation.
 
 - Implementation commit: `43daedc feat: add isolated four-patch fusion smoke runner`
 - Implementation push: successful to `origin/codex/china-v1-fusion-smoke`
+- Preparation evidence commit: `087b615 docs: record isolated smoke preparation evidence`
+- Cumulative audit fix: `330e133 fix: preserve cumulative smoke path audit`
 - Base before Task 6: `25080bf6a21489c43f823a731312bdc5128fd15a`
 
-The real sandbox artifacts are not tracked by Git.
-
+The real sandbox artifacts are not tracked by Git. Task 6 did not invoke `npu-smoke`, inspect an
+NPU, export accuracy metrics, or write `SUCCESS`; those remain Task 7 responsibilities.

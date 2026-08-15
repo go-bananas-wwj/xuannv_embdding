@@ -26,3 +26,5 @@ Task 5: fix round 3/5 (1 addressed, 0 open — `manifests/patch_selection.json` 
 Task 5: complete (commits e5f5803..2cf836e, review clean)
 Task 6: implementation RED/GREEN complete (runner import RED; 11 focused tests GREEN; commit 43daedc pushed).
 Task 6: real setup/inspect/prepare complete (four fixed patches, 8 patch-years, 48 source ZIP snapshots unchanged, 100427959-byte sandbox, no NPU started).
+Task 6: path-audit self-review fix complete (sequential-stage RED; cumulative audit GREEN; commit 330e133 pushed).
+Task 6: complete (real small CPU four-group contract and exact zero-gate identity passed; 98 isolated non-NPU tests passed; sandbox 100429169 bytes; no NPU started).
