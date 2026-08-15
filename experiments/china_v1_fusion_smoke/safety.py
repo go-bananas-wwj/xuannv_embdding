@@ -28,6 +28,15 @@ def ensure_sandbox(root: Path) -> Path:
     return absolute
 
 
+def ensure_unsealed_sandbox(root: Path) -> Path:
+    """验证可写沙箱，并在任何写入前拒绝已经封口的输出。"""
+    absolute = ensure_sandbox(root)
+    success = absolute / "SUCCESS"
+    if success.exists() or success.is_symlink():
+        raise SafetyError("SUCCESS exists; sealed smoke output is immutable")
+    return absolute
+
+
 def validate_write_path(path: Path, sandbox_root: Path) -> Path:
     """只允许写入无 symlink 的 sentinel 沙箱及其无 symlink 子路径。"""
     root = ensure_sandbox(sandbox_root)

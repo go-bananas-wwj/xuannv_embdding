@@ -43,7 +43,12 @@ from experiments.china_v1_fusion_smoke.registry import (
     validate_formal_registry,
     validate_smoke_registry,
 )
-from experiments.china_v1_fusion_smoke.safety import ensure_sandbox, validate_write_path
+from experiments.china_v1_fusion_smoke.safety import (
+    SafetyError,
+    ensure_sandbox,
+    ensure_unsealed_sandbox,
+    validate_write_path,
+)
 from experiments.china_v1_fusion_smoke.synthetic import (
     SyntheticAnnualContext,
     generate_synthetic_context,
@@ -1291,9 +1296,9 @@ def _mark_tee_complete(config_path: Path) -> Path:
     config = load_smoke_config(config_path)
     _load_seed(config_path)
     sandbox_root = ensure_sandbox(config.sandbox_root)
-    _validate_npu_launcher(config)
     if (sandbox_root / "SUCCESS").exists():
         raise RunnerError("SUCCESS already exists; sealed smoke output is immutable")
+    _validate_npu_launcher(config)
     marker = validate_write_path(sandbox_root / TEE_COMPLETE, sandbox_root)
     if marker.exists() or marker.is_symlink():
         raise RunnerError("TEE_COMPLETE already exists; refusing to overwrite completion evidence")
@@ -1366,9 +1371,9 @@ def _finalize_npu_smoke(config_path: Path) -> Path:
     config = load_smoke_config(config_path)
     _load_seed(config_path)
     sandbox_root = ensure_sandbox(config.sandbox_root)
-    _validate_npu_launcher(config)
     if (sandbox_root / "SUCCESS").exists():
         raise RunnerError("SUCCESS already exists; sealed smoke output is immutable")
+    _validate_npu_launcher(config)
 
     ready_path, _audit_path = _validated_ready_to_seal(config, config_path)
     tee_complete, launcher_log = _validated_tee_complete(config, config_path, ready_path)
@@ -1404,7 +1409,6 @@ def run_stage(config_path: Path, stage: str, *, full_shape: bool = False) -> Sta
     sandbox_root = ensure_sandbox(config.sandbox_root)
     if sandbox_root != config.sandbox_root.resolve(strict=True):
         raise RunnerError("resolved sandbox root differs from the configured root")
-    before_sandbox = _snapshot_sandbox(sandbox_root)
     if stage == "inspect":
         selections, headers = _inspect(config)
         return StageResult(
@@ -1415,6 +1419,11 @@ def run_stage(config_path: Path, stage: str, *, full_shape: bool = False) -> Sta
             headers=headers,
             sandbox_bytes=_require_disk_budget(sandbox_root),
         )
+    try:
+        ensure_unsealed_sandbox(sandbox_root)
+    except SafetyError as exc:
+        raise RunnerError(str(exc)) from exc
+    before_sandbox = _snapshot_sandbox(sandbox_root)
     if stage == "prepare":
         return _run_prepare(config, seed, before_sandbox)
     if stage == "cpu-contract":

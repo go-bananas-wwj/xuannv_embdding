@@ -5,6 +5,7 @@ WORKTREE=/root/workspace/xuannv/.worktrees/codex-china-v1-fusion-smoke
 SANDBOX=/data/xuannv_embedding/sandboxes/china_v1_fusion_smoke_20260815
 READY_TO_SEAL=${SANDBOX}/READY_TO_SEAL
 TEE_COMPLETE=${SANDBOX}/TEE_COMPLETE
+LOG=${SANDBOX}/logs/npu_smoke.log
 
 if [[ ! -e /dev/davinci2 ]]; then
   echo "NPU 2 device is absent" >&2
@@ -46,9 +47,13 @@ if [[ -f "${TEE_COMPLETE}" && ! -f "${READY_TO_SEAL}" ]]; then
 fi
 
 if [[ ! -f "${READY_TO_SEAL}" && ! -f "${TEE_COMPLETE}" ]]; then
+  "${SANDBOX}/env/bin/python" -m experiments.china_v1_fusion_smoke.safe_tee \
+    --sandbox-root "${SANDBOX}" --log "${LOG}" --reserve
   "${SANDBOX}/env/bin/python" -m experiments.china_v1_fusion_smoke.runner \
     --config configs/smoke/china_v1_isolated_fusion_4patch_20260815.yaml \
-    --stage npu-smoke 2>&1 | tee "${SANDBOX}/logs/npu_smoke.log"
+    --stage npu-smoke 2>&1 | "${SANDBOX}/env/bin/python" \
+      -m experiments.china_v1_fusion_smoke.safe_tee \
+      --sandbox-root "${SANDBOX}" --log "${LOG}" --stream-reserved
   "${SANDBOX}/env/bin/python" -m experiments.china_v1_fusion_smoke.runner \
     --config configs/smoke/china_v1_isolated_fusion_4patch_20260815.yaml \
     --mark-tee-complete

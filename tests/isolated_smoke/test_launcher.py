@@ -73,7 +73,10 @@ def test_launcher_runs_the_only_supported_smoke_in_the_foreground() -> None:
     assert source.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
     assert "--config configs/smoke/china_v1_isolated_fusion_4patch_20260815.yaml" in source
     assert "--stage npu-smoke" in source
-    assert '2>&1 | tee "${SANDBOX}/logs/npu_smoke.log"' in source
+    assert "experiments.china_v1_fusion_smoke.safe_tee" in source
+    assert "--reserve" in source
+    assert "--stream-reserved" in source
+    assert "| tee " not in source
     assert "READY_TO_SEAL" in source
     assert "TEE_COMPLETE" in source
     assert "READY_TO_SEAL exists without TEE_COMPLETE" in source
