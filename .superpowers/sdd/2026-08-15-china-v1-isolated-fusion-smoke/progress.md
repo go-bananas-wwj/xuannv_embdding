@@ -31,5 +31,7 @@ Task 6: complete (real small CPU four-group contract and exact zero-gate identit
 Task 6: fix round 1 started for symlink-closed sandbox writes, independent NPU/launcher provenance, bounded related-source entry snapshots, and authoritative final SUCCESS audit.
 Task 6: minor (deferred): Task 2 archive pools remain bounded at 8 and are independent of data-loading `num_workers=0`.
 Task 6: minor (deferred): all 48 monthly refs retain member/CRC, but shape/CRS/transform are stored only for representative headers.
-Task 6: fix round 1/5 (4 addressed, 0 open — root/sentinel symlinks fail closed; Runner independently verifies physical NPU 2 and Task 7 ancestry; source audit covers 48 ZIPs plus 55 related directories/253 direct entries; seal validates planned final SUCCESS; commits 54f03f4..82d4e77).
-Task 6: complete after fix round 1 (109 isolated non-NPU tests passed; real inspect/prepare/cpu replay passed; source unchanged; sandbox 100518960 bytes; no NPU started).
+Task 6: fix round 1/5 (3 addressed, 1 open — root/sentinel symlinks fail closed; source audit covers 48 ZIPs plus 55 related directories/253 direct entries; seal validates planned final SUCCESS; Task 7 ancestor check remained open because any argv token could match the launcher path; commits 54f03f4..82d4e77).
+Task 6: verification after fix round 1 (109 isolated non-NPU tests passed; real inspect/prepare/cpu replay passed; source unchanged; sandbox 100518960 bytes; no NPU started; finding #2 subsequently reopened).
+Task 6: fix round 2/5 (1 addressed, 0 open — Task 7 ancestry now requires the fixed launcher as the exact shell script operand and rejects `bash -c`, `bash -s`, and trailing argv decoys; commit 0dd423d).
+Task 6: complete after fix round 2 (22 focused Runner tests and 113 isolated non-NPU tests passed; Ruff/Black/diff-check passed; no NPU inspected or started).

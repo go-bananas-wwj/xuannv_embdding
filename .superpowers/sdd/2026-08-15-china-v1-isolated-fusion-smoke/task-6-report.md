@@ -164,8 +164,10 @@ NPU, export accuracy metrics, or write `SUCCESS`; those remain Task 7 responsibi
 
 ## Fix Round 1: isolation, launcher provenance, source-tree audit, and final seal
 
-Independent review rejected the initial Task 6 result on four Important findings. All four were
-reproduced before their fixes and addressed without running NPU code.
+Independent review rejected the initial Task 6 result on four Important findings. Round 1
+reproduced all four, but follow-up review showed the Task 7 ancestor fix was incomplete. The
+corrected round 1 accounting is therefore **3 addressed, 1 open**; round 2 below closes that
+remaining finding. No fix round ran NPU code.
 
 ### 1. Symlink-closed sandbox and sentinel
 
@@ -185,7 +187,7 @@ The initial guard trusted four environment variables. Three device/provenance ca
 before implementation: a manually forged environment without launcher ancestry, a missing
 `/dev/davinci2`, and a busy device.
 
-The Runner now independently requires:
+The round 1 Runner independently required:
 
 - the exact isolated worktree as current directory;
 - the exact sandbox `env/bin/python` interpreter;
@@ -195,10 +197,12 @@ The Runner now independently requires:
   fixed worktree;
 - the launcher itself to be a regular, non-symlink file.
 
-A controlled `/proc` fixture verifies the positive parent-chain parser. Manually setting the four
-environment variables cannot satisfy these checks. Runner focused verification returned
-`16 passed in 7.62s`. The physical device helper was replaced only in unit tests; no real NPU
-device was inspected or started in Task 6.
+A controlled `/proc` fixture verified the positive parent-chain parser. Manually setting the four
+environment variables could not satisfy these checks. Runner focused verification returned
+`16 passed in 7.62s`. However, this first version accepted the fixed launcher path in any argv
+position, so it did not prove that the shell actually executed that file. Finding #2 therefore
+remained open after round 1. The physical device helper was replaced only in unit tests; no real
+NPU device was inspected or started in Task 6.
 
 ### 3. Bounded related-source directory snapshots
 
@@ -278,3 +282,50 @@ Fix-round commits, all pushed to `origin/codex/china-v1-fusion-smoke`:
   data-loading `num_workers=0`; changing that reviewed Task 2 implementation is deferred.
 - `patch_selection.json` keeps all 48 member paths and CRCs but only representative headers, not
   per-entry shape/CRS/transform for all 48 references; expanding that manifest is deferred.
+
+## Fix Round 2: exact Task 7 shell script operand
+
+Follow-up review supplied a concrete provenance decoy: `bash -c ... <fixed-launcher-path>` can
+place the launcher path in `$0`/argv without executing it. The round 1 implementation iterated all
+tokens and incorrectly accepted that form, `bash -s <fixed-launcher-path>`, and an unrelated
+script followed by the fixed path.
+
+### RED evidence
+
+A real fake-`/proc` parameterized test supplied those three cmdlines while keeping the expected
+worktree cwd. Before the fix, all three negative cases failed because
+`_has_task7_launcher_ancestor` returned `true`:
+
+```text
+3 failed, 3 passed, 16 deselected in 6.86s
+```
+
+The positive cases independently covered both an absolute fixed launcher operand and the Task 7
+planned invocation form:
+
+```text
+/usr/bin/bash scripts/smoke/run_china_v1_isolated_fusion_smoke.sh
+```
+
+The latter is resolved against the ancestor process cwd read from `/proc/<pid>/cwd`.
+
+### Minimal fix and GREEN evidence
+
+The ancestor check now accepts only a two-element shell argv: the `bash`/`sh` executable and the
+fixed launcher as its actual script operand. It no longer scans arbitrary later tokens. This
+structurally rejects `-c`, `-s`, and post-script decoys while preserving the fixed worktree,
+interpreter, physical `/dev/davinci2`, `fuser` idle, and real parent-chain checks.
+
+```text
+launcher-focused: 6 passed, 16 deselected in 7.38s
+full Runner: 22 passed in 7.76s
+isolated non-NPU: 113 passed in 33.73s
+Ruff: All checks passed!
+Black: 2 files would be left unchanged.
+git diff --check: exit 0
+```
+
+Round 2 commit: `0dd423d fix: require exact Task 7 script operand`.
+
+Corrected review accounting: **round 1 = 3 addressed / 1 open; round 2 = 1 addressed / 0 open**.
+No NPU was inspected or started.
