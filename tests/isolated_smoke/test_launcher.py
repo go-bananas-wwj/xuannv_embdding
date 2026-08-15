@@ -74,6 +74,10 @@ def test_launcher_runs_the_only_supported_smoke_in_the_foreground() -> None:
     assert "--config configs/smoke/china_v1_isolated_fusion_4patch_20260815.yaml" in source
     assert "--stage npu-smoke" in source
     assert '2>&1 | tee "${SANDBOX}/logs/npu_smoke.log"' in source
+    assert "READY_TO_SEAL" in source
+    assert "--finalize-seal" in source
+    assert source.index("--stage npu-smoke") < source.index("--finalize-seal")
+    assert source.rstrip().endswith("--finalize-seal")
     assert "torchrun" not in source
     assert "nohup" not in source
     assert not re.search(r"(?m)&\s*(?:#.*)?$", source)

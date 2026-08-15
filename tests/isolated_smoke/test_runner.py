@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, replace
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -237,22 +238,44 @@ def test_path_audit_accumulates_prepare_and_cpu_contract_paths(
 def test_npu_path_audit_records_expected_success_before_sealing(
     runner_fixture: RunnerFixture,
 ) -> None:
-    """authoritative audit 必须先记录最终 SUCCESS，且此时磁盘上还没有 SUCCESS。"""
+    """finalizer 必须在 tee 结束后捕获最终日志，再声明最终 SUCCESS。"""
     import experiments.china_v1_fusion_smoke.runner as runner_module
 
-    before = runner_module._snapshot_sandbox(runner_fixture.sandbox_root)
-    success = runner_fixture.sandbox_root / "SUCCESS"
-    created = runner_module._record_path_audit(
+    launcher_log = runner_fixture.sandbox_root / "logs" / "npu_smoke.log"
+    launcher_log.parent.mkdir()
+    launcher_log.write_text("compute output\n", encoding="utf-8")
+    before_compute = runner_module._snapshot_sandbox(runner_fixture.sandbox_root)
+    (runner_fixture.sandbox_root / "metrics.json").write_text("{}\n", encoding="utf-8")
+    runner_module._record_path_audit(
         "npu-smoke",
         runner_fixture.sandbox_root,
-        before,
+        before_compute,
+    )
+    with launcher_log.open("a", encoding="utf-8") as handle:
+        handle.write("final runner JSON from tee\n")
+    before_finalize = runner_module._snapshot_sandbox(runner_fixture.sandbox_root)
+    success = runner_fixture.sandbox_root / "SUCCESS"
+    created = runner_module._record_path_audit(
+        "finalize-seal",
+        runner_fixture.sandbox_root,
+        before_finalize,
         final_seal_path=success,
+        declared_paths=(launcher_log,),
     )
 
     audit = json.loads((runner_fixture.sandbox_root / "path_audit.json").read_text())
     assert not success.exists()
+    assert launcher_log in created
     assert success in created
+    assert "logs/npu_smoke.log" in audit["created_or_modified"]
     assert "SUCCESS" in audit["created_or_modified"]
+    assert audit["stage"] == "finalize-seal"
+    assert audit["stages"] == ["npu-smoke", "finalize-seal"]
+    assert audit["declared_files"]["logs/npu_smoke.log"] == {
+        "size": launcher_log.stat().st_size,
+        "mtime_ns": launcher_log.stat().st_mtime_ns,
+        "sha256": sha256(launcher_log.read_bytes()).hexdigest(),
+    }
     assert audit["final_seal"] == {
         "path": "SUCCESS",
         "status": "expected_last_write",

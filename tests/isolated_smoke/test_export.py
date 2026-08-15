@@ -17,6 +17,7 @@ from experiments.china_v1_fusion_smoke.export import (
     load_smoke_checkpoint,
     save_smoke_checkpoint,
     seal_success,
+    verify_success,
 )
 from experiments.china_v1_fusion_smoke.safety import SafetyError
 
@@ -55,6 +56,11 @@ def _metadata_for(model: torch.nn.Module) -> dict[str, object]:
 
 
 def _write_evidence(sandbox: Path) -> list[Path]:
+    launcher_log = sandbox / "logs" / "npu_smoke.log"
+    launcher_log.parent.mkdir()
+    launcher_log.write_text("complete foreground runner output\n", encoding="utf-8")
+    ready = sandbox / "READY_TO_SEAL"
+    ready.write_text('{"status": "npu_compute_complete"}\n', encoding="utf-8")
     evidence = []
     for name in (
         "run_manifest.json",
@@ -66,8 +72,26 @@ def _write_evidence(sandbox: Path) -> list[Path]:
         payload = {}
         if name == "path_audit.json":
             payload = {
-                "stage": "npu-smoke",
-                "created_or_modified": ["path_audit.json", "SUCCESS"],
+                "stage": "finalize-seal",
+                "stages": ["npu-smoke", "finalize-seal"],
+                "created_or_modified": [
+                    "logs/npu_smoke.log",
+                    "path_audit.json",
+                    "READY_TO_SEAL",
+                    "SUCCESS",
+                ],
+                "declared_files": {
+                    "logs/npu_smoke.log": {
+                        "size": launcher_log.stat().st_size,
+                        "mtime_ns": launcher_log.stat().st_mtime_ns,
+                        "sha256": sha256(launcher_log.read_bytes()).hexdigest(),
+                    },
+                    "READY_TO_SEAL": {
+                        "size": ready.stat().st_size,
+                        "mtime_ns": ready.stat().st_mtime_ns,
+                        "sha256": sha256(ready.read_bytes()).hexdigest(),
+                    },
+                },
                 "final_seal": {
                     "path": "SUCCESS",
                     "status": "expected_last_write",
@@ -83,7 +107,7 @@ def _write_evidence(sandbox: Path) -> list[Path]:
     selection = sandbox / "manifests" / "patch_selection.json"
     selection.parent.mkdir()
     selection.write_text('{"patch_ids": ["patch-000", "patch-001", "patch-002", "patch-003"]}')
-    return evidence
+    return [*evidence, launcher_log, ready]
 
 
 def _export_all_groups(
@@ -367,13 +391,38 @@ def test_seal_success_requires_complete_sealed_false_formal_evidence(
 ) -> None:
     """SUCCESS 只能在四组已封存且全部审计证据存在时写入。"""
     groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    launcher_log = tmp_sandbox / "logs" / "npu_smoke.log"
+    log_state_before = launcher_log.stat()
+    log_sha_before = sha256(launcher_log.read_bytes()).hexdigest()
 
     success = seal_success(tmp_sandbox, [*groups, *evidence])
 
     assert success == tmp_sandbox / "SUCCESS"
+    assert launcher_log.stat().st_size == log_state_before.st_size
+    assert launcher_log.stat().st_mtime_ns == log_state_before.st_mtime_ns
+    assert sha256(launcher_log.read_bytes()).hexdigest() == log_sha_before
+    assert success.stat().st_mtime_ns >= launcher_log.stat().st_mtime_ns
     payload = success.read_text(encoding="utf-8")
     assert "combined_sha256" in payload
     assert "utc" in payload
+    verify_success(tmp_sandbox)
+
+
+def test_success_verification_detects_launcher_log_tampering_after_seal(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+) -> None:
+    """最终日志进入 SUCCESS 摘要后，任何 seal 后追加都必须使正式验证失败。"""
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    launcher_log = tmp_sandbox / "logs" / "npu_smoke.log"
+    seal_success(tmp_sandbox, [*groups, *evidence])
+    verify_success(tmp_sandbox)
+
+    with launcher_log.open("a", encoding="utf-8") as handle:
+        handle.write("tampered after SUCCESS\n")
+
+    with pytest.raises(ExportError, match="launcher log|combined SHA-256|declared"):
+        verify_success(tmp_sandbox)
 
 
 def test_seal_success_rejects_path_audit_without_expected_final_success(

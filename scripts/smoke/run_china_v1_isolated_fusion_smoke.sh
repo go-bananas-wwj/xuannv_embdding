@@ -3,6 +3,7 @@ set -euo pipefail
 
 WORKTREE=/root/workspace/xuannv/.worktrees/codex-china-v1-fusion-smoke
 SANDBOX=/data/xuannv_embedding/sandboxes/china_v1_fusion_smoke_20260815
+READY_TO_SEAL=${SANDBOX}/READY_TO_SEAL
 
 if [[ ! -e /dev/davinci2 ]]; then
   echo "NPU 2 device is absent" >&2
@@ -34,6 +35,12 @@ then
   exit 20
 fi
 
+if [[ ! -f "${READY_TO_SEAL}" ]]; then
+  "${SANDBOX}/env/bin/python" -m experiments.china_v1_fusion_smoke.runner \
+    --config configs/smoke/china_v1_isolated_fusion_4patch_20260815.yaml \
+    --stage npu-smoke 2>&1 | tee "${SANDBOX}/logs/npu_smoke.log"
+fi
+
 "${SANDBOX}/env/bin/python" -m experiments.china_v1_fusion_smoke.runner \
   --config configs/smoke/china_v1_isolated_fusion_4patch_20260815.yaml \
-  --stage npu-smoke 2>&1 | tee "${SANDBOX}/logs/npu_smoke.log"
+  --finalize-seal

@@ -35,6 +35,8 @@ _REQUIRED_EVIDENCE = (
     "smoke_checkpoint.pt",
 )
 _PATCH_SELECTION_RELATIVE_PATH = Path("manifests") / "patch_selection.json"
+_LAUNCHER_LOG_RELATIVE_PATH = Path("logs") / "npu_smoke.log"
+_READY_TO_SEAL_RELATIVE_PATH = Path("READY_TO_SEAL")
 _REQUIRED_METADATA = (
     "git_commit",
     "config_sha256",
@@ -506,19 +508,27 @@ def _validate_required_evidence(sandbox_root: Path) -> None:
         if not isinstance(parsed, Mapping):
             raise ExportError(f"required JSON evidence must be an object: {path}")
         if name == "path_audit.json":
-            _validate_final_path_audit(parsed)
+            _validate_final_path_audit(parsed, sandbox_root)
     checkpoint = _guard_non_symlink_sandbox_path(sandbox_root / "smoke_checkpoint.pt", sandbox_root)
     _require_regular_evidence_file(checkpoint)
     _load_checkpoint_payload(checkpoint)
 
 
-def _validate_final_path_audit(raw: Mapping[str, object]) -> None:
+def _validate_final_path_audit(raw: Mapping[str, object], sandbox_root: Path) -> None:
     """确认 SUCCESS 已在不可再修改的 audit 中声明为最后封存写入。"""
     created = raw.get("created_or_modified")
-    if not isinstance(created, list) or "SUCCESS" not in created:
-        raise ExportError("path audit must include the final SUCCESS path")
-    if raw.get("stage") != "npu-smoke":
-        raise ExportError("path audit final SUCCESS declaration requires stage npu-smoke")
+    required_created = {
+        _LAUNCHER_LOG_RELATIVE_PATH.as_posix(),
+        _READY_TO_SEAL_RELATIVE_PATH.as_posix(),
+        "SUCCESS",
+    }
+    if not isinstance(created, list) or not required_created.issubset(created):
+        raise ExportError("path audit must include the final log, READY_TO_SEAL and SUCCESS")
+    if raw.get("stage") != "finalize-seal":
+        raise ExportError("path audit final SUCCESS declaration requires stage finalize-seal")
+    stages = raw.get("stages")
+    if not isinstance(stages, list) or stages[-2:] != ["npu-smoke", "finalize-seal"]:
+        raise ExportError("path audit must finish with npu-smoke then finalize-seal")
     expected = {
         "path": "SUCCESS",
         "status": "expected_last_write",
@@ -526,6 +536,27 @@ def _validate_final_path_audit(raw: Mapping[str, object]) -> None:
     }
     if not _exactly_equal(raw.get("final_seal"), expected):
         raise ExportError("path audit must declare SUCCESS as the expected last write")
+    declared = raw.get("declared_files")
+    expected_declared = {
+        _LAUNCHER_LOG_RELATIVE_PATH.as_posix(),
+        _READY_TO_SEAL_RELATIVE_PATH.as_posix(),
+    }
+    if not isinstance(declared, Mapping) or set(declared) != expected_declared:
+        raise ExportError("path audit declared files must bind the launcher log and READY_TO_SEAL")
+    for relative in sorted(expected_declared):
+        metadata = declared[relative]
+        if not isinstance(metadata, Mapping) or set(metadata) != {"size", "mtime_ns", "sha256"}:
+            raise ExportError(f"path audit declared metadata is invalid: {relative}")
+        path = _guard_non_symlink_sandbox_path(sandbox_root / relative, sandbox_root)
+        _require_regular_evidence_file(path)
+        current = path.stat()
+        expected_metadata = {
+            "size": current.st_size,
+            "mtime_ns": current.st_mtime_ns,
+            "sha256": _sha256_file(path),
+        }
+        if not _exactly_equal(metadata, expected_metadata):
+            raise ExportError(f"path audit declared file changed after final audit: {relative}")
 
 
 def _required_patch_selection_ids(sandbox_root: Path) -> tuple[str, ...]:
@@ -577,18 +608,15 @@ def _digest_path(digest: Any, path: Path, sandbox_root: Path) -> None:
         _digest_path(digest, child, sandbox_root)
 
 
-def seal_success(sandbox_root: Path, required_files: Iterable[Path | str]) -> Path:
-    """确认固定 evidence 与四个 sealed Zarr 均完整后，最后写入 ``SUCCESS``。"""
-    root = _guard_non_symlink_sandbox_path(Path(sandbox_root), Path(sandbox_root))
-    success = _guard_non_symlink_sandbox_path(root / "SUCCESS", root)
-    if success.exists():
-        raise ExportError("SUCCESS already exists; a sealed smoke run is immutable")
-
+def _validated_seal_paths(root: Path, required_files: Iterable[Path | str]) -> list[Path]:
+    """验证最终证据合同并返回参与 SUCCESS 摘要的稳定路径集合。"""
     supplied_paths = [_resolve_required_path(path, root) for path in required_files]
     mandatory_paths = [
         *(_guard_non_symlink_sandbox_path(path, root) for path in _required_group_paths(root)),
         *(_guard_non_symlink_sandbox_path(root / name, root) for name in _REQUIRED_EVIDENCE),
         _guard_non_symlink_sandbox_path(root / _PATCH_SELECTION_RELATIVE_PATH, root),
+        _guard_non_symlink_sandbox_path(root / _LAUNCHER_LOG_RELATIVE_PATH, root),
+        _guard_non_symlink_sandbox_path(root / _READY_TO_SEAL_RELATIVE_PATH, root),
     ]
     trusted_patch_ids = _required_patch_selection_ids(root)
     all_paths = list(dict.fromkeys([*mandatory_paths, *supplied_paths]))
@@ -608,14 +636,29 @@ def seal_success(sandbox_root: Path, required_files: Iterable[Path | str]) -> Pa
     if group_axes[0][0] != trusted_patch_ids:
         raise ExportError("Zarr patch axis does not match trusted patch selection evidence")
     _validate_required_evidence(root)
+    return all_paths
 
+
+def _combined_paths_sha256(root: Path, paths: Iterable[Path]) -> str:
     digest = sha256()
-    for path in sorted(all_paths, key=lambda item: item.relative_to(root).as_posix()):
+    for path in sorted(paths, key=lambda item: item.relative_to(root).as_posix()):
         _digest_path(digest, path, root)
+    return digest.hexdigest()
+
+
+def seal_success(sandbox_root: Path, required_files: Iterable[Path | str]) -> Path:
+    """确认固定 evidence 与四个 sealed Zarr 均完整后，最后写入 ``SUCCESS``。"""
+    root = _guard_non_symlink_sandbox_path(Path(sandbox_root), Path(sandbox_root))
+    success = _guard_non_symlink_sandbox_path(root / "SUCCESS", root)
+    if success.exists():
+        raise ExportError("SUCCESS already exists; a sealed smoke run is immutable")
+
+    all_paths = _validated_seal_paths(root, required_files)
+    combined_sha256 = _combined_paths_sha256(root, all_paths)
     sealed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     payload = (
         "{\n"
-        f'  "combined_sha256": "{digest.hexdigest()}",\n'
+        f'  "combined_sha256": "{combined_sha256}",\n'
         f'  "sealed_at_utc": "{sealed_at}",\n'
         '  "synthetic": true,\n'
         '  "formal_training_allowed": false,\n'
@@ -629,4 +672,38 @@ def seal_success(sandbox_root: Path, required_files: Iterable[Path | str]) -> Pa
     _guard_non_symlink_sandbox_path(temporary, root)
     _guard_non_symlink_sandbox_path(success, root)
     temporary.replace(success)
+    verify_success(root)
     return success
+
+
+def verify_success(sandbox_root: Path) -> None:
+    """只读复核 SUCCESS 摘要与最终日志、证据和四组 Zarr 的当前内容。"""
+    root = _guard_non_symlink_sandbox_path(Path(sandbox_root), Path(sandbox_root))
+    success = _guard_non_symlink_sandbox_path(root / "SUCCESS", root)
+    _require_regular_evidence_file(success)
+    try:
+        raw = json.loads(success.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ExportError("SUCCESS summary is malformed") from exc
+    expected_keys = {
+        "combined_sha256",
+        "sealed_at_utc",
+        "synthetic",
+        "formal_training_allowed",
+        "formal_evaluation_allowed",
+    }
+    if not isinstance(raw, Mapping) or set(raw) != expected_keys:
+        raise ExportError("SUCCESS summary has an invalid schema")
+    if not _is_hex(raw["combined_sha256"], 64):
+        raise ExportError("SUCCESS combined SHA-256 is invalid")
+    if not isinstance(raw["sealed_at_utc"], str) or not raw["sealed_at_utc"].endswith("Z"):
+        raise ExportError("SUCCESS sealed_at_utc is invalid")
+    if (
+        raw["synthetic"] is not True
+        or raw["formal_training_allowed"] is not False
+        or raw["formal_evaluation_allowed"] is not False
+    ):
+        raise ExportError("SUCCESS formal-use policy is invalid")
+    all_paths = _validated_seal_paths(root, ())
+    if _combined_paths_sha256(root, all_paths) != raw["combined_sha256"]:
+        raise ExportError("SUCCESS combined SHA-256 does not match current smoke evidence")

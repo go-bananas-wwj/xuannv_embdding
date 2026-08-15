@@ -33,6 +33,7 @@ from experiments.china_v1_fusion_smoke.export import (
     load_smoke_checkpoint,
     save_smoke_checkpoint,
     seal_success,
+    verify_success,
 )
 from experiments.china_v1_fusion_smoke.model import IsolatedFusionSmokeModel
 from experiments.china_v1_fusion_smoke.registry import (
@@ -47,6 +48,8 @@ from experiments.china_v1_fusion_smoke.synthetic import (
 )
 
 STAGES = ("inspect", "prepare", "cpu-contract", "npu-smoke")
+FINALIZE_STAGE = "finalize-seal"
+AUDIT_STAGES = (*STAGES, FINALIZE_STAGE)
 GROUPS: dict[str, tuple[bool, bool]] = {
     "base": (False, False),
     "base_aef": (True, False),
@@ -58,6 +61,7 @@ EXPECTED_SEED = 20260815
 EXPECTED_WORKTREE = Path("/root/workspace/xuannv/.worktrees/codex-china-v1-fusion-smoke")
 TASK7_LAUNCHER = EXPECTED_WORKTREE / "scripts/smoke/run_china_v1_isolated_fusion_smoke.sh"
 PHYSICAL_NPU2 = Path("/dev/davinci2")
+READY_TO_SEAL = "READY_TO_SEAL"
 
 
 class RunnerError(RuntimeError):
@@ -221,8 +225,11 @@ def _record_path_audit(
     before: Mapping[str, tuple[int, int, int]],
     *,
     final_seal_path: Path | None = None,
+    declared_paths: Sequence[Path] = (),
 ) -> tuple[Path, ...]:
     """记录本阶段新增或修改路径；audit 文件自身也显式纳入。"""
+    if stage not in AUDIT_STAGES:
+        raise RunnerError(f"invalid path audit stage: {stage}")
     after = _snapshot_sandbox(sandbox_root)
     changed = {path for path, state in after.items() if before.get(path) != state}
     audit_relative = "path_audit.json"
@@ -249,11 +256,31 @@ def _record_path_audit(
         if raw_stages is None and isinstance(previous.get("stage"), str):
             raw_stages = [previous["stage"]]
         if not isinstance(raw_stages, list) or not all(
-            isinstance(value, str) and value in STAGES for value in raw_stages
+            isinstance(value, str) and value in AUDIT_STAGES for value in raw_stages
         ):
             raise RunnerError("existing path audit contains invalid stages")
         previous_stages = raw_stages
     changed.add(audit_relative)
+    declared_files: dict[str, dict[str, object]] = {}
+    for declared_path in declared_paths:
+        declared = validate_write_path(declared_path, sandbox_root)
+        if declared.is_symlink() or not declared.is_file():
+            raise RunnerError(f"declared audit path must be a real file: {declared}")
+        relative = declared.relative_to(sandbox_root).as_posix()
+        before_hash = declared.stat()
+        checksum = _sha256_file(declared)
+        after_hash = declared.stat()
+        if (before_hash.st_size, before_hash.st_mtime_ns) != (
+            after_hash.st_size,
+            after_hash.st_mtime_ns,
+        ):
+            raise RunnerError(f"declared audit file changed while hashing: {declared}")
+        changed.add(relative)
+        declared_files[relative] = {
+            "size": after_hash.st_size,
+            "mtime_ns": after_hash.st_mtime_ns,
+            "sha256": checksum,
+        }
     stages = [*previous_stages, stage]
     final_seal: dict[str, object] | None = None
     if final_seal_path is not None:
@@ -278,6 +305,8 @@ def _record_path_audit(
     }
     if final_seal is not None:
         payload["final_seal"] = final_seal
+    if declared_files:
+        payload["declared_files"] = dict(sorted(declared_files.items()))
     _write_json(
         audit_path,
         payload,
@@ -1062,10 +1091,23 @@ def _run_npu_smoke(
         "npu-smoke",
         config.sandbox_root,
         before_sandbox,
-        final_seal_path=config.sandbox_root / "SUCCESS",
     )
-    _require_disk_budget(config.sandbox_root)
-    seal_success(config.sandbox_root, [])
+    path_audit = config.sandbox_root / "path_audit.json"
+    ready = _write_json(
+        config.sandbox_root / READY_TO_SEAL,
+        {
+            "status": "npu_compute_complete",
+            "git_commit": metadata["git_commit"],
+            "config_sha256": metadata["config_sha256"],
+            "preliminary_path_audit_sha256": _sha256_file(path_audit),
+            "source_unchanged": True,
+            "synthetic": True,
+            "formal_training_allowed": False,
+            "formal_evaluation_allowed": False,
+        },
+        config.sandbox_root,
+    )
+    created = (*created, ready)
     return StageResult(
         stage="npu-smoke",
         sandbox_root=config.sandbox_root,
@@ -1088,6 +1130,75 @@ def _gradient_l1(module: torch.nn.Module) -> float:
     ):
         return 0.0
     return float(sum(gradient.abs().sum().item() for gradient in gradients if gradient is not None))
+
+
+def _finalize_npu_smoke(config_path: Path) -> Path:
+    """tee 完全结束后重建最终审计，并把 SUCCESS 作为最后一次沙箱写入。"""
+    config_path = Path(config_path)
+    config = load_smoke_config(config_path)
+    _load_seed(config_path)
+    sandbox_root = ensure_sandbox(config.sandbox_root)
+    _validate_npu_launcher(config)
+    if (sandbox_root / "SUCCESS").exists():
+        raise RunnerError("SUCCESS already exists; sealed smoke output is immutable")
+
+    ready_path = validate_write_path(sandbox_root / READY_TO_SEAL, sandbox_root)
+    if ready_path.is_symlink() or not ready_path.is_file():
+        raise RunnerError("finalize-seal requires a real READY_TO_SEAL file")
+    ready = _load_json_object(ready_path)
+    expected_ready_keys = {
+        "status",
+        "git_commit",
+        "config_sha256",
+        "preliminary_path_audit_sha256",
+        "source_unchanged",
+        "synthetic",
+        "formal_training_allowed",
+        "formal_evaluation_allowed",
+    }
+    if set(ready) != expected_ready_keys:
+        raise RunnerError("READY_TO_SEAL has an invalid schema")
+    expected_ready = {
+        "status": "npu_compute_complete",
+        "git_commit": _git_commit(),
+        "config_sha256": _sha256_file(config_path),
+        "source_unchanged": True,
+        "synthetic": True,
+        "formal_training_allowed": False,
+        "formal_evaluation_allowed": False,
+    }
+    if any(ready.get(key) != value for key, value in expected_ready.items()):
+        raise RunnerError("READY_TO_SEAL provenance does not match the current smoke")
+
+    audit_path = validate_write_path(sandbox_root / "path_audit.json", sandbox_root)
+    preliminary_audit = _load_json_object(audit_path)
+    if preliminary_audit.get("stage") != "npu-smoke" or ready.get(
+        "preliminary_path_audit_sha256"
+    ) != _sha256_file(audit_path):
+        raise RunnerError("READY_TO_SEAL does not match the preliminary path audit")
+
+    expected_source = _load_json_object(sandbox_root / "manifests" / "source_snapshot_after.json")
+    if expected_source.pop("hashing_performed", None) is not False:
+        raise RunnerError("prepared source snapshot has an invalid hashing policy")
+    if _snapshot_source_archives(config.source_root) != expected_source:
+        raise RunnerError("source archive snapshot changed before finalize-seal")
+
+    launcher_log = validate_write_path(sandbox_root / "logs" / "npu_smoke.log", sandbox_root)
+    if launcher_log.is_symlink() or not launcher_log.is_file():
+        raise RunnerError("finalize-seal requires the completed foreground launcher log")
+    before_finalize = _snapshot_sandbox(sandbox_root)
+    _record_path_audit(
+        FINALIZE_STAGE,
+        sandbox_root,
+        before_finalize,
+        final_seal_path=sandbox_root / "SUCCESS",
+        declared_paths=(launcher_log, ready_path),
+    )
+    _require_disk_budget(sandbox_root)
+    success = seal_success(sandbox_root, [])
+    verify_success(sandbox_root)
+    _require_disk_budget(sandbox_root)
+    return success
 
 
 def run_stage(config_path: Path, stage: str, *, full_shape: bool = False) -> StageResult:
@@ -1137,15 +1248,23 @@ def _result_payload(result: StageResult) -> dict[str, object]:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--stage", choices=STAGES, required=True)
+    action = parser.add_mutually_exclusive_group(required=True)
+    action.add_argument("--stage", choices=STAGES)
+    action.add_argument("--finalize-seal", action="store_true")
     parser.add_argument(
         "--full-shape",
         action="store_true",
         help="cpu-contract only: use B=8 and 128x128 instead of the small fixture",
     )
     args = parser.parse_args(argv)
+    if args.finalize_seal:
+        if args.full_shape:
+            parser.error("--full-shape is not supported by --finalize-seal")
+        _finalize_npu_smoke(args.config)
+        return 0
     if args.full_shape and args.stage != "cpu-contract":
         parser.error("--full-shape is supported only by --stage cpu-contract")
+    assert args.stage is not None
     result = run_stage(args.config, args.stage, full_shape=args.full_shape)
     print(json.dumps(_result_payload(result), ensure_ascii=False, indent=2, sort_keys=True))
     return 0
