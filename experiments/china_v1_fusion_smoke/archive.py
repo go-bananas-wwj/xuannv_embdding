@@ -54,9 +54,12 @@ def _archive_path(source_root: Path, sensor: str, year: int, month: int) -> Path
 def _patch_id(info_name: str, sensor: str, year: int, month: int) -> str | None:
     """若 ZIP member 遵循约定，返回它的 patch ID。"""
     expected_prefix = f"{sensor}/{year}/{month:02d}/"
-    if not info_name.startswith(expected_prefix) or not info_name.endswith(".tif"):
+    if not info_name.startswith(expected_prefix):
         return None
-    return Path(info_name).stem
+    filename = info_name.removeprefix(expected_prefix)
+    if not filename or "/" in filename or not filename.endswith(".tif"):
+        return None
+    return Path(filename).stem
 
 
 def _member_ids(spec: tuple[Path, str, int, int]) -> set[str]:
@@ -76,29 +79,29 @@ def _member_ids(spec: tuple[Path, str, int, int]) -> set[str]:
     return members
 
 
-def _selected_crcs(
+def _selected_members(
     spec: tuple[Path, str, int, int], selected_ids: frozenset[str]
-) -> dict[str, int]:
-    """从一个 ZIP 的中央目录捕获已选 patch 的 CRC，不读取 TIFF 内容。"""
+) -> dict[str, tuple[str, int]]:
+    """从一个 ZIP 的中央目录捕获已选 patch 的精确 member 名与 CRC。"""
     archive_path, sensor, year, month = spec
-    crcs: dict[str, int] = {}
+    members: dict[str, tuple[str, int]] = {}
     with ZipFile(archive_path) as archive:
         for info in archive.infolist():
             patch_id = _patch_id(info.filename, sensor, year, month)
             if patch_id not in selected_ids:
                 continue
-            if patch_id in crcs:
+            if patch_id in members:
                 raise ValueError(f"duplicate selected patch member in {archive_path}: {patch_id}")
-            crcs[patch_id] = info.CRC
-    return crcs
+            members[patch_id] = (info.filename, info.CRC)
+    return members
 
 
-def _selected_crcs_for_spec(
+def _selected_members_for_spec(
     call: tuple[tuple[Path, str, int, int], frozenset[str]],
-) -> dict[str, int]:
+) -> dict[str, tuple[str, int]]:
     """为 ProcessPoolExecutor 提供可序列化的固定选中集合调用。"""
     spec, selected_ids = call
-    return _selected_crcs(spec, selected_ids)
+    return _selected_members(spec, selected_ids)
 
 
 def select_complete_patches(source_root: Path, count: int = 4) -> tuple[PatchSelection, ...]:
@@ -124,17 +127,19 @@ def select_complete_patches(source_root: Path, count: int = 4) -> tuple[PatchSel
             for members in executor.map(_member_ids, batch):
                 complete_ids = members if complete_ids is None else complete_ids & members
     assert complete_ids is not None
+    if len(complete_ids) < count:
+        raise ValueError(f"requested {count} complete patches, found {len(complete_ids)}")
     selected_ids = tuple(sorted(complete_ids)[:count])
     selected_set = frozenset(selected_ids)
-    crc_by_spec: dict[tuple[Path, str, int, int], dict[str, int]] = {}
+    members_by_spec: dict[tuple[Path, str, int, int], dict[str, tuple[str, int]]] = {}
     for start in range(0, len(specs), 8):
         batch = specs[start : start + 8]
         with ProcessPoolExecutor(max_workers=len(batch)) as executor:
             calls = ((spec, selected_set) for spec in batch)
-            for spec, crcs in zip(batch, executor.map(_selected_crcs_for_spec, calls)):
-                if set(crcs) != selected_set:
+            for spec, members in zip(batch, executor.map(_selected_members_for_spec, calls)):
+                if set(members) != selected_set:
                     raise ValueError(f"selected patch disappeared from source archive: {spec[0]}")
-                crc_by_spec[spec] = crcs
+                members_by_spec[spec] = members
 
     selections: list[PatchSelection] = []
     for patch_id in selected_ids:
@@ -143,8 +148,7 @@ def select_complete_patches(source_root: Path, count: int = 4) -> tuple[PatchSel
             for year in YEARS:
                 for month in MONTHS:
                     archive = _archive_path(root, sensor, year, month)
-                    member = f"{sensor}/{year}/{month:02d}/{patch_id}.tif"
-                    crc = crc_by_spec[archive, sensor, year, month][patch_id]
+                    member, crc = members_by_spec[archive, sensor, year, month][patch_id]
                     refs.append(MonthRef(sensor, year, month, archive, member, crc))
         selections.append(PatchSelection(patch_id, tuple(refs)))
     return tuple(selections)

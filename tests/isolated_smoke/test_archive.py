@@ -75,6 +75,30 @@ def test_selector_captures_member_crc_and_preserves_archive_paths(fake_archive_r
     assert first.crc == info.CRC
 
 
+def test_selector_ignores_nested_tiff_members(fake_archive_root: Path) -> None:
+    """仅直接位于约定目录下的 TIFF 才能成为可重建的 patch member。"""
+    nested_patch_id = "parent_32643:001:0001"
+    for archive_path in fake_archive_root.rglob("*.zip"):
+        sensor, year, month = archive_path.parts[-4:-1]
+        with ZipFile(archive_path, "a", compression=ZIP_DEFLATED) as archive:
+            archive.writestr(
+                f"{sensor}/{year}/{month}/nested/{nested_patch_id}.tif",
+                b"not-a-direct-member",
+            )
+
+    selected = select_complete_patches(fake_archive_root, count=4)
+
+    assert [item.patch_id for item in selected] == COMPLETE_PATCH_IDS[:4]
+
+
+def test_selector_rejects_requested_count_larger_than_complete_intersection(
+    fake_archive_root: Path,
+) -> None:
+    """调用方请求四个以上完整 patch 时不能静默降级为较小 batch。"""
+    with pytest.raises(ValueError, match=r"requested 5 complete patches, found 4"):
+        select_complete_patches(fake_archive_root, count=5)
+
+
 def test_selector_does_not_modify_archive_tree(fake_archive_root: Path) -> None:
     """检索只能读取 ZIP 目录，调用前后输入文件集合与时间戳保持不变。"""
     before = {
