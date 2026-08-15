@@ -160,8 +160,15 @@ def test_loader_rejects_duplicate_missing_and_extra_month_references(
         ("EPSG:32644", from_origin(310000.0, 3384000.0, 10.0, 10.0)),
         ("EPSG:32643", Affine(10.0, 1.0, 310000.0, 0.0, -10.0, 3384000.0)),
         ("EPSG:32643", from_origin(310000.0, 3384000.0, 20.0, 20.0)),
+        ("EPSG:32643", Affine(10.0, 0.0, 310000.0, 0.0, -10.0, 3384010.0)),
     ],
-    ids=("shifted-transform", "different-crs", "rotated-transform", "non-10m-transform"),
+    ids=(
+        "shifted-transform",
+        "different-crs",
+        "rotated-transform",
+        "non-10m-transform",
+        "northing-shift-10m",
+    ),
 )
 def test_loader_rejects_nonuniform_or_invalid_patch_grid(
     fake_complete_selection: tuple[PatchSelection, ...],

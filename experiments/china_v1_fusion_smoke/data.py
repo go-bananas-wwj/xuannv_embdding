@@ -100,7 +100,9 @@ def _validate_grid(
 ) -> tuple[str, tuple[float, ...]]:
     if expected_grid is None:
         return grid
-    if grid[0] != expected_grid[0] or not np.allclose(grid[1], expected_grid[1]):
+    if grid[0] != expected_grid[0] or not np.allclose(
+        grid[1], expected_grid[1], rtol=0.0, atol=1.0e-6
+    ):
         raise ValueError(f"patch grid differs for {month_ref.member}")
     return expected_grid
 
