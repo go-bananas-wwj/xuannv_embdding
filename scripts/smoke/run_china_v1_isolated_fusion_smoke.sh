@@ -8,11 +8,6 @@ if [[ ! -e /dev/davinci2 ]]; then
   echo "NPU 2 device is absent" >&2
   exit 19
 fi
-if [[ -n "$(fuser /dev/davinci2 2>/dev/null || true)" ]]; then
-  echo "NPU 2 is busy; refusing smoke run" >&2
-  exit 20
-fi
-
 source /usr/local/Ascend/cann-9.0.0/set_env.sh
 CANN_PYTHONPATH="${PYTHONPATH:-}"
 export PYTHONNOUSERSITE=1
@@ -23,6 +18,22 @@ export XUANNV_SMOKE_DEVICE=npu:0
 export WANDB_MODE=disabled
 
 cd "${WORKTREE}"
+if ! "${SANDBOX}/env/bin/python" - <<'PY'
+from experiments.china_v1_fusion_smoke.runner import (
+    _physical_npu2_exists,
+    _physical_npu2_is_idle,
+)
+
+if not _physical_npu2_exists():
+    raise SystemExit("NPU 2 device is absent")
+if not _physical_npu2_is_idle():
+    raise SystemExit("NPU 2 is busy; refusing smoke run")
+PY
+then
+  echo "NPU 2 is busy or occupancy is unknown; refusing smoke run" >&2
+  exit 20
+fi
+
 "${SANDBOX}/env/bin/python" -m experiments.china_v1_fusion_smoke.runner \
   --config configs/smoke/china_v1_isolated_fusion_4patch_20260815.yaml \
   --stage npu-smoke 2>&1 | tee "${SANDBOX}/logs/npu_smoke.log"

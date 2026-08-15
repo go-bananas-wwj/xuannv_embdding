@@ -394,6 +394,57 @@ def _set_task7_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WANDB_MODE", "disabled")
 
 
+def test_missing_fuser_falls_back_to_an_idle_proc_device_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """没有 fuser 时，完整可读且无 owner 的 /proc 扫描必须明确返回 idle。"""
+    import experiments.china_v1_fusion_smoke.runner as runner_module
+
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    monkeypatch.setattr(runner_module.shutil, "which", lambda _name: None)
+
+    assert runner_module._physical_device_is_idle(Path("/dev/null"), proc_root=proc_root)
+
+
+def test_missing_fuser_proc_scan_detects_owner_by_character_device_rdev(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """fallback 必须按字符设备 st_rdev 识别 owner，而不是比较 fd symlink 字符串。"""
+    import experiments.china_v1_fusion_smoke.runner as runner_module
+
+    proc_root = tmp_path / "proc"
+    fd_root = proc_root / "123" / "fd"
+    fd_root.mkdir(parents=True)
+    fd_root.joinpath("7").symlink_to("/dev/null")
+    monkeypatch.setattr(runner_module.shutil, "which", lambda _name: None)
+
+    assert not runner_module._physical_device_is_idle(Path("/dev/null"), proc_root=proc_root)
+
+
+def test_missing_fuser_proc_scan_fails_closed_on_unreadable_process_fds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """任何无法读取的进程 fd 目录都必须作为 unknown fail closed，而非误报 idle。"""
+    import experiments.china_v1_fusion_smoke.runner as runner_module
+
+    proc_root = tmp_path / "proc"
+    fd_root = proc_root / "123" / "fd"
+    fd_root.mkdir(parents=True)
+    original_iterdir = Path.iterdir
+
+    def deny_target_fd_directory(path: Path):
+        if path == fd_root:
+            raise PermissionError("fixture denies fd scan")
+        return original_iterdir(path)
+
+    monkeypatch.setattr(runner_module.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(Path, "iterdir", deny_target_fd_directory)
+
+    with pytest.raises(RunnerError, match="cannot independently scan process file descriptors"):
+        runner_module._physical_device_is_idle(Path("/dev/null"), proc_root=proc_root)
+
+
 def test_npu_smoke_rejects_manually_set_environment_without_launcher_ancestor(
     runner_fixture: RunnerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -30,7 +30,9 @@ def test_launcher_exposes_only_physical_npu2_as_logical_npu0() -> None:
     source = _launcher_source()
 
     assert "[[ ! -e /dev/davinci2 ]]" in source
-    assert "fuser /dev/davinci2" in source
+    assert "fuser /dev/davinci2" not in source
+    assert "_physical_npu2_is_idle" in source
+    assert '"${SANDBOX}/env/bin/python" -' in source
     assert "export ASCEND_RT_VISIBLE_DEVICES=2" in source
     assert "export XUANNV_SMOKE_DEVICE=npu:0" in source
 

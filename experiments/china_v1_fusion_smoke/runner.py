@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -712,10 +713,53 @@ def _physical_npu2_exists() -> bool:
     return PHYSICAL_NPU2.exists() and PHYSICAL_NPU2.is_char_device()
 
 
-def _physical_npu2_is_idle() -> bool:
+def _proc_device_user_pids(device: Path, *, proc_root: Path) -> tuple[int, ...]:
+    """在没有 fuser 时按字符设备 st_rdev 扫描完整可读的进程 fd。"""
+    try:
+        device_metadata = device.stat()
+    except OSError as exc:
+        raise RunnerError(f"cannot stat physical NPU device: {device}") from exc
+    if not stat.S_ISCHR(device_metadata.st_mode):
+        raise RunnerError(f"physical NPU path is not a character device: {device}")
+    try:
+        processes = tuple(proc_root.iterdir())
+    except OSError as exc:
+        raise RunnerError("cannot independently scan the process table") from exc
+
+    users: set[int] = set()
+    for process in processes:
+        if not process.name.isdigit():
+            continue
+        fd_root = process / "fd"
+        try:
+            descriptors = tuple(fd_root.iterdir())
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise RunnerError(
+                f"cannot independently scan process file descriptors: {fd_root}"
+            ) from exc
+        for descriptor in descriptors:
+            try:
+                metadata = descriptor.stat()
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                raise RunnerError(
+                    f"cannot independently inspect process file descriptor: {descriptor}"
+                ) from exc
+            if stat.S_ISCHR(metadata.st_mode) and metadata.st_rdev == device_metadata.st_rdev:
+                users.add(int(process.name))
+    return tuple(sorted(users))
+
+
+def _physical_device_is_idle(device: Path, *, proc_root: Path = Path("/proc")) -> bool:
+    fuser = shutil.which("fuser")
+    if fuser is None:
+        return not _proc_device_user_pids(device, proc_root=proc_root)
     try:
         result = subprocess.run(
-            ["fuser", str(PHYSICAL_NPU2)],
+            [fuser, str(device)],
             check=False,
             capture_output=True,
             text=True,
@@ -729,6 +773,10 @@ def _physical_npu2_is_idle() -> bool:
     raise RunnerError(
         f"cannot independently query NPU 2 occupancy: fuser exited {result.returncode}"
     )
+
+
+def _physical_npu2_is_idle() -> bool:
+    return _physical_device_is_idle(PHYSICAL_NPU2)
 
 
 def _proc_parent_pid(process: Path) -> int | None:
