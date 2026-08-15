@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import stat
 import subprocess
 import sys
 import time
@@ -103,20 +104,52 @@ def _archive_paths(source_root: Path) -> tuple[Path, ...]:
     )
 
 
-def _snapshot_source_archives(source_root: Path) -> dict[str, dict[str, int]]:
-    """只记录固定 48 个源 ZIP 的 size/mtime，不读取内容或生成 hash。"""
-    root = Path(source_root).resolve(strict=True)
-    snapshot: dict[str, dict[str, int]] = {}
+def _source_entry_metadata(path: Path) -> dict[str, object]:
+    metadata = path.lstat()
+    if stat.S_ISREG(metadata.st_mode):
+        kind = "file"
+    elif stat.S_ISDIR(metadata.st_mode):
+        kind = "directory"
+    elif stat.S_ISLNK(metadata.st_mode):
+        kind = "symlink"
+    else:
+        kind = "other"
+    return {"type": kind, "size": metadata.st_size, "mtime_ns": metadata.st_mtime_ns}
+
+
+def _snapshot_source_archives(source_root: Path) -> dict[str, object]:
+    """快照 48 个 ZIP 及其有限相关目录的完整直接 entry，不读取大文件内容。"""
+    root = Path(os.path.abspath(source_root))
+    if root.is_symlink() or not root.is_dir():
+        raise RunnerError(f"source root must be a real directory: {root}")
+    archives: dict[str, dict[str, object]] = {}
+    watched_directories: set[Path] = {root}
     for archive in _archive_paths(root):
-        resolved = archive.resolve(strict=True)
-        if not resolved.is_relative_to(root) or not resolved.is_file():
-            raise RunnerError(f"source archive is outside the fixed root: {resolved}")
-        stat = resolved.stat()
-        snapshot[resolved.relative_to(root).as_posix()] = {
-            "size": stat.st_size,
-            "mtime_ns": stat.st_mtime_ns,
+        if archive.is_symlink() or not archive.is_file():
+            raise RunnerError(f"required source archive is missing or is a symlink: {archive}")
+        relative = archive.relative_to(root).as_posix()
+        archives[relative] = _source_entry_metadata(archive)
+        directory = archive.parent
+        while directory.is_relative_to(root):
+            watched_directories.add(directory)
+            if directory == root:
+                break
+            directory = directory.parent
+
+    directories: dict[str, object] = {}
+    for directory in sorted(watched_directories, key=lambda value: value.as_posix()):
+        if directory.is_symlink() or not directory.is_dir():
+            raise RunnerError(f"watched source path must be a real directory: {directory}")
+        relative = "." if directory == root else directory.relative_to(root).as_posix()
+        entries = {
+            child.name: _source_entry_metadata(child)
+            for child in sorted(directory.iterdir(), key=lambda value: value.name)
         }
-    return snapshot
+        directories[relative] = {
+            "metadata": _source_entry_metadata(directory),
+            "entries": entries,
+        }
+    return {"archives": archives, "directories": directories}
 
 
 def _snapshot_sandbox(sandbox_root: Path) -> dict[str, tuple[int, int, int]]:
@@ -377,12 +410,12 @@ def _run_prepare(
     manifests = config.sandbox_root / "manifests"
     _write_json(
         manifests / "source_snapshot_before.json",
-        {"archives": source_before, "hashing_performed": False},
+        {**source_before, "hashing_performed": False},
         config.sandbox_root,
     )
     _write_json(
         manifests / "source_snapshot_after.json",
-        {"archives": source_after, "hashing_performed": False},
+        {**source_after, "hashing_performed": False},
         config.sandbox_root,
     )
     selection_path = _write_json(
@@ -465,7 +498,7 @@ def _run_prepare(
             "patch_ids": [selection.patch_id for selection in selections],
             "patch_years": 8,
             "years": list(config.years),
-            "source_archive_count": len(source_before),
+            "source_archive_count": len(source_before["archives"]),
             "source_unchanged": True,
             "selection_manifest_sha256": _sha256_file(selection_path),
             "sandbox_bytes_before_path_audit": sandbox_bytes,

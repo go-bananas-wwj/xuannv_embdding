@@ -295,11 +295,37 @@ def test_prepare_rejects_a_changed_source_snapshot(
         calls += 1
         snapshot = original(source_root)
         if calls == 2:
-            first = next(iter(snapshot))
-            snapshot[first] = {**snapshot[first], "mtime_ns": snapshot[first]["mtime_ns"] + 1}
+            archives = snapshot["archives"]
+            assert isinstance(archives, dict)
+            first = next(iter(archives))
+            archives[first] = {
+                **archives[first],
+                "mtime_ns": archives[first]["mtime_ns"] + 1,
+            }
         return snapshot
 
     monkeypatch.setattr(runner_module, "_snapshot_source_archives", changed_snapshot)
+
+    with pytest.raises(RunnerError, match="source archive snapshot changed"):
+        run_stage(runner_fixture.config_path, stage="prepare")
+    assert not (runner_fixture.sandbox_root / "manifests" / "prepare_manifest.json").exists()
+
+
+def test_prepare_rejects_new_direct_entry_in_canonical_archive_directory(
+    runner_fixture: RunnerFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """prepare 间隙新增 lock/index/temp/completion entry 必须触发源目录 stop rule。"""
+    import experiments.china_v1_fusion_smoke.runner as runner_module
+
+    original_loader = runner_module.load_patch_year_batch
+
+    def load_then_create_forbidden_entry(*args, **kwargs):
+        batch = original_loader(*args, **kwargs)
+        parent = runner_fixture.source_root / "pc-s2/2020/01"
+        (parent / ".forbidden.lock").write_text("must be detected", encoding="utf-8")
+        return batch
+
+    monkeypatch.setattr(runner_module, "load_patch_year_batch", load_then_create_forbidden_entry)
 
     with pytest.raises(RunnerError, match="source archive snapshot changed"):
         run_stage(runner_fixture.config_path, stage="prepare")
