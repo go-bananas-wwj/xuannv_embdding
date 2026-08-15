@@ -389,6 +389,39 @@ def test_seal_success_rejects_path_audit_without_expected_final_success(
     assert not (tmp_sandbox / "SUCCESS").exists()
 
 
+@pytest.mark.parametrize(
+    "tampered_final_seal",
+    [
+        {
+            "path": "SUCCESS",
+            "status": "already_written",
+            "exists_when_audit_written": False,
+        },
+        {
+            "path": "outputs/SUCCESS",
+            "status": "expected_last_write",
+            "exists_when_audit_written": False,
+        },
+    ],
+    ids=("wrong-status", "wrong-path"),
+)
+def test_seal_success_rejects_tampered_final_success_declaration(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+    tampered_final_seal: dict[str, object],
+) -> None:
+    """planned SUCCESS 的状态或路径被篡改时，seal 不得只相信 created list。"""
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    audit = tmp_sandbox / "path_audit.json"
+    payload = json.loads(audit.read_text(encoding="utf-8"))
+    payload["final_seal"] = tampered_final_seal
+    audit.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ExportError, match="path audit.*SUCCESS"):
+        seal_success(tmp_sandbox, [*groups, *evidence])
+    assert not (tmp_sandbox / "SUCCESS").exists()
+
+
 def test_seal_success_rejects_missing_manifest_partial_or_formal_use(
     tmp_sandbox: Path,
     full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
