@@ -1,79 +1,76 @@
-# Task 8 Report: Evidence Report, Regression, and Handoff
+# Task 8 Report: Final Evidence Report, Regression, and Handoff
 
 ## Result
 
-Task 8 produced the planned repository Markdown report and CHANGELOG entry. The human-readable
-verdict is **engineering PASS**, while accuracy, real AEF semantics, real 2 m quality, national
-production readiness, formal training, and formal evaluation remain explicitly **not evaluated / not
-authorized**.
+Task 8 已把最终 `f36a4de` physical-NPU-2 seal 与最终审查修复波同步到仓库文档。唯一结论
+为 **synthetic engineering smoke PASS**；accuracy、真实 AEF 语义、真实 2 m 信息、
+正式 `AEFModel` 训练、正式下游评测与全国生产能力均未评估、未授权。
 
-The report consumes only the corrected current seal. The rejected first seal under
-`attempts/rejected_20260815_first_seal/` is identified as a diagnostic archive and is not treated as
-current evidence. No webpage was created because the requested delivery remains repository
-Markdown, and no chart was added because four one-shot groups with a cold-start first group are not
-latency-comparable.
+主报告只消费 current corrected seal。两份 rejected attempts 均被列为 diagnostic archives，
+并从 current audit、digest closure 与结论中排除。交付仍为 repository Markdown；未创建网页
+或 latency 图，因为四个 one-shot 值包含 cold-start/cache 差异，不具备横向性能可比性。
 
-## Evidence inventory
+## Final evidence inventory
 
-Fresh read-only inspection and `verify_success` established:
+Fresh read-only inventory 建立了以下事实：
 
-- current SUCCESS combined SHA-256
-  `408993be3d507d4f604fd05a26a671026419c9975374ba403a7612b32860efab`;
-- 323 digest roots, 319 unique leaf files, 322 unique path-audit entries, and zero uncovered
-  entries;
-- four independently reopened finite FP16 Zarr embeddings with shape `[4,8,64,128,128]` and bool
-  valid masks with shape `[4,8,1,128,128]`;
-- the fixed four patch IDs and `2020Q1` through `2021Q4` axes on every group;
-- byte-identical source snapshots covering 48 archives, 55 watched directories, and 253 direct
-  entries, with content hashing explicitly disabled;
-- exact zero-gate, checkpoint-reload, and deterministic-rerun errors of `0.0`, plus finite nonzero
-  gradients on both side branches, the high-resolution stem, and output projection;
-- distinct pre-export FP32 and reopened persisted-FP16 vMF norm summaries;
-- per-group one-shot latency and peak allocated/reserved NPU bytes, converted to MiB and GiB in the
-  report without cross-group performance interpretation;
-- complete Python, torch, torch-npu, CANN, driver, Git, and physical-NPU-2 to logical-`npu:0`
-  provenance;
-- sandbox size 292,698,261 bytes (279.14 MiB / 0.273 GiB), no `.partial` path, and SUCCESS as the
-  final current-seal write.
+- 运行 commit：`f36a4de49e263badea4a86b429fddbc3006d5953`；
+- `SUCCESS` combined SHA-256：
+  `45ec55838b74b09d48be96bf510e1e35c8368ff996ea6953f86414f0ba1944f9`；
+- 350 validated roots、321 unique leaf files、350 current audit entries、0 个
+  `attempts/` audit entries、0 个 `.partial`；
+- audit stages：`prepare → cpu-contract → npu-smoke → finalize-seal`；
+- 四组重开后均为有限 FP16 `[4,8,64,128,128]`，bool valid mask
+  `[4,8,1,128,128]`，patch/period axes 一致；
+- exact zero-gate、checkpoint reload、deterministic rerun errors 均为 `0.0`；AEF/highres
+  adapters、两项 gate、highres stem 与 output projection gradients 均为有限非零；
+- 导出前 FP32 与重开 FP16 Zarr vMF 范数分别复算并满足各自阈值；
+- 四组 HBM baselines 完全相同，且各自记录 peak allocated/reserved 与 delta；
+- source snapshots 字节一致，覆盖 48 archives、55 directories、253 direct entries；
+- provenance 记录两次物理 NPU 2 idle check、唯一逻辑 `npu:0`、CANN/driver/
+  Python/torch/torch-npu 与模块路径；
+- 最终 sandbox 587,926,789 bytes，含两份被排除的 diagnostic archives，低于 5 GiB。
 
-The main worktree remained at commit `4cf032a6215fa9c573c998a0ea6daa005b48fb96` on
-`v3-semantic-64d`, ahead/behind `0/0`, with its pre-existing two modified paths and five untracked
-paths/directories unchanged.
+## Rejected evidence handling
+
+- `attempts/rejected_20260815_first_seal/` 是第一次 Task 7 seal 的小型诊断证据；
+- `attempts/rejected_pre_f36a4de/` 保存最终 review 前旧 seal 的 `evidence/` 与
+  `replaceable/`，以及归档位置纠正前的 `audit_reset/` 记录；
+- 第二份归档由沙箱同级位置原子纠正到固定沙箱内。位置稳定后重新运行 prepare 与 CPU
+  contract，再执行唯一一次最终 physical-NPU launcher；current audit 不含任一归档路径。
+
+两份归档都不得作为成功证据、训练证据或精度证据。
 
 ## Repository deliverables
 
-- `docs/reports/china_v1_isolated_fusion_smoke_20260815.md`: answer-first technical evidence
-  report with scope, method, compact evidence tables, robustness/limitations, and next steps;
-- `CHANGELOG.md`: 2026-08-15 entry summarizing the isolated smoke and its strict conclusion
-  boundary.
-
-The report contains no `/data` Markdown asset link. Absolute runtime paths appear only as quoted
-provenance text where relevant.
+- `docs/reports/china_v1_isolated_fusion_smoke_20260815.md`：最终 answer-first 技术报告；
+- `.superpowers/sdd/2026-08-15-china-v1-isolated-fusion-smoke/task-7-report.md`：最终 NPU
+  执行、修复与 seal 细节；
+- `.superpowers/sdd/2026-08-15-china-v1-isolated-fusion-smoke/task-8-report.md`：最终回归与
+  handoff；
+- `.superpowers/sdd/2026-08-15-china-v1-isolated-fusion-smoke/progress.md`：SDD ledger；
+- `CHANGELOG.md`：最终修复波、final seal、rejected attempts 和结论边界。
 
 ## Verification
 
-Task 8 did not set the NPU opt-in environment variable and did not trigger NPU execution. The
-specified fresh regression returned:
+最终回归未设置 NPU opt-in，也未触发第二次 NPU 运行。结果如下：
 
 ```text
-194 passed, 1 skipped in 46.36s
-```
-
-The single skip is the deliberately opt-in NPU integration test; the corrected Task 7 seal already
-contains its physical NPU 2 execution evidence. Additional checks returned:
-
-```text
+pytest: 239 passed, 1 skipped in 61.44s
 Ruff: All checks passed!
+Black: 23 files would be left unchanged.
+launcher shell syntax: PASS
 git diff --check: PASS
-report evidence assertion: PASS
 fresh verify_success: PASS
 ```
 
-## Version control and handoff
+唯一 skip 是显式 opt-in 的 NPU integration test；本轮没有以回归命令再次占用 NPU，物理
+NPU 2 证据来自 Task 7 唯一一次最终前台运行。Fresh verifier 重新检查了当前 seal 的 digest
+与 semantic graph，而不是只读取 `SUCCESS` 文本。
 
-The primary deliverables were committed and immediately pushed:
+## Explicitly deferred
 
-- `33b6ea3 docs: report isolated China V1 fusion smoke evidence`
-
-No sandbox artifact was added to Git, no NPU was touched, and Task 8 made no write to `/data`.
-After this ledger update, the task stops before whole-branch review as requested.
+本次未实现 192 个 grid headers/全量 statistics，也未把多个有界 archive/header pools
+重构为共享池；source protection 仍为 size/mtime 清单而非内容哈希。这些项目在扩大 patch
+数量或进入生产设计前必须关闭。真实 AEF、真实 2 m、正式训练与正式评测属于后续独立
+阶段，不能由本次 synthetic smoke 替代。

@@ -12,6 +12,21 @@
 - 新增工程证据报告 `docs/reports/china_v1_isolated_fusion_smoke_20260815.md`。结论仅为
   engineering PASS；模型精度、真实 AEF 语义、真实 2 m 质量与全国生产能力均未评估。
 
+### Changed
+
+- 完成最终审查修复波 `86095fb`、`966737c`、`f36a4de`：bootstrap 与日志写入改为
+  symlink-safe/no-clobber；模型输入、straight-through gate gradients 与 vMF 单位范数
+  合同收紧；prepare/CPU/NPU/finalizer evidence graph 改为跨 artifact 语义复验。
+- 最终 physical-NPU-2 synthetic smoke seal 绑定运行 commit `f36a4de`，四组输出均为
+  `[4,8,64,128,128]`，最终 combined SHA-256 为
+  `45ec55838b74b09d48be96bf510e1e35c8368ff996ea6953f86414f0ba1944f9`。
+- 登记两份仅供诊断的 rejected attempts：`rejected_20260815_first_seal` 与
+  `rejected_pre_f36a4de`。后者已从沙箱同级位置纠正到固定沙箱内；当前 350 条 audit
+  entries 不含 `attempts/` 路径，两份归档均不得作为成功、精度或训练证据。
+- 明确延期 192 个 grid headers/全量 statistics、archive/header 共享 worker pool 与源
+  ZIP 内容哈希；这些缺口及 synthetic AEF/high-resolution 输入使本次结果不能外推为
+  真实 AEF、真实 2 m、正式训练或正式评测结论。
+
 ## 2026-06-21
 
 ### Added
