@@ -68,6 +68,9 @@ def _write_evidence(sandbox: Path) -> list[Path]:
     checkpoint = sandbox / "smoke_checkpoint.pt"
     save_smoke_checkpoint(model, checkpoint, _metadata_for(model))
     evidence.append(checkpoint)
+    selection = sandbox / "manifests" / "patch_selection.json"
+    selection.parent.mkdir()
+    selection.write_text('{"patch_ids": ["patch-000", "patch-001", "patch-002", "patch-003"]}')
     return evidence
 
 
@@ -108,6 +111,29 @@ class _UnsafeLegacyPayload:
 
     def __reduce__(self):
         return (_unsafe_marker, (str(self.marker),))
+
+
+class _TwoParameterModel(torch.nn.Module):
+    """让第一参数先被加载，第二参数可触发后续 application 失败。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.first = torch.nn.Parameter(torch.tensor([1.0]))
+        self.second = torch.nn.Parameter(torch.tensor([2.0, 3.0]))
+
+
+class _MutatesThenFailsModel(torch.nn.Module):
+    """模拟同 shape/dtype payload 在应用阶段失败的非标准模块。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.tensor([1.0]))
+
+    def load_state_dict(self, state_dict, strict: bool = True):  # type: ignore[override]
+        del state_dict, strict
+        with torch.no_grad():
+            self.weight.fill_(99.0)
+        raise RuntimeError("simulated application failure")
 
 
 def test_export_contract_and_checkpoint_reload(
@@ -271,6 +297,37 @@ def test_checkpoint_schema_failures_do_not_mutate_model(
         assert torch.equal(after[key], before[key])
 
 
+@pytest.mark.parametrize("mutation", ["sparse", "application"], ids=str)
+def test_checkpoint_application_failures_restore_model_state(
+    tmp_sandbox: Path,
+    mutation: str,
+) -> None:
+    """同形稀疏或应用阶段失败时，任何已写参数都必须被事务性恢复。"""
+    model: torch.nn.Module
+    if mutation == "sparse":
+        model = _TwoParameterModel()
+        state_dict = dict(model.state_dict())
+        state_dict["first"] = torch.tensor([7.0])
+        state_dict["second"] = torch.sparse_coo_tensor(
+            indices=torch.tensor([[0, 1]]),
+            values=torch.tensor([8.0, 9.0]),
+            size=(2,),
+        )
+    else:
+        model = _MutatesThenFailsModel()
+        state_dict = dict(model.state_dict())
+    metadata = _metadata_for(model)
+    before = {key: value.detach().clone() for key, value in model.state_dict().items()}
+    checkpoint = tmp_sandbox / "smoke_checkpoint.pt"
+    torch.save({"state_dict": state_dict, "metadata": metadata}, checkpoint)
+
+    with pytest.raises(ExportError, match="state_dict"):
+        load_smoke_checkpoint(model, checkpoint, metadata)
+
+    for key, value in model.state_dict().items():
+        assert torch.equal(value, before[key])
+
+
 def test_seal_success_requires_complete_sealed_false_formal_evidence(
     tmp_sandbox: Path,
     full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
@@ -398,4 +455,39 @@ def test_seal_success_rejects_altered_zarr_contract(
 
     with pytest.raises(ExportError):
         seal_success(tmp_sandbox, [*groups, *evidence])
+    assert not (tmp_sandbox / "SUCCESS").exists()
+
+
+def test_seal_success_rejects_coordinated_cross_group_patch_axis_mutation(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+) -> None:
+    """四组共同伪造自洽 patch_id/attrs 时仍须服从可信 patch selection。"""
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    changed_ids = ["patch-100", "patch-101", "patch-102", "patch-103"]
+    for path in groups:
+        exported = zarr.open_group(str(path), mode="a")
+        exported["patch_id"][:] = np.asarray(changed_ids, dtype="<U9")
+        exported.attrs["patch_ids"] = changed_ids
+
+    with pytest.raises(ExportError, match="patch"):
+        seal_success(tmp_sandbox, [*groups, *evidence])
+    assert not (tmp_sandbox / "SUCCESS").exists()
+
+
+def test_seal_success_rejects_supplied_directory_with_external_symlink_child(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+    tmp_path: Path,
+) -> None:
+    """required 目录的子 symlink 不得在摘要阶段把沙箱外内容引入 SUCCESS。"""
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    supplied = tmp_sandbox / "extra-evidence"
+    supplied.mkdir()
+    outside = tmp_path / "outside-child.txt"
+    outside.write_text("must not be hashed", encoding="utf-8")
+    os.symlink(outside, supplied / "external-child.txt")
+
+    with pytest.raises(ExportError, match="symlink"):
+        seal_success(tmp_sandbox, [*groups, *evidence, supplied])
     assert not (tmp_sandbox / "SUCCESS").exists()

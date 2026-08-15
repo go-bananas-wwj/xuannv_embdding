@@ -203,9 +203,18 @@ def _assert_tree_has_no_symlinks(path: Path) -> None:
         raise ExportError(f"symlink Zarr path is forbidden: {path}")
     if not path.is_dir():
         raise ExportError(f"Zarr group must be a directory: {path}")
+    _assert_directory_has_no_symlink_children(path)
+
+
+def _assert_directory_has_no_symlink_children(path: Path) -> None:
+    """递归检查任意将被读取或哈希的目录，拒绝其所有 symlink 子项。"""
+    if path.is_symlink():
+        raise ExportError(f"symlink directory is forbidden: {path}")
+    if not path.is_dir():
+        raise ExportError(f"required directory is missing: {path}")
     for child in path.rglob("*"):
         if child.is_symlink():
-            raise ExportError(f"symlink inside Zarr group is forbidden: {child}")
+            raise ExportError(f"symlink child is forbidden in a hashed directory: {child}")
 
 
 def _validate_identifier_array(
@@ -232,7 +241,7 @@ def _verify_exported_group(
     expected_group: str | None = None,
     expected_patch_ids: Sequence[str] | None = None,
     expected_periods: Sequence[str] | None = None,
-) -> None:
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """在 rename 和 SUCCESS 前重新打开 Zarr，避免把坏目录当作成功产物。"""
     _assert_tree_has_no_symlinks(path)
     try:
@@ -284,6 +293,7 @@ def _verify_exported_group(
     for key in ("formal_training_allowed", "formal_evaluation_allowed"):
         if exported.attrs.get(key) is not False:
             raise ExportError(f"Zarr {key} must be false: {path}")
+    return tuple(patch_ids), tuple(periods)
 
 
 def export_group_zarr(
@@ -422,8 +432,27 @@ def _validate_state_dict_for_model(
         value = state_dict[key]
         if not isinstance(value, torch.Tensor):
             raise ExportError(f"smoke checkpoint state_dict value is not a tensor: {key}")
+        if value.layout != torch.strided or target.layout != torch.strided:
+            raise ExportError(f"smoke checkpoint state_dict tensor must be dense strided: {key}")
+        if value.device.type != "cpu":
+            raise ExportError(f"smoke checkpoint state_dict tensor must be loaded onto CPU: {key}")
         if value.shape != target.shape or value.dtype != target.dtype:
             raise ExportError(f"smoke checkpoint state_dict tensor contract is invalid: {key}")
+
+
+def _snapshot_model_state(model: torch.nn.Module) -> dict[str, torch.Tensor]:
+    """在应用 checkpoint 前保存值副本，供异常路径直接恢复而不调用模块 hook。"""
+    return {key: value.detach().clone() for key, value in model.state_dict().items()}
+
+
+def _restore_model_state(model: torch.nn.Module, snapshot: Mapping[str, torch.Tensor]) -> None:
+    """直接 copy 回 state tensors，避免失败模型的 ``load_state_dict`` 再次执行副作用。"""
+    current = model.state_dict()
+    if set(current) != set(snapshot):
+        raise ExportError("model state changed while applying smoke checkpoint")
+    with torch.no_grad():
+        for key, value in current.items():
+            value.copy_(snapshot[key])
 
 
 def load_smoke_checkpoint(
@@ -441,9 +470,11 @@ def load_smoke_checkpoint(
     if not _exactly_equal(dict(saved_metadata), expected):
         raise ExportError("smoke checkpoint metadata does not exactly match expected metadata")
     _validate_state_dict_for_model(state_dict, model)
+    snapshot = _snapshot_model_state(model)
     try:
         model.load_state_dict(state_dict, strict=True)
     except Exception as exc:
+        _restore_model_state(model, snapshot)
         raise ExportError("smoke checkpoint state_dict could not be applied") from exc
 
 
@@ -451,7 +482,10 @@ def _resolve_required_path(path: Path | str, sandbox_root: Path) -> Path:
     candidate = Path(path)
     if not candidate.is_absolute():
         candidate = sandbox_root / candidate
-    return _guard_non_symlink_sandbox_path(candidate, sandbox_root)
+    guarded = _guard_non_symlink_sandbox_path(candidate, sandbox_root)
+    if guarded.is_dir():
+        _assert_directory_has_no_symlink_children(guarded)
+    return guarded
 
 
 def _require_regular_evidence_file(path: Path) -> None:
@@ -475,13 +509,41 @@ def _validate_required_evidence(sandbox_root: Path) -> None:
     _load_checkpoint_payload(checkpoint)
 
 
+def _trusted_patch_ids(sandbox_root: Path) -> tuple[str, ...] | None:
+    """读取可用的 Task 6 patch-selection 证据；未知 schema 时让跨组比对继续兜底。"""
+    selection = sandbox_root / "manifests" / "patch_selection.json"
+    if not selection.exists() and not selection.is_symlink():
+        return None
+    guarded = _guard_non_symlink_sandbox_path(selection, sandbox_root)
+    _require_regular_evidence_file(guarded)
+    try:
+        raw = json.loads(guarded.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ExportError(f"patch selection evidence is malformed: {guarded}") from exc
+    if not isinstance(raw, Mapping):
+        return None
+    values = raw.get("patch_ids")
+    if not isinstance(values, list) and isinstance(raw.get("patches"), list):
+        values = [
+            item.get("patch_id") if isinstance(item, Mapping) else None for item in raw["patches"]
+        ]
+    if not isinstance(values, list) or not all(
+        isinstance(value, str) and value for value in values
+    ):
+        return None
+    return tuple(values)
+
+
 def _digest_path(digest: Any, path: Path, sandbox_root: Path) -> None:
     """把文件树路径和内容一起纳入封口摘要，避免只哈希目录名。"""
+    if path.is_symlink():
+        raise ExportError(f"symlink path must not enter SUCCESS digest: {path}")
     if path.is_file():
         relative = path.relative_to(sandbox_root).as_posix().encode("utf-8")
         digest.update(relative + b"\0")
         digest.update(bytes.fromhex(_sha256_file(path)))
         return
+    _assert_directory_has_no_symlink_children(path)
     children = sorted(
         (item for item in path.rglob("*") if item.is_file()),
         key=lambda item: item.as_posix(),
@@ -510,9 +572,15 @@ def seal_success(sandbox_root: Path, required_files: Iterable[Path | str]) -> Pa
     if partials:
         raise ExportError(f"partial smoke output prevents SUCCESS sealing: {partials[0]}")
 
+    group_axes: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
     for group, path in zip(_GROUPS, _required_group_paths(root)):
         guarded = _guard_non_symlink_sandbox_path(path, root)
-        _verify_exported_group(guarded, expected_group=group)
+        group_axes.append(_verify_exported_group(guarded, expected_group=group))
+    if any(axes != group_axes[0] for axes in group_axes[1:]):
+        raise ExportError("all smoke Zarr groups must share exactly the same patch and period axes")
+    trusted_patch_ids = _trusted_patch_ids(root)
+    if trusted_patch_ids is not None and group_axes[0][0] != trusted_patch_ids:
+        raise ExportError("Zarr patch axis does not match trusted patch selection evidence")
     _validate_required_evidence(root)
 
     digest = sha256()
