@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import shutil
 from hashlib import sha256
 from pathlib import Path
 
@@ -58,11 +60,14 @@ def _write_evidence(sandbox: Path) -> list[Path]:
         "metrics.json",
         "path_audit.json",
         "reproducibility.json",
-        "smoke_checkpoint.pt",
     ):
         path = sandbox / name
         path.write_text("{}", encoding="utf-8")
         evidence.append(path)
+    model = torch.nn.Linear(2, 1)
+    checkpoint = sandbox / "smoke_checkpoint.pt"
+    save_smoke_checkpoint(model, checkpoint, _metadata_for(model))
+    evidence.append(checkpoint)
     return evidence
 
 
@@ -83,6 +88,26 @@ def _export_all_groups(
         )
         for group in GROUPS
     ]
+
+
+def _complete_seal_inputs(
+    sandbox: Path,
+    tensors: tuple[torch.Tensor, torch.Tensor],
+) -> tuple[list[Path], list[Path]]:
+    embedding, valid = tensors
+    return _export_all_groups(sandbox, embedding, valid), _write_evidence(sandbox)
+
+
+def _unsafe_marker(marker: str) -> None:
+    Path(marker).write_text("unsafe pickle executed", encoding="utf-8")
+
+
+class _UnsafeLegacyPayload:
+    def __init__(self, marker: Path) -> None:
+        self.marker = marker
+
+    def __reduce__(self):
+        return (_unsafe_marker, (str(self.marker),))
 
 
 def test_export_contract_and_checkpoint_reload(
@@ -157,14 +182,101 @@ def test_checkpoint_save_requires_a_sentinel_sandbox(tmp_path: Path) -> None:
         save_smoke_checkpoint(model, tmp_path / "smoke_checkpoint.pt", _metadata_for(model))
 
 
+@pytest.mark.parametrize(
+    ("link_name", "is_live"),
+    [
+        ("smoke_checkpoint.pt", False),
+        ("smoke_checkpoint.pt", True),
+        ("smoke_checkpoint.pt.partial", False),
+        ("smoke_checkpoint.pt.partial", True),
+    ],
+    ids=["target-broken", "target-live", "partial-broken", "partial-live"],
+)
+def test_checkpoint_save_rejects_symlinked_target_or_partial_without_touching_outside(
+    tmp_sandbox: Path,
+    tmp_path: Path,
+    link_name: str,
+    is_live: bool,
+) -> None:
+    """target 或 partial 的损坏/存活外部 symlink 都不得成为 checkpoint 写出跳板。"""
+    model = torch.nn.Linear(2, 1)
+    checkpoint = tmp_sandbox / "smoke_checkpoint.pt"
+    outside = tmp_path / "outside-checkpoint.pt"
+    if is_live:
+        outside.write_bytes(b"outside must remain unchanged")
+    os.symlink(outside, checkpoint.with_name(link_name))
+
+    with pytest.raises(ExportError, match="symlink"):
+        save_smoke_checkpoint(model, checkpoint, _metadata_for(model))
+
+    assert checkpoint.is_symlink() if link_name == checkpoint.name else not checkpoint.exists()
+    assert (
+        outside.read_bytes() == b"outside must remain unchanged"
+        if is_live
+        else not outside.exists()
+    )
+
+
+def test_checkpoint_load_requires_sentinel_and_safe_weights_only_payload(
+    tmp_sandbox: Path,
+    tmp_path: Path,
+) -> None:
+    """加载不得越过 sandbox，也不能执行 legacy pickle 的任意代码。"""
+    model = torch.nn.Linear(2, 1)
+    metadata = _metadata_for(model)
+    checkpoint = tmp_sandbox / "smoke_checkpoint.pt"
+    torch.save(
+        {
+            "state_dict": model.state_dict(),
+            "metadata": metadata,
+            "legacy": _UnsafeLegacyPayload(tmp_path / "unsafe-marker"),
+        },
+        checkpoint,
+    )
+    with pytest.raises(ExportError):
+        load_smoke_checkpoint(model, checkpoint, metadata)
+    assert not (tmp_path / "unsafe-marker").exists()
+
+    outside = tmp_path / "outside.pt"
+    torch.save({"state_dict": model.state_dict(), "metadata": metadata}, outside)
+    with pytest.raises(ExportError, match="sentinel sandbox"):
+        load_smoke_checkpoint(model, outside, metadata)
+
+
+@pytest.mark.parametrize("mutation", ["missing", "unexpected", "shape"], ids=str)
+def test_checkpoint_schema_failures_do_not_mutate_model(
+    tmp_sandbox: Path,
+    mutation: str,
+) -> None:
+    """严格恢复在键或 tensor 合同错误时必须不触碰现有模型参数。"""
+    model = torch.nn.Linear(2, 1)
+    metadata = _metadata_for(model)
+    before = {key: value.detach().clone() for key, value in model.state_dict().items()}
+    state_dict = dict(model.state_dict())
+    if mutation == "missing":
+        del state_dict["bias"]
+    elif mutation == "unexpected":
+        state_dict["unexpected"] = torch.zeros(1)
+    else:
+        state_dict["weight"] = torch.zeros((3, 2))
+    checkpoint = tmp_sandbox / "smoke_checkpoint.pt"
+    torch.save({"state_dict": state_dict, "metadata": metadata}, checkpoint)
+
+    with pytest.raises(ExportError, match="state_dict"):
+        load_smoke_checkpoint(model, checkpoint, metadata)
+
+    after = model.state_dict()
+    assert after.keys() == before.keys()
+    for key in before:
+        assert torch.equal(after[key], before[key])
+
+
 def test_seal_success_requires_complete_sealed_false_formal_evidence(
     tmp_sandbox: Path,
     full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
 ) -> None:
     """SUCCESS 只能在四组已封存且全部审计证据存在时写入。"""
-    embedding, valid = full_contract_tensors
-    groups = _export_all_groups(tmp_sandbox, embedding, valid)
-    evidence = _write_evidence(tmp_sandbox)
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
 
     success = seal_success(tmp_sandbox, [*groups, *evidence])
 
@@ -179,9 +291,7 @@ def test_seal_success_rejects_missing_manifest_partial_or_formal_use(
     full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
 ) -> None:
     """缺证据、未封存 Zarr 或可正式使用标记都不得生成 SUCCESS。"""
-    embedding, valid = full_contract_tensors
-    groups = _export_all_groups(tmp_sandbox, embedding, valid)
-    evidence = _write_evidence(tmp_sandbox)
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
     (tmp_sandbox / "run_manifest.json").unlink()
     with pytest.raises(ExportError, match="run_manifest"):
         seal_success(tmp_sandbox, [*groups, *evidence])
@@ -207,11 +317,85 @@ def test_seal_success_rejects_required_outputs_outside_the_sandbox(
     tmp_path: Path,
 ) -> None:
     """调用者注入沙箱外 required path 时不能绕过隔离路径守卫。"""
-    embedding, valid = full_contract_tensors
-    groups = _export_all_groups(tmp_sandbox, embedding, valid)
-    evidence = _write_evidence(tmp_sandbox)
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
     outside = tmp_path / "outside.json"
     outside.write_text("{}", encoding="utf-8")
 
     with pytest.raises(SafetyError):
         seal_success(tmp_sandbox, [*groups, *evidence, outside])
+
+
+@pytest.mark.parametrize("kind", ["directory", "malformed_json", "checkpoint"], ids=str)
+def test_seal_success_rejects_non_evidence_files(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+    kind: str,
+) -> None:
+    """空目录、坏 JSON 或坏 checkpoint 都不能满足封存证据合同。"""
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    if kind == "directory":
+        target = tmp_sandbox / "metrics.json"
+        target.unlink()
+        target.mkdir()
+    elif kind == "malformed_json":
+        (tmp_sandbox / "metrics.json").write_text("not-json", encoding="utf-8")
+    else:
+        torch.save({"not": "a smoke checkpoint"}, tmp_sandbox / "smoke_checkpoint.pt")
+
+    with pytest.raises(ExportError):
+        seal_success(tmp_sandbox, [*groups, *evidence])
+    assert not (tmp_sandbox / "SUCCESS").exists()
+
+
+@pytest.mark.parametrize("link_kind", ["group", "ancestor"], ids=str)
+def test_seal_success_rejects_mandatory_zarr_symlink_to_outside(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+    tmp_path: Path,
+    link_kind: str,
+) -> None:
+    """即使外部 target 是完整 Zarr，mandatory group symlink 也不得封存成功。"""
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    if link_kind == "group":
+        outside = tmp_path / "outside-full.zarr"
+        shutil.copytree(groups[-1], outside)
+        shutil.rmtree(groups[-1])
+        os.symlink(outside, groups[-1], target_is_directory=True)
+    else:
+        outside = tmp_path / "outside-full-parent"
+        outside.mkdir()
+        shutil.copytree(groups[-1], outside / "embedding.zarr")
+        shutil.rmtree(groups[-1].parent)
+        os.symlink(outside, groups[-1].parent, target_is_directory=True)
+
+    with pytest.raises(ExportError, match="symlink"):
+        seal_success(tmp_sandbox, [*groups, *evidence])
+    assert not (tmp_sandbox / "SUCCESS").exists()
+
+
+@pytest.mark.parametrize("mutation", ["uncompressed", "extra", "wrong_identifier"], ids=str)
+def test_seal_success_rejects_altered_zarr_contract(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+    mutation: str,
+) -> None:
+    """编解码器、array 集合和标识符任一被改写时均拒绝 SUCCESS。"""
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    exported = zarr.open_group(str(groups[0]), mode="a")
+    if mutation == "uncompressed":
+        embedding = exported["embedding"][:]
+        del exported["embedding"]
+        exported.create_dataset(
+            "embedding",
+            data=embedding,
+            chunks=(1, 1, 64, 128, 128),
+            compressor=None,
+        )
+    elif mutation == "extra":
+        exported.create_dataset("unexpected", data=np.array([1], dtype=np.int8))
+    else:
+        exported["patch_id"][0] = "wrong-000"
+
+    with pytest.raises(ExportError):
+        seal_success(tmp_sandbox, [*groups, *evidence])
+    assert not (tmp_sandbox / "SUCCESS").exists()

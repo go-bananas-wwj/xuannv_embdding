@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -13,7 +15,7 @@ import torch
 import zarr
 from numcodecs import Blosc
 
-from experiments.china_v1_fusion_smoke.safety import validate_write_path
+from experiments.china_v1_fusion_smoke.safety import SENTINEL, validate_write_path
 
 
 class ExportError(RuntimeError):
@@ -41,6 +43,7 @@ _REQUIRED_METADATA = (
     "synthetic",
 )
 _BLOSC = Blosc(cname="zstd", clevel=5, shuffle=Blosc.BITSHUFFLE)
+_EXPECTED_PERIODS = tuple(f"{year}Q{quarter}" for year in (2020, 2021) for quarter in range(1, 5))
 
 
 def _model_class_name(model: torch.nn.Module) -> str:
@@ -56,10 +59,8 @@ def _is_hex(value: object, length: int) -> bool:
     )
 
 
-def _validate_checkpoint_metadata(
-    metadata: Mapping[str, object], model: torch.nn.Module
-) -> dict[str, object]:
-    """严格校验足以绑定权重和本次 smoke 输入的 provenance。"""
+def _validate_checkpoint_metadata_schema(metadata: Mapping[str, object]) -> dict[str, object]:
+    """校验 checkpoint provenance 自身的不可放宽字段。"""
     raw = dict(metadata)
     missing = [key for key in _REQUIRED_METADATA if key not in raw]
     if missing:
@@ -71,13 +72,23 @@ def _validate_checkpoint_metadata(
             raise ExportError(f"checkpoint metadata {key} must be a SHA-256")
     if type(raw["seed"]) is not int:
         raise ExportError("checkpoint metadata seed must be an integer")
-    if raw["model_class"] != _model_class_name(model):
-        raise ExportError("checkpoint metadata model_class does not match the model")
+    if not isinstance(raw["model_class"], str) or not raw["model_class"]:
+        raise ExportError("checkpoint metadata model_class must be a non-empty string")
     if raw["synthetic"] is not True:
         raise ExportError("checkpoint metadata must declare synthetic=true")
     for key in ("formal_training_allowed", "formal_evaluation_allowed"):
         if key in raw and raw[key] is not False:
             raise ExportError(f"checkpoint metadata {key} must be false when present")
+    return raw
+
+
+def _validate_checkpoint_metadata(
+    metadata: Mapping[str, object], model: torch.nn.Module
+) -> dict[str, object]:
+    """严格校验足以绑定权重和本次 smoke 输入的 provenance。"""
+    raw = _validate_checkpoint_metadata_schema(metadata)
+    if raw["model_class"] != _model_class_name(model):
+        raise ExportError("checkpoint metadata model_class does not match the model")
     return raw
 
 
@@ -104,12 +115,45 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _validated_checkpoint_path(path: Path) -> Path:
-    """从 checkpoint 目标向上寻找唯一的隔离哨兵并复用路径守卫。"""
-    resolved = path.resolve(strict=False)
-    for candidate in (resolved.parent, *resolved.parents):
-        if (candidate / ".xuannv_isolated_smoke").is_file():
-            return validate_write_path(resolved, candidate)
+def _absolute_without_resolving(path: Path) -> Path:
+    """绝对化路径但不跟随 symlink，令后续检查能看到损坏 link。"""
+    return Path(os.path.abspath(path))
+
+
+def _guard_non_symlink_sandbox_path(path: Path, sandbox_root: Path) -> Path:
+    """仅接受沙箱内、各既有路径节点均非 symlink 的路径。"""
+    root = _absolute_without_resolving(sandbox_root)
+    candidate = _absolute_without_resolving(path)
+    if root.is_symlink():
+        raise ExportError(f"sandbox root must not be a symlink: {root}")
+    for ancestor in root.parents:
+        if ancestor.is_symlink():
+            raise ExportError(f"sandbox ancestor must not be a symlink: {ancestor}")
+    sentinel = root / SENTINEL
+    if sentinel.is_symlink() or not sentinel.is_file():
+        raise ExportError(f"sandbox sentinel must be a regular file: {sentinel}")
+    if not candidate.is_relative_to(root):
+        # Keep Task 1's canonical boundary validation load-bearing.
+        validate_write_path(candidate, root)
+        raise ExportError(f"path escapes sandbox: {candidate}")
+    current = root
+    for component in candidate.relative_to(root).parts:
+        current = current / component
+        if current.is_symlink():
+            raise ExportError(f"symlink paths are forbidden in the smoke sandbox: {current}")
+    validate_write_path(candidate, root)
+    return candidate
+
+
+def _checkpoint_path_and_root(path: Path) -> tuple[Path, Path]:
+    """从未 resolve 的 checkpoint 路径向上查找带常规 sentinel 的沙箱。"""
+    candidate = _absolute_without_resolving(path)
+    for root in candidate.parents:
+        sentinel = root / SENTINEL
+        if sentinel.is_symlink():
+            raise ExportError(f"sandbox sentinel must not be a symlink: {sentinel}")
+        if sentinel.is_file():
+            return _guard_non_symlink_sandbox_path(candidate, root), root
     raise ExportError("smoke checkpoint path is not inside a sentinel sandbox")
 
 
@@ -153,26 +197,86 @@ def _required_group_paths(sandbox_root: Path) -> tuple[Path, ...]:
     return tuple(sandbox_root / "outputs" / group / "embedding.zarr" for group in _GROUPS)
 
 
-def _verify_exported_group(path: Path, expected_group: str | None = None) -> None:
+def _assert_tree_has_no_symlinks(path: Path) -> None:
+    """Zarr 目录内部也不得放置能把读取或哈希引出沙箱的 symlink。"""
+    if path.is_symlink():
+        raise ExportError(f"symlink Zarr path is forbidden: {path}")
+    if not path.is_dir():
+        raise ExportError(f"Zarr group must be a directory: {path}")
+    for child in path.rglob("*"):
+        if child.is_symlink():
+            raise ExportError(f"symlink inside Zarr group is forbidden: {child}")
+
+
+def _validate_identifier_array(
+    exported: zarr.Group,
+    name: str,
+    expected: Sequence[str],
+) -> None:
+    array = exported[name]
+    expected_values = list(expected)
+    if array.shape != (len(expected_values),):
+        raise ExportError(f"Zarr {name} shape is invalid")
+    if array.dtype != _string_array(expected_values).dtype:
+        raise ExportError(f"Zarr {name} dtype is invalid")
+    if array[:].tolist() != expected_values:
+        raise ExportError(f"Zarr {name} values do not match the export contract")
+
+
+def _is_zstd_blosc(compressor: object) -> bool:
+    return isinstance(compressor, Blosc) and compressor.cname == "zstd"
+
+
+def _verify_exported_group(
+    path: Path,
+    expected_group: str | None = None,
+    expected_patch_ids: Sequence[str] | None = None,
+    expected_periods: Sequence[str] | None = None,
+) -> None:
     """在 rename 和 SUCCESS 前重新打开 Zarr，避免把坏目录当作成功产物。"""
+    _assert_tree_has_no_symlinks(path)
     try:
         exported = zarr.open_group(str(path), mode="r")
     except Exception as exc:  # zarr reports several concrete error classes across releases.
         raise ExportError(f"cannot reopen exported Zarr group: {path}") from exc
+    if set(exported.array_keys()) != {"embedding", "valid", "patch_id", "period"}:
+        raise ExportError(f"Zarr array set is invalid: {path}")
     if exported["embedding"].shape != _EMBEDDING_SHAPE:
         raise ExportError(f"Zarr embedding shape is not {_EMBEDDING_SHAPE}: {path}")
     if exported["embedding"].dtype != np.dtype("float16"):
         raise ExportError(f"Zarr embedding dtype is not float16: {path}")
     if exported["embedding"].chunks != _EMBEDDING_CHUNKS:
         raise ExportError(f"Zarr embedding chunks are not {_EMBEDDING_CHUNKS}: {path}")
+    if not _is_zstd_blosc(exported["embedding"].compressor):
+        raise ExportError(f"Zarr embedding compressor must be Blosc Zstd: {path}")
     if exported["valid"].shape != _VALID_SHAPE or exported["valid"].dtype != np.dtype("bool"):
         raise ExportError(f"Zarr valid array contract is invalid: {path}")
     if exported["valid"].chunks != _VALID_CHUNKS:
         raise ExportError(f"Zarr valid chunks are not {_VALID_CHUNKS}: {path}")
-    if exported["patch_id"].shape != (4,) or exported["period"].shape != (8,):
-        raise ExportError(f"Zarr patch_id or period contract is invalid: {path}")
+    if not _is_zstd_blosc(exported["valid"].compressor):
+        raise ExportError(f"Zarr valid compressor must be Blosc Zstd: {path}")
+    attribute_patch_ids = exported.attrs.get("patch_ids")
+    attribute_periods = exported.attrs.get("periods")
+    if not isinstance(attribute_patch_ids, list) or not all(
+        isinstance(value, str) for value in attribute_patch_ids
+    ):
+        raise ExportError(f"Zarr patch_ids attribute is invalid: {path}")
+    if not isinstance(attribute_periods, list) or not all(
+        isinstance(value, str) for value in attribute_periods
+    ):
+        raise ExportError(f"Zarr periods attribute is invalid: {path}")
+    patch_ids = attribute_patch_ids if expected_patch_ids is None else list(expected_patch_ids)
+    periods = attribute_periods if expected_periods is None else list(expected_periods)
+    _validate_identifier_array(exported, "patch_id", patch_ids)
+    _validate_identifier_array(exported, "period", periods)
     if expected_group is not None and exported.attrs.get("group") != expected_group:
         raise ExportError(f"Zarr group attribute does not match {expected_group!r}: {path}")
+    if expected_periods is None and attribute_periods != list(_EXPECTED_PERIODS):
+        raise ExportError(f"Zarr periods must be the fixed smoke quarters: {path}")
+    if expected_patch_ids is not None and attribute_patch_ids != list(expected_patch_ids):
+        raise ExportError(f"Zarr patch_ids attribute does not match the export contract: {path}")
+    if expected_periods is not None and attribute_periods != list(expected_periods):
+        raise ExportError(f"Zarr periods attribute does not match the export contract: {path}")
     if exported.attrs.get("synthetic") is not True:
         raise ExportError(f"Zarr must declare synthetic=true: {path}")
     if exported.attrs.get("allowed_use") != "smoke_test_only":
@@ -194,10 +298,12 @@ def export_group_zarr(
     """原子写出一个完整季度组；失败时只保留可诊断的 ``.partial`` 目录。"""
     _validate_group_name(group)
     _validate_export_inputs(embedding, valid, patch_ids, periods)
-    target = validate_write_path(Path(output), sandbox_root)
+    target = _guard_non_symlink_sandbox_path(Path(output), sandbox_root)
     if target.name != "embedding.zarr":
         raise ExportError("smoke Zarr outputs must be named embedding.zarr")
-    partial = validate_write_path(target.with_name(f"{target.name}.partial"), sandbox_root)
+    partial = _guard_non_symlink_sandbox_path(
+        target.with_name(f"{target.name}.partial"), sandbox_root
+    )
     if target.exists():
         raise ExportError(f"refusing to overwrite sealed Zarr output: {target}")
     if partial.exists():
@@ -232,9 +338,18 @@ def export_group_zarr(
             "allowed_use": "smoke_test_only",
             "formal_training_allowed": False,
             "formal_evaluation_allowed": False,
+            "patch_ids": list(patch_ids),
+            "periods": list(periods),
         }
     )
-    _verify_exported_group(partial, expected_group=group)
+    _verify_exported_group(
+        partial,
+        expected_group=group,
+        expected_patch_ids=patch_ids,
+        expected_periods=periods,
+    )
+    _guard_non_symlink_sandbox_path(partial, sandbox_root)
+    _guard_non_symlink_sandbox_path(target, sandbox_root)
     partial.replace(target)
     return target
 
@@ -246,18 +361,69 @@ def save_smoke_checkpoint(
 ) -> str:
     """以精确 provenance 和原子 replace 保存仅用于 reload 检查的 checkpoint。"""
     checked_metadata = _validate_checkpoint_metadata(metadata, model)
-    target = _validated_checkpoint_path(Path(path))
+    target, sandbox_root = _checkpoint_path_and_root(Path(path))
+    partial = _guard_non_symlink_sandbox_path(
+        target.with_name(f"{target.name}.partial"), sandbox_root
+    )
     if target.exists():
         raise ExportError(f"refusing to overwrite smoke checkpoint: {target}")
     if target.suffix != ".pt":
         raise ExportError("smoke checkpoint must use a .pt suffix")
     target.parent.mkdir(parents=True, exist_ok=True)
-    partial = target.with_name(f"{target.name}.partial")
     if partial.exists():
         raise ExportError(f"refusing to overwrite diagnostic partial checkpoint: {partial}")
     torch.save({"state_dict": model.state_dict(), "metadata": checked_metadata}, partial)
+    _guard_non_symlink_sandbox_path(partial, sandbox_root)
+    _guard_non_symlink_sandbox_path(target, sandbox_root)
     partial.replace(target)
     return _sha256_file(target)
+
+
+def _validate_checkpoint_payload(
+    raw: object,
+) -> tuple[Mapping[str, torch.Tensor], Mapping[str, object]]:
+    """仅接受 weights-only 可解析的最小 checkpoint payload 结构。"""
+    if not isinstance(raw, Mapping) or set(raw) != {"state_dict", "metadata"}:
+        raise ExportError("smoke checkpoint payload has an invalid schema")
+    state_dict = raw["state_dict"]
+    metadata = raw["metadata"]
+    if not isinstance(state_dict, Mapping) or not state_dict:
+        raise ExportError("smoke checkpoint state_dict has an invalid schema")
+    if not all(
+        isinstance(key, str) and isinstance(value, torch.Tensor)
+        for key, value in state_dict.items()
+    ):
+        raise ExportError("smoke checkpoint state_dict must map strings to tensors")
+    if not isinstance(metadata, Mapping):
+        raise ExportError("smoke checkpoint metadata has an invalid schema")
+    _validate_checkpoint_metadata_schema(metadata)
+    return state_dict, metadata
+
+
+def _load_checkpoint_payload(
+    checkpoint: Path,
+) -> tuple[Mapping[str, torch.Tensor], Mapping[str, object]]:
+    """禁用 legacy pickle 后读取 checkpoint，随后进行显式结构校验。"""
+    try:
+        raw = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    except Exception as exc:
+        raise ExportError(f"cannot safely load smoke checkpoint: {checkpoint}") from exc
+    return _validate_checkpoint_payload(raw)
+
+
+def _validate_state_dict_for_model(
+    state_dict: Mapping[str, torch.Tensor], model: torch.nn.Module
+) -> None:
+    """在任何参数写入前验证 keys、shape、dtype 和 tensor 类型。"""
+    expected = model.state_dict()
+    if set(state_dict) != set(expected):
+        raise ExportError("smoke checkpoint state_dict keys do not exactly match the model")
+    for key, target in expected.items():
+        value = state_dict[key]
+        if not isinstance(value, torch.Tensor):
+            raise ExportError(f"smoke checkpoint state_dict value is not a tensor: {key}")
+        if value.shape != target.shape or value.dtype != target.dtype:
+            raise ExportError(f"smoke checkpoint state_dict tensor contract is invalid: {key}")
 
 
 def load_smoke_checkpoint(
@@ -267,31 +433,46 @@ def load_smoke_checkpoint(
 ) -> None:
     """只在文件 metadata 与调用方 provenance 完全相同时恢复权重。"""
     expected = _validate_checkpoint_metadata(expected_metadata, model)
-    checkpoint = Path(path)
-    if not checkpoint.is_file():
+    checkpoint, _sandbox_root = _checkpoint_path_and_root(Path(path))
+    if not checkpoint.is_file() or checkpoint.is_symlink():
         raise ExportError(f"smoke checkpoint is missing: {checkpoint}")
-    try:
-        raw = torch.load(checkpoint, map_location="cpu", weights_only=False)
-    except Exception as exc:
-        raise ExportError(f"cannot load smoke checkpoint: {checkpoint}") from exc
-    if not isinstance(raw, Mapping) or set(raw) != {"state_dict", "metadata"}:
-        raise ExportError("smoke checkpoint payload has an invalid schema")
-    saved_metadata = raw["metadata"]
-    if not isinstance(saved_metadata, Mapping):
-        raise ExportError("smoke checkpoint metadata has an invalid schema")
+    state_dict, saved_metadata = _load_checkpoint_payload(checkpoint)
     _validate_checkpoint_metadata(saved_metadata, model)
     if not _exactly_equal(dict(saved_metadata), expected):
         raise ExportError("smoke checkpoint metadata does not exactly match expected metadata")
-    if not isinstance(raw["state_dict"], Mapping):
-        raise ExportError("smoke checkpoint state_dict has an invalid schema")
-    model.load_state_dict(raw["state_dict"], strict=True)
+    _validate_state_dict_for_model(state_dict, model)
+    try:
+        model.load_state_dict(state_dict, strict=True)
+    except Exception as exc:
+        raise ExportError("smoke checkpoint state_dict could not be applied") from exc
 
 
 def _resolve_required_path(path: Path | str, sandbox_root: Path) -> Path:
     candidate = Path(path)
     if not candidate.is_absolute():
         candidate = sandbox_root / candidate
-    return validate_write_path(candidate, sandbox_root)
+    return _guard_non_symlink_sandbox_path(candidate, sandbox_root)
+
+
+def _require_regular_evidence_file(path: Path) -> None:
+    if path.is_symlink() or not path.is_file():
+        raise ExportError(f"required smoke evidence must be a regular non-symlink file: {path}")
+
+
+def _validate_required_evidence(sandbox_root: Path) -> None:
+    """封存前要求四份 JSON 与 checkpoint 都是可安全解析的常规文件。"""
+    for name in _REQUIRED_EVIDENCE[:-1]:
+        path = _guard_non_symlink_sandbox_path(sandbox_root / name, sandbox_root)
+        _require_regular_evidence_file(path)
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ExportError(f"required JSON evidence is malformed: {path}") from exc
+        if not isinstance(parsed, Mapping):
+            raise ExportError(f"required JSON evidence must be an object: {path}")
+    checkpoint = _guard_non_symlink_sandbox_path(sandbox_root / "smoke_checkpoint.pt", sandbox_root)
+    _require_regular_evidence_file(checkpoint)
+    _load_checkpoint_payload(checkpoint)
 
 
 def _digest_path(digest: Any, path: Path, sandbox_root: Path) -> None:
@@ -311,15 +492,15 @@ def _digest_path(digest: Any, path: Path, sandbox_root: Path) -> None:
 
 def seal_success(sandbox_root: Path, required_files: Iterable[Path | str]) -> Path:
     """确认固定 evidence 与四个 sealed Zarr 均完整后，最后写入 ``SUCCESS``。"""
-    root = validate_write_path(Path(sandbox_root), sandbox_root)
-    success = validate_write_path(root / "SUCCESS", root)
+    root = _guard_non_symlink_sandbox_path(Path(sandbox_root), Path(sandbox_root))
+    success = _guard_non_symlink_sandbox_path(root / "SUCCESS", root)
     if success.exists():
         raise ExportError("SUCCESS already exists; a sealed smoke run is immutable")
 
     supplied_paths = [_resolve_required_path(path, root) for path in required_files]
     mandatory_paths = [
-        *_required_group_paths(root),
-        *(root / name for name in _REQUIRED_EVIDENCE),
+        *(_guard_non_symlink_sandbox_path(path, root) for path in _required_group_paths(root)),
+        *(_guard_non_symlink_sandbox_path(root / name, root) for name in _REQUIRED_EVIDENCE),
     ]
     all_paths = list(dict.fromkeys([*mandatory_paths, *supplied_paths]))
     for path in all_paths:
@@ -330,7 +511,9 @@ def seal_success(sandbox_root: Path, required_files: Iterable[Path | str]) -> Pa
         raise ExportError(f"partial smoke output prevents SUCCESS sealing: {partials[0]}")
 
     for group, path in zip(_GROUPS, _required_group_paths(root)):
-        _verify_exported_group(path, expected_group=group)
+        guarded = _guard_non_symlink_sandbox_path(path, root)
+        _verify_exported_group(guarded, expected_group=group)
+    _validate_required_evidence(root)
 
     digest = sha256()
     for path in sorted(all_paths, key=lambda item: item.relative_to(root).as_posix()):
@@ -345,9 +528,11 @@ def seal_success(sandbox_root: Path, required_files: Iterable[Path | str]) -> Pa
         '  "formal_evaluation_allowed": false\n'
         "}\n"
     )
-    temporary = validate_write_path(root / "SUCCESS.tmp", root)
+    temporary = _guard_non_symlink_sandbox_path(root / "SUCCESS.tmp", root)
     if temporary.exists():
         raise ExportError("SUCCESS.tmp already exists; refusing to overwrite seal evidence")
     temporary.write_text(payload, encoding="utf-8")
+    _guard_non_symlink_sandbox_path(temporary, root)
+    _guard_non_symlink_sandbox_path(success, root)
     temporary.replace(success)
     return success
