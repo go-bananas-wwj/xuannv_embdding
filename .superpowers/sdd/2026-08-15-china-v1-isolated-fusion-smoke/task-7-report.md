@@ -62,6 +62,26 @@ audit 拒绝、fd/destination 合法短写续写以及 0/负数写入拒绝。�
 因此物理运行 commit、指标、日志 hash 与 `SUCCESS` 摘要仍全部绑定 `f36a4de`，无需 NPU
 rerun。
 
+### Critical TOCTOU closeout
+
+进一步复审发现 `cbda7be` 的“按路径验证、按路径 replace”仍存在 Critical TOCTOU：验证
+后的 `SUCCESS.tmp` 路径可以被替换，`SUCCESS` 目标也可能在发布瞬间出现。非 NPU commit
+`13efe98 fix: publish smoke seal without path races` 已关闭该问题：
+
+- sandbox root 以 directory fd 固定；`SUCCESS.tmp` 使用相对该 fd 的
+  `O_EXCL|O_NOFOLLOW` 创建或 `O_NOFOLLOW` 恢复；
+- 内容从已打开 fd 读取和验证，`fstat` 要求单链接常规 inode；新 payload 完整写入后降为
+  `0400` 并 `fsync`；
+- `SUCCESS` 通过 hard-link no-replace 发布，绝不覆盖并发 winner；发布后目标 inode 必须
+  与已验证 temporary fd 的 device/inode 完全一致，随后同步目录并移除临时链接；
+- 三类竞态测试覆盖 open 前插入 symlink、publish 前替换 temporary path、并发 winner
+  抢先创建 `SUCCESS`。外部目标不被写入，路径 swap 被 stable-inode 检查拒绝，并发 winner
+  保持原字节。
+
+该修复和全部新增测试均未触发 NPU 或改写 `/data`。最终无 NPU 回归为
+`255 passed, 1 skipped`，Ruff、Black、launcher shell syntax、diff-check 与收紧版 fresh
+`verify_success` 均通过。物理 NPU 2 仍只运行过 `f36a4de` 版本，无需重跑。
+
 ## Rejected attempts
 
 两次旧 seal 均已明确否决，只保留作诊断材料：

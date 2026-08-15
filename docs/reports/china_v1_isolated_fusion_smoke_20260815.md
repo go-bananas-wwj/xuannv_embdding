@@ -72,6 +72,23 @@
 `f36a4de49e263badea4a86b429fddbc3006d5953`；current seal 已在收紧后的 verifier 下 fresh
 复验通过，因此无需为这次非 NPU hardening 重跑物理设备。
 
+后续 Critical TOCTOU 复审指出，`cbda7be` 虽然验证了 `SUCCESS.tmp` 内容，却仍在验证后按
+路径执行 replace；攻击者可在两者之间替换临时路径，或在发布前抢先创建 `SUCCESS`。
+非 NPU commit `13efe98` 进一步关闭该窗口：
+
+- 通过固定 sandbox directory fd，以 `O_EXCL`、`O_NOFOLLOW` 创建临时文件，或以
+  `O_NOFOLLOW` 只读恢复它；所有 schema/digest 校验都从同一个已打开 fd 读取；
+- `fstat` 要求该 fd 始终指向单链接常规文件，并在发布后把目标的 device/inode 与已验证
+  fd 精确比较，从而检测临时路径 swap；
+- 使用 hard-link no-replace 原语发布 `SUCCESS`，并在每个目录状态转换后 `fsync`；并发
+  winner 已存在时保留 winner、拒绝覆盖；
+- 三类竞态回归分别覆盖：临时文件 open 前插入外部 symlink、验证后发布前替换临时路径、
+  以及并发 `SUCCESS` winner 抢先发布。
+
+`13efe98` 同样只涉及 finalizer 与 CPU 安全测试；未运行 NPU、未改写 current evidence。
+收紧后的 fresh verifier 继续接受 `f36a4de` seal，因此物理运行 provenance 与结论边界均
+不变。
+
 ## 数据只读证据
 
 `patch_selection.json` 固定 4 个唯一 patch、192 个 ZIP member/CRC references 与 48 个
@@ -176,7 +193,7 @@ cache、投影、source snapshots、CPU/NPU metrics、四组 axes、门控、重
 ## 回归、限制与延期项
 
 最终非 NPU 回归、静态检查、shell 语法、diff 检查和 fresh `verify_success` 的精确结果见
-Task 8 报告；最终计数为 `252 passed, 1 skipped`，封口后的收紧版 read-only 复验通过。
+Task 8 报告；最终计数为 `255 passed, 1 skipped`，封口后的收紧版 read-only 复验通过。
 
 仍需保留的限制和延期项：
 

@@ -22,6 +22,11 @@
   preliminary/final audit 必须具有精确三/四阶段历史；safe tee 对日志 fd 与 stdout 均执行
   write-all，拒绝 0、负数和越界写入。现有 `f36a4de` 物理运行经收紧 verifier 复验通过，
   无需也未执行 NPU rerun。
+- 关闭 Critical TOCTOU 复审发现 `13efe98`：finalizer 通过 sandbox directory fd 与
+  `O_EXCL/O_NOFOLLOW` 固定 `SUCCESS.tmp`，从 stable fd 验证单链接常规 inode 和内容，
+  再以 hard-link no-replace 发布并核对目标 inode；新增 symlink-before-open、
+  temporary-path swap-before-publish、concurrent SUCCESS winner 三类竞态回归。该后续
+  hardening 未运行 NPU，物理运行仍绑定 `f36a4de`。
 - 最终 physical-NPU-2 synthetic smoke seal 绑定运行 commit `f36a4de`，四组输出均为
   `[4,8,64,128,128]`，最终 combined SHA-256 为
   `45ec55838b74b09d48be96bf510e1e35c8368ff996ea6953f86414f0ba1944f9`。

@@ -11,6 +11,12 @@ Task 8 已把最终 `f36a4de` physical-NPU-2 seal 与最终审查修复波同步
 preliminary/final audit 需精确完整 stage history；fd 与 stdout destination 均处理短写并在
 0/负数写入时 fail closed。该 commit 未产生新 NPU evidence，物理运行仍绑定 `f36a4de`。
 
+Critical TOCTOU follow-up `13efe98` 又把 seal publication 从路径级 replace 改为 fd 绑定的
+no-replace 流程：`O_EXCL/O_NOFOLLOW` 打开 temporary、从 stable fd 校验内容与单链接常规
+inode、hard-link 发布且拒绝覆盖并发 winner、发布后核对目标与已验证 fd 的 device/inode。
+三类竞态测试覆盖 symlink-before-open、temporary-path swap-before-publish 与 concurrent
+SUCCESS winner。它仍是纯非 NPU hardening，未改变 current seal 或运行 provenance。
+
 主报告只消费 current corrected seal。两份 rejected attempts 均被列为 diagnostic archives，
 并从 current audit、digest closure 与结论中排除。交付仍为 repository Markdown；未创建网页
 或 latency 图，因为四个 one-shot 值包含 cold-start/cache 差异，不具备横向性能可比性。
@@ -61,7 +67,7 @@ Fresh read-only inventory 建立了以下事实：
 最终回归未设置 NPU opt-in，也未触发第二次 NPU 运行。结果如下：
 
 ```text
-pytest: 252 passed, 1 skipped
+pytest: 255 passed, 1 skipped
 Ruff: All checks passed!
 Black: PASS
 launcher shell syntax: PASS
@@ -72,7 +78,8 @@ fresh verify_success: PASS
 唯一 skip 是显式 opt-in 的 NPU integration test；本轮没有以回归命令再次占用 NPU，物理
 NPU 2 证据来自 Task 7 唯一一次最终前台运行。Fresh verifier 重新检查了当前 seal 的 digest
 与 semantic graph，包括收紧后的完整 preliminary/final stage history，而不是只读取
-`SUCCESS` 文本。
+`SUCCESS` 文本。`13efe98` 的 publication hardening 不要求重写现有 `SUCCESS`，因此也不
+要求 NPU rerun。
 
 ## Explicitly deferred
 
