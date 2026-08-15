@@ -951,7 +951,7 @@ def _runtime_provenance(torch_npu_module: object, device: torch.device) -> dict[
         "model": str(Path(model_module.__file__).resolve(strict=True)),
     }
     return {
-        "sys_executable": str(Path(sys.executable).resolve(strict=True)),
+        "sys_executable": os.path.abspath(sys.executable),
         "python_version": platform.python_version(),
         "torch_version": str(torch.__version__),
         "torch_npu_version": str(torch_npu_module.__version__),

@@ -362,6 +362,27 @@ def test_mark_tee_complete_refuses_recovery_without_ready(
         runner_module._mark_tee_complete(runner_fixture.config_path)
 
 
+def test_runtime_provenance_records_sys_executable_without_resolving_venv_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """sys.executable 必须保留实际 launcher 路径，不能 resolve 成 venv 的基础解释器。"""
+    import experiments.china_v1_fusion_smoke.runner as runner_module
+
+    class TorchNpuFixture:
+        __file__ = torch.__file__
+        __version__ = "test-torch-npu"
+
+    monkeypatch.setattr(runner_module.sys, "executable", "/sandbox/env/bin/python")
+    monkeypatch.setenv("ASCEND_RT_VISIBLE_DEVICES", "2")
+    monkeypatch.setattr(runner_module, "_key_value_version", lambda _path, _key: "test")
+    monkeypatch.setattr(runner_module.torch.npu, "device_count", lambda: 1)
+    monkeypatch.setattr(runner_module.torch.npu, "get_device_name", lambda _device: "test-npu")
+
+    provenance = runner_module._runtime_provenance(TorchNpuFixture(), torch.device("cpu"))
+
+    assert provenance["sys_executable"] == "/sandbox/env/bin/python"
+
+
 def test_invalid_stage_is_rejected_before_dispatch(runner_fixture: RunnerFixture) -> None:
     """拼错的阶段不得静默落到任何可写或设备路径。"""
     with pytest.raises(ValueError, match="unknown smoke stage"):
