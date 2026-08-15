@@ -55,65 +55,126 @@ def _metadata_for(model: torch.nn.Module) -> dict[str, object]:
 
 
 def _write_evidence(sandbox: Path) -> list[Path]:
+    from experiments.china_v1_fusion_smoke.model import IsolatedFusionSmokeModel
+
+    selection = sandbox / "manifests" / "patch_selection.json"
+    selection.parent.mkdir()
+    selection.write_text(json.dumps({"patch_ids": list(PATCH_IDS)}) + "\n", encoding="utf-8")
     launcher_log = sandbox / "logs" / "npu_smoke.log"
     launcher_log.parent.mkdir()
     launcher_log.write_text("complete foreground runner output\n", encoding="utf-8")
+    preliminary = sandbox / "manifests/preliminary_path_audit.json"
+    preliminary.write_text(
+        json.dumps(
+            {
+                "stage": "npu-smoke",
+                "stages": ["npu-smoke"],
+                "sandbox_root": str(sandbox),
+                "created_or_modified": ["manifests/preliminary_path_audit.json"],
+                "formal_training_allowed": False,
+                "formal_evaluation_allowed": False,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     ready = sandbox / "READY_TO_SEAL"
-    ready.write_text('{"status": "npu_compute_complete"}\n', encoding="utf-8")
+    ready.write_text(
+        json.dumps(
+            {
+                "status": "npu_compute_complete",
+                "git_commit": "a" * 40,
+                "config_sha256": "b" * 64,
+                "preliminary_path_audit": {
+                    "path": "manifests/preliminary_path_audit.json",
+                    "sha256": sha256(preliminary.read_bytes()).hexdigest(),
+                },
+                "source_unchanged": True,
+                "synthetic": True,
+                "formal_training_allowed": False,
+                "formal_evaluation_allowed": False,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     tee_complete = sandbox / "TEE_COMPLETE"
-    tee_complete.write_text('{"status": "tee_pipeline_complete"}\n', encoding="utf-8")
-    evidence = []
-    for name in (
-        "run_manifest.json",
-        "metrics.json",
-        "path_audit.json",
-        "reproducibility.json",
-    ):
-        path = sandbox / name
-        payload = {}
-        if name == "path_audit.json":
-            payload = {
+    tee_complete.write_text(
+        json.dumps(
+            {
+                "status": "tee_pipeline_complete",
+                "git_commit": "a" * 40,
+                "config_sha256": "b" * 64,
+                "ready_to_seal_sha256": sha256(ready.read_bytes()).hexdigest(),
+                "launcher_log": {
+                    "path": "logs/npu_smoke.log",
+                    "size": launcher_log.stat().st_size,
+                    "mtime_ns": launcher_log.stat().st_mtime_ns,
+                    "sha256": sha256(launcher_log.read_bytes()).hexdigest(),
+                },
+                "synthetic": True,
+                "formal_training_allowed": False,
+                "formal_evaluation_allowed": False,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    audit = sandbox / "path_audit.json"
+    audit.write_text(
+        json.dumps(
+            {
                 "stage": "finalize-seal",
                 "stages": ["npu-smoke", "finalize-seal"],
                 "created_or_modified": [
                     "logs/npu_smoke.log",
+                    "manifests/preliminary_path_audit.json",
                     "path_audit.json",
                     "READY_TO_SEAL",
                     "TEE_COMPLETE",
                     "SUCCESS",
                 ],
                 "declared_files": {
-                    "logs/npu_smoke.log": {
-                        "size": launcher_log.stat().st_size,
-                        "mtime_ns": launcher_log.stat().st_mtime_ns,
-                        "sha256": sha256(launcher_log.read_bytes()).hexdigest(),
-                    },
-                    "READY_TO_SEAL": {
-                        "size": ready.stat().st_size,
-                        "mtime_ns": ready.stat().st_mtime_ns,
-                        "sha256": sha256(ready.read_bytes()).hexdigest(),
-                    },
-                    "TEE_COMPLETE": {
-                        "size": tee_complete.stat().st_size,
-                        "mtime_ns": tee_complete.stat().st_mtime_ns,
-                        "sha256": sha256(tee_complete.read_bytes()).hexdigest(),
-                    },
+                    relative: {
+                        "size": path.stat().st_size,
+                        "mtime_ns": path.stat().st_mtime_ns,
+                        "sha256": sha256(path.read_bytes()).hexdigest(),
+                    }
+                    for relative, path in {
+                        "logs/npu_smoke.log": launcher_log,
+                        "READY_TO_SEAL": ready,
+                        "TEE_COMPLETE": tee_complete,
+                    }.items()
                 },
                 "final_seal": {
                     "path": "SUCCESS",
                     "status": "expected_last_write",
                     "exists_when_audit_written": False,
                 },
-            }
-        path.write_text(json.dumps(payload), encoding="utf-8")
-        evidence.append(path)
-    model = torch.nn.Linear(2, 1)
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    model = IsolatedFusionSmokeModel(embed_dim=64)
     checkpoint = sandbox / "smoke_checkpoint.pt"
-    save_smoke_checkpoint(model, checkpoint, _metadata_for(model))
-    evidence.append(checkpoint)
-    selection = sandbox / "manifests" / "patch_selection.json"
-    selection.parent.mkdir()
-    selection.write_text('{"patch_ids": ["patch-000", "patch-001", "patch-002", "patch-003"]}')
+    metadata = {
+        "git_commit": "a" * 40,
+        "config_sha256": "b" * 64,
+        "selected_patch_manifest_sha256": sha256(selection.read_bytes()).hexdigest(),
+        "seed": 20260815,
+        "model_class": (
+            "experiments.china_v1_fusion_smoke.model.IsolatedFusionSmokeModel"
+        ),
+        "synthetic": True,
+        "formal_training_allowed": False,
+        "formal_evaluation_allowed": False,
+    }
+    checkpoint_sha = save_smoke_checkpoint(model, checkpoint, metadata)
     _add_prepared_evidence_declared_by_audit(sandbox)
     (sandbox / "metrics.json").write_text(
         json.dumps(
@@ -137,7 +198,28 @@ def _write_evidence(sandbox: Path) -> list[Path]:
     (sandbox / "run_manifest.json").write_text(
         json.dumps(_valid_run_manifest(sandbox)), encoding="utf-8"
     )
-    return [*evidence, launcher_log, ready, tee_complete]
+    (sandbox / "reproducibility.json").write_text(
+        json.dumps(
+            {
+                "fixed_seed": 20260815,
+                "max_abs_error": 0.0,
+                "matches": True,
+                "checkpoint_sha256": checkpoint_sha,
+                "synthetic": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return [
+        sandbox / "run_manifest.json",
+        sandbox / "metrics.json",
+        audit,
+        sandbox / "reproducibility.json",
+        checkpoint,
+        launcher_log,
+        ready,
+        tee_complete,
+    ]
 
 
 def _export_all_groups(
@@ -177,13 +259,143 @@ def _set_group_patch_axis(groups: list[Path], patch_ids: list[str]) -> None:
 def _add_prepared_evidence_declared_by_audit(sandbox: Path) -> dict[str, Path]:
     """补齐真实 smoke 中必须由 SUCCESS 覆盖的 prepare/CPU/synthetic 证据。"""
     files: dict[str, Path] = {}
+    selection = sandbox / "manifests/patch_selection.json"
+    selection_sha = sha256(selection.read_bytes()).hexdigest()
+    aef_metadata = {
+        "synthetic": True,
+        "synthetic_kind": "annual_s2_fixed_projection",
+        "allowed_use": "smoke_test_only",
+        "formal_training_allowed": False,
+        "formal_evaluation_allowed": False,
+    }
+    highres_metadata = {
+        "synthetic": True,
+        "synthetic_kind": "annual_s2_rgb_5x_deterministic_texture",
+        "allowed_use": "smoke_test_only",
+        "formal_training_allowed": False,
+        "formal_evaluation_allowed": False,
+        "claimed_native_gsd_m": None,
+        "model_input_gsd_m": 2,
+        "contains_real_2m_information": False,
+    }
+    entries: dict[str, list[dict[str, object]]] = {"aef": [], "highres_2m": []}
+    for index, (patch_id, year) in enumerate(
+        patch_year
+        for patch_id in PATCH_IDS
+        for patch_year in ((patch_id, 2020), (patch_id, 2021))
+    ):
+        for kind, metadata, tensor_payload in (
+            (
+                "aef",
+                aef_metadata,
+                {
+                    "aef": torch.ones((64, 1, 1), dtype=torch.float32),
+                    "aef_valid": torch.ones((1, 1, 1), dtype=torch.bool),
+                },
+            ),
+            (
+                "highres_2m",
+                highres_metadata,
+                {
+                    "highres": torch.ones((3, 5, 5), dtype=torch.float32),
+                    "highres_valid": torch.ones((1, 5, 5), dtype=torch.bool),
+                },
+            ),
+        ):
+            relative = f"synthetic/{kind}/patch_{index:02d}_{year}.pt"
+            path = sandbox / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not path.exists():
+                torch.save(
+                    {
+                        **tensor_payload,
+                        "metadata": metadata,
+                        "patch_id": patch_id,
+                        "year": year,
+                    },
+                    path,
+                )
+            files[relative] = path
+            entries[kind].append(
+                {
+                    "patch_id": patch_id,
+                    "year": year,
+                    "path": relative,
+                    "sha256": sha256(path.read_bytes()).hexdigest(),
+                }
+            )
+    projection_relative = "synthetic/aef/fixed_projection_10x64.pt"
+    projection_path = sandbox / projection_relative
+    if not projection_path.exists():
+        torch.save(
+            {
+                "projection": torch.ones((64, 10), dtype=torch.float32),
+                "seed": 20260815,
+                "shape": [64, 10],
+                "dtype": "float32",
+                "synthetic": True,
+                "formal_training_allowed": False,
+                "formal_evaluation_allowed": False,
+            },
+            projection_path,
+        )
+    files[projection_relative] = projection_path
+    source = {
+        "archives": {f"archive-{index:02d}.zip": {"type": "file"} for index in range(48)},
+        "directories": {},
+        "hashing_performed": False,
+    }
+    cpu_groups = {
+        group: {
+            "shape": [2, 4, 64, 16, 16],
+            "dtype": "torch.float32",
+            "finite": True,
+            "max_vmf_norm_error": 0.0,
+        }
+        for group in GROUPS
+    }
     payloads = {
-        "manifests/aef_registry.json": {"synthetic": True, "entries": []},
-        "manifests/highres_2m_registry.json": {"synthetic": True, "entries": []},
-        "manifests/prepare_manifest.json": {"patch_years": 8, "source_unchanged": True},
-        "manifests/cpu_contract.json": {"groups": list(GROUPS)},
-        "manifests/source_snapshot_before.json": {"hashing_performed": False},
-        "manifests/source_snapshot_after.json": {"hashing_performed": False},
+        "manifests/aef_registry.json": {
+            **aef_metadata,
+            "entries": entries["aef"],
+            "projection": {
+                "path": projection_relative,
+                "sha256": sha256(projection_path.read_bytes()).hexdigest(),
+                "seed": 20260815,
+                "shape": [64, 10],
+                "dtype": "float32",
+            },
+        },
+        "manifests/highres_2m_registry.json": {
+            **highres_metadata,
+            "entries": entries["highres_2m"],
+        },
+        "manifests/prepare_manifest.json": {
+            "patch_ids": list(PATCH_IDS),
+            "patch_years": 8,
+            "years": [2020, 2021],
+            "source_archive_count": 48,
+            "source_unchanged": True,
+            "selection_manifest_sha256": selection_sha,
+            "sandbox_bytes_before_path_audit": 1,
+            "synthetic": True,
+            "allowed_use": "smoke_test_only",
+            "formal_training_allowed": False,
+            "formal_evaluation_allowed": False,
+            "accuracy_conclusion_allowed": False,
+        },
+        "manifests/cpu_contract.json": {
+            "fixture": "small",
+            "groups": cpu_groups,
+            "full_zero_gate_matches_base": True,
+            "synthetic": True,
+            "allowed_use": "smoke_test_only",
+            "formal_training_allowed": False,
+            "formal_evaluation_allowed": False,
+            "accuracy_conclusion_allowed": False,
+        },
+        "manifests/source_snapshot_before.json": source,
+        "manifests/source_snapshot_after.json": source,
     }
     for relative, payload in payloads.items():
         path = sandbox / relative
@@ -191,16 +403,6 @@ def _add_prepared_evidence_declared_by_audit(sandbox: Path) -> dict[str, Path]:
         if not path.exists():
             path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
         files[relative] = path
-    for relative in (
-        "synthetic/aef/patch_00_2020.pt",
-        "synthetic/highres_2m/patch_00_2020.pt",
-    ):
-        path = sandbox / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if not path.exists():
-            path.write_bytes((relative + "\n").encode())
-        files[relative] = path
-
     audit_path = sandbox / "path_audit.json"
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
     declared = audit["created_or_modified"]
@@ -210,9 +412,10 @@ def _add_prepared_evidence_declared_by_audit(sandbox: Path) -> dict[str, Path]:
         *payloads,
         "synthetic",
         "synthetic/aef",
-        "synthetic/aef/patch_00_2020.pt",
+        projection_relative,
+        *(str(entry["path"]) for entry in entries["aef"]),
         "synthetic/highres_2m",
-        "synthetic/highres_2m/patch_00_2020.pt",
+        *(str(entry["path"]) for entry in entries["highres_2m"]),
     ]
     declared.extend(relative for relative in additions if relative not in declared)
     audit_path.write_text(json.dumps(audit, sort_keys=True) + "\n", encoding="utf-8")
@@ -228,16 +431,16 @@ def _valid_group_metrics() -> dict[str, object]:
             "pre_export_fp32_vmf_norm": {
                 "source_dtype": "float32",
                 "computation_dtype": "float32",
-                "min": 0.9999999,
+                "min": 1.0,
                 "median": 1.0,
-                "max": 1.0000001,
+                "max": 1.0,
             },
             "reopened_fp16_zarr_vmf_norm": {
                 "source_dtype": "float16",
                 "computation_dtype": "float32",
-                "min": 0.9998,
+                "min": 1.0,
                 "median": 1.0,
-                "max": 1.0002,
+                "max": 1.0,
             },
             "npu_peak_memory": {
                 "unit": "bytes",
@@ -298,6 +501,10 @@ def _valid_run_manifest(sandbox: Path) -> dict[str, object]:
                 "runner": "/worktree/experiments/china_v1_fusion_smoke/runner.py",
                 "model": "/worktree/experiments/china_v1_fusion_smoke/model.py",
             },
+            "occupancy_checks": [
+                {"stage": "launcher_preload", "idle": True},
+                {"stage": "post_load_pre_set_device", "idle": True},
+            ],
         },
         "cpu_contract_fallback": {
             "path": "manifests/cpu_contract.json",
@@ -962,3 +1169,164 @@ def test_reopened_fp16_norm_summary_reads_the_exported_zarr(
         "median": float(np.median(expected)),
         "max": float(expected.max()),
     }
+
+
+@pytest.mark.parametrize("scale", [0.0, 2.0], ids=("all-zero", "norm-two"))
+def test_reopened_fp16_norm_summary_rejects_nonunit_persisted_vectors(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+    scale: float,
+) -> None:
+    """重开实际 FP16 Zarr 后，全零和 norm=2 都不能只因 finite 而通过。"""
+    import experiments.china_v1_fusion_smoke.export as export_module
+
+    embedding, valid = full_contract_tensors
+    embedding[:, :, 0] = scale
+    output = export_group_zarr(
+        "full",
+        embedding,
+        valid,
+        PATCH_IDS,
+        PERIODS,
+        tmp_sandbox / "outputs/full/embedding.zarr",
+        tmp_sandbox,
+    )
+
+    with pytest.raises(ExportError, match="vMF.*tolerance"):
+        export_module.reopened_fp16_vmf_norm_summary(output)
+
+
+@pytest.mark.parametrize(
+    ("source_dtype", "minimum", "maximum"),
+    [("float32", 0.99998, 1.0), ("float16", 0.9994, 1.0)],
+)
+def test_norm_evidence_enforces_dtype_specific_unit_tolerances(
+    source_dtype: str,
+    minimum: float,
+    maximum: float,
+) -> None:
+    """FP32 使用 1e-5、持久化 FP16 使用 5e-4，越界摘要必须拒绝。"""
+    import experiments.china_v1_fusion_smoke.export as export_module
+
+    summary = {
+        "source_dtype": source_dtype,
+        "computation_dtype": "float32",
+        "min": minimum,
+        "median": 1.0,
+        "max": maximum,
+    }
+
+    with pytest.raises(ExportError, match="vMF.*tolerance"):
+        export_module._validate_norm_summary(summary, source_dtype=source_dtype)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "repro-matches",
+        "repro-max-error",
+        "repro-checkpoint-sha",
+        "run-git",
+        "run-config",
+        "run-patch-axis",
+        "empty-aef-registry",
+        "prepare-patch-years",
+        "source-snapshot-mismatch",
+        "cpu-identity",
+        "checkpoint-state",
+        "persisted-norm-mismatch",
+        "missing-gate-gradients",
+    ],
+)
+def test_seal_rejects_semantically_inconsistent_evidence_graph(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+    mutation: str,
+) -> None:
+    """各 JSON 自洽但跨 artifact 矛盾时，最终 seal 必须逐项 fail closed。"""
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    checkpoint = tmp_sandbox / "smoke_checkpoint.pt"
+    checkpoint_sha = sha256(checkpoint.read_bytes()).hexdigest()
+    reproducibility = {
+        "fixed_seed": 20260815,
+        "max_abs_error": 0.0,
+        "matches": True,
+        "checkpoint_sha256": checkpoint_sha,
+        "synthetic": True,
+    }
+    if mutation == "repro-matches":
+        reproducibility["matches"] = False
+    elif mutation == "repro-max-error":
+        reproducibility["max_abs_error"] = 1.0
+    elif mutation == "repro-checkpoint-sha":
+        reproducibility["checkpoint_sha256"] = "0" * 64
+    (tmp_sandbox / "reproducibility.json").write_text(
+        json.dumps(reproducibility), encoding="utf-8"
+    )
+
+    manifest_path = tmp_sandbox / "run_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if mutation == "run-git":
+        manifest["git_commit"] = "d" * 40
+    elif mutation == "run-config":
+        manifest["config_sha256"] = "e" * 64
+    elif mutation == "run-patch-axis":
+        manifest["patch_ids"] = list(reversed(PATCH_IDS))
+    elif mutation == "cpu-identity":
+        cpu_path = tmp_sandbox / "manifests/cpu_contract.json"
+        cpu = json.loads(cpu_path.read_text(encoding="utf-8"))
+        cpu["full_zero_gate_matches_base"] = False
+        cpu_path.write_text(json.dumps(cpu), encoding="utf-8")
+        manifest["cpu_contract_fallback"]["sha256"] = sha256(cpu_path.read_bytes()).hexdigest()
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    if mutation == "empty-aef-registry":
+        registry = tmp_sandbox / "manifests/aef_registry.json"
+        registry.write_text(
+            json.dumps(
+                {
+                    "synthetic": True,
+                    "synthetic_kind": "annual_s2_fixed_projection",
+                    "allowed_use": "smoke_test_only",
+                    "formal_training_allowed": False,
+                    "formal_evaluation_allowed": False,
+                    "entries": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+    elif mutation == "prepare-patch-years":
+        prepare = tmp_sandbox / "manifests/prepare_manifest.json"
+        raw = json.loads(prepare.read_text(encoding="utf-8"))
+        raw["patch_years"] = 7
+        prepare.write_text(json.dumps(raw), encoding="utf-8")
+    elif mutation == "source-snapshot-mismatch":
+        after = tmp_sandbox / "manifests/source_snapshot_after.json"
+        raw = json.loads(after.read_text(encoding="utf-8"))
+        raw["unexpected_change"] = True
+        after.write_text(json.dumps(raw), encoding="utf-8")
+    elif mutation == "checkpoint-state":
+        payload = torch.load(checkpoint, map_location="cpu", weights_only=True)
+        payload["state_dict"] = {"wrong.weight": torch.ones((1,), dtype=torch.float32)}
+        torch.save(payload, checkpoint)
+        reproducibility["checkpoint_sha256"] = sha256(checkpoint.read_bytes()).hexdigest()
+        (tmp_sandbox / "reproducibility.json").write_text(
+            json.dumps(reproducibility), encoding="utf-8"
+        )
+    elif mutation == "persisted-norm-mismatch":
+        metrics = tmp_sandbox / "metrics.json"
+        raw = json.loads(metrics.read_text(encoding="utf-8"))
+        raw["groups"]["full"]["reopened_fp16_zarr_vmf_norm"]["median"] = 1.0002
+        metrics.write_text(json.dumps(raw), encoding="utf-8")
+    elif mutation == "missing-gate-gradients":
+        metrics = tmp_sandbox / "metrics.json"
+        raw = json.loads(metrics.read_text(encoding="utf-8"))
+        raw["gradient_l1"].pop("aef_gate")
+        metrics.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(
+        ExportError,
+        match="semantic|reproducibility|registry|source|CPU|checkpoint|gradient|norm|axis",
+    ):
+        seal_success(tmp_sandbox, [*groups, *evidence])
+    assert not (tmp_sandbox / "SUCCESS").exists()

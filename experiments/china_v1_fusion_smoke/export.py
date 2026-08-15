@@ -693,6 +693,7 @@ def _validate_run_manifest_evidence(raw: Mapping[str, object], sandbox_root: Pat
         "driver",
         "device_mapping",
         "module_paths",
+        "occupancy_checks",
     }
     if not isinstance(runtime, Mapping) or set(runtime) != runtime_keys:
         raise ExportError("run manifest runtime provenance is invalid")
@@ -743,6 +744,13 @@ def _validate_run_manifest_evidence(raw: Mapping[str, object], sandbox_root: Pat
         isinstance(value, str) and Path(value).is_absolute() for value in module_paths.values()
     ):
         raise ExportError("run manifest module paths must be absolute")
+    occupancy = runtime["occupancy_checks"]
+    expected_occupancy = [
+        {"stage": "launcher_preload", "idle": True},
+        {"stage": "post_load_pre_set_device", "idle": True},
+    ]
+    if not _exactly_equal(occupancy, expected_occupancy):
+        raise ExportError("run manifest NPU occupancy evidence is invalid")
 
     fallback = raw["cpu_contract_fallback"]
     if not isinstance(fallback, Mapping) or set(fallback) != {"path", "sha256"}:
@@ -753,6 +761,369 @@ def _validate_run_manifest_evidence(raw: Mapping[str, object], sandbox_root: Pat
     _require_regular_evidence_file(cpu_contract)
     if _sha256_file(cpu_contract) != fallback["sha256"]:
         raise ExportError("run manifest CPU contract fallback hash does not match evidence")
+
+
+def _read_json_evidence(path: Path, sandbox_root: Path) -> dict[str, object]:
+    guarded = _guard_non_symlink_sandbox_path(path, sandbox_root)
+    _require_regular_evidence_file(guarded)
+    try:
+        raw = json.loads(guarded.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ExportError(f"semantic evidence is malformed: {guarded}") from exc
+    if not isinstance(raw, dict):
+        raise ExportError(f"semantic evidence must be a JSON object: {guarded}")
+    return raw
+
+
+def _strict_smoke_policy(raw: Mapping[str, object], *, highres: bool = False) -> None:
+    expected = {
+        "synthetic": True,
+        "allowed_use": "smoke_test_only",
+        "formal_training_allowed": False,
+        "formal_evaluation_allowed": False,
+    }
+    if any(not _exactly_equal(raw.get(key), value) for key, value in expected.items()):
+        raise ExportError("semantic registry use-policy flags are invalid")
+    expected_kind = (
+        "annual_s2_rgb_5x_deterministic_texture"
+        if highres
+        else "annual_s2_fixed_projection"
+    )
+    if raw.get("synthetic_kind") != expected_kind:
+        raise ExportError("semantic registry synthetic kind is invalid")
+    if highres and (
+        raw.get("claimed_native_gsd_m") is not None
+        or raw.get("model_input_gsd_m") != 2
+        or raw.get("contains_real_2m_information") is not False
+    ):
+        raise ExportError("semantic highres registry claims unsupported real 2 m information")
+
+
+def _load_safe_tensor_payload(path: Path, sandbox_root: Path) -> dict[str, object]:
+    guarded = _guard_non_symlink_sandbox_path(path, sandbox_root)
+    _require_regular_evidence_file(guarded)
+    try:
+        payload = torch.load(guarded, map_location="cpu", weights_only=True)
+    except Exception as exc:
+        raise ExportError(f"semantic tensor evidence cannot be loaded safely: {guarded}") from exc
+    if not isinstance(payload, dict) or not payload:
+        raise ExportError(f"semantic tensor evidence must be a non-empty mapping: {guarded}")
+    return payload
+
+
+def _validate_registry_graph(
+    sandbox_root: Path,
+    patch_ids: tuple[str, ...],
+) -> None:
+    expected_pairs = tuple((patch_id, year) for patch_id in patch_ids for year in (2020, 2021))
+    manifest_root = sandbox_root / "manifests"
+    registries = (
+        ("aef", _read_json_evidence(manifest_root / "aef_registry.json", sandbox_root), False),
+        (
+            "highres_2m",
+            _read_json_evidence(manifest_root / "highres_2m_registry.json", sandbox_root),
+            True,
+        ),
+    )
+    for kind, registry, highres in registries:
+        _strict_smoke_policy(registry, highres=highres)
+        entries = registry.get("entries")
+        if not isinstance(entries, list) or len(entries) != 8:
+            raise ExportError(f"semantic {kind} registry must contain exactly eight entries")
+        observed_pairs: list[tuple[object, object]] = []
+        metadata = {
+            key: value
+            for key, value in registry.items()
+            if key not in {"entries", "projection"}
+        }
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, Mapping) or set(entry) != {
+                "patch_id",
+                "year",
+                "path",
+                "sha256",
+            }:
+                raise ExportError(f"semantic {kind} registry entry schema is invalid")
+            pair = (entry["patch_id"], entry["year"])
+            observed_pairs.append(pair)
+            expected_path = f"synthetic/{kind}/patch_{index:02d}_{expected_pairs[index][1]}.pt"
+            if pair != expected_pairs[index] or entry["path"] != expected_path:
+                raise ExportError(f"semantic {kind} registry patch-year axis is invalid")
+            if not _is_hex(entry["sha256"], 64):
+                raise ExportError(f"semantic {kind} registry checksum is invalid")
+            cache = _guard_non_symlink_sandbox_path(sandbox_root / str(entry["path"]), sandbox_root)
+            if _sha256_file(cache) != entry["sha256"]:
+                raise ExportError(f"semantic {kind} registry checksum does not match cache")
+            payload = _load_safe_tensor_payload(cache, sandbox_root)
+            if (
+                payload.get("patch_id") != pair[0]
+                or payload.get("year") != pair[1]
+                or not _exactly_equal(payload.get("metadata"), metadata)
+            ):
+                raise ExportError(f"semantic {kind} cache provenance is invalid")
+        if tuple(observed_pairs) != expected_pairs or len(set(observed_pairs)) != 8:
+            raise ExportError(f"semantic {kind} registry does not cover eight patch-years")
+
+    aef_registry = registries[0][1]
+    projection = aef_registry.get("projection")
+    expected_projection_keys = {"path", "sha256", "seed", "shape", "dtype"}
+    if not isinstance(projection, Mapping) or set(projection) != expected_projection_keys:
+        raise ExportError("semantic AEF projection provenance is invalid")
+    if (
+        projection.get("path") != "synthetic/aef/fixed_projection_10x64.pt"
+        or projection.get("seed") != 20260815
+        or projection.get("shape") != [64, 10]
+        or projection.get("dtype") != "float32"
+        or not _is_hex(projection.get("sha256"), 64)
+    ):
+        raise ExportError("semantic AEF projection provenance is invalid")
+    projection_path = sandbox_root / str(projection["path"])
+    if _sha256_file(projection_path) != projection["sha256"]:
+        raise ExportError("semantic AEF projection checksum does not match")
+    projection_payload = _load_safe_tensor_payload(projection_path, sandbox_root)
+    tensor = projection_payload.get("projection")
+    if (
+        not isinstance(tensor, torch.Tensor)
+        or tuple(tensor.shape) != (64, 10)
+        or tensor.dtype != torch.float32
+        or not bool(torch.isfinite(tensor).all())
+        or projection_payload.get("seed") != 20260815
+    ):
+        raise ExportError("semantic AEF projection tensor is invalid")
+
+
+def _validate_prepare_and_cpu_graph(
+    sandbox_root: Path,
+    patch_ids: tuple[str, ...],
+    selection_sha256: str,
+) -> None:
+    manifests = sandbox_root / "manifests"
+    prepare = _read_json_evidence(manifests / "prepare_manifest.json", sandbox_root)
+    expected_prepare_keys = {
+        "patch_ids",
+        "patch_years",
+        "years",
+        "source_archive_count",
+        "source_unchanged",
+        "selection_manifest_sha256",
+        "sandbox_bytes_before_path_audit",
+        "synthetic",
+        "allowed_use",
+        "formal_training_allowed",
+        "formal_evaluation_allowed",
+        "accuracy_conclusion_allowed",
+    }
+    if set(prepare) != expected_prepare_keys:
+        raise ExportError("semantic prepare manifest schema is invalid")
+    if (
+        prepare["patch_ids"] != list(patch_ids)
+        or prepare["patch_years"] != 8
+        or prepare["years"] != [2020, 2021]
+        or prepare["source_archive_count"] != 48
+        or prepare["source_unchanged"] is not True
+        or prepare["selection_manifest_sha256"] != selection_sha256
+        or type(prepare["sandbox_bytes_before_path_audit"]) is not int
+        or prepare["sandbox_bytes_before_path_audit"] < 0
+        or prepare["synthetic"] is not True
+        or prepare["allowed_use"] != "smoke_test_only"
+        or prepare["formal_training_allowed"] is not False
+        or prepare["formal_evaluation_allowed"] is not False
+        or prepare["accuracy_conclusion_allowed"] is not False
+    ):
+        raise ExportError("semantic prepare manifest provenance is invalid")
+
+    before = _read_json_evidence(manifests / "source_snapshot_before.json", sandbox_root)
+    after = _read_json_evidence(manifests / "source_snapshot_after.json", sandbox_root)
+    if not _exactly_equal(before, after) or set(before) != {
+        "archives",
+        "directories",
+        "hashing_performed",
+    }:
+        raise ExportError("semantic source snapshots differ")
+    if (
+        before["hashing_performed"] is not False
+        or not isinstance(before["archives"], Mapping)
+        or len(before["archives"]) != 48
+        or not isinstance(before["directories"], Mapping)
+    ):
+        raise ExportError("semantic source snapshot coverage is invalid")
+
+    cpu = _read_json_evidence(manifests / "cpu_contract.json", sandbox_root)
+    expected_cpu_keys = {
+        "fixture",
+        "groups",
+        "full_zero_gate_matches_base",
+        "synthetic",
+        "allowed_use",
+        "formal_training_allowed",
+        "formal_evaluation_allowed",
+        "accuracy_conclusion_allowed",
+    }
+    if set(cpu) != expected_cpu_keys or cpu["fixture"] not in {"small", "full-shape"}:
+        raise ExportError("semantic CPU contract schema is invalid")
+    groups = cpu.get("groups")
+    if not isinstance(groups, Mapping) or set(groups) != set(_GROUPS):
+        raise ExportError("semantic CPU contract must contain the exact four groups")
+    for group in _GROUPS:
+        value = groups[group]
+        if not isinstance(value, Mapping) or set(value) != {
+            "shape",
+            "dtype",
+            "finite",
+            "max_vmf_norm_error",
+        }:
+            raise ExportError("semantic CPU contract group schema is invalid")
+        shape = value["shape"]
+        if (
+            not isinstance(shape, list)
+            or len(shape) != 5
+            or shape[1] != 4
+            or shape[2] != 64
+            or shape[3] != shape[4]
+            or value["dtype"] != "torch.float32"
+            or value["finite"] is not True
+            or not _finite_number(value["max_vmf_norm_error"])
+            or not 0.0 <= value["max_vmf_norm_error"] <= 1.0e-5
+        ):
+            raise ExportError("semantic CPU contract group value is invalid")
+    if (
+        cpu["full_zero_gate_matches_base"] is not True
+        or cpu["synthetic"] is not True
+        or cpu["allowed_use"] != "smoke_test_only"
+        or cpu["formal_training_allowed"] is not False
+        or cpu["formal_evaluation_allowed"] is not False
+        or cpu["accuracy_conclusion_allowed"] is not False
+    ):
+        raise ExportError("semantic CPU identity/use-policy evidence is invalid")
+
+
+def _validate_markers(sandbox_root: Path, git_commit: str, config_sha256: str) -> None:
+    preliminary_path = sandbox_root / "manifests/preliminary_path_audit.json"
+    preliminary = _read_json_evidence(preliminary_path, sandbox_root)
+    if preliminary.get("stage") != "npu-smoke":
+        raise ExportError("semantic preliminary audit stage is invalid")
+    ready_path = sandbox_root / _READY_TO_SEAL_RELATIVE_PATH
+    ready = _read_json_evidence(ready_path, sandbox_root)
+    expected_ready_keys = {
+        "status",
+        "git_commit",
+        "config_sha256",
+        "preliminary_path_audit",
+        "source_unchanged",
+        "synthetic",
+        "formal_training_allowed",
+        "formal_evaluation_allowed",
+    }
+    binding = {
+        "path": "manifests/preliminary_path_audit.json",
+        "sha256": _sha256_file(preliminary_path),
+    }
+    if set(ready) != expected_ready_keys or not _exactly_equal(
+        ready,
+        {
+            "status": "npu_compute_complete",
+            "git_commit": git_commit,
+            "config_sha256": config_sha256,
+            "preliminary_path_audit": binding,
+            "source_unchanged": True,
+            "synthetic": True,
+            "formal_training_allowed": False,
+            "formal_evaluation_allowed": False,
+        },
+    ):
+        raise ExportError("semantic READY_TO_SEAL provenance is invalid")
+    tee = _read_json_evidence(sandbox_root / _TEE_COMPLETE_RELATIVE_PATH, sandbox_root)
+    log = sandbox_root / _LAUNCHER_LOG_RELATIVE_PATH
+    stat_result = log.stat()
+    log_metadata = {
+        "path": _LAUNCHER_LOG_RELATIVE_PATH.as_posix(),
+        "size": stat_result.st_size,
+        "mtime_ns": stat_result.st_mtime_ns,
+        "sha256": _sha256_file(log),
+    }
+    expected_tee = {
+        "status": "tee_pipeline_complete",
+        "git_commit": git_commit,
+        "config_sha256": config_sha256,
+        "ready_to_seal_sha256": _sha256_file(ready_path),
+        "launcher_log": log_metadata,
+        "synthetic": True,
+        "formal_training_allowed": False,
+        "formal_evaluation_allowed": False,
+    }
+    if not _exactly_equal(tee, expected_tee):
+        raise ExportError("semantic TEE_COMPLETE/log provenance is invalid")
+
+
+def _validate_semantic_evidence_graph(sandbox_root: Path) -> None:
+    selection_path = sandbox_root / _PATCH_SELECTION_RELATIVE_PATH
+    patch_ids = _required_patch_selection_ids(sandbox_root)
+    selection_sha = _sha256_file(selection_path)
+    run = _read_json_evidence(sandbox_root / "run_manifest.json", sandbox_root)
+    metrics = _read_json_evidence(sandbox_root / "metrics.json", sandbox_root)
+    reproducibility = _read_json_evidence(
+        sandbox_root / "reproducibility.json", sandbox_root
+    )
+    _validate_run_manifest_evidence(run, sandbox_root)
+    _validate_metrics_evidence(metrics)
+    if run["patch_ids"] != list(patch_ids):
+        raise ExportError("semantic run/selection patch axis differs")
+
+    checkpoint_path = sandbox_root / "smoke_checkpoint.pt"
+    state_dict, metadata = _load_checkpoint_payload(checkpoint_path)
+    expected_metadata_keys = {
+        "git_commit",
+        "config_sha256",
+        "selected_patch_manifest_sha256",
+        "seed",
+        "model_class",
+        "synthetic",
+        "formal_training_allowed",
+        "formal_evaluation_allowed",
+    }
+    if set(metadata) != expected_metadata_keys:
+        raise ExportError("semantic checkpoint metadata schema is invalid")
+    if (
+        metadata["git_commit"] != run["git_commit"]
+        or metadata["config_sha256"] != run["config_sha256"]
+        or metadata["selected_patch_manifest_sha256"] != selection_sha
+        or metadata["seed"] != 20260815
+        or metadata["model_class"]
+        != "experiments.china_v1_fusion_smoke.model.IsolatedFusionSmokeModel"
+        or metadata["synthetic"] is not True
+        or metadata["formal_training_allowed"] is not False
+        or metadata["formal_evaluation_allowed"] is not False
+    ):
+        raise ExportError("semantic checkpoint provenance differs from run/selection evidence")
+    from experiments.china_v1_fusion_smoke.model import IsolatedFusionSmokeModel
+
+    expected_model = IsolatedFusionSmokeModel(embed_dim=64)
+    _validate_state_dict_for_model(state_dict, expected_model)
+
+    expected_repro = {
+        "fixed_seed": 20260815,
+        "max_abs_error": 0.0,
+        "matches": True,
+        "checkpoint_sha256": _sha256_file(checkpoint_path),
+        "synthetic": True,
+    }
+    if not _exactly_equal(reproducibility, expected_repro):
+        raise ExportError("semantic reproducibility evidence is invalid")
+
+    _validate_registry_graph(sandbox_root, patch_ids)
+    _validate_prepare_and_cpu_graph(sandbox_root, patch_ids, selection_sha)
+    _validate_markers(
+        sandbox_root,
+        str(run["git_commit"]),
+        str(run["config_sha256"]),
+    )
+    for group in _GROUPS:
+        actual = reopened_fp16_vmf_norm_summary(
+            sandbox_root / "outputs" / group / "embedding.zarr"
+        )
+        reported = metrics["groups"][group]["reopened_fp16_zarr_vmf_norm"]
+        if not _exactly_equal(actual, reported):
+            raise ExportError(f"semantic persisted norm differs from metrics for {group}")
 
 
 def _validate_required_evidence(sandbox_root: Path) -> None:
@@ -775,6 +1146,7 @@ def _validate_required_evidence(sandbox_root: Path) -> None:
     checkpoint = _guard_non_symlink_sandbox_path(sandbox_root / "smoke_checkpoint.pt", sandbox_root)
     _require_regular_evidence_file(checkpoint)
     _load_checkpoint_payload(checkpoint)
+    _validate_semantic_evidence_graph(sandbox_root)
 
 
 def _created_evidence_paths(raw: Mapping[str, object], sandbox_root: Path) -> tuple[Path, ...]:

@@ -28,6 +28,14 @@ def _generator_seed(seed: int, patch_id: str, year: int) -> int:
     return int.from_bytes(digest[:8], byteorder="big") & ((1 << 63) - 1)
 
 
+def fixed_aef_projection(seed: int) -> torch.Tensor:
+    """生成一次全局固定的 10→64 synthetic AEF 语义投影。"""
+    digest = sha256(f"{seed}|global-aef-projection".encode("utf-8")).digest()
+    projection_seed = int.from_bytes(digest[:8], byteorder="big") & ((1 << 63) - 1)
+    generator = torch.Generator(device="cpu").manual_seed(projection_seed)
+    return torch.randn((64, 10), generator=generator, dtype=torch.float32)
+
+
 def _validate_inputs(s2_year: torch.Tensor, valid_s2_year: torch.Tensor) -> None:
     if s2_year.shape != _S2_SHAPE:
         raise ValueError(f"s2_year must have shape {_S2_SHAPE}; got {tuple(s2_year.shape)}")
@@ -63,6 +71,7 @@ def generate_synthetic_context(
     patch_id: str,
     year: int,
     seed: int,
+    aef_projection: torch.Tensor | None = None,
 ) -> SyntheticAnnualContext:
     """从一年 S2 生成确定性的 synthetic AEF 与 5×上采样高分支输入。
 
@@ -70,10 +79,17 @@ def generate_synthetic_context(
     """
     _validate_inputs(s2_year, valid_s2_year)
     annual_s2, annual_valid = _annual_s2(s2_year, valid_s2_year)
-    generator = torch.Generator(device="cpu")
-    generator.manual_seed(_generator_seed(seed, patch_id, year))
+    generator = torch.Generator(device="cpu").manual_seed(_generator_seed(seed, patch_id, year))
 
-    projection = torch.randn((64, 10), generator=generator, dtype=torch.float32)
+    projection = fixed_aef_projection(seed) if aef_projection is None else aef_projection
+    if (
+        not isinstance(projection, torch.Tensor)
+        or tuple(projection.shape) != (64, 10)
+        or projection.dtype != torch.float32
+        or projection.device.type != "cpu"
+        or not bool(torch.isfinite(projection).all())
+    ):
+        raise ValueError("aef_projection must be a finite CPU float32 tensor with shape (64, 10)")
     projected_aef = torch.einsum("oc,chw->ohw", projection, annual_s2)
     aef_norm = torch.linalg.vector_norm(projected_aef, dim=0, keepdim=True)
     aef_valid = annual_valid & (aef_norm > 1.0e-6)

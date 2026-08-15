@@ -91,3 +91,16 @@ def test_degenerate_zero_projection_is_not_marked_as_valid_aef() -> None:
     context = generate_synthetic_context(s2, valid_s2, "patch-a", 2020, seed=20260815)
 
     assert not bool(context.aef_valid.any())
+
+
+def test_aef_projection_is_global_while_texture_remains_patch_year_specific() -> None:
+    """AEF 的 10→64 投影只能依赖全局 seed，不能随 patch-year 改变语义基底。"""
+    generator = torch.Generator().manual_seed(17)
+    s2 = torch.rand((4, 3, 10, 128, 128), generator=generator)
+    valid = torch.ones((4, 3, 1, 128, 128), dtype=torch.bool)
+
+    first = generate_synthetic_context(s2, valid, "patch-a", 2020, seed=20260815)
+    second = generate_synthetic_context(s2, valid, "patch-b", 2021, seed=20260815)
+
+    torch.testing.assert_close(first.aef, second.aef, atol=0.0, rtol=0.0)
+    assert not torch.equal(first.highres, second.highres)

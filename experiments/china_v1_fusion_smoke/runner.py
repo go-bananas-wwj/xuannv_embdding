@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import platform
@@ -51,6 +52,7 @@ from experiments.china_v1_fusion_smoke.safety import (
 )
 from experiments.china_v1_fusion_smoke.synthetic import (
     SyntheticAnnualContext,
+    fixed_aef_projection,
     generate_synthetic_context,
 )
 
@@ -70,6 +72,7 @@ TASK7_LAUNCHER = EXPECTED_WORKTREE / "scripts/smoke/run_china_v1_isolated_fusion
 PHYSICAL_NPU2 = Path("/dev/davinci2")
 READY_TO_SEAL = "READY_TO_SEAL"
 TEE_COMPLETE = "TEE_COMPLETE"
+PRELIMINARY_PATH_AUDIT = Path("manifests/preliminary_path_audit.json")
 
 
 class RunnerError(RuntimeError):
@@ -250,20 +253,27 @@ def _record_path_audit(
     *,
     final_seal_path: Path | None = None,
     declared_paths: Sequence[Path] = (),
+    previous_audit_path: Path | None = None,
+    output_audit_path: Path | None = None,
 ) -> tuple[Path, ...]:
     """记录本阶段新增或修改路径；audit 文件自身也显式纳入。"""
     if stage not in AUDIT_STAGES:
         raise RunnerError(f"invalid path audit stage: {stage}")
     after = _snapshot_sandbox(sandbox_root)
     changed = {path for path, state in after.items() if before.get(path) != state}
-    audit_relative = "path_audit.json"
-    audit_path = validate_write_path(sandbox_root / audit_relative, sandbox_root)
+    previous_path = validate_write_path(
+        previous_audit_path or sandbox_root / "path_audit.json", sandbox_root
+    )
+    audit_path = validate_write_path(
+        output_audit_path or sandbox_root / "path_audit.json", sandbox_root
+    )
+    audit_relative = audit_path.relative_to(sandbox_root).as_posix()
     previous_stages: list[str] = []
-    if audit_path.exists():
+    if previous_path.exists():
         try:
-            previous = json.loads(audit_path.read_text(encoding="utf-8"))
+            previous = json.loads(previous_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise RunnerError(f"existing path audit is malformed: {audit_path}") from exc
+            raise RunnerError(f"existing path audit is malformed: {previous_path}") from exc
         if not isinstance(previous, dict):
             raise RunnerError("existing path audit must be a JSON object")
         previous_paths = previous.get("created_or_modified")
@@ -499,6 +509,27 @@ def _run_prepare(
     aef_entries: list[dict[str, object]] = []
     highres_entries: list[dict[str, object]] = []
     registry_metadata: Mapping[str, Mapping[str, object]] | None = None
+    projection = fixed_aef_projection(seed)
+    projection_path, projection_sha = _write_tensor_cache(
+        config.sandbox_root / "synthetic" / "aef" / "fixed_projection_10x64.pt",
+        {
+            "projection": projection,
+            "seed": seed,
+            "shape": [64, 10],
+            "dtype": "float32",
+            "synthetic": True,
+            "formal_training_allowed": False,
+            "formal_evaluation_allowed": False,
+        },
+        config.sandbox_root,
+    )
+    projection_provenance = {
+        "path": projection_path.relative_to(config.sandbox_root).as_posix(),
+        "sha256": projection_sha,
+        "seed": seed,
+        "shape": [64, 10],
+        "dtype": "float32",
+    }
     for sample_index, (patch_id, year) in enumerate(zip(batch.patch_ids, batch.years)):
         context = generate_synthetic_context(
             batch.s2[sample_index],
@@ -506,6 +537,7 @@ def _run_prepare(
             patch_id,
             year,
             seed,
+            aef_projection=projection,
         )
         _validate_context(context)
         if registry_metadata is None:
@@ -555,7 +587,10 @@ def _run_prepare(
     assert registry_metadata is not None
     _write_json(
         manifests / "aef_registry.json",
-        _registry_payload(registry_metadata["aef"], aef_entries),
+        {
+            **_registry_payload(registry_metadata["aef"], aef_entries),
+            "projection": projection_provenance,
+        },
         config.sandbox_root,
     )
     _write_json(
@@ -726,9 +761,12 @@ def _load_prepared_contexts(
                 payload = torch.load(path, map_location="cpu", weights_only=True)
             except Exception as exc:
                 raise RunnerError(f"cannot safely load prepared cache: {path}") from exc
-            if not isinstance(payload, dict) or payload.get("metadata") != {
-                key: value for key, value in registry.items() if key != "entries"
-            }:
+            registry_metadata = {
+                key: value
+                for key, value in registry.items()
+                if key not in {"entries", "projection"}
+            }
+            if not isinstance(payload, dict) or payload.get("metadata") != registry_metadata:
                 raise RunnerError(f"prepared {kind} cache metadata mismatch: {path}")
             validate_smoke_registry(payload["metadata"])
             tensors[tensor_name].append(payload[tensor_name])
@@ -943,7 +981,11 @@ def _key_value_version(path: Path, key: str) -> str:
     raise RunnerError(f"runtime version evidence is missing {key}: {path}")
 
 
-def _runtime_provenance(torch_npu_module: object, device: torch.device) -> dict[str, object]:
+def _runtime_provenance(
+    torch_npu_module: object,
+    device: torch.device,
+    occupancy_checks: Sequence[Mapping[str, object]] = (),
+) -> dict[str, object]:
     """记录本次 NPU 进程实际解释器、模块、CANN/driver 与设备映射。"""
     cann_root = Path("/usr/local/Ascend/cann-9.0.0")
     cann_info = cann_root / "aarch64-linux/ascend_toolkit_install.info"
@@ -978,6 +1020,61 @@ def _runtime_provenance(torch_npu_module: object, device: torch.device) -> dict[
             "device_name": torch.npu.get_device_name(device),
         },
         "module_paths": module_paths,
+        "occupancy_checks": list(occupancy_checks),
+    }
+
+
+def _run_npu_forward_group(
+    model: object,
+    inputs: Mapping[str, torch.Tensor],
+    *,
+    use_aef: bool,
+    use_highres: bool,
+    device: torch.device,
+    npu_api: object,
+) -> tuple[torch.Tensor, dict[str, object]]:
+    """单组测量结束即复制到 CPU 并释放完整 NPU 输出，再返回下一组。"""
+    gc.collect()
+    npu_api.synchronize()
+    npu_api.empty_cache()
+    npu_api.synchronize()
+    npu_api.reset_peak_memory_stats(device)
+    baseline_allocated = int(npu_api.memory_allocated(device))
+    baseline_reserved = int(npu_api.memory_reserved(device))
+    started = time.perf_counter()
+    output = model(
+        **inputs,
+        use_aef=use_aef,
+        use_highres=use_highres,
+    )
+    npu_api.synchronize()
+    latency = time.perf_counter() - started
+    peak_allocated = int(npu_api.max_memory_allocated(device))
+    peak_reserved = int(npu_api.max_memory_reserved(device))
+    embedding = output.embedding.detach().to(device="cpu", dtype=torch.float32, copy=True)
+    del output
+    norms = torch.linalg.vector_norm(embedding, dim=2)
+    summary = {
+        "source_dtype": "float32",
+        "computation_dtype": "float32",
+        "min": float(norms.min()),
+        "median": float(norms.median()),
+        "max": float(norms.max()),
+    }
+    return embedding, {
+        "shape": list(embedding.shape),
+        "latency_seconds": latency,
+        "finite": bool(torch.isfinite(embedding).all()),
+        "pre_export_fp32_vmf_norm": summary,
+        "npu_peak_memory": {
+            "unit": "bytes",
+            "baseline_allocated": baseline_allocated,
+            "baseline_reserved": baseline_reserved,
+            "peak_allocated": peak_allocated,
+            "peak_reserved": peak_reserved,
+            "peak_allocated_delta": peak_allocated - baseline_allocated,
+            "peak_reserved_delta": peak_reserved - baseline_reserved,
+        },
     }
 
 
@@ -1013,6 +1110,13 @@ def _run_npu_smoke(
     _validate_batch(batch, selections)
     aef, aef_valid, highres, highres_valid = _load_prepared_contexts(config, batch)
 
+    if not _physical_npu2_is_idle():
+        raise RunnerError("NPU 2 became busy after archive/cache load; refusing set_device")
+    occupancy_checks = (
+        {"stage": "launcher_preload", "idle": True},
+        {"stage": "post_load_pre_set_device", "idle": True},
+    )
+
     try:
         import torch_npu
     except ImportError as exc:
@@ -1021,7 +1125,7 @@ def _run_npu_smoke(
         raise RunnerError("Task 7 launcher must expose exactly one logical NPU")
     device = torch.device(config.logical_device)
     torch.npu.set_device(device)
-    runtime_provenance = _runtime_provenance(torch_npu, device)
+    runtime_provenance = _runtime_provenance(torch_npu, device, occupancy_checks)
     inputs = {
         "s2": batch.s2.to(device),
         "s1": batch.s1.to(device),
@@ -1038,46 +1142,24 @@ def _run_npu_smoke(
     group_metrics: dict[str, object] = {}
     with torch.no_grad():
         for group, (use_aef, use_highres) in GROUPS.items():
-            torch.npu.synchronize()
-            torch.npu.empty_cache()
-            torch.npu.synchronize()
-            torch.npu.reset_peak_memory_stats(device)
-            baseline_allocated = int(torch.npu.memory_allocated(device))
-            baseline_reserved = int(torch.npu.memory_reserved(device))
-            started = time.perf_counter()
-            output = model(
-                **inputs,
+            embedding, metric = _run_npu_forward_group(
+                model,
+                inputs,
                 use_aef=use_aef,
                 use_highres=use_highres,
+                device=device,
+                npu_api=torch.npu,
             )
-            torch.npu.synchronize()
-            latency = time.perf_counter() - started
-            peak_allocated = int(torch.npu.max_memory_allocated(device))
-            peak_reserved = int(torch.npu.max_memory_reserved(device))
-            embedding = output.embedding.detach().cpu()
+            metric["shape"] = list(_patch_period_layout(embedding).shape)
+            norm_summary = metric["pre_export_fp32_vmf_norm"]
+            assert isinstance(norm_summary, Mapping)
+            if any(
+                abs(float(norm_summary[key]) - 1.0) > 1.0e-5
+                for key in ("min", "median", "max")
+            ):
+                raise RunnerError("pre-export FP32 vMF norm exceeds the 1e-5 tolerance")
             output_cpu[group] = embedding
-            norms = torch.linalg.vector_norm(embedding, dim=2)
-            group_metrics[group] = {
-                "shape": list(_patch_period_layout(embedding).shape),
-                "latency_seconds": latency,
-                "finite": bool(torch.isfinite(embedding).all()),
-                "pre_export_fp32_vmf_norm": {
-                    "source_dtype": str(embedding.dtype).removeprefix("torch."),
-                    "computation_dtype": "float32",
-                    "min": float(norms.min()),
-                    "median": float(norms.median()),
-                    "max": float(norms.max()),
-                },
-                "npu_peak_memory": {
-                    "unit": "bytes",
-                    "baseline_allocated": baseline_allocated,
-                    "baseline_reserved": baseline_reserved,
-                    "peak_allocated": peak_allocated,
-                    "peak_reserved": peak_reserved,
-                    "peak_allocated_delta": peak_allocated - baseline_allocated,
-                    "peak_reserved_delta": peak_reserved - baseline_reserved,
-                },
-            }
+            group_metrics[group] = metric
     zero_gate_error = float((output_cpu["full"] - output_cpu["base"]).abs().max())
     if zero_gate_error != 0.0:
         raise RunnerError("zero-gate Full/Base identity failed on NPU")
@@ -1208,15 +1290,20 @@ def _run_npu_smoke(
         "npu-smoke",
         config.sandbox_root,
         before_sandbox,
+        previous_audit_path=config.sandbox_root / "path_audit.json",
+        output_audit_path=config.sandbox_root / PRELIMINARY_PATH_AUDIT,
     )
-    path_audit = config.sandbox_root / "path_audit.json"
+    path_audit = config.sandbox_root / PRELIMINARY_PATH_AUDIT
     ready = _write_json(
         config.sandbox_root / READY_TO_SEAL,
         {
             "status": "npu_compute_complete",
             "git_commit": metadata["git_commit"],
             "config_sha256": metadata["config_sha256"],
-            "preliminary_path_audit_sha256": _sha256_file(path_audit),
+            "preliminary_path_audit": {
+                "path": PRELIMINARY_PATH_AUDIT.as_posix(),
+                "sha256": _sha256_file(path_audit),
+            },
             "source_unchanged": True,
             "synthetic": True,
             "formal_training_allowed": False,
@@ -1270,7 +1357,7 @@ def _validated_ready_to_seal(
         "status",
         "git_commit",
         "config_sha256",
-        "preliminary_path_audit_sha256",
+        "preliminary_path_audit",
         "source_unchanged",
         "synthetic",
         "formal_training_allowed",
@@ -1290,10 +1377,15 @@ def _validated_ready_to_seal(
     if any(ready.get(key) != value for key, value in expected_ready.items()):
         raise RunnerError("READY_TO_SEAL provenance does not match the current smoke")
 
-    audit_path = validate_write_path(sandbox_root / "path_audit.json", sandbox_root)
+    preliminary = ready.get("preliminary_path_audit")
+    if not isinstance(preliminary, Mapping) or set(preliminary) != {"path", "sha256"}:
+        raise RunnerError("READY_TO_SEAL preliminary path audit binding is invalid")
+    if preliminary.get("path") != PRELIMINARY_PATH_AUDIT.as_posix():
+        raise RunnerError("READY_TO_SEAL preliminary path audit path is invalid")
+    audit_path = validate_write_path(sandbox_root / PRELIMINARY_PATH_AUDIT, sandbox_root)
     preliminary_audit = _load_json_object(audit_path)
-    if preliminary_audit.get("stage") != "npu-smoke" or ready.get(
-        "preliminary_path_audit_sha256"
+    if preliminary_audit.get("stage") != "npu-smoke" or preliminary.get(
+        "sha256"
     ) != _sha256_file(audit_path):
         raise RunnerError("READY_TO_SEAL does not match the preliminary path audit")
     return ready_path, audit_path
@@ -1384,7 +1476,7 @@ def _finalize_npu_smoke(config_path: Path) -> Path:
         raise RunnerError("SUCCESS already exists; sealed smoke output is immutable")
     _validate_npu_launcher(config)
 
-    ready_path, _audit_path = _validated_ready_to_seal(config, config_path)
+    ready_path, preliminary_audit = _validated_ready_to_seal(config, config_path)
     tee_complete, launcher_log = _validated_tee_complete(config, config_path, ready_path)
 
     expected_source = _load_json_object(sandbox_root / "manifests" / "source_snapshot_after.json")
@@ -1400,6 +1492,8 @@ def _finalize_npu_smoke(config_path: Path) -> Path:
         before_finalize,
         final_seal_path=sandbox_root / "SUCCESS",
         declared_paths=(launcher_log, ready_path, tee_complete),
+        previous_audit_path=preliminary_audit,
+        output_audit_path=sandbox_root / "path_audit.json",
     )
     _require_disk_budget(sandbox_root)
     success = seal_success(sandbox_root, [])

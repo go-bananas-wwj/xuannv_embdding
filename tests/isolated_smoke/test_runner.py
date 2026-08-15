@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import gc
 import json
+import weakref
 from dataclasses import dataclass, replace
 from hashlib import sha256
 from pathlib import Path
@@ -222,6 +224,27 @@ def test_prepare_writes_eight_marked_contexts_and_unchanged_source_audit(
     )
 
 
+def test_prepare_persists_one_global_projection_and_binds_it_in_aef_registry(
+    runner_fixture: RunnerFixture,
+) -> None:
+    """八个 patch-year 必须共享一个落盘且可校验的 10→64 投影。"""
+    run_stage(runner_fixture.config_path, stage="prepare")
+
+    projection = runner_fixture.sandbox_root / "synthetic/aef/fixed_projection_10x64.pt"
+    registry = json.loads(
+        (runner_fixture.sandbox_root / "manifests/aef_registry.json").read_text(encoding="utf-8")
+    )
+    provenance = registry["projection"]
+    assert projection.is_file() and not projection.is_symlink()
+    assert provenance == {
+        "path": "synthetic/aef/fixed_projection_10x64.pt",
+        "sha256": sha256(projection.read_bytes()).hexdigest(),
+        "seed": 20260815,
+        "shape": [64, 10],
+        "dtype": "float32",
+    }
+
+
 def test_path_audit_accumulates_prepare_and_cpu_contract_paths(
     runner_fixture: RunnerFixture,
 ) -> None:
@@ -290,14 +313,18 @@ def _write_preliminary_ready(runner_fixture: RunnerFixture) -> tuple[Path, Path]
     log = runner_fixture.sandbox_root / "logs" / "npu_smoke.log"
     log.parent.mkdir()
     log.write_text("complete foreground output\n", encoding="utf-8")
-    audit = runner_fixture.sandbox_root / "path_audit.json"
+    audit = runner_fixture.sandbox_root / "manifests/preliminary_path_audit.json"
+    audit.parent.mkdir()
     audit.write_text(
         json.dumps(
             {
                 "stage": "npu-smoke",
                 "stages": ["npu-smoke"],
                 "sandbox_root": str(runner_fixture.sandbox_root),
-                "created_or_modified": ["logs/npu_smoke.log", "path_audit.json"],
+                "created_or_modified": [
+                    "logs/npu_smoke.log",
+                    "manifests/preliminary_path_audit.json",
+                ],
                 "formal_training_allowed": False,
                 "formal_evaluation_allowed": False,
             }
@@ -312,7 +339,10 @@ def _write_preliminary_ready(runner_fixture: RunnerFixture) -> tuple[Path, Path]
                 "status": "npu_compute_complete",
                 "git_commit": "a" * 40,
                 "config_sha256": runner_module._sha256_file(runner_fixture.config_path),
-                "preliminary_path_audit_sha256": runner_module._sha256_file(audit),
+                "preliminary_path_audit": {
+                    "path": "manifests/preliminary_path_audit.json",
+                    "sha256": runner_module._sha256_file(audit),
+                },
                 "source_unchanged": True,
                 "synthetic": True,
                 "formal_training_allowed": False,
@@ -383,6 +413,211 @@ def test_runtime_provenance_records_sys_executable_without_resolving_venv_link(
     assert provenance["sys_executable"] == "/sandbox/env/bin/python"
 
 
+def test_npu_occupancy_is_rechecked_after_archive_load_and_before_set_device(
+    runner_fixture: RunnerFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """archive/cache 加载窗口结束后必须再次 fail-closed 检查 NPU2，再 set_device。"""
+    import experiments.china_v1_fusion_smoke.runner as runner_module
+
+    run_stage(runner_fixture.config_path, stage="prepare")
+    run_stage(runner_fixture.config_path, stage="cpu-contract")
+    _set_task7_environment(monkeypatch)
+    monkeypatch.setattr(runner_module, "_is_expected_smoke_interpreter", lambda _config: True)
+    monkeypatch.setattr(runner_module, "_physical_npu2_exists", lambda: True)
+    monkeypatch.setattr(runner_module, "_has_task7_launcher_ancestor", lambda: True)
+    events: list[str] = []
+
+    def idle() -> bool:
+        events.append("idle")
+        return True
+
+    real_load = runner_module._load_prepared_contexts
+
+    def load(*args, **kwargs):
+        result = real_load(*args, **kwargs)
+        events.append("loaded")
+        return result
+
+    class StopBeforeDevice(RuntimeError):
+        pass
+
+    def set_device(_device) -> None:
+        assert events == ["idle", "loaded", "idle"]
+        raise StopBeforeDevice
+
+    monkeypatch.setattr(runner_module, "_physical_npu2_is_idle", idle)
+    monkeypatch.setattr(runner_module, "_load_prepared_contexts", load)
+    monkeypatch.setattr(runner_module.torch.npu, "device_count", lambda: 1)
+    monkeypatch.setattr(runner_module.torch.npu, "set_device", set_device)
+
+    with pytest.raises(StopBeforeDevice):
+        run_stage(runner_fixture.config_path, stage="npu-smoke")
+
+
+def test_group_measurement_returns_only_cpu_output_before_the_next_hbm_baseline() -> None:
+    """逐组 helper 返回后不得保留上一组 FusionOutput/NPU tensor 影响下一 baseline。"""
+    import experiments.china_v1_fusion_smoke.runner as runner_module
+    from experiments.china_v1_fusion_smoke.model import FusionOutput
+
+    class AccountingNpu:
+        def synchronize(self) -> None:
+            pass
+
+        def empty_cache(self) -> None:
+            pass
+
+        def reset_peak_memory_stats(self, _device) -> None:
+            pass
+
+        def memory_allocated(self, _device) -> int:
+            return 100
+
+        def memory_reserved(self, _device) -> int:
+            return 200
+
+        def max_memory_allocated(self, _device) -> int:
+            return 300
+
+        def max_memory_reserved(self, _device) -> int:
+            return 400
+
+    class Model:
+        output_ref: weakref.ReferenceType[FusionOutput] | None = None
+
+        def __call__(self, **_kwargs) -> FusionOutput:
+            embedding = torch.ones((1, 4, 64, 2, 2), dtype=torch.float32)
+            output = FusionOutput(
+                embedding=embedding,
+                pre_vmf=embedding,
+                gates={"aef": torch.tensor(0.0), "highres": torch.tensor(0.0)},
+            )
+            self.output_ref = weakref.ref(output)
+            return output
+
+    model = Model()
+    embedding, metrics = runner_module._run_npu_forward_group(
+        model,
+        {},
+        use_aef=False,
+        use_highres=False,
+        device=torch.device("cpu"),
+        npu_api=AccountingNpu(),
+    )
+    gc.collect()
+
+    assert embedding.device.type == "cpu"
+    assert model.output_ref is not None and model.output_ref() is None
+    assert metrics["npu_peak_memory"] == {
+        "unit": "bytes",
+        "baseline_allocated": 100,
+        "baseline_reserved": 200,
+        "peak_allocated": 300,
+        "peak_reserved": 400,
+        "peak_allocated_delta": 200,
+        "peak_reserved_delta": 200,
+    }
+
+
+def test_finalize_retry_uses_an_immutable_preliminary_audit(
+    runner_fixture: RunnerFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """seal 暂态失败后可重建 final audit 重试，且 READY 绑定的 preliminary 不变。"""
+    import experiments.china_v1_fusion_smoke.runner as runner_module
+
+    monkeypatch.setattr(runner_module, "_validate_npu_launcher", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(runner_module, "_git_commit", lambda: "a" * 40)
+    source = runner_module._snapshot_source_archives(runner_fixture.source_root)
+    manifests = runner_fixture.sandbox_root / "manifests"
+    manifests.mkdir()
+    (manifests / "source_snapshot_after.json").write_text(
+        json.dumps({**source, "hashing_performed": False}) + "\n", encoding="utf-8"
+    )
+    preliminary = manifests / "preliminary_path_audit.json"
+    preliminary.write_text(
+        json.dumps(
+            {
+                "stage": "npu-smoke",
+                "stages": ["npu-smoke"],
+                "sandbox_root": str(runner_fixture.sandbox_root),
+                "created_or_modified": ["manifests/preliminary_path_audit.json"],
+                "formal_training_allowed": False,
+                "formal_evaluation_allowed": False,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    preliminary_bytes = preliminary.read_bytes()
+    ready = runner_fixture.sandbox_root / "READY_TO_SEAL"
+    ready.write_text(
+        json.dumps(
+            {
+                "status": "npu_compute_complete",
+                "git_commit": "a" * 40,
+                "config_sha256": runner_module._sha256_file(runner_fixture.config_path),
+                "preliminary_path_audit": {
+                    "path": "manifests/preliminary_path_audit.json",
+                    "sha256": runner_module._sha256_file(preliminary),
+                },
+                "source_unchanged": True,
+                "synthetic": True,
+                "formal_training_allowed": False,
+                "formal_evaluation_allowed": False,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    log = runner_fixture.sandbox_root / "logs/npu_smoke.log"
+    log.parent.mkdir()
+    log.write_text("complete output\n", encoding="utf-8")
+    tee = runner_fixture.sandbox_root / "TEE_COMPLETE"
+    tee.write_text(
+        json.dumps(
+            {
+                "status": "tee_pipeline_complete",
+                "git_commit": "a" * 40,
+                "config_sha256": runner_module._sha256_file(runner_fixture.config_path),
+                "ready_to_seal_sha256": runner_module._sha256_file(ready),
+                "launcher_log": {
+                    "path": "logs/npu_smoke.log",
+                    **runner_module._stable_file_metadata(log),
+                },
+                "synthetic": True,
+                "formal_training_allowed": False,
+                "formal_evaluation_allowed": False,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    attempts = 0
+
+    def flaky_seal(root: Path, _required) -> Path:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("transient seal failure")
+        success = root / "SUCCESS"
+        success.write_text("sealed\n", encoding="utf-8")
+        return success
+
+    monkeypatch.setattr(runner_module, "seal_success", flaky_seal)
+    monkeypatch.setattr(runner_module, "verify_success", lambda _root: None)
+
+    with pytest.raises(RuntimeError, match="transient seal failure"):
+        runner_module._finalize_npu_smoke(runner_fixture.config_path)
+    result = runner_module._finalize_npu_smoke(runner_fixture.config_path)
+
+    assert result == runner_fixture.sandbox_root / "SUCCESS"
+    assert preliminary.read_bytes() == preliminary_bytes
+    final_audit = json.loads((runner_fixture.sandbox_root / "path_audit.json").read_text())
+    assert final_audit["stages"][-2:] == ["npu-smoke", "finalize-seal"]
+
+
 def test_invalid_stage_is_rejected_before_dispatch(runner_fixture: RunnerFixture) -> None:
     """拼错的阶段不得静默落到任何可写或设备路径。"""
     with pytest.raises(ValueError, match="unknown smoke stage"):
@@ -399,6 +634,50 @@ def test_missing_sentinel_fails_before_any_stage_work(runner_fixture: RunnerFixt
 
     with pytest.raises(Exception, match="sentinel"):
         run_stage(runner_fixture.config_path, stage="inspect")
+
+
+@pytest.mark.parametrize(
+    ("stage", "implementation"),
+    [
+        ("prepare", "_run_prepare"),
+        ("cpu-contract", "_run_cpu_contract"),
+        ("npu-smoke", "_run_npu_smoke"),
+    ],
+)
+def test_success_makes_every_mutating_stage_fail_before_dispatch(
+    runner_fixture: RunnerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+    implementation: str,
+) -> None:
+    """SUCCESS 之后 prepare/CPU/NPU 入口均须在任何写入或设备动作前拒绝。"""
+    import experiments.china_v1_fusion_smoke.runner as runner_module
+
+    success = runner_fixture.sandbox_root / "SUCCESS"
+    success.write_text("sealed\n", encoding="utf-8")
+    before = runner_module._snapshot_sandbox(runner_fixture.sandbox_root)
+
+    def forbidden_dispatch(*_args, **_kwargs):
+        raise AssertionError("mutating stage dispatched after SUCCESS")
+
+    monkeypatch.setattr(runner_module, implementation, forbidden_dispatch)
+    with pytest.raises(RunnerError, match="SUCCESS.*immutable"):
+        run_stage(runner_fixture.config_path, stage=stage)
+
+    assert runner_module._snapshot_sandbox(runner_fixture.sandbox_root) == before
+
+
+def test_success_still_allows_read_only_inspect(runner_fixture: RunnerFixture) -> None:
+    """封口后仅 inspect/verify 仍可读，且 inspect 不改变任何 sandbox entry。"""
+    import experiments.china_v1_fusion_smoke.runner as runner_module
+
+    (runner_fixture.sandbox_root / "SUCCESS").write_text("sealed\n", encoding="utf-8")
+    before = runner_module._snapshot_sandbox(runner_fixture.sandbox_root)
+
+    result = run_stage(runner_fixture.config_path, stage="inspect")
+
+    assert result.patch_years == 8
+    assert runner_module._snapshot_sandbox(runner_fixture.sandbox_root) == before
 
 
 @pytest.mark.parametrize("updates", [{"max_patches": 5}, {"years": [2020, 2022]}])

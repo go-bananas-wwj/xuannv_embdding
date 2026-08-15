@@ -32,6 +32,10 @@ downstream = [
     "scikit-image>=0.21",
     "shapely>=2.0",
 ]
+smoke = [
+    "zarr>=2.18,<3",
+    "numcodecs>=0.12,<0.16",
+]
 
 [tool.setuptools.packages.find]
 where = ["src", "downstreams"]

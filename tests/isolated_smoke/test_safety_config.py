@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -82,3 +83,13 @@ def test_ensure_sandbox_rejects_sentinel_symlink(tmp_path: Path) -> None:
 
     with pytest.raises(SafetyError, match="sentinel.*symlink"):
         ensure_sandbox(root)
+
+
+def test_smoke_zarr_dependencies_are_declared_as_an_optional_extra() -> None:
+    """隔离 smoke 的直接 Zarr imports 必须有可安装、受版本约束的项目依赖合同。"""
+    raw = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+
+    assert raw["project"]["optional-dependencies"]["smoke"] == [
+        "zarr>=2.18,<3",
+        "numcodecs>=0.12,<0.16",
+    ]
