@@ -49,3 +49,45 @@ def test_synthetic_context_metadata_disclaims_official_aef_and_real_2m() -> None
         "model_input_gsd_m": 2,
         "contains_real_2m_information": False,
     }
+
+
+def test_invalid_nan_observations_do_not_contaminate_annual_context() -> None:
+    """无效月份中的 NaN 必须被掩码移除，不能污染年度输出。"""
+    s2 = torch.full((4, 3, 10, 128, 128), 0.25, dtype=torch.float32)
+    valid_s2 = torch.ones((4, 3, 1, 128, 128), dtype=torch.bool)
+    s2[:, :, :, 0, 0] = float("nan")
+    valid_s2[:, :, :, 0, 0] = False
+    s2[0, 0, :, 1, 1] = float("nan")
+    valid_s2[0, 0, :, 1, 1] = False
+
+    context = generate_synthetic_context(s2, valid_s2, "patch-a", 2020, seed=20260815)
+
+    assert bool(torch.isfinite(context.aef).all())
+    assert bool(torch.isfinite(context.highres).all())
+    assert not bool(context.aef_valid[0, 0, 0])
+    assert bool(context.aef_valid[0, 1, 1])
+    norms = torch.linalg.vector_norm(context.aef[:, context.aef_valid[0]], dim=0)
+    torch.testing.assert_close(norms, torch.ones_like(norms), atol=1e-5, rtol=1e-5)
+
+
+def test_all_invalid_nan_observations_produce_finite_outputs_and_false_masks() -> None:
+    """全无效样本即使填有 NaN 也必须导出有限值和全 false 掩码。"""
+    s2 = torch.full((4, 3, 10, 128, 128), float("nan"), dtype=torch.float32)
+    valid_s2 = torch.zeros((4, 3, 1, 128, 128), dtype=torch.bool)
+
+    context = generate_synthetic_context(s2, valid_s2, "patch-a", 2020, seed=20260815)
+
+    assert bool(torch.isfinite(context.aef).all())
+    assert bool(torch.isfinite(context.highres).all())
+    assert not bool(context.aef_valid.any())
+    assert not bool(context.highres_valid.any())
+
+
+def test_degenerate_zero_projection_is_not_marked_as_valid_aef() -> None:
+    """有效 S2 全零时，零向量不可伪装为单位 AEF 向量。"""
+    s2 = torch.zeros((4, 3, 10, 128, 128), dtype=torch.float32)
+    valid_s2 = torch.ones((4, 3, 1, 128, 128), dtype=torch.bool)
+
+    context = generate_synthetic_context(s2, valid_s2, "patch-a", 2020, seed=20260815)
+
+    assert not bool(context.aef_valid.any())

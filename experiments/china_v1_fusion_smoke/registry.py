@@ -14,11 +14,16 @@ _SMOKE_REQUIREMENTS = {
     "formal_training_allowed": False,
     "formal_evaluation_allowed": False,
 }
+_AEF_KIND = "annual_s2_fixed_projection"
 _HIGHRES_KIND = "annual_s2_rgb_5x_deterministic_texture"
 _HIGHRES_REQUIREMENTS = {
     "claimed_native_gsd_m": None,
     "model_input_gsd_m": 2,
     "contains_real_2m_information": False,
+}
+_SYNTHETIC_KIND_REQUIREMENTS = {
+    _AEF_KIND: {},
+    _HIGHRES_KIND: _HIGHRES_REQUIREMENTS,
 }
 
 
@@ -37,8 +42,10 @@ def validate_smoke_registry(raw: Mapping[str, Any]) -> None:
     if not isinstance(raw, Mapping):
         raise RegistryError("registry must be a mapping")
     _require_exact(raw, _SMOKE_REQUIREMENTS)
-    if raw.get("synthetic_kind") == _HIGHRES_KIND:
-        _require_exact(raw, _HIGHRES_REQUIREMENTS)
+    synthetic_kind = raw.get("synthetic_kind")
+    if not isinstance(synthetic_kind, str) or synthetic_kind not in _SYNTHETIC_KIND_REQUIREMENTS:
+        raise RegistryError("registry synthetic_kind must be a recognized synthetic context kind")
+    _require_exact(raw, _SYNTHETIC_KIND_REQUIREMENTS[synthetic_kind])
 
 
 def validate_formal_registry(raw: Mapping[str, Any]) -> None:
@@ -49,3 +56,12 @@ def validate_formal_registry(raw: Mapping[str, Any]) -> None:
         raise RegistryError("formal registry requires a boolean synthetic field")
     if raw["synthetic"] is True:
         raise RegistryError("synthetic data is forbidden in formal registries")
+    if raw.get("allowed_use") == "smoke_test_only":
+        raise RegistryError("smoke-only metadata is forbidden in formal registries")
+    for key in ("formal_training_allowed", "formal_evaluation_allowed"):
+        if key in raw and type(raw[key]) is not bool:
+            raise RegistryError(f"formal registry field {key!r} must be boolean")
+        if raw.get(key) is False:
+            raise RegistryError("smoke-only metadata is forbidden in formal registries")
+    if raw.get("synthetic_kind") in _SYNTHETIC_KIND_REQUIREMENTS:
+        raise RegistryError("smoke-only metadata is forbidden in formal registries")

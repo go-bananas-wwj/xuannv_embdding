@@ -47,11 +47,14 @@ def _annual_s2(
     s2_year: torch.Tensor, valid_s2_year: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor]:
     observations = s2_year.reshape(12, 10, 128, 128)
-    valid = valid_s2_year.reshape(12, 1, 128, 128)
+    valid = valid_s2_year.reshape(12, 1, 128, 128) & torch.isfinite(observations).all(
+        dim=1, keepdim=True
+    )
     counts = valid.sum(dim=0)
     annual_valid = counts > 0
-    annual = (observations * valid).sum(dim=0) / counts.clamp_min(1).to(s2_year.dtype)
-    return annual * annual_valid.to(s2_year.dtype), annual_valid
+    safe_observations = torch.where(valid, observations, torch.zeros_like(observations))
+    annual = safe_observations.sum(dim=0) / counts.clamp_min(1).to(s2_year.dtype)
+    return torch.where(annual_valid, annual, torch.zeros_like(annual)), annual_valid
 
 
 def generate_synthetic_context(
@@ -66,13 +69,16 @@ def generate_synthetic_context(
     这不是官方 AEF，也不包含真实 2 m 信息；此函数只能服务隔离 smoke test。
     """
     _validate_inputs(s2_year, valid_s2_year)
-    annual_s2, aef_valid = _annual_s2(s2_year, valid_s2_year)
+    annual_s2, annual_valid = _annual_s2(s2_year, valid_s2_year)
     generator = torch.Generator(device="cpu")
     generator.manual_seed(_generator_seed(seed, patch_id, year))
 
     projection = torch.randn((64, 10), generator=generator, dtype=torch.float32)
-    aef = torch.einsum("oc,chw->ohw", projection, annual_s2)
-    aef = functional.normalize(aef, p=2, dim=0, eps=1.0e-6)
+    projected_aef = torch.einsum("oc,chw->ohw", projection, annual_s2)
+    aef_norm = torch.linalg.vector_norm(projected_aef, dim=0, keepdim=True)
+    aef_valid = annual_valid & (aef_norm > 1.0e-6)
+    aef = functional.normalize(projected_aef, p=2, dim=0, eps=1.0e-6)
+    aef = torch.where(aef_valid, aef, torch.zeros_like(aef))
 
     rgb = annual_s2[[2, 1, 0]].unsqueeze(0)
     up = functional.interpolate(rgb, size=(640, 640), mode="bicubic", align_corners=False)
@@ -81,7 +87,7 @@ def generate_synthetic_context(
     highres = (up + 0.15 * (up - blur) + texture).clamp(0.0, 1.5).squeeze(0)
     highres_valid = (
         functional.interpolate(
-            aef_valid.to(torch.float32).unsqueeze(0), size=(640, 640), mode="nearest"
+            annual_valid.to(torch.float32).unsqueeze(0), size=(640, 640), mode="nearest"
         )
         .to(torch.bool)
         .squeeze(0)
