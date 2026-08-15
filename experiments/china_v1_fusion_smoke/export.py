@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -1349,13 +1350,8 @@ def _combined_paths_sha256(root: Path, paths: Iterable[Path]) -> str:
     return digest.hexdigest()
 
 
-def _read_success_summary(path: Path, *, label: str) -> Mapping[str, object]:
-    """读取并校验 SUCCESS/SUCCESS.tmp 的精确 fail-closed schema。"""
-    _require_regular_evidence_file(path)
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ExportError(f"{label} summary is malformed") from exc
+def _validate_success_summary(raw: object, *, label: str) -> Mapping[str, object]:
+    """校验 SUCCESS/SUCCESS.tmp 的精确 fail-closed schema。"""
     expected_keys = {
         "combined_sha256",
         "sealed_at_utc",
@@ -1378,21 +1374,76 @@ def _read_success_summary(path: Path, *, label: str) -> Mapping[str, object]:
     return raw
 
 
-def seal_success(sandbox_root: Path, required_files: Iterable[Path | str]) -> Path:
-    """确认固定 evidence 与四个 sealed Zarr 均完整后，最后写入 ``SUCCESS``。"""
-    root = _guard_non_symlink_sandbox_path(Path(sandbox_root), Path(sandbox_root))
-    success = _guard_non_symlink_sandbox_path(root / "SUCCESS", root)
-    if success.exists():
-        raise ExportError("SUCCESS already exists; a sealed smoke run is immutable")
+def _read_success_summary(path: Path, *, label: str) -> Mapping[str, object]:
+    """从常规文件路径读取并校验 SUCCESS 摘要。"""
+    _require_regular_evidence_file(path)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ExportError(f"{label} summary is malformed") from exc
+    return _validate_success_summary(raw, label=label)
 
-    all_paths = _validated_seal_paths(root, required_files)
-    combined_sha256 = _combined_paths_sha256(root, all_paths)
-    temporary = _guard_non_symlink_sandbox_path(root / "SUCCESS.tmp", root)
-    if temporary.exists():
-        temporary_summary = _read_success_summary(temporary, label="SUCCESS.tmp")
-        if temporary_summary["combined_sha256"] != combined_sha256:
+
+def _read_success_summary_fd(descriptor: int, *, label: str) -> Mapping[str, object]:
+    """从已打开的稳定 inode 读取摘要，避免再次解析可替换路径。"""
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    chunks: list[bytes] = []
+    while chunk := os.read(descriptor, 64 * 1024):
+        chunks.append(chunk)
+    try:
+        raw = json.loads(b"".join(chunks).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ExportError(f"{label} summary is malformed") from exc
+    return _validate_success_summary(raw, label=label)
+
+
+def _write_all_fd(descriptor: int, payload: bytes) -> None:
+    """把 seal payload 完整写入已独占打开的 inode。"""
+    view = memoryview(payload)
+    offset = 0
+    while offset < len(view):
+        written = os.write(descriptor, view[offset:])
+        if written <= 0 or written > len(view) - offset:
+            raise ExportError("SUCCESS.tmp write made no valid progress")
+        offset += written
+
+
+def _open_success_temporary(root_descriptor: int, combined_sha256: str) -> int:
+    """独占创建或只读恢复绑定当前 evidence 的稳定临时 inode。"""
+    relative = "SUCCESS.tmp"
+    create_flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
+    read_flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        create_flags |= os.O_NOFOLLOW
+        read_flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(relative, create_flags, 0o600, dir_fd=root_descriptor)
+    except FileExistsError:
+        try:
+            descriptor = os.open(relative, read_flags, dir_fd=root_descriptor)
+        except OSError as exc:
+            raise ExportError("SUCCESS.tmp cannot be safely reopened") from exc
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            os.close(descriptor)
+            raise ExportError("SUCCESS.tmp must be one private regular inode")
+        try:
+            summary = _read_success_summary_fd(descriptor, label="SUCCESS.tmp")
+        except Exception:
+            os.close(descriptor)
+            raise
+        if summary["combined_sha256"] != combined_sha256:
+            os.close(descriptor)
             raise ExportError("SUCCESS.tmp combined SHA-256 does not match current evidence")
-    else:
+        return descriptor
+    except OSError as exc:
+        raise ExportError("SUCCESS.tmp cannot be safely created") from exc
+
+    metadata = os.fstat(descriptor)
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+        os.close(descriptor)
+        raise ExportError("new SUCCESS.tmp must be one private regular inode")
+    try:
         sealed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         payload = (
             "{\n"
@@ -1402,11 +1453,69 @@ def seal_success(sandbox_root: Path, required_files: Iterable[Path | str]) -> Pa
             '  "formal_training_allowed": false,\n'
             '  "formal_evaluation_allowed": false\n'
             "}\n"
+        ).encode("utf-8")
+        _write_all_fd(descriptor, payload)
+        os.fchmod(descriptor, 0o400)
+        os.fsync(descriptor)
+        return descriptor
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _publish_success_no_replace(root_descriptor: int, temporary_descriptor: int) -> None:
+    """原子 no-replace 发布，并确认目标仍是已验证的临时 inode。"""
+    temporary_metadata = os.fstat(temporary_descriptor)
+    try:
+        os.link(
+            "SUCCESS.tmp",
+            "SUCCESS",
+            src_dir_fd=root_descriptor,
+            dst_dir_fd=root_descriptor,
+            follow_symlinks=False,
         )
-        temporary.write_text(payload, encoding="utf-8")
-    _guard_non_symlink_sandbox_path(temporary, root)
-    _guard_non_symlink_sandbox_path(success, root)
-    temporary.replace(success)
+    except FileExistsError as exc:
+        raise ExportError("SUCCESS appeared concurrently; refusing to overwrite it") from exc
+    except OSError as exc:
+        raise ExportError("cannot atomically publish SUCCESS without replacement") from exc
+    published_metadata = os.stat("SUCCESS", dir_fd=root_descriptor, follow_symlinks=False)
+    if not stat.S_ISREG(published_metadata.st_mode) or (
+        published_metadata.st_dev,
+        published_metadata.st_ino,
+    ) != (temporary_metadata.st_dev, temporary_metadata.st_ino):
+        raise ExportError("published SUCCESS does not match the verified temporary inode")
+    os.fsync(root_descriptor)
+    try:
+        os.unlink("SUCCESS.tmp", dir_fd=root_descriptor)
+    except FileNotFoundError:
+        pass
+    os.fsync(root_descriptor)
+
+
+def seal_success(sandbox_root: Path, required_files: Iterable[Path | str]) -> Path:
+    """确认固定 evidence 与四个 sealed Zarr 均完整后，最后写入 ``SUCCESS``。"""
+    root = _guard_non_symlink_sandbox_path(Path(sandbox_root), Path(sandbox_root))
+    success = _guard_non_symlink_sandbox_path(root / "SUCCESS", root)
+    if success.exists():
+        raise ExportError("SUCCESS already exists; a sealed smoke run is immutable")
+
+    all_paths = _validated_seal_paths(root, required_files)
+    combined_sha256 = _combined_paths_sha256(root, all_paths)
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        directory_flags |= os.O_NOFOLLOW
+    try:
+        root_descriptor = os.open(root, directory_flags)
+    except OSError as exc:
+        raise ExportError("sandbox root cannot be safely opened for sealing") from exc
+    temporary_descriptor: int | None = None
+    try:
+        temporary_descriptor = _open_success_temporary(root_descriptor, combined_sha256)
+        _publish_success_no_replace(root_descriptor, temporary_descriptor)
+    finally:
+        if temporary_descriptor is not None:
+            os.close(temporary_descriptor)
+        os.close(root_descriptor)
     verify_success(root)
     return success
 

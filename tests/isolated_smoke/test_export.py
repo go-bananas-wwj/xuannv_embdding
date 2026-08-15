@@ -759,23 +759,25 @@ def test_seal_success_requires_complete_sealed_false_formal_evidence(
     verify_success(tmp_sandbox)
 
 
-def test_seal_success_retries_an_authenticated_temporary_after_replace_failure(
+def test_seal_success_retries_an_authenticated_temporary_after_publish_failure(
     tmp_sandbox: Path,
     full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """完整 SUCCESS.tmp 只因原子 replace 失败时，下一次调用应安全完成同一 seal。"""
-    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
-    real_replace = Path.replace
+    """完整 SUCCESS.tmp 只因原子发布失败时，下一次调用应安全完成同一 seal。"""
+    from experiments.china_v1_fusion_smoke import export as export_module
 
-    def fail_success_replace(path: Path, target: Path) -> Path:
-        if path == tmp_sandbox / "SUCCESS.tmp":
-            raise OSError("injected atomic replace failure")
-        return real_replace(path, target)
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    real_link = export_module.os.link
+
+    def fail_success_publish(source: str, target: str, **kwargs: object) -> None:
+        if target == "SUCCESS":
+            raise OSError("injected atomic publish failure")
+        real_link(source, target, **kwargs)
 
     with monkeypatch.context() as patch:
-        patch.setattr(Path, "replace", fail_success_replace)
-        with pytest.raises(OSError, match="injected atomic replace failure"):
+        patch.setattr(export_module.os, "link", fail_success_publish)
+        with pytest.raises(ExportError, match="atomically publish"):
             seal_success(tmp_sandbox, [*groups, *evidence])
 
     temporary = tmp_sandbox / "SUCCESS.tmp"
@@ -787,6 +789,99 @@ def test_seal_success_retries_an_authenticated_temporary_after_replace_failure(
     assert success.read_bytes() == payload_before_retry
     assert not temporary.exists()
     verify_success(tmp_sandbox)
+
+
+def test_seal_success_does_not_follow_a_symlink_inserted_before_temporary_open(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """temp 创建竞态中插入外部 symlink 时，外部文件一字节也不能被写。"""
+    from experiments.china_v1_fusion_smoke import export as export_module
+
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    outside = tmp_path / "outside-success.txt"
+    outside.write_bytes(b"preserve outside bytes")
+    real_open = export_module.os.open
+    injected = False
+
+    def racing_open(
+        path: str | os.PathLike[str],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal injected
+        if path == "SUCCESS.tmp" and flags & os.O_CREAT and not injected:
+            (tmp_sandbox / "SUCCESS.tmp").symlink_to(outside)
+            injected = True
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(export_module.os, "open", racing_open)
+    with pytest.raises(ExportError, match="SUCCESS.tmp"):
+        seal_success(tmp_sandbox, [*groups, *evidence])
+
+    assert outside.read_bytes() == b"preserve outside bytes"
+    assert not (tmp_sandbox / "SUCCESS").exists()
+
+
+def test_seal_success_rejects_if_temporary_path_is_swapped_before_publish(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """发布前 temp 路径被替换时必须拒绝，且不得留下错误 SUCCESS。"""
+    from experiments.china_v1_fusion_smoke import export as export_module
+
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    outside = tmp_path / "outside-success.txt"
+    outside.write_bytes(b"outside must stay unchanged")
+    real_link = export_module.os.link
+    swapped = False
+
+    def swap_then_link(source: str, target: str, **kwargs: object) -> None:
+        nonlocal swapped
+        if target == "SUCCESS" and not swapped:
+            temporary = tmp_sandbox / "SUCCESS.tmp"
+            temporary.unlink()
+            temporary.symlink_to(outside)
+            swapped = True
+        real_link(source, target, **kwargs)
+
+    monkeypatch.setattr(export_module.os, "link", swap_then_link)
+    with pytest.raises(ExportError, match="verified temporary inode"):
+        seal_success(tmp_sandbox, [*groups, *evidence])
+
+    assert outside.read_bytes() == b"outside must stay unchanged"
+    assert (tmp_sandbox / "SUCCESS.tmp").is_symlink()
+    assert (tmp_sandbox / "SUCCESS").is_symlink()
+
+
+def test_seal_success_never_overwrites_a_concurrent_success_winner(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """另一 sealer 抢先发布 SUCCESS 时，本进程必须保留 winner 并 fail closed。"""
+    from experiments.china_v1_fusion_smoke import export as export_module
+
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    real_link = export_module.os.link
+    winner = b"concurrent winner must remain immutable\n"
+
+    def publish_winner_first(source: str, target: str, **kwargs: object) -> None:
+        if target == "SUCCESS":
+            (tmp_sandbox / "SUCCESS").write_bytes(winner)
+        real_link(source, target, **kwargs)
+
+    monkeypatch.setattr(export_module.os, "link", publish_winner_first)
+    with pytest.raises(ExportError, match="concurrently|overwrite"):
+        seal_success(tmp_sandbox, [*groups, *evidence])
+
+    assert (tmp_sandbox / "SUCCESS").read_bytes() == winner
 
 
 @pytest.mark.parametrize(
