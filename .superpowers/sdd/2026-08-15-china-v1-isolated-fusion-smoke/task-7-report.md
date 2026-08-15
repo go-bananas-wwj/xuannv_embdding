@@ -2,83 +2,107 @@
 
 ## Result
 
-Task 7 is complete. The fixed foreground launcher ran the isolated four-branch fusion smoke on
-physical NPU 2, exposed as the only logical device `npu:0`. The final sandbox contains four
-full-size Zarr groups, a checkpoint, metrics, reproducibility evidence, a finalized path audit,
-and a last-written `SUCCESS` seal. A fresh read-only `verify_success` call passes.
+Task 7 fix round 1 is implemented and awaiting review. The corrected fixed foreground launcher ran
+the isolated four-branch fusion smoke on physical NPU 2, exposed as the only logical device
+`npu:0`. The authoritative sandbox contains four full-size Zarr groups, a checkpoint, metrics,
+runtime provenance, reproducibility evidence, a finalized path audit, and a last-written `SUCCESS`
+seal. A fresh read-only `verify_success` call passes.
 
-This is a synthetic smoke result only. It does not authorize formal training, formal evaluation,
-or any accuracy conclusion.
+The first Task 7 seal was rejected because it did not prove tee completion, did not digest every
+path-audit output, did not record per-group peak NPU memory or complete runtime provenance, and
+reported pre-export FP32 norms as if they described the persisted FP16 Zarr arrays. Its small
+evidence was archived recoverably under `attempts/rejected_20260815_first_seal/`; its 191,740,996
+bytes of replaceable Zarr output were deliberately not duplicated. The corrected physical-NPU run
+replaced the rejected current output only after the archive copy was verified byte-for-byte.
+
+This remains a synthetic smoke result only. It does not authorize formal training, formal
+evaluation, benchmarking, or any accuracy conclusion. Task 8 has not been started.
 
 ## Implementation
 
-The Task 7 implementation added or changed:
+The completed implementation includes:
 
 - `scripts/smoke/run_china_v1_isolated_fusion_smoke.sh`: fixed worktree/sandbox foreground
   launcher, physical-device idle check, exact logical-device mapping, CANN environment, tee log,
-  and post-tee final sealing;
-- `tests/isolated_smoke/test_launcher.py`: static launcher policy and finalize-order coverage;
-- `tests/isolated_smoke/test_npu_smoke.py`: opt-in one-visible-NPU Full forward/backward test;
+  explicit post-pipeline `TEE_COMPLETE`, and final sealing;
+- `experiments/china_v1_fusion_smoke/runner.py`: fail-closed `/proc/<pid>/fd` occupancy fallback,
+  strict `READY_TO_SEAL` and `TEE_COMPLETE` validation, per-group NPU peak-memory measurement,
+  complete runtime provenance, CPU-contract fallback binding, and separately labeled FP32 versus
+  reopened-FP16 norm summaries;
+- `experiments/china_v1_fusion_smoke/export.py`: strict finalizer validation, mandatory evidence
+  roots, complete union digest coverage for every `path_audit.created_or_modified` entry, schema
+  enforcement for the new evidence, and read-only full-seal verification;
 - `experiments/china_v1_fusion_smoke/model.py`: numerically stable all-valid high-resolution mask
   downsampling on NPU;
-- `experiments/china_v1_fusion_smoke/runner.py`: fail-closed `/proc/<pid>/fd` occupancy fallback
-  when `fuser` is unavailable, plus two-phase `READY_TO_SEAL`/finalize dispatch;
-- `experiments/china_v1_fusion_smoke/export.py`: final-log metadata in the authoritative audit and
-  a read-only full-seal verifier;
-- focused model, Runner, and Export regressions for all fixes above.
+- `tests/isolated_smoke/test_launcher.py`, `test_runner.py`, `test_export.py`, `test_model.py`, and
+  `test_npu_smoke.py`: regression coverage for launcher policy, recovery states, provenance,
+  metrics, digest closure, tampering, model behavior, and the opt-in one-visible-NPU path.
 
 ## TDD and diagnostic evidence
 
-### Launcher RED/GREEN
+### Initial launcher and NPU fixes
 
-The first focused launcher run failed in four tests because the launcher did not exist. After the
-minimum foreground launcher was added, the static launcher suite passed.
+The first focused launcher run failed in four tests because the launcher did not exist. The first
+real opt-in NPU preflight then stopped at the first convolution with ACL error `500001` and
+`ModuleNotFoundError: tbe`: the launcher had discarded CANN's Python paths. A regression was added
+before preserving those paths after the three explicit isolated-worktree entries.
 
-### NPU preflight failures and fixes
+The next preflight produced an AEF gradient but a zero high-resolution gradient. A controlled
+CPU/NPU comparison isolated the cause to strict equality after NPU `avg_pool2d`: a fully valid
+pooled mask became `1.0000001192092896`, invalidating every cell. A regression first captured
+fully valid and locally invalid masks; the implementation now max-pools the invalid indicator.
+The opt-in NPU test subsequently passed on physical NPU 2.
 
-The first real opt-in NPU preflight stopped at the first convolution with ACL error `500001` and
-`ModuleNotFoundError: tbe`. The launcher had replaced `PYTHONPATH` with worktree paths and thereby
-removed CANN's Python paths. A launcher regression was added before preserving CANN's paths after
-the three explicit worktree entries.
+The host has no `fuser` binary, so the first full-launch attempt correctly stopped before NPU use.
+Tests then required an empty `/proc` scan to mean idle, matching character-device `st_rdev` to mean
+busy, and an unreadable process descriptor directory to fail closed.
 
-The next preflight produced a nonzero AEF gradient but a zero high-resolution gradient. A
-controlled CPU/NPU comparison isolated the issue to strict equality after NPU `avg_pool2d`: a
-fully valid pooled mask was `1.0000001192092896`, so `.eq(1.0)` invalidated every cell. A regression
-first captured full-valid and locally invalid masks, then the implementation was changed to
-max-pool the invalid indicator and compare it with zero. The opt-in NPU test subsequently passed
-(`1 passed` in 18.08 seconds).
+### Fix round 1 RED/GREEN
 
-### Missing `fuser` and final-seal fixes
+The review findings were reproduced before implementation:
 
-The first full-launch attempt stopped before any NPU operation because this host has no `fuser`
-binary. Regression tests then required an empty `/proc` scan to mean idle, matching character
-device `st_rdev` to mean busy, and an unreadable process descriptor directory to fail closed. The
-Runner and launcher now share that behavior instead of treating a missing command as idle.
+```text
+tee-completion protocol: 3 failed, 29 passed
+seal digest and tamper closure: 10 failed
+peak HBM, provenance, and persisted norms: 3 failed
+```
 
-Review of that aborted attempt also found that the former launcher could write `SUCCESS` before
-`tee` appended the Runner's final JSON to the log. Regressions proved the post-seal mutation. The
-launcher now uses two phases: `npu-smoke` writes `READY_TO_SEAL`, the foreground tee pipeline
-finishes, and `--finalize-seal` audits the completed log before writing `SUCCESS`. The read-only
-verifier rejects any later mutation. Focused Export/Runner/launcher verification returned
-`71 passed`, and the combined Export/Runner/launcher/model/NPU selection returned
-`81 passed, 1 skipped` before the full run.
+The former two-phase protocol could seal after the Runner returned but before tee itself was proven
+complete. The launcher now has three states:
+
+1. `npu-smoke` writes `READY_TO_SEAL` after compute evidence is complete;
+2. only after the foreground tee pipeline exits successfully, `--mark-tee-complete` atomically
+   writes `TEE_COMPLETE`, binding the exact READY hash and final log path, size, nanosecond mtime,
+   and SHA-256;
+3. `--finalize-seal` independently revalidates READY and TEE, completes the path audit, and writes
+   `SUCCESS` last.
+
+Recovery fails closed for READY without TEE and for TEE without READY. READY plus a valid TEE may
+resume finalization without rerunning NPU compute. The finalizer rejects any later log or marker
+mutation.
+
+The `SUCCESS` combined digest now covers the strict union of every
+`path_audit.created_or_modified` evidence path and mandatory `manifests`, `synthetic`, and `outputs`
+roots, excluding only `SUCCESS` itself. Missing, symlinked, outside-root, duplicate, and unknown
+entries fail closed. The corrected seal covers 323 digest roots resolving to 319 unique leaf files;
+all 322 audit-created paths are covered, with no uncovered entry.
 
 ## Fixed foreground execution
 
-Immediately before execution, the independent device guard reported:
+Immediately before the corrected execution, the independent guard reported:
 
 ```text
 device=/dev/davinci2 users=() idle=True
 ```
 
-The only full-run command was:
+The only corrected full-run command was:
 
 ```bash
 bash scripts/smoke/run_china_v1_isolated_fusion_smoke.sh
 ```
 
-It ran in the foreground from the fixed linked worktree, without `torchrun`, `nohup`, a background
-job, or a process-kill command. The launcher set:
+It ran once in the foreground from the fixed linked worktree, without `torchrun`, `nohup`, a
+background job, or a process-kill command. The launcher set:
 
 ```text
 ASCEND_RT_VISIBLE_DEVICES=2
@@ -88,34 +112,52 @@ WANDB_MODE=disabled
 ```
 
 and sourced `/usr/local/Ascend/cann-9.0.0/set_env.sh`. Its `PYTHONPATH` began with the fixed
-worktree's `src`, `downstreams`, and root entries and retained the sourced CANN entries.
+worktree's `src`, `downstreams`, and root entries and retained the sourced CANN entries. A fresh
+post-run `/proc` guard again reported `users=() idle=True`.
 
-## Device and software evidence
+## Runtime and device provenance
 
-- Physical device: `/dev/davinci2`, NPU ID 2, Chip Logic ID 2.
-- Chip: `Ascend 910B4-1`; board product `IT21HMDC_Bin4_1`.
-- Launcher-visible logical device: `npu:0` and exactly one visible NPU.
-- CANN toolkit: 9.0.0 (`V100R001C10SPC001B250`).
-- Driver: 26.0.rc1; firmware: 9.0.0.0.205.
-- Python: 3.11.15; PyTorch: 2.6.0+cpu with torch-npu 2.6.0.post5.
+- Git commit executed: `0ef6e6b513ef4811a14a89e50e63bd8ea050c8a4`.
+- Physical device: `/dev/davinci2`, physical NPU 2; only logical device `npu:0` was visible.
+- Device name: `Ascend910B4-1`; visible-device value `2`; logical device count `1`.
+- Interpreter: the exact sandbox venv
+  `/data/xuannv_embedding/sandboxes/china_v1_fusion_smoke_20260815/env/bin/python`.
+- Python 3.11.15; PyTorch 2.6.0+cpu; torch-npu 2.6.0.post5.
+- CANN root/version: `/usr/local/Ascend/cann-9.0.0`, version 9.0.0, with its install-info path.
+- Driver: 26.0.rc1, with its version-info path.
+- Module paths record the exact worktree `model.py` and `runner.py`, and imported `torch` and
+  `torch_npu` package files.
+- CPU contract fallback:
+  `manifests/cpu_contract.json`, SHA-256
+  `2bfc300c7d3ce98393ef3f11e46221ce4a4364a27e4f0dcbf9218262323cae22`.
 
-`npu-smi` reports 65,536 MB HBM capacity. A fresh post-run idle query reported 5% HBM use and 0%
-NPU/AICore utilization. **Peak HBM was not instrumented by this sealed run**, so there is no valid
-peak-HBM value to report and the post-run 5% observation must not be interpreted as one.
+The finalizer requires these fields; their absence or mismatch prevents sealing.
 
-## Full-size output audit
+## Full-size output and NPU memory audit
 
-All four Zarr groups were reopened independently after sealing:
+All four Zarr groups were independently reopened after sealing. Each group has embedding dtype
+`float16`, shape `[4,8,64,128,128]`, boolean valid-mask shape `[4,8,1,128,128]`, and only finite
+values.
 
-| Group | Embedding | Valid mask | Finite | vMF norm min / median / max | One-shot latency (s) |
-| --- | --- | --- | --- | --- | ---: |
-| `base` | float16 `[4,8,64,128,128]` | bool `[4,8,1,128,128]` | yes | 0.9999996424 / 1.0 / 1.0000003576 | 5.464612 |
-| `base_aef` | float16 `[4,8,64,128,128]` | bool `[4,8,1,128,128]` | yes | 0.9999996424 / 1.0 / 1.0000003576 | 0.747578 |
-| `base_highres` | float16 `[4,8,64,128,128]` | bool `[4,8,1,128,128]` | yes | 0.9999996424 / 1.0 / 1.0000003576 | 0.761585 |
-| `full` | float16 `[4,8,64,128,128]` | bool `[4,8,1,128,128]` | yes | 0.9999996424 / 1.0 / 1.0000003576 | 0.131724 |
+| Group | Latency (s) | Peak allocated (bytes) | Allocated delta (bytes) | Peak reserved (bytes) | Reserved delta (bytes) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `base` | 5.260446 | 695,546,880 | 538,973,184 | 1,025,507,328 | 847,249,408 |
+| `base_aef` | 0.653409 | 1,165,312,512 | 740,301,312 | 1,434,451,968 | 983,564,288 |
+| `base_highres` | 0.666613 | 1,187,988,992 | 762,977,792 | 1,434,451,968 | 983,564,288 |
+| `full` | 0.007950 | 1,255,098,880 | 830,087,680 | 1,434,451,968 | 983,564,288 |
 
-These are single smoke timings, not benchmark statistics. The first `base` measurement includes
-NPU cold-start/compilation overhead and must not be used for branch-performance comparisons.
+Before each group, the Runner synchronizes the NPU, clears unused cache, synchronizes again,
+resets peak statistics, and records allocated/reserved baselines. It synchronizes again before
+reading peak allocated and reserved bytes. These are smoke-run observability values, not benchmark
+statistics; in particular, one-shot latency is affected by warm-up and compilation.
+
+The report now distinguishes the model's pre-export FP32 norm check from the independently reopened
+persisted FP16 Zarr norm check:
+
+| Evidence | Source dtype | Computation dtype | Min | Median | Max |
+| --- | --- | --- | ---: | ---: | ---: |
+| Pre-export model output (all groups) | float32 | float32 | 0.9999996424 | 1.0 | 1.0000003576 |
+| Reopened persisted Zarr (all groups) | float16 | float32 | 0.9998238087 | 0.9999999404 | 1.0001806021 |
 
 Every group has the same patch axis:
 
@@ -132,60 +174,60 @@ and the same period axis from `2020Q1` through `2021Q4`.
 - Gate-override gradient L1:
   - AEF adapter: `0.2702299631200731`;
   - high-resolution adapter: `0.4636795846745372`;
-  - high-resolution stem: `0.1533270152285695`;
+  - high-resolution stem: `0.15332698542624712`;
   - output projection: `25.318119764328003`.
 - Checkpoint reload maximum absolute error: `0.0`.
-- Deterministic rerun: `matches=true`, maximum absolute error `0.0`, fixed seed `20260815`.
+- Deterministic rerun: `matches=true`, maximum absolute error `0.0`, seed `20260815`.
 - Checkpoint SHA-256:
-  `287bb7fb9ffeafea7076e5c79156a9fee5da472873a77a9fa06e25e350fa6b13`.
-- Independent checkpoint hashing exactly matches `reproducibility.json`.
+  `4960b82b90fb89645099c46649fd6a0ffc722aab8561688e80d7978d7b1a27f9`, independently matching
+  `reproducibility.json`.
 
-## Isolation and final seal
+## Isolation and corrected final seal
 
 - Source snapshots before and after are byte-identical; `run_manifest.json` records
   `source_unchanged=true`.
-- No `.partial` path remains.
-- Final sandbox size: **292,396,383 bytes**, below 5 GiB.
-- Final path audit stage: `finalize-seal`; it declares the completed foreground log and
-  `READY_TO_SEAL` with exact size, nanosecond mtime, and SHA-256.
-- Foreground log: 40,705 bytes,
-  SHA-256 `ad54984456aacba528815d81416fb4415339b10eeaaa95d640c591a4382c2726`.
-- `READY_TO_SEAL`: 412 bytes,
-  SHA-256 `29cf862ed768f91b00b0e67cb80d905f06d57f5974809338aebbebc905c8d6f2`.
-- `SUCCESS` was sealed at `2026-08-15T11:30:13.745620Z`, is newer than every other sandbox
-  entry, and records combined SHA-256
-  `db42b6afb3c464ecc3fd2f9dcc1857c26a77ec6f318d6f1ff621a88a959fa440`.
-- Fresh `verify_success` result: PASS.
-
-The audit stage history is transparent about the earlier authorized CPU replay and stopped Task 7
-attempts:
-`["cpu-contract", "prepare", "cpu-contract", "prepare", "cpu-contract", "npu-smoke", "finalize-seal"]`.
-Only the final `npu-smoke` reached NPU execution and `READY_TO_SEAL`; the finalizer alone wrote
-`SUCCESS`.
+- Final path-audit stage: `finalize-seal`; its stage history is exactly
+  `["npu-smoke", "finalize-seal"]`.
+- `path_audit.created_or_modified`: 322 entries; no created evidence is outside the digest union.
+- `path_audit.json` SHA-256:
+  `208625713720235db0059396a3f8ad22cd1671e0995f032497000bce0e74b5d6`.
+- Foreground log: 38,033 bytes, mtime_ns `1786796244056000000`, SHA-256
+  `57f343981a3f857f34a0cdc6d0bce46ba3d974b332d948c9836bb845e88ef4ca`.
+- `READY_TO_SEAL`: 412 bytes, SHA-256
+  `f7c36cb690cd838a63839912cbcf19f6e15bd2734af6f3b22dc2e039dbe23aaf`.
+- `TEE_COMPLETE`: 572 bytes; it independently binds that READY hash and all final-log metadata.
+- `SUCCESS` was sealed at `2026-08-15T12:17:44.025102Z`, is newer than every other current
+  sandbox entry, and records combined SHA-256
+  `408993be3d507d4f604fd05a26a671026419c9975374ba403a7612b32860efab`.
+- Fresh `verify_success`: PASS; remaining `.partial` paths: 0.
+- Final sandbox size, including the small rejected-attempt archive: 292,698,261 bytes, below 5 GiB.
 
 The main worktree pre/post snapshots match exactly: commit
 `4cf032a6215fa9c573c998a0ea6daa005b48fb96`, branch `v3-semantic-64d`, upstream ahead/behind
 `+0/-0`, the same two modified tracked paths, and the same five untracked paths/directories. The
-Task 7 linked worktree was clean and equal to its upstream after every pushed implementation step.
+Task 7 linked worktree was clean and equal to its upstream before this documentation update.
 
-## Fresh completion verification
+## Verification
 
-The final non-NPU regression suite was split only to avoid one large process retaining all test
-resources; together the two commands cover every file in `tests/isolated_smoke`:
+The final non-NPU regression suite was split so that no single process retained all test resources:
 
 ```text
-archive/data-contract/registry/safety/synthetic: 42 passed in 19.06s
-export/runner/launcher/model/NPU-test: 81 passed, 1 skipped in 23.13s
+archive/data-contract/registry/safety/synthetic: 42 passed in 18.61s
+runner/launcher/model/NPU-test: 43 passed, 1 skipped in 7.88s
+Export main partition: 49 passed, 5 deselected in 27.09s
+Export complementary partition: 5 passed, 49 deselected in 10.80s
 Ruff: All checks passed!
-Black: 8 files would be left unchanged.
-git diff --check: exit 0
+Black: 5 files would be left unchanged.
+launcher shell syntax: PASS
+git diff --check: PASS
 fresh verify_success: PASS
-SUCCESS newer than latest other entry: true
-remaining .partial paths: 0
 ```
 
-The skipped test is the deliberately opt-in NPU integration test. Its real opt-in invocation had
-already passed on physical NPU 2 before the full smoke, as recorded above.
+Together the Export partitions cover all 54 Export tests exactly once. The skipped test is the
+deliberately opt-in NPU integration test; its real invocation and the corrected full smoke both
+passed on physical NPU 2. Independent post-run checks also confirmed SUCCESS is the newest current
+sandbox evidence, no `.partial` path remains, every source snapshot still matches, all 322
+audit-created paths are digest-covered, and the main worktree snapshot is unchanged.
 
 ## Version control
 
@@ -194,5 +236,8 @@ All substantive implementation steps were committed and pushed immediately:
 - `ccfb362 test: run isolated fusion smoke on physical NPU 2`
 - `181ea2a fix: fail closed when fuser is unavailable`
 - `f316836 fix: seal smoke only after foreground logging`
+- `9467100 fix: bind complete NPU smoke evidence`
+- `0ef6e6b fix: preserve smoke interpreter provenance`
 
-The sandbox artifacts remain outside Git. Task 8 has not been started.
+The sandbox artifacts remain outside Git. The rejected seal is retained only as diagnostic evidence
+and is not part of the corrected current seal. Task 8 has not been started.
