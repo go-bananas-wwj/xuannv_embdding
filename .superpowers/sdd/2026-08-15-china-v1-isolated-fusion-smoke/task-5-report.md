@@ -132,3 +132,38 @@
   cannot enter the digest.
 - Code/test commit: `16714bb fix: make smoke sealing and reload transactional`; pushed to
   `origin/codex/china-v1-fusion-smoke`.
+
+## Review fix round 3
+
+### Changes
+
+- `manifests/patch_selection.json` is now mandatory evidence for `seal_success`, not an
+  optional cross-check. It must be a regular, non-symlink JSON object with either a
+  `patch_ids` list or `patches[*].patch_id`, containing exactly four unique non-empty IDs.
+- The trusted list must exactly equal the common `patch_id` axis of all four Zarr groups.
+- The manifest is inserted automatically into the mandatory evidence path set, so its path
+  and content hash are included in `SUCCESS.combined_sha256` even when callers omit it from
+  `required_files`.
+
+### Adversarial TDD evidence
+
+- RED: focused export tests produced `6 failed, 31 passed`: four self-consistent fake Zarr
+  axes sealed after manifest removal or malformed schema, duplicate/fewer-than-four
+  selection IDs were not rejected at schema validation, and the combined digest omitted the
+  manifest.
+- GREEN: `PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest
+  tests/isolated_smoke/test_export.py -q` → `37 passed in 18.75s`.
+- Regression: `PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest
+  tests/isolated_smoke -q -m 'not npu'` → `86 passed` (JUnit report: 0 errors, 0 failures,
+  0 skipped).
+- Static checks: `python -m ruff check experiments/china_v1_fusion_smoke
+  tests/isolated_smoke`, `python -m black --check experiments/china_v1_fusion_smoke/export.py
+  tests/isolated_smoke/test_export.py`, and `git diff --check` passed.
+
+### Self-review and delivery
+
+- The missing-manifest test deliberately makes every group self-attest the same fake IDs;
+  sealing now fails before any SUCCESS write. The digest test independently reconstructs the
+  combined hash with the mandatory manifest included.
+- Code/test commit: `4aec329 fix: require trusted patch selection for smoke sealing`; pushed
+  to `origin/codex/china-v1-fusion-smoke`.
