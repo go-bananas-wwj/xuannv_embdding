@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import shutil
 import stat
 import subprocess
@@ -31,6 +32,7 @@ from experiments.china_v1_fusion_smoke.data import PatchYearBatch, load_patch_ye
 from experiments.china_v1_fusion_smoke.export import (
     export_group_zarr,
     load_smoke_checkpoint,
+    reopened_fp16_vmf_norm_summary,
     save_smoke_checkpoint,
     seal_success,
     verify_success,
@@ -62,6 +64,7 @@ EXPECTED_WORKTREE = Path("/root/workspace/xuannv/.worktrees/codex-china-v1-fusio
 TASK7_LAUNCHER = EXPECTED_WORKTREE / "scripts/smoke/run_china_v1_isolated_fusion_smoke.sh"
 PHYSICAL_NPU2 = Path("/dev/davinci2")
 READY_TO_SEAL = "READY_TO_SEAL"
+TEE_COMPLETE = "TEE_COMPLETE"
 
 
 class RunnerError(RuntimeError):
@@ -217,6 +220,22 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _stable_file_metadata(path: Path) -> dict[str, object]:
+    """在文件未发生并发变化时返回可审计 size/mtime/SHA-256。"""
+    if path.is_symlink() or not path.is_file():
+        raise RunnerError(f"evidence path must be a real file: {path}")
+    before = path.stat()
+    checksum = _sha256_file(path)
+    after = path.stat()
+    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+        raise RunnerError(f"evidence file changed while hashing: {path}")
+    return {
+        "size": after.st_size,
+        "mtime_ns": after.st_mtime_ns,
+        "sha256": checksum,
+    }
 
 
 def _record_path_audit(
@@ -904,6 +923,59 @@ def _git_commit() -> str:
     return commit
 
 
+def _key_value_version(path: Path, key: str) -> str:
+    """读取 CANN/driver 的固定 key=value 版本证据。"""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise RunnerError(f"cannot read runtime version evidence: {path}") from exc
+    prefix = f"{key}="
+    for line in lines:
+        if line.startswith(prefix):
+            value = line.removeprefix(prefix).strip().strip('"')
+            if value:
+                return value
+    raise RunnerError(f"runtime version evidence is missing {key}: {path}")
+
+
+def _runtime_provenance(torch_npu_module: object, device: torch.device) -> dict[str, object]:
+    """记录本次 NPU 进程实际解释器、模块、CANN/driver 与设备映射。"""
+    cann_root = Path("/usr/local/Ascend/cann-9.0.0")
+    cann_info = cann_root / "aarch64-linux/ascend_toolkit_install.info"
+    driver_info = Path("/usr/local/Ascend/driver/version.info")
+    model_module = sys.modules[IsolatedFusionSmokeModel.__module__]
+    module_paths = {
+        "torch": str(Path(torch.__file__).resolve(strict=True)),
+        "torch_npu": str(Path(torch_npu_module.__file__).resolve(strict=True)),
+        "runner": str(Path(__file__).resolve(strict=True)),
+        "model": str(Path(model_module.__file__).resolve(strict=True)),
+    }
+    return {
+        "sys_executable": str(Path(sys.executable).resolve(strict=True)),
+        "python_version": platform.python_version(),
+        "torch_version": str(torch.__version__),
+        "torch_npu_version": str(torch_npu_module.__version__),
+        "cann": {
+            "root": str(cann_root),
+            "version": _key_value_version(cann_info, "version"),
+            "install_info": str(cann_info),
+        },
+        "driver": {
+            "version": _key_value_version(driver_info, "Version"),
+            "version_info": str(driver_info),
+        },
+        "device_mapping": {
+            "physical_device": str(PHYSICAL_NPU2),
+            "physical_npu": 2,
+            "visible_devices": os.environ["ASCEND_RT_VISIBLE_DEVICES"],
+            "logical_device": str(device),
+            "logical_device_count": torch.npu.device_count(),
+            "device_name": torch.npu.get_device_name(device),
+        },
+        "module_paths": module_paths,
+    }
+
+
 def _run_npu_smoke(
     config: SmokeConfig,
     config_path: Path,
@@ -915,6 +987,14 @@ def _run_npu_smoke(
     prepare = _load_json_object(config.sandbox_root / "manifests" / "prepare_manifest.json")
     if prepare.get("patch_years") != 8 or prepare.get("source_unchanged") is not True:
         raise RunnerError("npu-smoke requires a successful fixed prepare stage")
+    cpu_contract_path = config.sandbox_root / "manifests" / "cpu_contract.json"
+    cpu_contract = _load_json_object(cpu_contract_path)
+    if (
+        cpu_contract.get("full_zero_gate_matches_base") is not True
+        or not isinstance(cpu_contract.get("groups"), Mapping)
+        or set(cpu_contract["groups"]) != set(GROUPS)
+    ):
+        raise RunnerError("npu-smoke requires the successful CPU contract as fallback evidence")
     _require_disk_budget(config.sandbox_root)
     source_before = _snapshot_source_archives(config.source_root)
     selections = _checked_selections(config)
@@ -929,13 +1009,14 @@ def _run_npu_smoke(
     aef, aef_valid, highres, highres_valid = _load_prepared_contexts(config, batch)
 
     try:
-        import torch_npu  # noqa: F401
+        import torch_npu
     except ImportError as exc:
         raise RunnerError("torch_npu is unavailable after the Task 7 launcher setup") from exc
     if torch.npu.device_count() != 1:
         raise RunnerError("Task 7 launcher must expose exactly one logical NPU")
     device = torch.device(config.logical_device)
     torch.npu.set_device(device)
+    runtime_provenance = _runtime_provenance(torch_npu, device)
     inputs = {
         "s2": batch.s2.to(device),
         "s1": batch.s1.to(device),
@@ -953,6 +1034,11 @@ def _run_npu_smoke(
     with torch.no_grad():
         for group, (use_aef, use_highres) in GROUPS.items():
             torch.npu.synchronize()
+            torch.npu.empty_cache()
+            torch.npu.synchronize()
+            torch.npu.reset_peak_memory_stats(device)
+            baseline_allocated = int(torch.npu.memory_allocated(device))
+            baseline_reserved = int(torch.npu.memory_reserved(device))
             started = time.perf_counter()
             output = model(
                 **inputs,
@@ -960,16 +1046,32 @@ def _run_npu_smoke(
                 use_highres=use_highres,
             )
             torch.npu.synchronize()
+            latency = time.perf_counter() - started
+            peak_allocated = int(torch.npu.max_memory_allocated(device))
+            peak_reserved = int(torch.npu.max_memory_reserved(device))
             embedding = output.embedding.detach().cpu()
             output_cpu[group] = embedding
             norms = torch.linalg.vector_norm(embedding, dim=2)
             group_metrics[group] = {
                 "shape": list(_patch_period_layout(embedding).shape),
-                "latency_seconds": time.perf_counter() - started,
+                "latency_seconds": latency,
                 "finite": bool(torch.isfinite(embedding).all()),
-                "vmf_norm_min": float(norms.min()),
-                "vmf_norm_median": float(norms.median()),
-                "vmf_norm_max": float(norms.max()),
+                "pre_export_fp32_vmf_norm": {
+                    "source_dtype": str(embedding.dtype).removeprefix("torch."),
+                    "computation_dtype": "float32",
+                    "min": float(norms.min()),
+                    "median": float(norms.median()),
+                    "max": float(norms.max()),
+                },
+                "npu_peak_memory": {
+                    "unit": "bytes",
+                    "baseline_allocated": baseline_allocated,
+                    "baseline_reserved": baseline_reserved,
+                    "peak_allocated": peak_allocated,
+                    "peak_reserved": peak_reserved,
+                    "peak_allocated_delta": peak_allocated - baseline_allocated,
+                    "peak_reserved_delta": peak_reserved - baseline_reserved,
+                },
             }
     zero_gate_error = float((output_cpu["full"] - output_cpu["base"]).abs().max())
     if zero_gate_error != 0.0:
@@ -1035,7 +1137,7 @@ def _run_npu_smoke(
     valid = batch.valid_s2.any(dim=2) & batch.valid_s1.any(dim=2)
     exported_valid = _patch_period_layout(valid)
     for group, embedding in output_cpu.items():
-        export_group_zarr(
+        exported = export_group_zarr(
             group,
             _patch_period_layout(embedding),
             exported_valid,
@@ -1044,6 +1146,9 @@ def _run_npu_smoke(
             config.sandbox_root / "outputs" / group / "embedding.zarr",
             config.sandbox_root,
         )
+        metric = group_metrics[group]
+        assert isinstance(metric, dict)
+        metric["reopened_fp16_zarr_vmf_norm"] = reopened_fp16_vmf_norm_summary(exported)
     source_after = _snapshot_source_archives(config.source_root)
     if source_after != source_before:
         raise RunnerError("source archive snapshot changed during npu-smoke")
@@ -1062,6 +1167,11 @@ def _run_npu_smoke(
             "formal_training_allowed": False,
             "formal_evaluation_allowed": False,
             "accuracy_conclusion_allowed": False,
+            "runtime_provenance": runtime_provenance,
+            "cpu_contract_fallback": {
+                "path": "manifests/cpu_contract.json",
+                "sha256": _sha256_file(cpu_contract_path),
+            },
         },
         config.sandbox_root,
     )
@@ -1132,19 +1242,15 @@ def _gradient_l1(module: torch.nn.Module) -> float:
     return float(sum(gradient.abs().sum().item() for gradient in gradients if gradient is not None))
 
 
-def _finalize_npu_smoke(config_path: Path) -> Path:
-    """tee 完全结束后重建最终审计，并把 SUCCESS 作为最后一次沙箱写入。"""
-    config_path = Path(config_path)
-    config = load_smoke_config(config_path)
-    _load_seed(config_path)
-    sandbox_root = ensure_sandbox(config.sandbox_root)
-    _validate_npu_launcher(config)
-    if (sandbox_root / "SUCCESS").exists():
-        raise RunnerError("SUCCESS already exists; sealed smoke output is immutable")
-
+def _validated_ready_to_seal(
+    config: SmokeConfig,
+    config_path: Path,
+) -> tuple[Path, Path]:
+    """校验 compute marker 并返回 READY 与其绑定的 preliminary audit。"""
+    sandbox_root = config.sandbox_root
     ready_path = validate_write_path(sandbox_root / READY_TO_SEAL, sandbox_root)
     if ready_path.is_symlink() or not ready_path.is_file():
-        raise RunnerError("finalize-seal requires a real READY_TO_SEAL file")
+        raise RunnerError("operation requires a real READY_TO_SEAL file")
     ready = _load_json_object(ready_path)
     expected_ready_keys = {
         "status",
@@ -1176,6 +1282,96 @@ def _finalize_npu_smoke(config_path: Path) -> Path:
         "preliminary_path_audit_sha256"
     ) != _sha256_file(audit_path):
         raise RunnerError("READY_TO_SEAL does not match the preliminary path audit")
+    return ready_path, audit_path
+
+
+def _mark_tee_complete(config_path: Path) -> Path:
+    """仅在 launcher 的 pipefail pipeline 成功返回后原子绑定最终 tee 日志。"""
+    config_path = Path(config_path)
+    config = load_smoke_config(config_path)
+    _load_seed(config_path)
+    sandbox_root = ensure_sandbox(config.sandbox_root)
+    _validate_npu_launcher(config)
+    if (sandbox_root / "SUCCESS").exists():
+        raise RunnerError("SUCCESS already exists; sealed smoke output is immutable")
+    marker = validate_write_path(sandbox_root / TEE_COMPLETE, sandbox_root)
+    if marker.exists() or marker.is_symlink():
+        raise RunnerError("TEE_COMPLETE already exists; refusing to overwrite completion evidence")
+    ready_path, _audit_path = _validated_ready_to_seal(config, config_path)
+    launcher_log = validate_write_path(sandbox_root / "logs" / "npu_smoke.log", sandbox_root)
+    log_metadata = _stable_file_metadata(launcher_log)
+    return _write_json(
+        marker,
+        {
+            "status": "tee_pipeline_complete",
+            "git_commit": _git_commit(),
+            "config_sha256": _sha256_file(config_path),
+            "ready_to_seal_sha256": _sha256_file(ready_path),
+            "launcher_log": {
+                "path": "logs/npu_smoke.log",
+                **log_metadata,
+            },
+            "synthetic": True,
+            "formal_training_allowed": False,
+            "formal_evaluation_allowed": False,
+        },
+        sandbox_root,
+    )
+
+
+def _validated_tee_complete(
+    config: SmokeConfig,
+    config_path: Path,
+    ready_path: Path,
+) -> tuple[Path, Path]:
+    """验证 tee marker 的 provenance 与当前最终日志逐字段一致。"""
+    sandbox_root = config.sandbox_root
+    marker = validate_write_path(sandbox_root / TEE_COMPLETE, sandbox_root)
+    if marker.is_symlink() or not marker.is_file():
+        raise RunnerError("finalize-seal requires a real TEE_COMPLETE file")
+    raw = _load_json_object(marker)
+    expected_keys = {
+        "status",
+        "git_commit",
+        "config_sha256",
+        "ready_to_seal_sha256",
+        "launcher_log",
+        "synthetic",
+        "formal_training_allowed",
+        "formal_evaluation_allowed",
+    }
+    if set(raw) != expected_keys:
+        raise RunnerError("TEE_COMPLETE has an invalid schema")
+    expected = {
+        "status": "tee_pipeline_complete",
+        "git_commit": _git_commit(),
+        "config_sha256": _sha256_file(config_path),
+        "ready_to_seal_sha256": _sha256_file(ready_path),
+        "synthetic": True,
+        "formal_training_allowed": False,
+        "formal_evaluation_allowed": False,
+    }
+    if any(raw.get(key) != value for key, value in expected.items()):
+        raise RunnerError("TEE_COMPLETE provenance does not match the current smoke")
+    launcher_log = validate_write_path(sandbox_root / "logs" / "npu_smoke.log", sandbox_root)
+    expected_log = {"path": "logs/npu_smoke.log", **_stable_file_metadata(launcher_log)}
+    if raw.get("launcher_log") != expected_log:
+        raise RunnerError("TEE_COMPLETE launcher log metadata does not match the final log")
+    return marker, launcher_log
+
+
+def _finalize_npu_smoke(config_path: Path) -> Path:
+    """tee 完全结束后重建最终审计，并把 SUCCESS 作为最后一次沙箱写入。"""
+    config_path = Path(config_path)
+    config = load_smoke_config(config_path)
+    _load_seed(config_path)
+    sandbox_root = ensure_sandbox(config.sandbox_root)
+    _validate_npu_launcher(config)
+    if (sandbox_root / "SUCCESS").exists():
+        raise RunnerError("SUCCESS already exists; sealed smoke output is immutable")
+
+    ready_path, _audit_path = _validated_ready_to_seal(config, config_path)
+    tee_complete, launcher_log = _validated_tee_complete(config, config_path, ready_path)
 
     expected_source = _load_json_object(sandbox_root / "manifests" / "source_snapshot_after.json")
     if expected_source.pop("hashing_performed", None) is not False:
@@ -1183,16 +1379,13 @@ def _finalize_npu_smoke(config_path: Path) -> Path:
     if _snapshot_source_archives(config.source_root) != expected_source:
         raise RunnerError("source archive snapshot changed before finalize-seal")
 
-    launcher_log = validate_write_path(sandbox_root / "logs" / "npu_smoke.log", sandbox_root)
-    if launcher_log.is_symlink() or not launcher_log.is_file():
-        raise RunnerError("finalize-seal requires the completed foreground launcher log")
     before_finalize = _snapshot_sandbox(sandbox_root)
     _record_path_audit(
         FINALIZE_STAGE,
         sandbox_root,
         before_finalize,
         final_seal_path=sandbox_root / "SUCCESS",
-        declared_paths=(launcher_log, ready_path),
+        declared_paths=(launcher_log, ready_path, tee_complete),
     )
     _require_disk_budget(sandbox_root)
     success = seal_success(sandbox_root, [])
@@ -1250,6 +1443,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--config", type=Path, required=True)
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument("--stage", choices=STAGES)
+    action.add_argument("--mark-tee-complete", action="store_true")
     action.add_argument("--finalize-seal", action="store_true")
     parser.add_argument(
         "--full-shape",
@@ -1257,6 +1451,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="cpu-contract only: use B=8 and 128x128 instead of the small fixture",
     )
     args = parser.parse_args(argv)
+    if args.mark_tee_complete:
+        if args.full_shape:
+            parser.error("--full-shape is not supported by --mark-tee-complete")
+        _mark_tee_complete(args.config)
+        return 0
     if args.finalize_seal:
         if args.full_shape:
             parser.error("--full-shape is not supported by --finalize-seal")

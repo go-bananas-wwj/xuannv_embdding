@@ -61,6 +61,8 @@ def _write_evidence(sandbox: Path) -> list[Path]:
     launcher_log.write_text("complete foreground runner output\n", encoding="utf-8")
     ready = sandbox / "READY_TO_SEAL"
     ready.write_text('{"status": "npu_compute_complete"}\n', encoding="utf-8")
+    tee_complete = sandbox / "TEE_COMPLETE"
+    tee_complete.write_text('{"status": "tee_pipeline_complete"}\n', encoding="utf-8")
     evidence = []
     for name in (
         "run_manifest.json",
@@ -78,6 +80,7 @@ def _write_evidence(sandbox: Path) -> list[Path]:
                     "logs/npu_smoke.log",
                     "path_audit.json",
                     "READY_TO_SEAL",
+                    "TEE_COMPLETE",
                     "SUCCESS",
                 ],
                 "declared_files": {
@@ -90,6 +93,11 @@ def _write_evidence(sandbox: Path) -> list[Path]:
                         "size": ready.stat().st_size,
                         "mtime_ns": ready.stat().st_mtime_ns,
                         "sha256": sha256(ready.read_bytes()).hexdigest(),
+                    },
+                    "TEE_COMPLETE": {
+                        "size": tee_complete.stat().st_size,
+                        "mtime_ns": tee_complete.stat().st_mtime_ns,
+                        "sha256": sha256(tee_complete.read_bytes()).hexdigest(),
                     },
                 },
                 "final_seal": {
@@ -107,7 +115,28 @@ def _write_evidence(sandbox: Path) -> list[Path]:
     selection = sandbox / "manifests" / "patch_selection.json"
     selection.parent.mkdir()
     selection.write_text('{"patch_ids": ["patch-000", "patch-001", "patch-002", "patch-003"]}')
-    return [*evidence, launcher_log, ready]
+    _add_prepared_evidence_declared_by_audit(sandbox)
+    (sandbox / "metrics.json").write_text(
+        json.dumps(
+            {
+                "groups": _valid_group_metrics(),
+                "zero_gate_max_abs_error": 0.0,
+                "gradient_l1": {
+                    "aef_adapter": 1.0,
+                    "highres_stem": 1.0,
+                    "highres_adapter": 1.0,
+                    "output_projection": 1.0,
+                },
+                "checkpoint_reload_max_abs_error": 0.0,
+                "accuracy_conclusion_allowed": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (sandbox / "run_manifest.json").write_text(
+        json.dumps(_valid_run_manifest(sandbox)), encoding="utf-8"
+    )
+    return [*evidence, launcher_log, ready, tee_complete]
 
 
 def _export_all_groups(
@@ -144,18 +173,136 @@ def _set_group_patch_axis(groups: list[Path], patch_ids: list[str]) -> None:
         exported.attrs["patch_ids"] = patch_ids
 
 
-def _combined_digest(sandbox: Path, paths: list[Path]) -> str:
-    digest = sha256()
-    files: list[Path] = []
-    for path in paths:
-        if path.is_file():
-            files.append(path)
-        else:
-            files.extend(item for item in path.rglob("*") if item.is_file())
-    for path in sorted(files, key=lambda item: item.relative_to(sandbox).as_posix()):
-        digest.update(path.relative_to(sandbox).as_posix().encode("utf-8") + b"\0")
-        digest.update(bytes.fromhex(sha256(path.read_bytes()).hexdigest()))
-    return digest.hexdigest()
+def _add_prepared_evidence_declared_by_audit(sandbox: Path) -> dict[str, Path]:
+    """补齐真实 smoke 中必须由 SUCCESS 覆盖的 prepare/CPU/synthetic 证据。"""
+    files: dict[str, Path] = {}
+    payloads = {
+        "manifests/aef_registry.json": {"synthetic": True, "entries": []},
+        "manifests/highres_2m_registry.json": {"synthetic": True, "entries": []},
+        "manifests/prepare_manifest.json": {"patch_years": 8, "source_unchanged": True},
+        "manifests/cpu_contract.json": {"groups": list(GROUPS)},
+        "manifests/source_snapshot_before.json": {"hashing_performed": False},
+        "manifests/source_snapshot_after.json": {"hashing_performed": False},
+    }
+    for relative, payload in payloads.items():
+        path = sandbox / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+        files[relative] = path
+    for relative in (
+        "synthetic/aef/patch_00_2020.pt",
+        "synthetic/highres_2m/patch_00_2020.pt",
+    ):
+        path = sandbox / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.write_bytes((relative + "\n").encode())
+        files[relative] = path
+
+    audit_path = sandbox / "path_audit.json"
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    declared = audit["created_or_modified"]
+    assert isinstance(declared, list)
+    additions = [
+        "manifests",
+        *payloads,
+        "synthetic",
+        "synthetic/aef",
+        "synthetic/aef/patch_00_2020.pt",
+        "synthetic/highres_2m",
+        "synthetic/highres_2m/patch_00_2020.pt",
+    ]
+    declared.extend(relative for relative in additions if relative not in declared)
+    audit_path.write_text(json.dumps(audit, sort_keys=True) + "\n", encoding="utf-8")
+    return files
+
+
+def _valid_group_metrics() -> dict[str, object]:
+    return {
+        group: {
+            "shape": [4, 8, 64, 128, 128],
+            "latency_seconds": 0.25,
+            "finite": True,
+            "pre_export_fp32_vmf_norm": {
+                "source_dtype": "float32",
+                "computation_dtype": "float32",
+                "min": 0.9999999,
+                "median": 1.0,
+                "max": 1.0000001,
+            },
+            "reopened_fp16_zarr_vmf_norm": {
+                "source_dtype": "float16",
+                "computation_dtype": "float32",
+                "min": 0.9998,
+                "median": 1.0,
+                "max": 1.0002,
+            },
+            "npu_peak_memory": {
+                "unit": "bytes",
+                "baseline_allocated": 100,
+                "baseline_reserved": 200,
+                "peak_allocated": 300,
+                "peak_reserved": 400,
+                "peak_allocated_delta": 200,
+                "peak_reserved_delta": 200,
+            },
+        }
+        for group in GROUPS
+    }
+
+
+def _valid_run_manifest(sandbox: Path) -> dict[str, object]:
+    cpu_contract = sandbox / "manifests/cpu_contract.json"
+    return {
+        "git_commit": "a" * 40,
+        "config_sha256": "b" * 64,
+        "patch_ids": list(PATCH_IDS),
+        "periods": list(PERIODS),
+        "physical_npu": 2,
+        "logical_device": "npu:0",
+        "source_unchanged": True,
+        "synthetic": True,
+        "allowed_use": "smoke_test_only",
+        "formal_training_allowed": False,
+        "formal_evaluation_allowed": False,
+        "accuracy_conclusion_allowed": False,
+        "runtime_provenance": {
+            "sys_executable": "/sandbox/env/bin/python",
+            "python_version": "3.11.15",
+            "torch_version": "2.6.0+cpu",
+            "torch_npu_version": "2.6.0.post5",
+            "cann": {
+                "root": "/usr/local/Ascend/cann-9.0.0",
+                "version": "9.0.0",
+                "install_info": (
+                    "/usr/local/Ascend/cann-9.0.0/aarch64-linux/ascend_toolkit_install.info"
+                ),
+            },
+            "driver": {
+                "version": "26.0.rc1",
+                "version_info": "/usr/local/Ascend/driver/version.info",
+            },
+            "device_mapping": {
+                "physical_device": "/dev/davinci2",
+                "physical_npu": 2,
+                "visible_devices": "2",
+                "logical_device": "npu:0",
+                "logical_device_count": 1,
+                "device_name": "Ascend 910B4-1",
+            },
+            "module_paths": {
+                "torch": "/site-packages/torch/__init__.py",
+                "torch_npu": "/site-packages/torch_npu/__init__.py",
+                "runner": "/worktree/experiments/china_v1_fusion_smoke/runner.py",
+                "model": "/worktree/experiments/china_v1_fusion_smoke/model.py",
+            },
+        },
+        "cpu_contract_fallback": {
+            "path": "manifests/cpu_contract.json",
+            "sha256": sha256(cpu_contract.read_bytes()).hexdigest(),
+        },
+    }
 
 
 def _unsafe_marker(marker: str) -> None:
@@ -668,9 +815,147 @@ def test_success_combined_sha256_covers_mandatory_patch_selection(
     groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
     selection = tmp_sandbox / "manifests" / "patch_selection.json"
 
-    success = seal_success(tmp_sandbox, [*groups, *evidence])
+    seal_success(tmp_sandbox, [*groups, *evidence])
+    with selection.open("a", encoding="utf-8") as handle:
+        handle.write("tampered")
 
-    payload = json.loads(success.read_text(encoding="utf-8"))
-    assert payload["combined_sha256"] == _combined_digest(
-        tmp_sandbox, [*groups, *evidence, selection]
+    with pytest.raises(ExportError, match="combined SHA-256|patch selection"):
+        verify_success(tmp_sandbox)
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "manifests/source_snapshot_before.json",
+        "manifests/aef_registry.json",
+        "synthetic/aef/patch_00_2020.pt",
+        "manifests/prepare_manifest.json",
+        "manifests/cpu_contract.json",
+    ],
+    ids=("source-snapshot", "registry", "synthetic-cache", "prepare", "cpu-contract"),
+)
+def test_success_digest_covers_each_declared_prepared_evidence_file(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+    relative: str,
+) -> None:
+    """audit 声明的每份前置证据在 seal 后被改一字节都必须使验证失败。"""
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    prepared = _add_prepared_evidence_declared_by_audit(tmp_sandbox)
+    seal_success(tmp_sandbox, [*groups, *evidence])
+
+    with prepared[relative].open("ab") as handle:
+        handle.write(b"tampered")
+
+    with pytest.raises(ExportError, match="combined SHA-256|fallback hash"):
+        verify_success(tmp_sandbox)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["duplicate", "missing", "outside", "unknown", "symlink"],
+    ids=str,
+)
+def test_seal_rejects_invalid_or_unknown_created_evidence_paths(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    """审计路径不能重复、缺失、逃逸、未知或通过 symlink 改写证据边界。"""
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    _add_prepared_evidence_declared_by_audit(tmp_sandbox)
+    audit_path = tmp_sandbox / "path_audit.json"
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    created = audit["created_or_modified"]
+    assert isinstance(created, list)
+    if mutation == "duplicate":
+        created.append("manifests/cpu_contract.json")
+    elif mutation == "missing":
+        created.append("manifests/missing.json")
+    elif mutation == "outside":
+        created.append("../outside.json")
+    elif mutation == "unknown":
+        (tmp_sandbox / "unknown.txt").write_text("unknown", encoding="utf-8")
+        created.append("unknown.txt")
+    else:
+        outside = tmp_path / "outside.json"
+        outside.write_text("outside", encoding="utf-8")
+        (tmp_sandbox / "manifests/external.json").symlink_to(outside)
+        created.append("manifests/external.json")
+    audit_path.write_text(json.dumps(audit, sort_keys=True) + "\n", encoding="utf-8")
+
+    with pytest.raises(ExportError, match="audit|evidence|path|symlink|duplicate|unknown"):
+        seal_success(tmp_sandbox, [*groups, *evidence])
+    assert not (tmp_sandbox / "SUCCESS").exists()
+
+
+@pytest.mark.parametrize(
+    ("target", "field"),
+    [("metrics", "npu_peak_memory"), ("manifest", "runtime_provenance")],
+    ids=("missing-peak-hbm", "missing-runtime-provenance"),
+)
+def test_seal_requires_peak_npu_memory_and_runtime_provenance(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+    target: str,
+    field: str,
+) -> None:
+    """缺 peak HBM 或运行环境 provenance 的 smoke 不能获得 SUCCESS。"""
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    _add_prepared_evidence_declared_by_audit(tmp_sandbox)
+    metrics = {
+        "groups": _valid_group_metrics(),
+        "zero_gate_max_abs_error": 0.0,
+        "gradient_l1": {
+            "aef_adapter": 1.0,
+            "highres_stem": 1.0,
+            "highres_adapter": 1.0,
+            "output_projection": 1.0,
+        },
+        "checkpoint_reload_max_abs_error": 0.0,
+        "accuracy_conclusion_allowed": False,
+    }
+    manifest = _valid_run_manifest(tmp_sandbox)
+    if target == "metrics":
+        del metrics["groups"]["full"][field]
+    else:
+        del manifest[field]
+    (tmp_sandbox / "metrics.json").write_text(json.dumps(metrics), encoding="utf-8")
+    (tmp_sandbox / "run_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ExportError, match="memory|provenance"):
+        seal_success(tmp_sandbox, [*groups, *evidence])
+    assert not (tmp_sandbox / "SUCCESS").exists()
+
+
+def test_reopened_fp16_norm_summary_reads_the_exported_zarr(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+) -> None:
+    """FP16 norm 证据必须来自重开后的 Zarr，而不是复用 export 前 FP32 tensor。"""
+    import experiments.china_v1_fusion_smoke.export as export_module
+
+    embedding, valid = full_contract_tensors
+    embedding[:, :, 0] = 1.0003
+    output = export_group_zarr(
+        "full",
+        embedding,
+        valid,
+        PATCH_IDS,
+        PERIODS,
+        tmp_sandbox / "outputs/full/embedding.zarr",
+        tmp_sandbox,
     )
+    stored = zarr.open_group(str(output), mode="r")["embedding"][:]
+    expected = np.sqrt(np.square(stored.astype(np.float32)).sum(axis=2))
+
+    summary = export_module.reopened_fp16_vmf_norm_summary(output)
+
+    assert summary == {
+        "source_dtype": "float16",
+        "computation_dtype": "float32",
+        "min": float(expected.min()),
+        "median": float(np.median(expected)),
+        "max": float(expected.max()),
+    }

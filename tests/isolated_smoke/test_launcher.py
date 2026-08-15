@@ -75,8 +75,16 @@ def test_launcher_runs_the_only_supported_smoke_in_the_foreground() -> None:
     assert "--stage npu-smoke" in source
     assert '2>&1 | tee "${SANDBOX}/logs/npu_smoke.log"' in source
     assert "READY_TO_SEAL" in source
+    assert "TEE_COMPLETE" in source
+    assert "READY_TO_SEAL exists without TEE_COMPLETE" in source
+    assert "TEE_COMPLETE exists without READY_TO_SEAL" in source
+    assert "--mark-tee-complete" in source
     assert "--finalize-seal" in source
-    assert source.index("--stage npu-smoke") < source.index("--finalize-seal")
+    assert (
+        source.index("--stage npu-smoke")
+        < source.index("--mark-tee-complete")
+        < source.index("--finalize-seal")
+    )
     assert source.rstrip().endswith("--finalize-seal")
     assert "torchrun" not in source
     assert "nohup" not in source

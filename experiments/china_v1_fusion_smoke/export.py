@@ -37,6 +37,29 @@ _REQUIRED_EVIDENCE = (
 _PATCH_SELECTION_RELATIVE_PATH = Path("manifests") / "patch_selection.json"
 _LAUNCHER_LOG_RELATIVE_PATH = Path("logs") / "npu_smoke.log"
 _READY_TO_SEAL_RELATIVE_PATH = Path("READY_TO_SEAL")
+_TEE_COMPLETE_RELATIVE_PATH = Path("TEE_COMPLETE")
+_MANDATORY_EVIDENCE_ROOTS = (Path("manifests"), Path("synthetic"), Path("outputs"))
+_MANDATORY_MANIFEST_FILES = (
+    Path("manifests/aef_registry.json"),
+    Path("manifests/cpu_contract.json"),
+    Path("manifests/highres_2m_registry.json"),
+    Path("manifests/patch_selection.json"),
+    Path("manifests/prepare_manifest.json"),
+    Path("manifests/source_snapshot_after.json"),
+    Path("manifests/source_snapshot_before.json"),
+)
+_ALLOWED_AUDIT_EXACT_PATHS = {
+    "logs",
+    _LAUNCHER_LOG_RELATIVE_PATH.as_posix(),
+    _READY_TO_SEAL_RELATIVE_PATH.as_posix(),
+    _TEE_COMPLETE_RELATIVE_PATH.as_posix(),
+    "metrics.json",
+    "path_audit.json",
+    "reproducibility.json",
+    "run_manifest.json",
+    "smoke_checkpoint.pt",
+    "SUCCESS",
+}
 _REQUIRED_METADATA = (
     "git_commit",
     "config_sha256",
@@ -299,6 +322,27 @@ def _verify_exported_group(
     return tuple(patch_ids), tuple(periods)
 
 
+def reopened_fp16_vmf_norm_summary(path: Path) -> dict[str, object]:
+    """重开已导出的 FP16 Zarr，并以 FP32 累加计算实际持久化向量范数。"""
+    target = Path(path)
+    _verify_exported_group(target)
+    exported = zarr.open_group(str(target), mode="r")
+    stored = exported["embedding"][:]
+    if stored.dtype != np.dtype("float16"):
+        raise ExportError(f"reopened Zarr embedding is not float16: {target}")
+    values = stored.astype(np.float32)
+    norms = np.sqrt(np.square(values).sum(axis=2))
+    if not np.isfinite(norms).all():
+        raise ExportError(f"reopened Zarr vMF norms contain NaN or Inf: {target}")
+    return {
+        "source_dtype": "float16",
+        "computation_dtype": "float32",
+        "min": float(norms.min()),
+        "median": float(np.median(norms)),
+        "max": float(norms.max()),
+    }
+
+
 def export_group_zarr(
     group: str,
     embedding: torch.Tensor,
@@ -496,6 +540,213 @@ def _require_regular_evidence_file(path: Path) -> None:
         raise ExportError(f"required smoke evidence must be a regular non-symlink file: {path}")
 
 
+def _finite_number(value: object) -> bool:
+    return type(value) in {int, float} and bool(np.isfinite(value))
+
+
+def _validate_norm_summary(raw: object, *, source_dtype: str) -> None:
+    expected = {"source_dtype", "computation_dtype", "min", "median", "max"}
+    if not isinstance(raw, Mapping) or set(raw) != expected:
+        raise ExportError(f"{source_dtype} vMF norm evidence has an invalid schema")
+    if raw["source_dtype"] != source_dtype or raw["computation_dtype"] != "float32":
+        raise ExportError(f"{source_dtype} vMF norm dtype provenance is invalid")
+    values = [raw[key] for key in ("min", "median", "max")]
+    if not all(_finite_number(value) for value in values) or not (
+        0.0 < values[0] <= values[1] <= values[2]
+    ):
+        raise ExportError(f"{source_dtype} vMF norm values are invalid")
+
+
+def _validate_metrics_evidence(raw: Mapping[str, object]) -> None:
+    expected_keys = {
+        "groups",
+        "zero_gate_max_abs_error",
+        "gradient_l1",
+        "checkpoint_reload_max_abs_error",
+        "accuracy_conclusion_allowed",
+    }
+    if set(raw) != expected_keys or raw["accuracy_conclusion_allowed"] is not False:
+        raise ExportError("metrics evidence has an invalid schema")
+    groups = raw["groups"]
+    if not isinstance(groups, Mapping) or set(groups) != set(_GROUPS):
+        raise ExportError("metrics groups have an invalid schema")
+    expected_group_keys = {
+        "shape",
+        "latency_seconds",
+        "finite",
+        "pre_export_fp32_vmf_norm",
+        "reopened_fp16_zarr_vmf_norm",
+        "npu_peak_memory",
+    }
+    memory_keys = {
+        "unit",
+        "baseline_allocated",
+        "baseline_reserved",
+        "peak_allocated",
+        "peak_reserved",
+        "peak_allocated_delta",
+        "peak_reserved_delta",
+    }
+    for group in _GROUPS:
+        evidence = groups[group]
+        if not isinstance(evidence, Mapping):
+            raise ExportError(f"metrics group {group} has an invalid schema")
+        if "npu_peak_memory" not in evidence:
+            raise ExportError(f"metrics group {group} is missing NPU peak memory evidence")
+        if set(evidence) != expected_group_keys:
+            raise ExportError(f"metrics group {group} has an invalid schema")
+        if evidence["shape"] != list(_EMBEDDING_SHAPE) or evidence["finite"] is not True:
+            raise ExportError(f"metrics group {group} shape/finite evidence is invalid")
+        if not _finite_number(evidence["latency_seconds"]) or evidence["latency_seconds"] <= 0:
+            raise ExportError(f"metrics group {group} latency is invalid")
+        _validate_norm_summary(evidence["pre_export_fp32_vmf_norm"], source_dtype="float32")
+        _validate_norm_summary(evidence["reopened_fp16_zarr_vmf_norm"], source_dtype="float16")
+        memory = evidence["npu_peak_memory"]
+        if not isinstance(memory, Mapping) or set(memory) != memory_keys:
+            raise ExportError(f"metrics group {group} NPU peak memory evidence is invalid")
+        if memory["unit"] != "bytes":
+            raise ExportError(f"metrics group {group} NPU peak memory unit must be bytes")
+        numbers = {key: memory[key] for key in memory_keys - {"unit"}}
+        if not all(type(value) is int and value >= 0 for value in numbers.values()):
+            raise ExportError(f"metrics group {group} NPU peak memory values are invalid")
+        if (
+            numbers["peak_allocated"] < numbers["baseline_allocated"]
+            or numbers["peak_reserved"] < numbers["baseline_reserved"]
+            or numbers["peak_allocated_delta"]
+            != numbers["peak_allocated"] - numbers["baseline_allocated"]
+            or numbers["peak_reserved_delta"]
+            != numbers["peak_reserved"] - numbers["baseline_reserved"]
+        ):
+            raise ExportError(f"metrics group {group} NPU peak memory deltas are invalid")
+    if raw["zero_gate_max_abs_error"] != 0.0 or raw["checkpoint_reload_max_abs_error"] != 0.0:
+        raise ExportError("metrics exact-identity evidence is invalid")
+    gradients = raw["gradient_l1"]
+    expected_gradients = {
+        "aef_adapter",
+        "highres_stem",
+        "highres_adapter",
+        "output_projection",
+    }
+    if (
+        not isinstance(gradients, Mapping)
+        or set(gradients) != expected_gradients
+        or not all(_finite_number(value) and value > 0 for value in gradients.values())
+    ):
+        raise ExportError("metrics gradient evidence is invalid")
+
+
+def _validate_run_manifest_evidence(raw: Mapping[str, object], sandbox_root: Path) -> None:
+    expected_keys = {
+        "git_commit",
+        "config_sha256",
+        "patch_ids",
+        "periods",
+        "physical_npu",
+        "logical_device",
+        "source_unchanged",
+        "synthetic",
+        "allowed_use",
+        "formal_training_allowed",
+        "formal_evaluation_allowed",
+        "accuracy_conclusion_allowed",
+        "runtime_provenance",
+        "cpu_contract_fallback",
+    }
+    if set(raw) != expected_keys:
+        raise ExportError("run manifest provenance has an invalid schema")
+    if not _is_hex(raw["git_commit"], 40) or not _is_hex(raw["config_sha256"], 64):
+        raise ExportError("run manifest provenance hashes are invalid")
+    if (
+        not isinstance(raw["patch_ids"], list)
+        or len(raw["patch_ids"]) != 4
+        or len(set(raw["patch_ids"])) != 4
+        or raw["periods"] != list(_EXPECTED_PERIODS)
+    ):
+        raise ExportError("run manifest patch/period provenance is invalid")
+    if raw["physical_npu"] != 2 or raw["logical_device"] != "npu:0":
+        raise ExportError("run manifest NPU mapping provenance is invalid")
+    if (
+        raw["source_unchanged"] is not True
+        or raw["synthetic"] is not True
+        or raw["allowed_use"] != "smoke_test_only"
+        or raw["formal_training_allowed"] is not False
+        or raw["formal_evaluation_allowed"] is not False
+        or raw["accuracy_conclusion_allowed"] is not False
+    ):
+        raise ExportError("run manifest use-policy provenance is invalid")
+
+    runtime = raw["runtime_provenance"]
+    runtime_keys = {
+        "sys_executable",
+        "python_version",
+        "torch_version",
+        "torch_npu_version",
+        "cann",
+        "driver",
+        "device_mapping",
+        "module_paths",
+    }
+    if not isinstance(runtime, Mapping) or set(runtime) != runtime_keys:
+        raise ExportError("run manifest runtime provenance is invalid")
+    for key in ("sys_executable", "python_version", "torch_version", "torch_npu_version"):
+        if not isinstance(runtime[key], str) or not runtime[key]:
+            raise ExportError(f"run manifest runtime provenance {key} is invalid")
+    if not Path(runtime["sys_executable"]).is_absolute():
+        raise ExportError("run manifest sys.executable provenance must be absolute")
+    cann = runtime["cann"]
+    if not isinstance(cann, Mapping) or set(cann) != {"root", "version", "install_info"}:
+        raise ExportError("run manifest CANN provenance is invalid")
+    if cann["root"] != "/usr/local/Ascend/cann-9.0.0" or cann["version"] != "9.0.0":
+        raise ExportError("run manifest CANN version provenance is invalid")
+    if not isinstance(cann["install_info"], str) or not Path(cann["install_info"]).is_absolute():
+        raise ExportError("run manifest CANN install-info provenance is invalid")
+    driver = runtime["driver"]
+    if not isinstance(driver, Mapping) or set(driver) != {"version", "version_info"}:
+        raise ExportError("run manifest driver provenance is invalid")
+    if not all(isinstance(driver[key], str) and driver[key] for key in driver):
+        raise ExportError("run manifest driver values are invalid")
+    if not Path(driver["version_info"]).is_absolute():
+        raise ExportError("run manifest driver path provenance must be absolute")
+    mapping = runtime["device_mapping"]
+    expected_mapping = {
+        "physical_device": "/dev/davinci2",
+        "physical_npu": 2,
+        "visible_devices": "2",
+        "logical_device": "npu:0",
+        "logical_device_count": 1,
+    }
+    if not isinstance(mapping, Mapping) or set(mapping) != {*expected_mapping, "device_name"}:
+        raise ExportError("run manifest device mapping provenance is invalid")
+    if (
+        any(mapping[key] != value for key, value in expected_mapping.items())
+        or not isinstance(mapping["device_name"], str)
+        or not mapping["device_name"]
+    ):
+        raise ExportError("run manifest device mapping provenance is invalid")
+    module_paths = runtime["module_paths"]
+    if not isinstance(module_paths, Mapping) or set(module_paths) != {
+        "torch",
+        "torch_npu",
+        "runner",
+        "model",
+    }:
+        raise ExportError("run manifest module-path provenance is invalid")
+    if not all(
+        isinstance(value, str) and Path(value).is_absolute() for value in module_paths.values()
+    ):
+        raise ExportError("run manifest module paths must be absolute")
+
+    fallback = raw["cpu_contract_fallback"]
+    if not isinstance(fallback, Mapping) or set(fallback) != {"path", "sha256"}:
+        raise ExportError("run manifest CPU contract fallback provenance is invalid")
+    if fallback["path"] != "manifests/cpu_contract.json" or not _is_hex(fallback["sha256"], 64):
+        raise ExportError("run manifest CPU contract fallback hash is invalid")
+    cpu_contract = _guard_non_symlink_sandbox_path(sandbox_root / fallback["path"], sandbox_root)
+    _require_regular_evidence_file(cpu_contract)
+    if _sha256_file(cpu_contract) != fallback["sha256"]:
+        raise ExportError("run manifest CPU contract fallback hash does not match evidence")
+
+
 def _validate_required_evidence(sandbox_root: Path) -> None:
     """封存前要求四份 JSON 与 checkpoint 都是可安全解析的常规文件。"""
     for name in _REQUIRED_EVIDENCE[:-1]:
@@ -509,9 +760,47 @@ def _validate_required_evidence(sandbox_root: Path) -> None:
             raise ExportError(f"required JSON evidence must be an object: {path}")
         if name == "path_audit.json":
             _validate_final_path_audit(parsed, sandbox_root)
+        elif name == "metrics.json":
+            _validate_metrics_evidence(parsed)
+        elif name == "run_manifest.json":
+            _validate_run_manifest_evidence(parsed, sandbox_root)
     checkpoint = _guard_non_symlink_sandbox_path(sandbox_root / "smoke_checkpoint.pt", sandbox_root)
     _require_regular_evidence_file(checkpoint)
     _load_checkpoint_payload(checkpoint)
+
+
+def _created_evidence_paths(raw: Mapping[str, object], sandbox_root: Path) -> tuple[Path, ...]:
+    """把 audit 声明解析为严格、存在且属于已知证据命名空间的路径。"""
+    created = raw.get("created_or_modified")
+    if not isinstance(created, list) or not created:
+        raise ExportError("path audit created_or_modified must be a non-empty list")
+    if not all(isinstance(relative, str) and relative for relative in created):
+        raise ExportError("path audit contains a non-string or empty evidence path")
+    if len(set(created)) != len(created):
+        raise ExportError("path audit contains a duplicate evidence path")
+
+    allowed_roots = tuple(path.as_posix() for path in _MANDATORY_EVIDENCE_ROOTS)
+    paths: list[Path] = []
+    for relative in created:
+        parsed = Path(relative)
+        if parsed.is_absolute() or ".." in parsed.parts or parsed.as_posix() != relative:
+            raise ExportError(f"path audit contains an outside or noncanonical path: {relative}")
+        allowed = relative in _ALLOWED_AUDIT_EXACT_PATHS or any(
+            relative == root or relative.startswith(f"{root}/") for root in allowed_roots
+        )
+        if not allowed:
+            raise ExportError(f"path audit contains an unknown evidence path: {relative}")
+        if relative == "SUCCESS":
+            continue
+        path = _guard_non_symlink_sandbox_path(sandbox_root / parsed, sandbox_root)
+        if not path.exists():
+            raise ExportError(f"path audit declares missing evidence: {relative}")
+        if path.is_dir():
+            _assert_directory_has_no_symlink_children(path)
+        elif not path.is_file():
+            raise ExportError(f"path audit evidence is not a regular file or directory: {relative}")
+        paths.append(path)
+    return tuple(paths)
 
 
 def _validate_final_path_audit(raw: Mapping[str, object], sandbox_root: Path) -> None:
@@ -520,10 +809,14 @@ def _validate_final_path_audit(raw: Mapping[str, object], sandbox_root: Path) ->
     required_created = {
         _LAUNCHER_LOG_RELATIVE_PATH.as_posix(),
         _READY_TO_SEAL_RELATIVE_PATH.as_posix(),
+        _TEE_COMPLETE_RELATIVE_PATH.as_posix(),
         "SUCCESS",
     }
     if not isinstance(created, list) or not required_created.issubset(created):
-        raise ExportError("path audit must include the final log, READY_TO_SEAL and SUCCESS")
+        raise ExportError(
+            "path audit must include the final log, READY_TO_SEAL, TEE_COMPLETE and SUCCESS"
+        )
+    _created_evidence_paths(raw, sandbox_root)
     if raw.get("stage") != "finalize-seal":
         raise ExportError("path audit final SUCCESS declaration requires stage finalize-seal")
     stages = raw.get("stages")
@@ -540,9 +833,12 @@ def _validate_final_path_audit(raw: Mapping[str, object], sandbox_root: Path) ->
     expected_declared = {
         _LAUNCHER_LOG_RELATIVE_PATH.as_posix(),
         _READY_TO_SEAL_RELATIVE_PATH.as_posix(),
+        _TEE_COMPLETE_RELATIVE_PATH.as_posix(),
     }
     if not isinstance(declared, Mapping) or set(declared) != expected_declared:
-        raise ExportError("path audit declared files must bind the launcher log and READY_TO_SEAL")
+        raise ExportError(
+            "path audit declared files must bind the launcher log, READY_TO_SEAL and TEE_COMPLETE"
+        )
     for relative in sorted(expected_declared):
         metadata = declared[relative]
         if not isinstance(metadata, Mapping) or set(metadata) != {"size", "mtime_ns", "sha256"}:
@@ -610,17 +906,29 @@ def _digest_path(digest: Any, path: Path, sandbox_root: Path) -> None:
 
 def _validated_seal_paths(root: Path, required_files: Iterable[Path | str]) -> list[Path]:
     """验证最终证据合同并返回参与 SUCCESS 摘要的稳定路径集合。"""
-    supplied_paths = [_resolve_required_path(path, root) for path in required_files]
+    supplied_values = list(required_files)
+    supplied_paths = [_resolve_required_path(path, root) for path in supplied_values]
+    supplied_relatives = [path.relative_to(root).as_posix() for path in supplied_paths]
+    if len(set(supplied_relatives)) != len(supplied_relatives):
+        raise ExportError("required smoke evidence contains a duplicate path")
     mandatory_paths = [
-        *(_guard_non_symlink_sandbox_path(path, root) for path in _required_group_paths(root)),
+        *(
+            _guard_non_symlink_sandbox_path(root / relative, root)
+            for relative in _MANDATORY_EVIDENCE_ROOTS
+        ),
         *(_guard_non_symlink_sandbox_path(root / name, root) for name in _REQUIRED_EVIDENCE),
-        _guard_non_symlink_sandbox_path(root / _PATCH_SELECTION_RELATIVE_PATH, root),
         _guard_non_symlink_sandbox_path(root / _LAUNCHER_LOG_RELATIVE_PATH, root),
         _guard_non_symlink_sandbox_path(root / _READY_TO_SEAL_RELATIVE_PATH, root),
+        _guard_non_symlink_sandbox_path(root / _TEE_COMPLETE_RELATIVE_PATH, root),
     ]
     trusted_patch_ids = _required_patch_selection_ids(root)
-    all_paths = list(dict.fromkeys([*mandatory_paths, *supplied_paths]))
-    for path in all_paths:
+    for relative in _MANDATORY_MANIFEST_FILES:
+        path = _guard_non_symlink_sandbox_path(root / relative, root)
+        _require_regular_evidence_file(path)
+    for relative in (Path("synthetic/aef"), Path("synthetic/highres_2m")):
+        path = _guard_non_symlink_sandbox_path(root / relative, root)
+        _assert_directory_has_no_symlink_children(path)
+    for path in [*mandatory_paths, *supplied_paths]:
         if not path.exists():
             raise ExportError(f"required smoke evidence is missing: {path}")
     partials = sorted(root.rglob("*.partial"))
@@ -636,12 +944,30 @@ def _validated_seal_paths(root: Path, required_files: Iterable[Path | str]) -> l
     if group_axes[0][0] != trusted_patch_ids:
         raise ExportError("Zarr patch axis does not match trusted patch selection evidence")
     _validate_required_evidence(root)
-    return all_paths
+    audit = json.loads((root / "path_audit.json").read_text(encoding="utf-8"))
+    assert isinstance(audit, Mapping)  # already established by _validate_required_evidence.
+    audit_paths = _created_evidence_paths(audit, root)
+    allowed_roots = tuple(path.as_posix() for path in _MANDATORY_EVIDENCE_ROOTS)
+    for path, relative in zip(supplied_paths, supplied_relatives):
+        allowed = relative in _ALLOWED_AUDIT_EXACT_PATHS or any(
+            relative == allowed_root or relative.startswith(f"{allowed_root}/")
+            for allowed_root in allowed_roots
+        )
+        if not allowed:
+            raise ExportError(f"required smoke evidence contains an unknown path: {path}")
+    return list(dict.fromkeys([*mandatory_paths, *audit_paths, *supplied_paths]))
 
 
 def _combined_paths_sha256(root: Path, paths: Iterable[Path]) -> str:
+    files: set[Path] = set()
+    for path in paths:
+        if path.is_file():
+            files.add(path)
+            continue
+        _assert_directory_has_no_symlink_children(path)
+        files.update(item for item in path.rglob("*") if item.is_file())
     digest = sha256()
-    for path in sorted(paths, key=lambda item: item.relative_to(root).as_posix()):
+    for path in sorted(files, key=lambda item: item.relative_to(root).as_posix()):
         _digest_path(digest, path, root)
     return digest.hexdigest()
 

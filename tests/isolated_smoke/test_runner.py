@@ -283,6 +283,85 @@ def test_npu_path_audit_records_expected_success_before_sealing(
     }
 
 
+def _write_preliminary_ready(runner_fixture: RunnerFixture) -> tuple[Path, Path]:
+    """构造 compute 已完成、但 tee 尚未确认的真实文件状态。"""
+    import experiments.china_v1_fusion_smoke.runner as runner_module
+
+    log = runner_fixture.sandbox_root / "logs" / "npu_smoke.log"
+    log.parent.mkdir()
+    log.write_text("complete foreground output\n", encoding="utf-8")
+    audit = runner_fixture.sandbox_root / "path_audit.json"
+    audit.write_text(
+        json.dumps(
+            {
+                "stage": "npu-smoke",
+                "stages": ["npu-smoke"],
+                "sandbox_root": str(runner_fixture.sandbox_root),
+                "created_or_modified": ["logs/npu_smoke.log", "path_audit.json"],
+                "formal_training_allowed": False,
+                "formal_evaluation_allowed": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    ready = runner_fixture.sandbox_root / "READY_TO_SEAL"
+    ready.write_text(
+        json.dumps(
+            {
+                "status": "npu_compute_complete",
+                "git_commit": "a" * 40,
+                "config_sha256": runner_module._sha256_file(runner_fixture.config_path),
+                "preliminary_path_audit_sha256": runner_module._sha256_file(audit),
+                "source_unchanged": True,
+                "synthetic": True,
+                "formal_training_allowed": False,
+                "formal_evaluation_allowed": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return log, ready
+
+
+def test_mark_tee_complete_atomically_binds_the_finished_launcher_log(
+    runner_fixture: RunnerFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """只有 pipeline 返回后的独立动作才能把最终日志 metadata 绑定到 marker。"""
+    import experiments.china_v1_fusion_smoke.runner as runner_module
+
+    log, ready = _write_preliminary_ready(runner_fixture)
+    monkeypatch.setattr(runner_module, "_validate_npu_launcher", lambda _config: None)
+    monkeypatch.setattr(runner_module, "_git_commit", lambda: "a" * 40)
+
+    marker = runner_module._mark_tee_complete(runner_fixture.config_path)
+
+    payload = json.loads(marker.read_text(encoding="utf-8"))
+    assert marker == runner_fixture.sandbox_root / "TEE_COMPLETE"
+    assert payload["status"] == "tee_pipeline_complete"
+    assert payload["ready_to_seal_sha256"] == sha256(ready.read_bytes()).hexdigest()
+    assert payload["launcher_log"] == {
+        "path": "logs/npu_smoke.log",
+        "size": log.stat().st_size,
+        "mtime_ns": log.stat().st_mtime_ns,
+        "sha256": sha256(log.read_bytes()).hexdigest(),
+    }
+    assert not marker.with_name("TEE_COMPLETE.partial").exists()
+
+
+def test_mark_tee_complete_refuses_recovery_without_ready(
+    runner_fixture: RunnerFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TEE marker 不能在 READY 缺失时凭空创建。"""
+    import experiments.china_v1_fusion_smoke.runner as runner_module
+
+    monkeypatch.setattr(runner_module, "_validate_npu_launcher", lambda _config: None)
+
+    with pytest.raises(RunnerError, match="READY_TO_SEAL"):
+        runner_module._mark_tee_complete(runner_fixture.config_path)
+
+
 def test_invalid_stage_is_rejected_before_dispatch(runner_fixture: RunnerFixture) -> None:
     """拼错的阶段不得静默落到任何可写或设备路径。"""
     with pytest.raises(ValueError, match="unknown smoke stage"):
