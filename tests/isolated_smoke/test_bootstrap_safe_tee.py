@@ -150,3 +150,88 @@ def test_safe_tee_streams_only_into_the_exclusively_reserved_log(tmp_path: Path)
 
     assert log.read_bytes() == b"foreground output\n"
     assert forwarded.getvalue() == b"foreground output\n"
+
+
+class _Destination:
+    """允许测试替换 write 行为，同时保留真实字节副作用。"""
+
+    def __init__(self) -> None:
+        self.buffer = bytearray()
+
+    def write(self, data: bytes) -> int:
+        self.buffer.extend(data)
+        return len(data)
+
+    def flush(self) -> None:
+        pass
+
+
+@pytest.mark.parametrize("sink", ["descriptor", "destination"])
+def test_safe_tee_retries_short_writes_until_both_sinks_are_complete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sink: str,
+) -> None:
+    """任一 sink 只写部分字节时必须续写余量，不能静默截断。"""
+    root = _sentinel_sandbox(tmp_path)
+    (root / "logs").mkdir()
+    log = root / "logs/npu_smoke.log"
+    payload = b"short writes must preserve every byte\n"
+    destination = _Destination()
+    module = _safe_tee_module()
+    module.reserve_log(root, log)
+
+    if sink == "descriptor":
+        real_write = module.os.write
+
+        def short_fd_write(descriptor: int, data: bytes) -> int:
+            return real_write(descriptor, memoryview(data)[:3])
+
+        monkeypatch.setattr(module.os, "write", short_fd_write)
+    else:
+        real_write = destination.write
+
+        def short_destination_write(data: bytes) -> int:
+            return real_write(memoryview(data)[:3])
+
+        monkeypatch.setattr(destination, "write", short_destination_write)
+
+    module.stream_reserved_log(
+        root,
+        log,
+        source=io.BytesIO(payload),
+        destination=destination,
+    )
+
+    assert log.read_bytes() == payload
+    assert bytes(destination.buffer) == payload
+
+
+@pytest.mark.parametrize("sink", ["descriptor", "destination"])
+@pytest.mark.parametrize("result", [0, -1], ids=("zero", "negative"))
+def test_safe_tee_rejects_nonprogressing_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sink: str,
+    result: int,
+) -> None:
+    """write 返回 0 或负数表示无可靠进展，必须 fail closed。"""
+    root = _sentinel_sandbox(tmp_path)
+    (root / "logs").mkdir()
+    log = root / "logs/npu_smoke.log"
+    destination = _Destination()
+    module = _safe_tee_module()
+    module.reserve_log(root, log)
+
+    if sink == "descriptor":
+        monkeypatch.setattr(module.os, "write", lambda _descriptor, _data: result)
+    else:
+        monkeypatch.setattr(destination, "write", lambda _data: result)
+
+    with pytest.raises(module.SafeTeeError, match="write.*progress"):
+        module.stream_reserved_log(
+            root,
+            log,
+            source=io.BytesIO(b"must not silently truncate\n"),
+            destination=destination,
+        )

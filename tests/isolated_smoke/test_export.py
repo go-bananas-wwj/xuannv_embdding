@@ -68,7 +68,7 @@ def _write_evidence(sandbox: Path) -> list[Path]:
         json.dumps(
             {
                 "stage": "npu-smoke",
-                "stages": ["npu-smoke"],
+                "stages": ["prepare", "cpu-contract", "npu-smoke"],
                 "sandbox_root": str(sandbox),
                 "created_or_modified": ["manifests/preliminary_path_audit.json"],
                 "formal_training_allowed": False,
@@ -128,7 +128,7 @@ def _write_evidence(sandbox: Path) -> list[Path]:
         json.dumps(
             {
                 "stage": "finalize-seal",
-                "stages": ["npu-smoke", "finalize-seal"],
+                "stages": ["prepare", "cpu-contract", "npu-smoke", "finalize-seal"],
                 "created_or_modified": [
                     "logs/npu_smoke.log",
                     "manifests/preliminary_path_audit.json",
@@ -757,6 +757,131 @@ def test_seal_success_requires_complete_sealed_false_formal_evidence(
     assert "combined_sha256" in payload
     assert "utc" in payload
     verify_success(tmp_sandbox)
+
+
+def test_seal_success_retries_an_authenticated_temporary_after_replace_failure(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """完整 SUCCESS.tmp 只因原子 replace 失败时，下一次调用应安全完成同一 seal。"""
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    real_replace = Path.replace
+
+    def fail_success_replace(path: Path, target: Path) -> Path:
+        if path == tmp_sandbox / "SUCCESS.tmp":
+            raise OSError("injected atomic replace failure")
+        return real_replace(path, target)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "replace", fail_success_replace)
+        with pytest.raises(OSError, match="injected atomic replace failure"):
+            seal_success(tmp_sandbox, [*groups, *evidence])
+
+    temporary = tmp_sandbox / "SUCCESS.tmp"
+    payload_before_retry = temporary.read_bytes()
+    assert not (tmp_sandbox / "SUCCESS").exists()
+
+    success = seal_success(tmp_sandbox, [*groups, *evidence])
+
+    assert success.read_bytes() == payload_before_retry
+    assert not temporary.exists()
+    verify_success(tmp_sandbox)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"{incomplete",
+        json.dumps({"combined_sha256": "0" * 64}).encode("utf-8"),
+        json.dumps(
+            {
+                "combined_sha256": "0" * 64,
+                "sealed_at_utc": "2026-08-15T00:00:00Z",
+                "synthetic": True,
+                "formal_training_allowed": False,
+                "formal_evaluation_allowed": False,
+            }
+        ).encode("utf-8"),
+        json.dumps(
+            {
+                "combined_sha256": "f" * 64,
+                "sealed_at_utc": "2026-08-15T00:00:00Z",
+                "synthetic": True,
+                "formal_training_allowed": True,
+                "formal_evaluation_allowed": False,
+            }
+        ).encode("utf-8"),
+    ],
+    ids=("malformed", "incomplete-schema", "forged-digest", "forged-policy"),
+)
+def test_seal_success_rejects_untrusted_existing_temporary_without_mutating_it(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+    payload: bytes,
+) -> None:
+    """未知、残缺或语义不符的 SUCCESS.tmp 必须保留原样并 fail closed。"""
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    temporary = tmp_sandbox / "SUCCESS.tmp"
+    temporary.write_bytes(payload)
+
+    with pytest.raises(ExportError, match="SUCCESS.tmp"):
+        seal_success(tmp_sandbox, [*groups, *evidence])
+
+    assert temporary.read_bytes() == payload
+    assert not (tmp_sandbox / "SUCCESS").exists()
+
+
+def test_seal_success_rejects_final_audit_with_only_two_stages(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+) -> None:
+    """仅保留最终两阶段不能伪装成完整 prepare→CPU→NPU→finalize 历史。"""
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    audit_path = tmp_sandbox / "path_audit.json"
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    audit["stages"] = ["npu-smoke", "finalize-seal"]
+    audit_path.write_text(json.dumps(audit, sort_keys=True) + "\n", encoding="utf-8")
+
+    with pytest.raises(ExportError, match="complete.*stage|stages"):
+        seal_success(tmp_sandbox, [*groups, *evidence])
+    assert not (tmp_sandbox / "SUCCESS").exists()
+
+
+def test_seal_success_rejects_preliminary_audit_without_prepare_and_cpu_history(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+) -> None:
+    """READY 绑定的 preliminary audit 也必须包含 prepare→CPU→NPU 三阶段。"""
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    preliminary = tmp_sandbox / "manifests/preliminary_path_audit.json"
+    raw = json.loads(preliminary.read_text(encoding="utf-8"))
+    raw["stages"] = ["npu-smoke"]
+    preliminary.write_text(json.dumps(raw, sort_keys=True) + "\n", encoding="utf-8")
+    ready = tmp_sandbox / "READY_TO_SEAL"
+    ready_raw = json.loads(ready.read_text(encoding="utf-8"))
+    ready_raw["preliminary_path_audit"]["sha256"] = sha256(preliminary.read_bytes()).hexdigest()
+    ready.write_text(json.dumps(ready_raw, sort_keys=True) + "\n", encoding="utf-8")
+    tee = tmp_sandbox / "TEE_COMPLETE"
+    tee_raw = json.loads(tee.read_text(encoding="utf-8"))
+    tee_raw["ready_to_seal_sha256"] = sha256(ready.read_bytes()).hexdigest()
+    tee.write_text(json.dumps(tee_raw, sort_keys=True) + "\n", encoding="utf-8")
+    audit = tmp_sandbox / "path_audit.json"
+    audit_raw = json.loads(audit.read_text(encoding="utf-8"))
+    for relative, path in {
+        "READY_TO_SEAL": ready,
+        "TEE_COMPLETE": tee,
+    }.items():
+        audit_raw["declared_files"][relative] = {
+            "size": path.stat().st_size,
+            "mtime_ns": path.stat().st_mtime_ns,
+            "sha256": sha256(path.read_bytes()).hexdigest(),
+        }
+    audit.write_text(json.dumps(audit_raw, sort_keys=True) + "\n", encoding="utf-8")
+
+    with pytest.raises(ExportError, match="preliminary audit stage"):
+        seal_success(tmp_sandbox, [*groups, *evidence])
+    assert not (tmp_sandbox / "SUCCESS").exists()
 
 
 def test_success_verification_detects_launcher_log_tampering_after_seal(

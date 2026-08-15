@@ -996,7 +996,11 @@ def _validate_prepare_and_cpu_graph(
 def _validate_markers(sandbox_root: Path, git_commit: str, config_sha256: str) -> None:
     preliminary_path = sandbox_root / "manifests/preliminary_path_audit.json"
     preliminary = _read_json_evidence(preliminary_path, sandbox_root)
-    if preliminary.get("stage") != "npu-smoke":
+    if preliminary.get("stage") != "npu-smoke" or preliminary.get("stages") != [
+        "prepare",
+        "cpu-contract",
+        "npu-smoke",
+    ]:
         raise ExportError("semantic preliminary audit stage is invalid")
     ready_path = sandbox_root / _READY_TO_SEAL_RELATIVE_PATH
     ready = _read_json_evidence(ready_path, sandbox_root)
@@ -1192,8 +1196,9 @@ def _validate_final_path_audit(raw: Mapping[str, object], sandbox_root: Path) ->
     if raw.get("stage") != "finalize-seal":
         raise ExportError("path audit final SUCCESS declaration requires stage finalize-seal")
     stages = raw.get("stages")
-    if not isinstance(stages, list) or stages[-2:] != ["npu-smoke", "finalize-seal"]:
-        raise ExportError("path audit must finish with npu-smoke then finalize-seal")
+    expected_stages = ["prepare", "cpu-contract", "npu-smoke", "finalize-seal"]
+    if stages != expected_stages:
+        raise ExportError("path audit must contain the complete fixed stage history")
     expected = {
         "path": "SUCCESS",
         "status": "expected_last_write",
@@ -1344,6 +1349,35 @@ def _combined_paths_sha256(root: Path, paths: Iterable[Path]) -> str:
     return digest.hexdigest()
 
 
+def _read_success_summary(path: Path, *, label: str) -> Mapping[str, object]:
+    """读取并校验 SUCCESS/SUCCESS.tmp 的精确 fail-closed schema。"""
+    _require_regular_evidence_file(path)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ExportError(f"{label} summary is malformed") from exc
+    expected_keys = {
+        "combined_sha256",
+        "sealed_at_utc",
+        "synthetic",
+        "formal_training_allowed",
+        "formal_evaluation_allowed",
+    }
+    if not isinstance(raw, Mapping) or set(raw) != expected_keys:
+        raise ExportError(f"{label} summary has an invalid schema")
+    if not _is_hex(raw["combined_sha256"], 64):
+        raise ExportError(f"{label} combined SHA-256 is invalid")
+    if not isinstance(raw["sealed_at_utc"], str) or not raw["sealed_at_utc"].endswith("Z"):
+        raise ExportError(f"{label} sealed_at_utc is invalid")
+    if (
+        raw["synthetic"] is not True
+        or raw["formal_training_allowed"] is not False
+        or raw["formal_evaluation_allowed"] is not False
+    ):
+        raise ExportError(f"{label} formal-use policy is invalid")
+    return raw
+
+
 def seal_success(sandbox_root: Path, required_files: Iterable[Path | str]) -> Path:
     """确认固定 evidence 与四个 sealed Zarr 均完整后，最后写入 ``SUCCESS``。"""
     root = _guard_non_symlink_sandbox_path(Path(sandbox_root), Path(sandbox_root))
@@ -1353,20 +1387,23 @@ def seal_success(sandbox_root: Path, required_files: Iterable[Path | str]) -> Pa
 
     all_paths = _validated_seal_paths(root, required_files)
     combined_sha256 = _combined_paths_sha256(root, all_paths)
-    sealed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    payload = (
-        "{\n"
-        f'  "combined_sha256": "{combined_sha256}",\n'
-        f'  "sealed_at_utc": "{sealed_at}",\n'
-        '  "synthetic": true,\n'
-        '  "formal_training_allowed": false,\n'
-        '  "formal_evaluation_allowed": false\n'
-        "}\n"
-    )
     temporary = _guard_non_symlink_sandbox_path(root / "SUCCESS.tmp", root)
     if temporary.exists():
-        raise ExportError("SUCCESS.tmp already exists; refusing to overwrite seal evidence")
-    temporary.write_text(payload, encoding="utf-8")
+        temporary_summary = _read_success_summary(temporary, label="SUCCESS.tmp")
+        if temporary_summary["combined_sha256"] != combined_sha256:
+            raise ExportError("SUCCESS.tmp combined SHA-256 does not match current evidence")
+    else:
+        sealed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        payload = (
+            "{\n"
+            f'  "combined_sha256": "{combined_sha256}",\n'
+            f'  "sealed_at_utc": "{sealed_at}",\n'
+            '  "synthetic": true,\n'
+            '  "formal_training_allowed": false,\n'
+            '  "formal_evaluation_allowed": false\n'
+            "}\n"
+        )
+        temporary.write_text(payload, encoding="utf-8")
     _guard_non_symlink_sandbox_path(temporary, root)
     _guard_non_symlink_sandbox_path(success, root)
     temporary.replace(success)
@@ -1378,30 +1415,7 @@ def verify_success(sandbox_root: Path) -> None:
     """只读复核 SUCCESS 摘要与最终日志、证据和四组 Zarr 的当前内容。"""
     root = _guard_non_symlink_sandbox_path(Path(sandbox_root), Path(sandbox_root))
     success = _guard_non_symlink_sandbox_path(root / "SUCCESS", root)
-    _require_regular_evidence_file(success)
-    try:
-        raw = json.loads(success.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ExportError("SUCCESS summary is malformed") from exc
-    expected_keys = {
-        "combined_sha256",
-        "sealed_at_utc",
-        "synthetic",
-        "formal_training_allowed",
-        "formal_evaluation_allowed",
-    }
-    if not isinstance(raw, Mapping) or set(raw) != expected_keys:
-        raise ExportError("SUCCESS summary has an invalid schema")
-    if not _is_hex(raw["combined_sha256"], 64):
-        raise ExportError("SUCCESS combined SHA-256 is invalid")
-    if not isinstance(raw["sealed_at_utc"], str) or not raw["sealed_at_utc"].endswith("Z"):
-        raise ExportError("SUCCESS sealed_at_utc is invalid")
-    if (
-        raw["synthetic"] is not True
-        or raw["formal_training_allowed"] is not False
-        or raw["formal_evaluation_allowed"] is not False
-    ):
-        raise ExportError("SUCCESS formal-use policy is invalid")
+    raw = _read_success_summary(success, label="SUCCESS")
     all_paths = _validated_seal_paths(root, ())
     if _combined_paths_sha256(root, all_paths) != raw["combined_sha256"]:
         raise ExportError("SUCCESS combined SHA-256 does not match current smoke evidence")

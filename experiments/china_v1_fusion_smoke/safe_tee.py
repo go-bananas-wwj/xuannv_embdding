@@ -6,6 +6,7 @@ import argparse
 import os
 import stat
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import BinaryIO
 
@@ -18,6 +19,18 @@ from experiments.china_v1_fusion_smoke.safety import (
 
 class SafeTeeError(RuntimeError):
     """日志路径不满足独占、常规文件约束时抛出。"""
+
+
+def _write_all(writer: Callable[[memoryview], int | None], chunk: bytes, *, sink: str) -> None:
+    """处理合法短写；对无进展或越界返回 fail closed。"""
+    view = memoryview(chunk)
+    offset = 0
+    while offset < len(view):
+        written = writer(view[offset:])
+        remaining = len(view) - offset
+        if not isinstance(written, int) or written <= 0 or written > remaining:
+            raise SafeTeeError(f"{sink} write made no valid progress")
+        offset += written
 
 
 def _guard(root: Path, log: Path) -> tuple[Path, Path]:
@@ -72,8 +85,8 @@ def stream_reserved_log(
         source = source if source is not None else sys.stdin.buffer
         destination = destination if destination is not None else sys.stdout.buffer
         while chunk := source.read(1024 * 1024):
-            os.write(descriptor, chunk)
-            destination.write(chunk)
+            _write_all(lambda data: os.write(descriptor, data), chunk, sink="launcher log")
+            _write_all(destination.write, chunk, sink="stdout destination")
             destination.flush()
         os.fsync(descriptor)
     except OSError as exc:
