@@ -221,6 +221,19 @@ def test_prepare_writes_eight_marked_contexts_and_unchanged_source_audit(
     )
 
 
+def test_path_audit_accumulates_prepare_and_cpu_contract_paths(
+    runner_fixture: RunnerFixture,
+) -> None:
+    """后续阶段不得覆盖 prepare 的既有写路径 provenance。"""
+    run_stage(runner_fixture.config_path, stage="prepare")
+    run_stage(runner_fixture.config_path, stage="cpu-contract")
+
+    audit = json.loads((runner_fixture.sandbox_root / "path_audit.json").read_text())
+    assert audit["stages"] == ["prepare", "cpu-contract"]
+    assert "synthetic/aef/patch_00_2020.pt" in audit["created_or_modified"]
+    assert "manifests/cpu_contract.json" in audit["created_or_modified"]
+
+
 def test_invalid_stage_is_rejected_before_dispatch(runner_fixture: RunnerFixture) -> None:
     """拼错的阶段不得静默落到任何可写或设备路径。"""
     with pytest.raises(ValueError, match="unknown smoke stage"):

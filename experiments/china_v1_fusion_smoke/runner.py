@@ -184,23 +184,50 @@ def _record_path_audit(
 ) -> tuple[Path, ...]:
     """记录本阶段新增或修改路径；audit 文件自身也显式纳入。"""
     after = _snapshot_sandbox(sandbox_root)
-    changed = sorted(path for path, state in after.items() if before.get(path) != state)
+    changed = {path for path, state in after.items() if before.get(path) != state}
     audit_relative = "path_audit.json"
-    if audit_relative not in changed:
-        changed.append(audit_relative)
-        changed.sort()
+    audit_path = validate_write_path(sandbox_root / audit_relative, sandbox_root)
+    previous_stages: list[str] = []
+    if audit_path.exists():
+        try:
+            previous = json.loads(audit_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RunnerError(f"existing path audit is malformed: {audit_path}") from exc
+        if not isinstance(previous, dict):
+            raise RunnerError("existing path audit must be a JSON object")
+        previous_paths = previous.get("created_or_modified")
+        if not isinstance(previous_paths, list) or not all(
+            isinstance(relative, str)
+            and relative
+            and not Path(relative).is_absolute()
+            and ".." not in Path(relative).parts
+            for relative in previous_paths
+        ):
+            raise RunnerError("existing path audit contains invalid relative paths")
+        changed.update(previous_paths)
+        raw_stages = previous.get("stages")
+        if raw_stages is None and isinstance(previous.get("stage"), str):
+            raw_stages = [previous["stage"]]
+        if not isinstance(raw_stages, list) or not all(
+            isinstance(value, str) and value in STAGES for value in raw_stages
+        ):
+            raise RunnerError("existing path audit contains invalid stages")
+        previous_stages = raw_stages
+    changed.add(audit_relative)
+    stages = [*previous_stages, stage]
     _write_json(
-        sandbox_root / audit_relative,
+        audit_path,
         {
             "stage": stage,
+            "stages": stages,
             "sandbox_root": str(sandbox_root),
-            "created_or_modified": changed,
+            "created_or_modified": sorted(changed),
             "formal_training_allowed": False,
             "formal_evaluation_allowed": False,
         },
         sandbox_root,
     )
-    return tuple(sandbox_root / relative for relative in changed)
+    return tuple(sandbox_root / relative for relative in sorted(changed))
 
 
 def _checked_selections(config: SmokeConfig) -> tuple[PatchSelection, ...]:
