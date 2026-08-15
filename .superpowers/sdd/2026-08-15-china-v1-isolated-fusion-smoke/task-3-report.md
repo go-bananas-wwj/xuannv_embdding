@@ -65,3 +65,72 @@
 
 - Implementation commit: `371c86c feat: add synthetic annual side inputs with formal-use guards`
 - Pushed to `origin/codex/china-v1-fusion-smoke`.
+
+## Fix round 1: adversarial input and registry hardening
+
+### Root cause and RED evidence
+
+The review found four independent contract escapes in `371c86c`:
+
+1. `observations * valid` retains `NaN` because IEEE multiplication does not turn `NaN * 0`
+   into zero.
+2. A zero annual S2 vector projects to an all-zero AEF vector, while the old AEF mask used only
+   source-observation availability.
+3. The smoke validator applied highres requirements only when `synthetic_kind` already exactly
+   matched the highres kind, allowing missing and unknown kinds through.
+4. The formal validator checked only `synthetic`, allowing an otherwise smoke-only registry to
+   flip that field to `false`.
+
+After adding regression tests, the exact command below produced 9 expected failures and 8 passes:
+
+```bash
+PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest \
+  tests/isolated_smoke/test_synthetic.py tests/isolated_smoke/test_registry.py -q
+```
+
+```text
+..FFF.....FF.FFFF
+9 failed, 8 passed in 8.44s
+```
+
+The failing test coverage was:
+
+- `test_invalid_nan_observations_do_not_contaminate_annual_context`
+- `test_all_invalid_nan_observations_produce_finite_outputs_and_false_masks`
+- `test_degenerate_zero_projection_is_not_marked_as_valid_aef`
+- `test_smoke_registry_requires_a_recognized_kind_and_all_disclaimers` (missing kind, unknown
+  kind, and missing highres native-GSD disclaimer)
+- `test_formal_registry_rejects_smoke_only_declarations_with_false_synthetic_bit` (smoke use,
+  training/evaluation disallowance, and synthetic kind)
+
+### Fix and GREEN evidence
+
+- Annual aggregation now combines the supplied mask with per-observation finite checks and uses
+  `torch.where` to replace invalid values before summing. All-invalid and partially-invalid NaN
+  inputs now yield finite AEF/highres tensors and correctly false masks.
+- `aef_valid` now requires both annual source validity and projection norm `> 1e-6`; invalid or
+  degenerate vectors are explicitly exported as zeros. Highres validity continues to represent
+  annual source validity rather than AEF-vector validity.
+- Smoke registries now require one recognized kind: `annual_s2_fixed_projection` or
+  `annual_s2_rgb_5x_deterministic_texture`. The latter must have all exact 2 m disclaimers.
+- Formal registries reject known synthetic kinds, `smoke_test_only`, and false formal-use flags
+  even when `synthetic` is false; malformed formal-use flag types are rejected too.
+
+Fresh focused verification after the fixes:
+
+```bash
+PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest \
+  tests/isolated_smoke/test_synthetic.py tests/isolated_smoke/test_registry.py -q
+```
+
+```text
+17 passed in 10.30s
+```
+
+Formatting/static verification:
+
+```text
+black: 4 files left unchanged
+ruff check: All checks passed
+git diff --check: exit 0
+```
