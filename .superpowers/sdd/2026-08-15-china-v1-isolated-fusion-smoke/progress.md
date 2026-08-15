@@ -35,3 +35,4 @@ Task 6: fix round 1/5 (3 addressed, 1 open — root/sentinel symlinks fail close
 Task 6: verification after fix round 1 (109 isolated non-NPU tests passed; real inspect/prepare/cpu replay passed; source unchanged; sandbox 100518960 bytes; no NPU started; finding #2 subsequently reopened).
 Task 6: fix round 2/5 (1 addressed, 0 open — Task 7 ancestry now requires the fixed launcher as the exact shell script operand and rejects `bash -c`, `bash -s`, and trailing argv decoys; commit 0dd423d).
 Task 6: complete after fix round 2 (22 focused Runner tests and 113 isolated non-NPU tests passed; Ruff/Black/diff-check passed; no NPU inspected or started).
+Task 6: review clean (commits 25080bf..403febd; 2 deferred minors retained for final review).
