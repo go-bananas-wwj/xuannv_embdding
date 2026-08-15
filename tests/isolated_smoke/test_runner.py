@@ -428,6 +428,50 @@ def test_launcher_ancestor_verification_reads_fixed_script_from_proc(
     assert runner_module._has_task7_launcher_ancestor(start_pid=123, proc_root=proc_root)
 
 
+def test_launcher_ancestor_accepts_fixed_relative_script_operand(tmp_path: Path) -> None:
+    """合法 Task 7 argv 必须把相对 launcher 路径放在 bash 的实际脚本位置。"""
+    import experiments.china_v1_fusion_smoke.runner as runner_module
+
+    proc_root = tmp_path / "proc"
+    process = proc_root / "123"
+    process.mkdir(parents=True)
+    process.joinpath("cmdline").write_bytes(
+        b"/usr/bin/bash\0scripts/smoke/run_china_v1_isolated_fusion_smoke.sh\0"
+    )
+    process.joinpath("status").write_text("Name:\tbash\nPPid:\t1\n", encoding="utf-8")
+    process.joinpath("cwd").symlink_to(runner_module.EXPECTED_WORKTREE, target_is_directory=True)
+
+    assert runner_module._has_task7_launcher_ancestor(start_pid=123, proc_root=proc_root)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        (b"/usr/bin/bash\0-c\0exit 0\0" b"scripts/smoke/run_china_v1_isolated_fusion_smoke.sh\0"),
+        (b"/usr/bin/bash\0-s\0" b"scripts/smoke/run_china_v1_isolated_fusion_smoke.sh\0"),
+        (
+            b"/usr/bin/bash\0scripts/smoke/not-the-launcher.sh\0"
+            b"scripts/smoke/run_china_v1_isolated_fusion_smoke.sh\0"
+        ),
+    ],
+    ids=("bash-c-dollar-zero", "bash-s-argument", "trailing-decoy"),
+)
+def test_launcher_ancestor_rejects_non_script_operand_decoys(
+    tmp_path: Path, command: bytes
+) -> None:
+    """固定路径只作为 -c/-s 参数或后置参数时不能冒充实际执行脚本。"""
+    import experiments.china_v1_fusion_smoke.runner as runner_module
+
+    proc_root = tmp_path / "proc"
+    process = proc_root / "123"
+    process.mkdir(parents=True)
+    process.joinpath("cmdline").write_bytes(command)
+    process.joinpath("status").write_text("Name:\tbash\nPPid:\t1\n", encoding="utf-8")
+    process.joinpath("cwd").symlink_to(runner_module.EXPECTED_WORKTREE, target_is_directory=True)
+
+    assert not runner_module._has_task7_launcher_ancestor(start_pid=123, proc_root=proc_root)
+
+
 @pytest.mark.parametrize(
     ("device_exists", "device_idle", "message"),
     [(False, True, "physical /dev/davinci2 is absent"), (True, False, "NPU 2 is busy")],

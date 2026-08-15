@@ -766,16 +766,15 @@ def _has_task7_launcher_ancestor(
             process_cwd = process.joinpath("cwd").resolve(strict=True)
         except (OSError, UnicodeDecodeError):
             return False
-        if command and Path(command[0]).name in {"bash", "sh"}:
-            for argument in command[1:]:
-                candidate = Path(argument)
-                if not candidate.is_absolute():
-                    candidate = process_cwd / candidate
-                if (
-                    candidate.resolve(strict=False) == expected_launcher
-                    and process_cwd == expected_worktree
-                ):
-                    return True
+        if len(command) == 2 and Path(command[0]).name in {"bash", "sh"}:
+            script_operand = Path(command[1])
+            if not script_operand.is_absolute():
+                script_operand = process_cwd / script_operand
+            if (
+                script_operand.resolve(strict=False) == expected_launcher
+                and process_cwd == expected_worktree
+            ):
+                return True
         parent = _proc_parent_pid(process)
         if parent is None:
             return False
