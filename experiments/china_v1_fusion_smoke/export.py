@@ -70,6 +70,7 @@ _REQUIRED_METADATA = (
 )
 _BLOSC = Blosc(cname="zstd", clevel=5, shuffle=Blosc.BITSHUFFLE)
 _EXPECTED_PERIODS = tuple(f"{year}Q{quarter}" for year in (2020, 2021) for quarter in range(1, 5))
+_VMF_NORM_TOLERANCE = {"float32": 1.0e-5, "float16": 5.0e-4}
 
 
 def _model_class_name(model: torch.nn.Module) -> str:
@@ -334,13 +335,15 @@ def reopened_fp16_vmf_norm_summary(path: Path) -> dict[str, object]:
     norms = np.sqrt(np.square(values).sum(axis=2))
     if not np.isfinite(norms).all():
         raise ExportError(f"reopened Zarr vMF norms contain NaN or Inf: {target}")
-    return {
+    summary = {
         "source_dtype": "float16",
         "computation_dtype": "float32",
         "min": float(norms.min()),
         "median": float(np.median(norms)),
         "max": float(norms.max()),
     }
+    _validate_norm_summary(summary, source_dtype="float16")
+    return summary
 
 
 def export_group_zarr(
@@ -552,9 +555,12 @@ def _validate_norm_summary(raw: object, *, source_dtype: str) -> None:
         raise ExportError(f"{source_dtype} vMF norm dtype provenance is invalid")
     values = [raw[key] for key in ("min", "median", "max")]
     if not all(_finite_number(value) for value in values) or not (
-        0.0 < values[0] <= values[1] <= values[2]
+        values[0] <= values[1] <= values[2]
     ):
         raise ExportError(f"{source_dtype} vMF norm values are invalid")
+    tolerance = _VMF_NORM_TOLERANCE.get(source_dtype)
+    if tolerance is None or any(abs(float(value) - 1.0) > tolerance for value in values):
+        raise ExportError(f"{source_dtype} vMF norm exceeds the unit-vector tolerance")
 
 
 def _validate_metrics_evidence(raw: Mapping[str, object]) -> None:
@@ -623,8 +629,10 @@ def _validate_metrics_evidence(raw: Mapping[str, object]) -> None:
     gradients = raw["gradient_l1"]
     expected_gradients = {
         "aef_adapter",
+        "aef_gate",
         "highres_stem",
         "highres_adapter",
+        "highres_gate",
         "output_projection",
     }
     if (

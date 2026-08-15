@@ -1123,8 +1123,10 @@ def _run_npu_smoke(
         gradient_output.pre_vmf.square().mean().backward()
         gradient_norms = {
             "aef_adapter": _gradient_l1(model.aef_adapter),
+            "aef_gate": _parameter_gradient_l1(model.aef_gate),
             "highres_stem": _gradient_l1(model.highres_stem),
             "highres_adapter": _gradient_l1(model.highres_adapter),
+            "highres_gate": _parameter_gradient_l1(model.highres_gate),
             "output_projection": _gradient_l1(model.output_projection),
         }
         if not all(value > 0.0 for value in gradient_norms.values()):
@@ -1245,6 +1247,13 @@ def _gradient_l1(module: torch.nn.Module) -> float:
     ):
         return 0.0
     return float(sum(gradient.abs().sum().item() for gradient in gradients if gradient is not None))
+
+
+def _parameter_gradient_l1(parameter: torch.nn.Parameter) -> float:
+    gradient = parameter.grad
+    if gradient is None or not bool(torch.isfinite(gradient).all()):
+        return 0.0
+    return float(gradient.abs().sum().item())
 
 
 def _validated_ready_to_seal(

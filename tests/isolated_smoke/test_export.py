@@ -38,10 +38,9 @@ def tmp_sandbox(tmp_path: Path) -> Path:
 @pytest.fixture
 def full_contract_tensors() -> tuple[torch.Tensor, torch.Tensor]:
     """精确全尺寸合同张量，避免由被测代码推导预期 shape。"""
-    return (
-        torch.zeros((4, 8, 64, 128, 128), dtype=torch.float32),
-        torch.ones((4, 8, 1, 128, 128), dtype=torch.bool),
-    )
+    embedding = torch.zeros((4, 8, 64, 128, 128), dtype=torch.float32)
+    embedding[:, :, 0] = 1.0
+    return embedding, torch.ones((4, 8, 1, 128, 128), dtype=torch.bool)
 
 
 def _metadata_for(model: torch.nn.Module) -> dict[str, object]:
@@ -123,8 +122,10 @@ def _write_evidence(sandbox: Path) -> list[Path]:
                 "zero_gate_max_abs_error": 0.0,
                 "gradient_l1": {
                     "aef_adapter": 1.0,
+                    "aef_gate": 1.0,
                     "highres_stem": 1.0,
                     "highres_adapter": 1.0,
+                    "highres_gate": 1.0,
                     "output_projection": 1.0,
                 },
                 "checkpoint_reload_max_abs_error": 0.0,
@@ -909,8 +910,10 @@ def test_seal_requires_peak_npu_memory_and_runtime_provenance(
         "zero_gate_max_abs_error": 0.0,
         "gradient_l1": {
             "aef_adapter": 1.0,
+            "aef_gate": 1.0,
             "highres_stem": 1.0,
             "highres_adapter": 1.0,
+            "highres_gate": 1.0,
             "output_projection": 1.0,
         },
         "checkpoint_reload_max_abs_error": 0.0,

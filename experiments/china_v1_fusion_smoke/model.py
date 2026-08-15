@@ -84,8 +84,65 @@ class IsolatedFusionSmokeModel(nn.Module):
                 device=reference.device,
                 dtype=reference.dtype,
             )
-            return override, override
-        return torch.tanh(self.aef_gate), torch.tanh(self.highres_gate)
+            learned_aef = torch.tanh(self.aef_gate).to(reference)
+            learned_highres = torch.tanh(self.highres_gate).to(reference)
+            return (
+                learned_aef + (override - learned_aef).detach(),
+                learned_highres + (override - learned_highres).detach(),
+            )
+        return torch.tanh(self.aef_gate).to(reference), torch.tanh(self.highres_gate).to(reference)
+
+    @staticmethod
+    def _validate_input_contract(
+        s2: torch.Tensor,
+        s1: torch.Tensor,
+        valid_s2: torch.Tensor,
+        valid_s1: torch.Tensor,
+        aef: torch.Tensor | None,
+        aef_valid: torch.Tensor | None,
+        highres: torch.Tensor | None,
+        highres_valid: torch.Tensor | None,
+        use_aef: bool,
+        use_highres: bool,
+    ) -> None:
+        """在任何卷积前验证固定季度/月数/通道与共同空间轴。"""
+        tensors = (s2, s1, valid_s2, valid_s1)
+        if not all(isinstance(value, torch.Tensor) for value in tensors):
+            raise ValueError("input contract requires tensor sensor inputs and masks")
+        if s2.ndim != 6:
+            raise ValueError("input contract requires S2 rank 6")
+        batch, quarters, months, channels, height, width = s2.shape
+        if (quarters, months, channels) != (4, 3, 10) or height <= 0 or width <= 0:
+            raise ValueError("input contract requires S2 [B,4,3,10,H,W]")
+        if tuple(s1.shape) != (batch, 4, 3, 2, height, width):
+            raise ValueError("input contract requires S1 [B,4,3,2,H,W] on the common grid")
+        mask_shape = (batch, 4, 3, 1, height, width)
+        if tuple(valid_s2.shape) != mask_shape or tuple(valid_s1.shape) != mask_shape:
+            raise ValueError("input contract requires sensor masks [B,4,3,1,H,W]")
+        if valid_s2.dtype is not torch.bool or valid_s1.dtype is not torch.bool:
+            raise ValueError("input contract requires bool sensor masks")
+        if use_aef:
+            if not isinstance(aef, torch.Tensor) or not isinstance(aef_valid, torch.Tensor):
+                raise ValueError("input contract requires enabled AEF tensors")
+            if tuple(aef.shape) != (batch, 64, height, width):
+                raise ValueError("input contract requires AEF [B,64,H,W]")
+            if tuple(aef_valid.shape) != (batch, 1, height, width):
+                raise ValueError("input contract requires AEF mask [B,1,H,W]")
+            if aef_valid.dtype is not torch.bool:
+                raise ValueError("input contract requires a bool AEF mask")
+        if use_highres:
+            if not isinstance(highres, torch.Tensor) or not isinstance(
+                highres_valid, torch.Tensor
+            ):
+                raise ValueError("input contract requires enabled highres tensors")
+            highres_shape = (batch, 3, height * 5, width * 5)
+            highres_mask_shape = (batch, 1, height * 5, width * 5)
+            if tuple(highres.shape) != highres_shape:
+                raise ValueError("input contract requires highres [B,3,5H,5W]")
+            if tuple(highres_valid.shape) != highres_mask_shape:
+                raise ValueError("input contract requires highres mask [B,1,5H,5W]")
+            if highres_valid.dtype is not torch.bool:
+                raise ValueError("input contract requires a bool highres mask")
 
     def forward(
         self,
@@ -102,6 +159,18 @@ class IsolatedFusionSmokeModel(nn.Module):
         gate_override: float | None = None,
     ) -> FusionOutput:
         """融合显式启用的年度旁路；关闭旁路时不访问其输入。"""
+        self._validate_input_contract(
+            s2,
+            s1,
+            valid_s2,
+            valid_s1,
+            aef,
+            aef_valid,
+            highres,
+            highres_valid,
+            use_aef,
+            use_highres,
+        )
         s2_quarterly = self._quarterly_mean(s2, valid_s2, self.s2_stem)
         s1_quarterly = self._quarterly_mean(s1, valid_s1, self.s1_stem)
         batch_size, quarters, _, height, width = s2_quarterly.shape

@@ -130,6 +130,79 @@ def test_gate_override_reaches_both_side_adapters_and_output_projection() -> Non
     assert model.highres_gate.item() == 0.0
 
 
+def test_gate_override_keeps_exact_forward_value_and_gate_parameter_gradients() -> None:
+    """override 只能替换前向值；切断 tanh(gate) 梯度是无效 gradient smoke。"""
+    inputs = _small_inputs()
+    model = IsolatedFusionSmokeModel(embed_dim=64).train()
+
+    output = model(
+        **inputs,
+        use_aef=True,
+        use_highres=True,
+        gate_override=0.1,
+    )
+    expected = torch.as_tensor(0.1, dtype=output.pre_vmf.dtype)
+    torch.testing.assert_close(output.gates["aef"], expected, atol=0.0, rtol=0.0)
+    torch.testing.assert_close(output.gates["highres"], expected, atol=0.0, rtol=0.0)
+
+    output.pre_vmf.square().mean().backward()
+
+    assert model.aef_gate.grad is not None
+    assert model.highres_gate.grad is not None
+    assert bool(torch.isfinite(model.aef_gate.grad)) and model.aef_gate.grad.abs().item() > 0.0
+    assert (
+        bool(torch.isfinite(model.highres_gate.grad))
+        and model.highres_gate.grad.abs().item() > 0.0
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "quarters",
+        "months",
+        "s2-channels",
+        "mask-channels",
+        "batch",
+        "spatial",
+        "aef-channels",
+        "highres-grid",
+        "highres-mask-grid",
+    ],
+)
+def test_forward_rejects_every_nonexact_input_contract(mutation: str) -> None:
+    """季度/月数/通道/mask/batch/空间/5H 网格均须在卷积前显式 fail closed。"""
+    inputs = _small_inputs()
+    if mutation == "quarters":
+        inputs["s2"] = inputs["s2"][:, :3]
+        inputs["valid_s2"] = inputs["valid_s2"][:, :3]
+    elif mutation == "months":
+        inputs["s2"] = inputs["s2"][:, :, :2]
+        inputs["valid_s2"] = inputs["valid_s2"][:, :, :2]
+    elif mutation == "s2-channels":
+        inputs["s2"] = inputs["s2"][:, :, :, :9]
+    elif mutation == "mask-channels":
+        inputs["valid_s2"] = inputs["valid_s2"].expand(-1, -1, -1, 2, -1, -1)
+    elif mutation == "batch":
+        inputs["s1"] = inputs["s1"][:1]
+        inputs["valid_s1"] = inputs["valid_s1"][:1]
+    elif mutation == "spatial":
+        inputs["s1"] = inputs["s1"][..., :15, :]
+        inputs["valid_s1"] = inputs["valid_s1"][..., :15, :]
+    elif mutation == "aef-channels":
+        inputs["aef"] = inputs["aef"][:, :63]
+    elif mutation == "highres-grid":
+        inputs["highres"] = inputs["highres"][..., :79, :]
+    elif mutation == "highres-mask-grid":
+        inputs["highres_valid"] = inputs["highres_valid"][..., :79, :]
+    else:  # pragma: no cover - parametrization is exhaustive.
+        raise AssertionError(mutation)
+
+    model = IsolatedFusionSmokeModel(embed_dim=64).eval()
+    with pytest.raises(ValueError, match="input contract"):
+        model(**inputs, use_aef=True, use_highres=True)
+
+
 def test_downsampled_highres_mask_keeps_only_completely_valid_windows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
