@@ -54,3 +54,4 @@ Task 7: complete after fix round 1 (review clean; commits 87c663a..424a36f; corr
 Task 8: corrected current seal inventory complete; rejected first-seal archive excluded from current evidence; fresh verify_success PASS with 323 roots / 319 unique leaves / 322 audit entries / 0 uncovered.
 Task 8: repository technical report and CHANGELOG complete (`33b6ea3`, pushed); verdict is engineering PASS only, with accuracy, real AEF semantics, real 2 m quality, national production, formal training, and formal evaluation explicitly not evaluated/not authorized.
 Task 8: specified regression passed (`194 passed, 1 skipped in 46.36s`); Ruff, diff-check, report evidence assertions, and fresh verify_success passed; no NPU triggered and no `/data` writes performed.
+Task 8: complete (review clean; commits f4abb81..2e37cb4; final technical evidence report approved).
