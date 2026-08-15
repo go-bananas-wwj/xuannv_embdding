@@ -54,3 +54,45 @@
   loading is strict.
 - No `/data` artifact was added to Git. The implementation is intentionally isolated from
   production `AEFModel` and does not alter its registry or training paths.
+
+## Review fix round 1
+
+### Changes
+
+- Added lexical, non-resolving sandbox checks that reject target, partial, final, and
+  ancestor symlinks before writes, reads, hashing, or sealing. The checks still invoke the
+  Task 1 `validate_write_path` guard after the symlink-free validation.
+- Changed checkpoint reads to `torch.load(..., weights_only=True)`, require a sentinel
+  sandbox for reads as well as writes, and validate payload structure before use.
+- Prevalidate exact state-dict keys, tensor types, shapes, and dtypes before
+  `load_state_dict`, preventing malformed payloads from partially mutating a model.
+- Require the four fixed JSON evidence paths to be non-symlink regular files containing
+  JSON objects; require the checkpoint to pass safe structural validation.
+- Strengthened Zarr verification to reject internal symlinks, uncompressed/non-Zstd
+  arrays, unexpected arrays, invalid identifier dtypes/values, and mismatched identifier
+  attributes.
+
+### Adversarial TDD evidence
+
+- RED: after adding the adversarial cases, focused export tests produced `13 failed,
+  11 passed`. The failures covered broken/live checkpoint partial symlinks, unsafe legacy
+  pickle execution, missing/unexpected/shape-mismatched state dicts, directory/malformed
+  JSON/malformed checkpoint evidence, mandatory external Zarr symlinks, and
+  uncompressed/extra-array/wrong-identifier Zarr changes.
+- GREEN: `PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest
+  tests/isolated_smoke/test_export.py -q` → `27 passed in 13.57s`.
+- Regression: `PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest
+  tests/isolated_smoke -q -m 'not npu'` → `76 passed in 25.15s`.
+- Static checks: `python -m ruff check experiments/china_v1_fusion_smoke
+  tests/isolated_smoke`, `python -m black --check experiments/china_v1_fusion_smoke/export.py
+  tests/isolated_smoke/test_export.py`, and `git diff --check` all passed.
+
+### Self-review and delivery
+
+- The new tests include broken and live target/partial symlinks, both a direct mandatory
+  Zarr symlink and a symlinked mandatory ancestor, a payload that would write a marker if
+  legacy pickle executed, and byte-for-byte model-state preservation on malformed loads.
+- All mutations remain confined to pytest temporary sandboxes; no `/data` artifact was
+  staged.
+- Code/test commit: `d73e51c fix: harden smoke export sealing boundaries`; pushed to
+  `origin/codex/china-v1-fusion-smoke`.
