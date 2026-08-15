@@ -17,6 +17,11 @@
 - 完成最终审查修复波 `86095fb`、`966737c`、`f36a4de`：bootstrap 与日志写入改为
   symlink-safe/no-clobber；模型输入、straight-through gate gradients 与 vMF 单位范数
   合同收紧；prepare/CPU/NPU/finalizer evidence graph 改为跨 artifact 语义复验。
+- 完成非 NPU 最终安全收口 `cbda7be`：仅在精确 schema/policy 与 current evidence digest
+  全部匹配时恢复 replace 中断留下的 `SUCCESS.tmp`，恶意或残缺临时文件 fail closed；
+  preliminary/final audit 必须具有精确三/四阶段历史；safe tee 对日志 fd 与 stdout 均执行
+  write-all，拒绝 0、负数和越界写入。现有 `f36a4de` 物理运行经收紧 verifier 复验通过，
+  无需也未执行 NPU rerun。
 - 最终 physical-NPU-2 synthetic smoke seal 绑定运行 commit `f36a4de`，四组输出均为
   `[4,8,64,128,128]`，最终 combined SHA-256 为
   `45ec55838b74b09d48be96bf510e1e35c8368ff996ea6953f86414f0ba1944f9`。

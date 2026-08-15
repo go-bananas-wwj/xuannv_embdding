@@ -41,6 +41,27 @@ SHA-256 为
   registries/caches/projection、48 source archives、CPU 四组、NPU 四组、axes、gate
   gradients、持久化 norms、READY/TEE/log 与 final audit。
 
+## Post-run final security review
+
+物理运行完成后的最终复审又发现两路 fail-closed 缺口，并由非 NPU commit
+`cbda7be fix: make smoke sealing interruption-safe` 关闭：
+
+1. Finalizer/verifier 路：原实现若在完整 `SUCCESS.tmp` 落盘后、原子 replace 时中断，
+   下一次调用会无条件拒绝临时文件；final audit 也只检查最后两个 stages。现在仅当
+   `SUCCESS` 目标仍不存在，且临时文件是常规文件、精确 schema/policy 合法、combined
+   SHA-256 与当前 evidence 一致时才恢复 replace。恶意、残缺、伪造或内容过期的临时文件
+   保留原样并 fail closed。Preliminary/final audit stages 分别精确要求三阶段与四阶段完整
+   历史，两阶段 suffix 不再被接受。
+2. Foreground log 路：原 safe tee 忽略 `os.write` 与 destination `write` 的返回长度，可能
+   在短写时静默截断。现在两端都通过 write-all 循环处理合法短写，0、负数、非整数和
+   越界长度全部 fail closed。
+
+TDD 覆盖了首次 replace 注入失败后第二次安全成功、恶意/残缺 `SUCCESS.tmp` 拒绝、两阶段
+audit 拒绝、fd/destination 合法短写续写以及 0/负数写入拒绝。该 commit 没有 NPU 运行，
+也没有写 current `/data` evidence；收紧后的 fresh `verify_success` 直接通过现有 seal。
+因此物理运行 commit、指标、日志 hash 与 `SUCCESS` 摘要仍全部绑定 `f36a4de`，无需 NPU
+rerun。
+
 ## Rejected attempts
 
 两次旧 seal 均已明确否决，只保留作诊断材料：

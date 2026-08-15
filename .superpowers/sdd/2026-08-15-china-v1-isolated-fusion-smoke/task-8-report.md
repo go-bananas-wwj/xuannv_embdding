@@ -6,6 +6,11 @@ Task 8 已把最终 `f36a4de` physical-NPU-2 seal 与最终审查修复波同步
 为 **synthetic engineering smoke PASS**；accuracy、真实 AEF 语义、真实 2 m 信息、
 正式 `AEFModel` 训练、正式下游评测与全国生产能力均未评估、未授权。
 
+后续非 NPU hardening commit `cbda7be` 关闭了 finalizer/verifier 与 safe tee 两路最终复审
+发现：authenticated `SUCCESS.tmp` 可从 replace 中断安全恢复，恶意/残缺临时文件拒绝；
+preliminary/final audit 需精确完整 stage history；fd 与 stdout destination 均处理短写并在
+0/负数写入时 fail closed。该 commit 未产生新 NPU evidence，物理运行仍绑定 `f36a4de`。
+
 主报告只消费 current corrected seal。两份 rejected attempts 均被列为 diagnostic archives，
 并从 current audit、digest closure 与结论中排除。交付仍为 repository Markdown；未创建网页
 或 latency 图，因为四个 one-shot 值包含 cold-start/cache 差异，不具备横向性能可比性。
@@ -56,9 +61,9 @@ Fresh read-only inventory 建立了以下事实：
 最终回归未设置 NPU opt-in，也未触发第二次 NPU 运行。结果如下：
 
 ```text
-pytest: 239 passed, 1 skipped in 61.44s
+pytest: 252 passed, 1 skipped
 Ruff: All checks passed!
-Black: 23 files would be left unchanged.
+Black: PASS
 launcher shell syntax: PASS
 git diff --check: PASS
 fresh verify_success: PASS
@@ -66,7 +71,8 @@ fresh verify_success: PASS
 
 唯一 skip 是显式 opt-in 的 NPU integration test；本轮没有以回归命令再次占用 NPU，物理
 NPU 2 证据来自 Task 7 唯一一次最终前台运行。Fresh verifier 重新检查了当前 seal 的 digest
-与 semantic graph，而不是只读取 `SUCCESS` 文本。
+与 semantic graph，包括收紧后的完整 preliminary/final stage history，而不是只读取
+`SUCCESS` 文本。
 
 ## Explicitly deferred
 

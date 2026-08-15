@@ -53,6 +53,25 @@
 `post_load_pre_set_device`。运行期间物理设备 2 映射为唯一逻辑 `npu:0`，设备名为
 `Ascend910B4-1`。
 
+### 封口后非 NPU hardening
+
+最终安全复审的 finalizer/verifier 与日志两路发现已由 `cbda7be` 关闭：
+
+- `seal_success` 在完整 `SUCCESS.tmp` 已写入、仅原子 replace 中断时，可以在下一次调用
+  中恢复；恢复前会重新校验临时文件的常规文件状态、精确 schema、synthetic/formal-use
+  policy 及其 combined SHA-256 与当前 evidence 的一致性。残缺、伪造或语义不符的临时
+  文件保持原样并 fail closed，不会被盲删、盲覆盖或升级为 `SUCCESS`；
+- preliminary audit stages 必须精确为
+  `prepare → cpu-contract → npu-smoke`，final audit stages 必须精确再追加
+  `finalize-seal`；只保留末两阶段或插入额外阶段都会被拒绝；
+- safe tee 对 launcher log fd 和 stdout destination 都采用 write-all 循环；合法短写继续
+  写剩余字节，0、负数、非整数或超过 remaining length 的返回值全部 fail closed。
+
+`cbda7be` 只修改 finalizer/verifier、安全日志复制器及其 CPU 回归测试，没有启动 NPU，
+也没有改写 current sandbox evidence。物理 NPU 2 的唯一运行与所有数值 provenance 仍绑定
+`f36a4de49e263badea4a86b429fddbc3006d5953`；current seal 已在收紧后的 verifier 下 fresh
+复验通过，因此无需为这次非 NPU hardening 重跑物理设备。
+
 ## 数据只读证据
 
 `patch_selection.json` 固定 4 个唯一 patch、192 个 ZIP member/CRC references 与 48 个
@@ -157,7 +176,7 @@ cache、投影、source snapshots、CPU/NPU metrics、四组 axes、门控、重
 ## 回归、限制与延期项
 
 最终非 NPU 回归、静态检查、shell 语法、diff 检查和 fresh `verify_success` 的精确结果见
-Task 8 报告；封口后的 read-only 复验通过。
+Task 8 报告；最终计数为 `252 passed, 1 skipped`，封口后的收紧版 read-only 复验通过。
 
 仍需保留的限制和延期项：
 
