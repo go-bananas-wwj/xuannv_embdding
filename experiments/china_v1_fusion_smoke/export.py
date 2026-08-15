@@ -505,9 +505,27 @@ def _validate_required_evidence(sandbox_root: Path) -> None:
             raise ExportError(f"required JSON evidence is malformed: {path}") from exc
         if not isinstance(parsed, Mapping):
             raise ExportError(f"required JSON evidence must be an object: {path}")
+        if name == "path_audit.json":
+            _validate_final_path_audit(parsed)
     checkpoint = _guard_non_symlink_sandbox_path(sandbox_root / "smoke_checkpoint.pt", sandbox_root)
     _require_regular_evidence_file(checkpoint)
     _load_checkpoint_payload(checkpoint)
+
+
+def _validate_final_path_audit(raw: Mapping[str, object]) -> None:
+    """确认 SUCCESS 已在不可再修改的 audit 中声明为最后封存写入。"""
+    created = raw.get("created_or_modified")
+    if not isinstance(created, list) or "SUCCESS" not in created:
+        raise ExportError("path audit must include the final SUCCESS path")
+    if raw.get("stage") != "npu-smoke":
+        raise ExportError("path audit final SUCCESS declaration requires stage npu-smoke")
+    expected = {
+        "path": "SUCCESS",
+        "status": "expected_last_write",
+        "exists_when_audit_written": False,
+    }
+    if not _exactly_equal(raw.get("final_seal"), expected):
+        raise ExportError("path audit must declare SUCCESS as the expected last write")
 
 
 def _required_patch_selection_ids(sandbox_root: Path) -> tuple[str, ...]:

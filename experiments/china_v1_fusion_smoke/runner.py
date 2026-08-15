@@ -218,6 +218,8 @@ def _record_path_audit(
     stage: str,
     sandbox_root: Path,
     before: Mapping[str, tuple[int, int, int]],
+    *,
+    final_seal_path: Path | None = None,
 ) -> tuple[Path, ...]:
     """记录本阶段新增或修改路径；audit 文件自身也显式纳入。"""
     after = _snapshot_sandbox(sandbox_root)
@@ -252,16 +254,32 @@ def _record_path_audit(
         previous_stages = raw_stages
     changed.add(audit_relative)
     stages = [*previous_stages, stage]
+    final_seal: dict[str, object] | None = None
+    if final_seal_path is not None:
+        success = validate_write_path(final_seal_path, sandbox_root)
+        if success != sandbox_root / "SUCCESS":
+            raise RunnerError("final seal path must be the sandbox SUCCESS file")
+        if success.exists() or success.is_symlink():
+            raise RunnerError("SUCCESS must not exist when the authoritative audit is written")
+        changed.add("SUCCESS")
+        final_seal = {
+            "path": "SUCCESS",
+            "status": "expected_last_write",
+            "exists_when_audit_written": False,
+        }
+    payload: dict[str, object] = {
+        "stage": stage,
+        "stages": stages,
+        "sandbox_root": str(sandbox_root),
+        "created_or_modified": sorted(changed),
+        "formal_training_allowed": False,
+        "formal_evaluation_allowed": False,
+    }
+    if final_seal is not None:
+        payload["final_seal"] = final_seal
     _write_json(
         audit_path,
-        {
-            "stage": stage,
-            "stages": stages,
-            "sandbox_root": str(sandbox_root),
-            "created_or_modified": sorted(changed),
-            "formal_training_allowed": False,
-            "formal_evaluation_allowed": False,
-        },
+        payload,
         sandbox_root,
     )
     return tuple(sandbox_root / relative for relative in sorted(changed))
@@ -993,7 +1011,12 @@ def _run_npu_smoke(
         },
         config.sandbox_root,
     )
-    created = _record_path_audit("npu-smoke", config.sandbox_root, before_sandbox)
+    created = _record_path_audit(
+        "npu-smoke",
+        config.sandbox_root,
+        before_sandbox,
+        final_seal_path=config.sandbox_root / "SUCCESS",
+    )
     _require_disk_budget(config.sandbox_root)
     seal_success(config.sandbox_root, [])
     return StageResult(
@@ -1001,7 +1024,7 @@ def _run_npu_smoke(
         sandbox_root=config.sandbox_root,
         groups=tuple(GROUPS),
         full_zero_gate_matches_base=True,
-        created_paths=(*created, config.sandbox_root / "SUCCESS"),
+        created_paths=created,
         patch_ids=patch_ids,
         patch_years=8,
         source_unchanged=True,

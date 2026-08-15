@@ -234,6 +234,32 @@ def test_path_audit_accumulates_prepare_and_cpu_contract_paths(
     assert "manifests/cpu_contract.json" in audit["created_or_modified"]
 
 
+def test_npu_path_audit_records_expected_success_before_sealing(
+    runner_fixture: RunnerFixture,
+) -> None:
+    """authoritative audit 必须先记录最终 SUCCESS，且此时磁盘上还没有 SUCCESS。"""
+    import experiments.china_v1_fusion_smoke.runner as runner_module
+
+    before = runner_module._snapshot_sandbox(runner_fixture.sandbox_root)
+    success = runner_fixture.sandbox_root / "SUCCESS"
+    created = runner_module._record_path_audit(
+        "npu-smoke",
+        runner_fixture.sandbox_root,
+        before,
+        final_seal_path=success,
+    )
+
+    audit = json.loads((runner_fixture.sandbox_root / "path_audit.json").read_text())
+    assert not success.exists()
+    assert success in created
+    assert "SUCCESS" in audit["created_or_modified"]
+    assert audit["final_seal"] == {
+        "path": "SUCCESS",
+        "status": "expected_last_write",
+        "exists_when_audit_written": False,
+    }
+
+
 def test_invalid_stage_is_rejected_before_dispatch(runner_fixture: RunnerFixture) -> None:
     """拼错的阶段不得静默落到任何可写或设备路径。"""
     with pytest.raises(ValueError, match="unknown smoke stage"):

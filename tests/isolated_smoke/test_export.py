@@ -63,7 +63,18 @@ def _write_evidence(sandbox: Path) -> list[Path]:
         "reproducibility.json",
     ):
         path = sandbox / name
-        path.write_text("{}", encoding="utf-8")
+        payload = {}
+        if name == "path_audit.json":
+            payload = {
+                "stage": "npu-smoke",
+                "created_or_modified": ["path_audit.json", "SUCCESS"],
+                "final_seal": {
+                    "path": "SUCCESS",
+                    "status": "expected_last_write",
+                    "exists_when_audit_written": False,
+                },
+            }
+        path.write_text(json.dumps(payload), encoding="utf-8")
         evidence.append(path)
     model = torch.nn.Linear(2, 1)
     checkpoint = sandbox / "smoke_checkpoint.pt"
@@ -363,6 +374,19 @@ def test_seal_success_requires_complete_sealed_false_formal_evidence(
     payload = success.read_text(encoding="utf-8")
     assert "combined_sha256" in payload
     assert "utc" in payload
+
+
+def test_seal_success_rejects_path_audit_without_expected_final_success(
+    tmp_sandbox: Path,
+    full_contract_tensors: tuple[torch.Tensor, torch.Tensor],
+) -> None:
+    """seal 必须亲自验证 audit 已在 SUCCESS 创建前声明它是最后写入。"""
+    groups, evidence = _complete_seal_inputs(tmp_sandbox, full_contract_tensors)
+    (tmp_sandbox / "path_audit.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ExportError, match="path audit.*SUCCESS"):
+        seal_success(tmp_sandbox, [*groups, *evidence])
+    assert not (tmp_sandbox / "SUCCESS").exists()
 
 
 def test_seal_success_rejects_missing_manifest_partial_or_formal_use(
