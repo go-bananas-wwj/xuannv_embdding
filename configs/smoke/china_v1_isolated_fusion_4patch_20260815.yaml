@@ -1,0 +1,30 @@
+experiment:
+  name: china_v1_isolated_fusion_smoke_20260815
+  seed: 20260815
+  use_wandb: false
+sandbox:
+  root: /data/xuannv_embedding/sandboxes/china_v1_fusion_smoke_20260815
+  source_root: /data2/china_xuannv_embedding/data
+  sentinel: .xuannv_isolated_smoke
+runtime:
+  physical_npu: 2
+  logical_device: npu:0
+  max_patches: 4
+  years: [2020, 2021]
+  max_optimizer_steps: 2
+  num_workers: 0
+data:
+  s2_scale: 0.0001
+  s1_epsilon: 1.0e-6
+  s1_source_order: [vh, vv]
+  s1_model_order: [vv, vh]
+model:
+  embed_dim: 64
+  aef_hidden_dim: 16
+  highres_hidden_dim: 32
+  gate_init: 0.0
+  gradient_smoke_gate: 0.1
+export:
+  dtype: float16
+  zarr_version: 2
+  periods: [2020Q1, 2020Q2, 2020Q3, 2020Q4, 2021Q1, 2021Q2, 2021Q3, 2021Q4]
