@@ -112,3 +112,96 @@ highres_kernel_stride=(5, 5)/(5, 5)
 
 - Implementation commit: `4cb8a5f feat: add reversible tiny quarterly fusion smoke model`
 - Implementation pushed to `origin/codex/china-v1-fusion-smoke`.
+
+## Fix Round 1: preserve zero-gate identity under AMP
+
+### Finding and root cause
+
+CPU BF16 autocast reproduced the NPU AMP risk. The base projection and both annual adapters
+produced BF16 tensors, but the AEF and downsampled high-resolution masks were cast to their raw
+input dtype, FP32. Multiplying BF16 adapter deltas by those FP32 masks promoted the deltas and
+therefore Full `pre_vmf` to FP32. Base remained BF16. Although zero-gated `pre_vmf` values matched
+after an explicit cast, vMF normalization ran at different precisions and changed embeddings.
+
+The diagnostic run reported:
+
+```text
+component_dtypes {'base_projection': torch.bfloat16, 'aef_adapter': torch.bfloat16,
+                  'highres_adapter': torch.bfloat16}
+parameter_gate_dtype torch.float32
+raw_mask_dtype torch.float32
+base torch.bfloat16 torch.bfloat16
+full torch.float32 torch.float32
+max_pre_vmf_diff_after_cast 0.0
+max_embedding_diff_after_cast 0.0020360350608825684
+```
+
+A separate scalar promotion check confirmed that the zero-dimensional FP32 gate does not promote
+a BF16 tensor, while multiplying by an FP32 mask does. The minimal root-cause fix therefore casts
+each annual mask to its computed branch delta's dtype and device after the adapter.
+
+### RED
+
+The BF16 autocast regression was added before the model fix:
+
+```bash
+PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest \
+  tests/isolated_smoke/test_model.py::test_bfloat16_autocast_zero_gate_full_matches_base_dtype_and_values \
+  -q
+```
+
+```text
+F                                                                        [100%]
+E       AssertionError: assert torch.float32 == torch.bfloat16
+1 failed in 8.82s
+```
+
+The failure occurred at `assert full.pre_vmf.dtype == base.pre_vmf.dtype`, proving the regression
+detects the reported AMP promotion rather than an unrelated error.
+
+### GREEN
+
+After the two post-adapter mask casts:
+
+```bash
+PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest \
+  tests/isolated_smoke/test_model.py::test_bfloat16_autocast_zero_gate_full_matches_base_dtype_and_values \
+  -q
+```
+
+```text
+.                                                                        [100%]
+1 passed in 10.52s
+```
+
+The regression asserts Base and Full `pre_vmf` dtypes match, Base remains BF16, embedding dtypes
+match, and both `pre_vmf` and embedding values are exactly equal with `atol=0`, `rtol=0`.
+
+Fresh focused plus production-model regression after formatting:
+
+```bash
+PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest \
+  tests/isolated_smoke/test_model.py tests/test_model.py -q
+```
+
+```text
+........................................................                 [100%]
+56 passed in 22.23s
+```
+
+Fresh style/static verification:
+
+```text
+ruff check: All checks passed
+black --check: 2 files would be left unchanged
+git diff --check: exit 0
+```
+
+### Scope and version control
+
+- Changed only `experiments/china_v1_fusion_smoke/model.py` and
+  `tests/isolated_smoke/test_model.py` for the fix.
+- The shape-validation Low finding remains deferred as directed; no unrelated validation or API
+  changes were added.
+- Fix commit: `09502f3 fix: preserve fusion dtype under autocast`
+- Fix pushed to `origin/codex/china-v1-fusion-smoke`.
