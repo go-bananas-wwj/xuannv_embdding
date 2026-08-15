@@ -333,3 +333,69 @@ def test_npu_smoke_requires_the_task7_launcher_environment(runner_fixture: Runne
     """直接 Python 调用不得绕过 Task 7 对物理 NPU 2 的启动守卫。"""
     with pytest.raises(RunnerError, match="Task 7 launcher"):
         run_stage(runner_fixture.config_path, stage="npu-smoke")
+
+
+def _set_task7_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PYTHONNOUSERSITE", "1")
+    monkeypatch.setenv("ASCEND_RT_VISIBLE_DEVICES", "2")
+    monkeypatch.setenv("XUANNV_SMOKE_DEVICE", "npu:0")
+    monkeypatch.setenv("WANDB_MODE", "disabled")
+
+
+def test_npu_smoke_rejects_manually_set_environment_without_launcher_ancestor(
+    runner_fixture: RunnerFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """普通 Python 即使伪造四个环境变量，也不能冒充固定 Task 7 launcher。"""
+    import experiments.china_v1_fusion_smoke.runner as runner_module
+
+    _set_task7_environment(monkeypatch)
+    monkeypatch.setattr(runner_module, "_is_expected_smoke_interpreter", lambda _config: True)
+    monkeypatch.setattr(runner_module, "_physical_npu2_exists", lambda: True)
+    monkeypatch.setattr(runner_module, "_physical_npu2_is_idle", lambda: True)
+    monkeypatch.setattr(runner_module, "_has_task7_launcher_ancestor", lambda: False)
+
+    with pytest.raises(RunnerError, match="verified Task 7 launcher ancestor"):
+        run_stage(runner_fixture.config_path, stage="npu-smoke")
+
+
+def test_launcher_ancestor_verification_reads_fixed_script_from_proc(
+    tmp_path: Path,
+) -> None:
+    """祖先进程必须是 bash 执行固定 Task 7 脚本，不能只检查任意父 PID 存在。"""
+    import experiments.china_v1_fusion_smoke.runner as runner_module
+
+    proc_root = tmp_path / "proc"
+    process = proc_root / "123"
+    process.mkdir(parents=True)
+    process.joinpath("cmdline").write_bytes(
+        b"/usr/bin/bash\0" + str(runner_module.TASK7_LAUNCHER).encode() + b"\0"
+    )
+    process.joinpath("status").write_text("Name:\tbash\nPPid:\t1\n", encoding="utf-8")
+    process.joinpath("cwd").symlink_to(runner_module.EXPECTED_WORKTREE, target_is_directory=True)
+
+    assert runner_module._has_task7_launcher_ancestor(start_pid=123, proc_root=proc_root)
+
+
+@pytest.mark.parametrize(
+    ("device_exists", "device_idle", "message"),
+    [(False, True, "physical /dev/davinci2 is absent"), (True, False, "NPU 2 is busy")],
+    ids=("missing-device", "busy-device"),
+)
+def test_npu_smoke_independently_checks_physical_device_and_idle_state(
+    runner_fixture: RunnerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    device_exists: bool,
+    device_idle: bool,
+    message: str,
+) -> None:
+    """launcher shell 的检查不能替代 Runner 自己的设备存在性与 fuser 空闲检查。"""
+    import experiments.china_v1_fusion_smoke.runner as runner_module
+
+    _set_task7_environment(monkeypatch)
+    monkeypatch.setattr(runner_module, "_is_expected_smoke_interpreter", lambda _config: True)
+    monkeypatch.setattr(runner_module, "_has_task7_launcher_ancestor", lambda: True)
+    monkeypatch.setattr(runner_module, "_physical_npu2_exists", lambda: device_exists)
+    monkeypatch.setattr(runner_module, "_physical_npu2_is_idle", lambda: device_idle)
+
+    with pytest.raises(RunnerError, match=message):
+        run_stage(runner_fixture.config_path, stage="npu-smoke")

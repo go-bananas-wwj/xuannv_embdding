@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
@@ -52,6 +53,9 @@ GROUPS: dict[str, tuple[bool, bool]] = {
 }
 MAX_SANDBOX_BYTES = 5 * 1024**3
 EXPECTED_SEED = 20260815
+EXPECTED_WORKTREE = Path("/root/workspace/xuannv/.worktrees/codex-china-v1-fusion-smoke")
+TASK7_LAUNCHER = EXPECTED_WORKTREE / "scripts/smoke/run_china_v1_isolated_fusion_smoke.sh"
+PHYSICAL_NPU2 = Path("/dev/davinci2")
 
 
 class RunnerError(RuntimeError):
@@ -648,6 +652,86 @@ def _load_prepared_contexts(
     return context.aef, context.aef_valid, context.highres, context.highres_valid
 
 
+def _is_expected_smoke_interpreter(config: SmokeConfig) -> bool:
+    expected = Path(os.path.abspath(config.sandbox_root / "env/bin/python"))
+    return Path(os.path.abspath(sys.executable)) == expected
+
+
+def _physical_npu2_exists() -> bool:
+    return PHYSICAL_NPU2.exists() and PHYSICAL_NPU2.is_char_device()
+
+
+def _physical_npu2_is_idle() -> bool:
+    try:
+        result = subprocess.run(
+            ["fuser", str(PHYSICAL_NPU2)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        raise RunnerError("cannot independently query NPU 2 occupancy with fuser") from exc
+    if result.returncode == 1:
+        return True
+    if result.returncode == 0:
+        return False
+    raise RunnerError(
+        f"cannot independently query NPU 2 occupancy: fuser exited {result.returncode}"
+    )
+
+
+def _proc_parent_pid(process: Path) -> int | None:
+    try:
+        lines = process.joinpath("status").read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    for line in lines:
+        if line.startswith("PPid:"):
+            try:
+                return int(line.split(":", maxsplit=1)[1].strip())
+            except ValueError:
+                return None
+    return None
+
+
+def _has_task7_launcher_ancestor(
+    *,
+    start_pid: int | None = None,
+    proc_root: Path = Path("/proc"),
+) -> bool:
+    """沿真实父进程链查找由固定 worktree 执行固定 Task 7 脚本的 shell。"""
+    pid = os.getppid() if start_pid is None else start_pid
+    expected_launcher = TASK7_LAUNCHER.resolve(strict=False)
+    expected_worktree = EXPECTED_WORKTREE.resolve(strict=True)
+    visited: set[int] = set()
+    for _depth in range(16):
+        if pid <= 1 or pid in visited:
+            return False
+        visited.add(pid)
+        process = proc_root / str(pid)
+        try:
+            command = process.joinpath("cmdline").read_bytes().split(b"\0")
+            command = [part.decode("utf-8") for part in command if part]
+            process_cwd = process.joinpath("cwd").resolve(strict=True)
+        except (OSError, UnicodeDecodeError):
+            return False
+        if command and Path(command[0]).name in {"bash", "sh"}:
+            for argument in command[1:]:
+                candidate = Path(argument)
+                if not candidate.is_absolute():
+                    candidate = process_cwd / candidate
+                if (
+                    candidate.resolve(strict=False) == expected_launcher
+                    and process_cwd == expected_worktree
+                ):
+                    return True
+        parent = _proc_parent_pid(process)
+        if parent is None:
+            return False
+        pid = parent
+    return False
+
+
 def _validate_npu_launcher(config: SmokeConfig) -> None:
     expected = {
         "PYTHONNOUSERSITE": "1",
@@ -661,6 +745,18 @@ def _validate_npu_launcher(config: SmokeConfig) -> None:
             "npu-smoke is supported only through the Task 7 launcher; missing exact environment: "
             + ", ".join(mismatches)
         )
+    if Path.cwd().resolve(strict=True) != EXPECTED_WORKTREE.resolve(strict=True):
+        raise RunnerError("Task 7 launcher must run from the fixed isolated worktree")
+    if not _is_expected_smoke_interpreter(config):
+        raise RunnerError("Task 7 launcher must use the fixed sandbox Python interpreter")
+    if not _physical_npu2_exists():
+        raise RunnerError("physical /dev/davinci2 is absent")
+    if not _physical_npu2_is_idle():
+        raise RunnerError("NPU 2 is busy; refusing smoke run")
+    if not _has_task7_launcher_ancestor():
+        raise RunnerError("npu-smoke requires a verified Task 7 launcher ancestor")
+    if TASK7_LAUNCHER.is_symlink() or not TASK7_LAUNCHER.is_file():
+        raise RunnerError("fixed Task 7 launcher is missing or is a symlink")
 
 
 def _patch_period_layout(tensor: torch.Tensor) -> torch.Tensor:
