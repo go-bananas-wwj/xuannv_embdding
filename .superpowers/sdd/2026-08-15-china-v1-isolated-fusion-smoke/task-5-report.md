@@ -96,3 +96,39 @@
   staged.
 - Code/test commit: `d73e51c fix: harden smoke export sealing boundaries`; pushed to
   `origin/codex/china-v1-fusion-smoke`.
+
+## Review fix round 2
+
+### Changes
+
+- State-dict validation now requires CPU, dense `torch.strided` tensors before applying a
+  checkpoint. Loading snapshots every current state tensor and copies the snapshot directly
+  back on any application exception, so a module hook cannot leave prior parameters changed.
+- SUCCESS now compares the complete `(patch_id, period)` axes across all four Zarr groups.
+  When `manifests/patch_selection.json` provides `patch_ids` (or a list of patch objects),
+  the common Zarr patch axis must also match that trusted selection.
+- Any caller-supplied required directory is recursively checked for symlinks before it can
+  be hashed; `_digest_path` repeats that guard defensively.
+
+### Adversarial TDD evidence
+
+- RED: the three new scenarios produced `4 failed, 27 passed`: a same-shape sparse COO
+  tensor changed the earlier parameter before the later failure; a module that mutates then
+  throws left its value changed; coordinated `patch_id` array+attribute edits across every
+  group sealed; and an external symlink child of a supplied directory was hashed.
+- GREEN: `PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest
+  tests/isolated_smoke/test_export.py -q` → `31 passed in 15.15s`.
+- Regression: `PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest
+  tests/isolated_smoke -q -m 'not npu'` → `80 passed in 27.34s`.
+- Static checks: `python -m ruff check experiments/china_v1_fusion_smoke
+  tests/isolated_smoke`, `python -m black --check experiments/china_v1_fusion_smoke/export.py
+  tests/isolated_smoke/test_export.py`, and `git diff --check` passed.
+
+### Self-review and delivery
+
+- Regression tests prove byte-for-byte state preservation for both sparse and deliberately
+  mutating application failures; they also prove trusted patch selection rejects a
+  coordinated self-attested cross-group axis mutation and that an external child symlink
+  cannot enter the digest.
+- Code/test commit: `16714bb fix: make smoke sealing and reload transactional`; pushed to
+  `origin/codex/china-v1-fusion-smoke`.
