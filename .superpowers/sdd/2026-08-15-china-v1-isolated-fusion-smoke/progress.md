@@ -36,3 +36,8 @@ Task 6: verification after fix round 1 (109 isolated non-NPU tests passed; real 
 Task 6: fix round 2/5 (1 addressed, 0 open — Task 7 ancestry now requires the fixed launcher as the exact shell script operand and rejects `bash -c`, `bash -s`, and trailing argv decoys; commit 0dd423d).
 Task 6: complete after fix round 2 (22 focused Runner tests and 113 isolated non-NPU tests passed; Ruff/Black/diff-check passed; no NPU inspected or started).
 Task 6: review clean (commits 25080bf..403febd; 2 deferred minors retained for final review).
+Task 7: launcher/NPU preflight TDD complete; fixed sourced CANN Python path preservation and NPU-stable high-resolution valid-mask downsampling (commit ccfb362 pushed; opt-in NPU Full backward passed).
+Task 7: fail-closed physical-device occupancy fallback complete after the host exposed missing `fuser` (commit 181ea2a pushed; `/proc/<pid>/fd` character-device matching covered).
+Task 7: two-phase post-tee final sealing complete (commit f316836 pushed; final log metadata is audited, and read-only seal verification rejects later mutation).
+Task 7: full foreground physical NPU 2 smoke complete (`base`, `base_aef`, `base_highres`, `full` all finite at `[4,8,64,128,128]`; nonzero AEF/highres gradients; exact zero-gate, checkpoint reload, and deterministic rerun; source unchanged; final `verify_success` passed; sandbox 292396383 bytes).
+Task 7: observability note — NPU 2 maps to Ascend 910B4-1 logical `npu:0`; post-run idle HBM was 5% of 65536 MB, but peak HBM was not instrumented and no peak claim is made.
