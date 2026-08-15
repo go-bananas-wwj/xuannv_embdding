@@ -1055,7 +1055,10 @@ def test_success_digest_covers_each_declared_prepared_evidence_file(
     with prepared[relative].open("ab") as handle:
         handle.write(b"tampered")
 
-    with pytest.raises(ExportError, match="combined SHA-256|fallback hash"):
+    with pytest.raises(
+        ExportError,
+        match="combined SHA-256|fallback hash|semantic evidence|semantic .* checksum",
+    ):
         verify_success(tmp_sandbox)
 
 
