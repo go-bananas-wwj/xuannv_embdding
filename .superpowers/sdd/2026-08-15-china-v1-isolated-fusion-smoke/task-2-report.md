@@ -200,3 +200,65 @@ The real read-only source selection was rechecked after the parser change:
 - Commit: `04d2e4d fix: harden smoke archive and raster contracts`
 - Pushed: `origin/codex/china-v1-fusion-smoke`
 - Review: exact selected member names and CRCs now travel together; malformed reference cardinality is rejected before dictionary creation; grid equality is scoped to one patch selection across both sensors and both years; non-finite input has both a false validity mask and finite, zero-filled output.
+
+## Fix Round 2
+
+### Affine-comparison correction
+
+Cross-raster affine equality now uses `np.allclose(..., rtol=0.0, atol=1.0e-6)`. The absolute tolerance accommodates sub-micrometre-scale float serialization noise without making the allowed discrepancy grow with projected coordinates.
+
+### Covering regression test
+
+`test_loader_rejects_nonuniform_or_invalid_patch_grid[northing-shift-10m]` uses these exact affine transforms:
+
+```text
+baseline: Affine(10.0, 0.0, 310000.0, 0.0, -10.0, 3384000.0)
+shifted:  Affine(10.0, 0.0, 310000.0, 0.0, -10.0, 3384010.0)
+```
+
+The 10 m northing displacement was accepted by the prior default `np.allclose` because its default relative tolerance scales with the ≈3.38 million m northing.
+
+### RED
+
+Command:
+
+```bash
+PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest \
+  'tests/isolated_smoke/test_data_contract.py::test_loader_rejects_nonuniform_or_invalid_patch_grid[northing-shift-10m]' -q
+```
+
+Output before the comparison fix:
+
+```text
+F                                                                        [100%]
+Failed: DID NOT RAISE ValueError
+1 failed in 12.36s
+```
+
+### GREEN
+
+Commands:
+
+```bash
+ruff check experiments/china_v1_fusion_smoke/data.py \
+  tests/isolated_smoke/test_data_contract.py
+PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest \
+  'tests/isolated_smoke/test_data_contract.py::test_loader_rejects_nonuniform_or_invalid_patch_grid[northing-shift-10m]' -q
+PYTHONPATH=$PWD/src:$PWD/downstreams:$PWD python -m pytest tests/isolated_smoke -q
+```
+
+Output:
+
+```text
+All checks passed!
+.                                                                        [100%]
+1 passed in 12.89s
+.......................                                                  [100%]
+23 passed in 47.05s
+```
+
+### Fix Round 2 commit and self-review
+
+- Commit: `75239c0 fix: require absolute affine grid agreement`
+- Pushed: `origin/codex/china-v1-fusion-smoke`
+- Review: the new check still accepts the observed floating-point serialization precision while rejecting a 10 m row displacement regardless of the large coordinate magnitude.
