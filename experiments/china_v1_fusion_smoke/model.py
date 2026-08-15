@@ -8,6 +8,12 @@ from torch import nn
 from torch.nn import functional as functional
 
 
+def _downsample_all_valid_mask(valid: torch.Tensor, *, dtype: torch.dtype) -> torch.Tensor:
+    """仅保留 5×5 窗口内不存在无效像素的位置。"""
+    invalid = (~valid).to(dtype=dtype)
+    return functional.max_pool2d(invalid, kernel_size=5, stride=5).eq(0.0)
+
+
 @dataclass(frozen=True)
 class FusionOutput:
     """隔离融合模型的季度单位向量及门控前中间量。"""
@@ -118,9 +124,10 @@ class IsolatedFusionSmokeModel(nn.Module):
                 raise ValueError("enabled highres branch requires highres and highres_valid")
             masked_highres = torch.where(highres_valid, highres, torch.zeros_like(highres))
             highres_features = self.highres_stem(masked_highres)
-            downsampled_valid = functional.avg_pool2d(
-                highres_valid.to(highres.dtype), kernel_size=5, stride=5
-            ).eq(1.0)
+            downsampled_valid = _downsample_all_valid_mask(
+                highres_valid,
+                dtype=highres.dtype,
+            )
             highres_delta = self.highres_adapter(highres_features)
             highres_delta = highres_delta * downsampled_valid.to(
                 device=highres_delta.device, dtype=highres_delta.dtype

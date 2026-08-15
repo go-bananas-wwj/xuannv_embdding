@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
+from experiments.china_v1_fusion_smoke import model as model_module
 from experiments.china_v1_fusion_smoke.model import IsolatedFusionSmokeModel
 
 
@@ -127,6 +128,23 @@ def test_gate_override_reaches_both_side_adapters_and_output_projection() -> Non
     assert output.gates["highres"].item() == pytest.approx(0.1)
     assert model.aef_gate.item() == 0.0
     assert model.highres_gate.item() == 0.0
+
+
+def test_downsampled_highres_mask_keeps_only_completely_valid_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """全有效窗口为真，含任一无效像素的窗口为假，且不再依赖平均池化。"""
+    valid = torch.ones((1, 1, 10, 10), dtype=torch.bool)
+    valid[:, :, 0, 0] = False
+
+    def forbidden_avg_pool2d(*_args, **_kwargs):
+        raise AssertionError("all-valid mask must not depend on average-pool rounding")
+
+    monkeypatch.setattr(model_module.functional, "avg_pool2d", forbidden_avg_pool2d)
+    downsampled = model_module._downsample_all_valid_mask(valid, dtype=torch.float32)
+
+    expected = torch.tensor([[[[False, True], [True, True]]]])
+    torch.testing.assert_close(downsampled, expected)
 
 
 def test_highres_branch_downsamples_the_real_five_times_grid() -> None:
