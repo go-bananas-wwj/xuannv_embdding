@@ -23,3 +23,4 @@ Task 5: fix round 1 started for symlink-safe writes/evidence, weights-only check
 Task 5: fix round 1/5 (4 addressed, 3 open — checkpoint apply can mutate on sparse tensor; cross-group patch identity self-attested; caller directory recursive symlink; commits 59f4041..4c90c1f)
 Task 5: fix round 2/5 (2 addressed, 1 open — checkpoint application is transactional for sparse/application failures and caller directories reject recursive symlinks; cross-group axes compare and use patch selection when present, but trusted patch selection remains optional; commits 4c90c1f..01ab4ce)
 Task 5: fix round 3/5 (1 addressed, 0 open — `manifests/patch_selection.json` is mandatory, strictly four unique patch IDs, matches all group axes, and is included in SUCCESS combined SHA-256; commits 01ab4ce..4aec329)
+Task 5: complete (commits e5f5803..2cf836e, review clean)
