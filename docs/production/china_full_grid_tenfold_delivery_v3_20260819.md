@@ -47,9 +47,33 @@
 
 - 根目录 `README.md`：总体用途与分片范围表。
 - 根目录 `tenfold_partition_manifest.json`：机器可读分片、范围、UTM 计数与验证信息。
+- 根目录 `china_tenfold_shard_regions.geojson`：十片的 WGS84 范围索引（Shape 中心经纬度外接矩形）。
 - 根目录 `QA.md`：总量、唯一归属和未分配检查。
 - `shards/shard_01/` 至 `shards/shard_10/`：每片的完整 GeoParquet Shape。
-- 每个分片目录的 `README.md`：该片范围、中心点和 UTM 分区计数。
+- 每个分片目录的 `README.md`：该片范围、中心点和 UTM 分区计数；`region_bounds.geojson`
+  提供该片的范围索引。
+
+范围索引仅供浏览、下载前筛选与经纬度定位，不能用于精确的成员判断。精确范围和唯一成员关系
+始终以各分片 GeoParquet 中的 `geometry` 与 `parent_key` 为准。
+
+## ModelScope 发布布局
+
+发布到数据集 `WeijieWu/xuannv_china_full_grid` 的新目录：
+
+```text
+releases/china-full-grid-tenfold-v3-20260819/
+├── README.md
+├── QA.md
+├── tenfold_partition_manifest.json
+├── china_tenfold_shard_regions.geojson
+├── china_tenfold_partition_overview.png
+├── SHA256SUMS.json
+├── china_full_grid_tenfold_delivery_v3_20260819.zip
+└── shards/shard_01/ ... shards/shard_10/
+```
+
+与既有 `releases/china-full-1280m-v1-20260805/` 并列发布，绝不覆盖旧版。另一台机器若只需要第
+一片，应先读取根清单和范围索引，再只下载 `shards/shard_01/`；无需下载全部十片。
 
 ## 后续生产建议
 

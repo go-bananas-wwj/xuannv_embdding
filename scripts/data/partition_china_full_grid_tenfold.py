@@ -21,6 +21,120 @@ PARTITION_CRS = CRS.from_proj4(
 )
 
 
+def region_bounds_feature(summary: dict[str, object]) -> dict[str, object]:
+    """Build a lightweight WGS84 range index, deliberately separate from exact shapes."""
+    shard_id = int(summary["shard_id"])
+    longitude_range = summary["longitude_range"]
+    latitude_range = summary["latitude_range"]
+    if not isinstance(longitude_range, list) or not isinstance(latitude_range, list):
+        raise ValueError("Region summary must contain longitude and latitude ranges")
+    lon_min, lon_max = (float(value) for value in longitude_range)
+    lat_min, lat_max = (float(value) for value in latitude_range)
+    centroid = summary["centroid_wgs84"]
+    if not isinstance(centroid, dict):
+        raise ValueError("Region summary must contain a centroid")
+    return {
+        "type": "Feature",
+        "properties": {
+            "shard_id": f"shard_{shard_id:02d}",
+            "shape_count": int(summary["shape_count"]),
+            "center_longitude": float(centroid["longitude"]),
+            "center_latitude": float(centroid["latitude"]),
+            "min_longitude": lon_min,
+            "max_longitude": lon_max,
+            "min_latitude": lat_min,
+            "max_latitude": lat_max,
+            "geometry_role": "center_coordinate_bbox_index",
+            "exact_membership": (
+                "Use the GeoParquet geometry and parent_key files in the shard directory."
+            ),
+        },
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [
+                [
+                    [lon_min, lat_min],
+                    [lon_max, lat_min],
+                    [lon_max, lat_max],
+                    [lon_min, lat_max],
+                    [lon_min, lat_min],
+                ]
+            ],
+        },
+    }
+
+
+def write_region_indices(
+    output_root: Path, summaries: list[dict[str, object]] | None = None
+) -> None:
+    """Write root and per-shard WGS84 range indexes without touching GeoParquet data."""
+    manifest_path = output_root / "tenfold_partition_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if summaries is None:
+        raw_summaries = manifest.get("shards")
+        if not isinstance(raw_summaries, list):
+            raise ValueError(f"Invalid shard summaries in {manifest_path}")
+        summaries = raw_summaries
+    region_features = [region_bounds_feature(summary) for summary in summaries]
+    region_collection = {
+        "type": "FeatureCollection",
+        "name": "china_tenfold_shard_regions",
+        "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
+        "metadata": {
+            "geometry_role": "center_coordinate_bbox_index",
+            "exact_membership": (
+                "Use the GeoParquet geometry and parent_key files in each shard directory."
+            ),
+        },
+        "features": region_features,
+    }
+    (output_root / "china_tenfold_shard_regions.geojson").write_text(
+        json.dumps(region_collection, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    for feature in region_features:
+        shard_id = str(feature["properties"]["shard_id"])
+        shard_path = output_root / "shards" / shard_id
+        if not shard_path.is_dir():
+            raise FileNotFoundError(f"Shard directory does not exist: {shard_path}")
+        (shard_path / "region_bounds.geojson").write_text(
+            json.dumps(feature, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+    manifest["region_bounds_index"] = {
+        "path": "china_tenfold_shard_regions.geojson",
+        "geometry_role": "center_coordinate_bbox_index",
+        "exact_membership": (
+            "Use the GeoParquet geometry and parent_key files in each shard directory."
+        ),
+    }
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def add_region_index_readme_notes(output_root: Path, shard_ids: list[int]) -> None:
+    """Document lightweight boundary indexes in a delivery already written to disk."""
+    root_readme = output_root / "README.md"
+    root_note = (
+        "\n## 范围索引\n\n"
+        "`china_tenfold_shard_regions.geojson` 提供十个分片的 WGS84 轻量范围索引。"
+        "其中矩形由 Shape 中心经纬度范围生成，只用于检索和预览；"
+        "精确成员必须以各分片 GeoParquet 的 `geometry` 和 `parent_key` 为准。\n"
+    )
+    root_text = root_readme.read_text(encoding="utf-8")
+    if "china_tenfold_shard_regions.geojson" not in root_text:
+        root_readme.write_text(root_text.rstrip() + root_note, encoding="utf-8")
+    shard_note = (
+        "\n## 范围索引\n\n"
+        "`region_bounds.geojson` 是该片的中心经纬度外接矩形，仅用于检索和预览。"
+        "精确成员关系以目录内 GeoParquet 的 `geometry` 和 `parent_key` 为准。\n"
+    )
+    for shard_id in shard_ids:
+        shard_readme = output_root / "shards" / f"shard_{shard_id:02d}" / "README.md"
+        shard_text = shard_readme.read_text(encoding="utf-8")
+        if "region_bounds.geojson" not in shard_text:
+            shard_readme.write_text(shard_text.rstrip() + shard_note, encoding="utf-8")
+
+
 def partition_equal_capacity(
     x: np.ndarray,
     y: np.ndarray,
@@ -70,15 +184,37 @@ def partition_equal_capacity(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source-root", type=Path, required=True)
+    parser.add_argument("--source-root", type=Path)
     parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument(
+        "--write-region-indices-only",
+        action="store_true",
+        help=(
+            "Add GeoJSON range indexes to an existing tenfold delivery "
+            "without rewriting GeoParquet."
+        ),
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    source_root = args.source_root.resolve()
     output_root = args.output_root.resolve()
+    if args.write_region_indices_only:
+        if not output_root.is_dir():
+            raise FileNotFoundError(f"Existing delivery directory does not exist: {output_root}")
+        write_region_indices(output_root)
+        manifest = json.loads(
+            (output_root / "tenfold_partition_manifest.json").read_text(encoding="utf-8")
+        )
+        add_region_index_readme_notes(
+            output_root,
+            [int(summary["shard_id"]) for summary in manifest["shards"]],
+        )
+        return
+    if args.source_root is None:
+        raise ValueError("--source-root is required unless --write-region-indices-only is set")
+    source_root = args.source_root.resolve()
     if output_root.exists():
         raise FileExistsError(f"Refusing to overwrite existing output: {output_root}")
     paths = sorted((source_root / "all").glob("utm*/part-*.parquet"))
@@ -150,11 +286,19 @@ def main() -> None:
             "shard_counts": actual_counts,
             "unassigned_shape_count": int(np.count_nonzero(assignment == 0)),
         },
+        "region_bounds_index": {
+            "path": "china_tenfold_shard_regions.geojson",
+            "geometry_role": "center_coordinate_bbox_index",
+            "exact_membership": (
+                "Use the GeoParquet geometry and parent_key files in each shard directory."
+            ),
+        },
         "shards": summaries,
     }
     (output_root / "tenfold_partition_manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    write_region_indices(output_root, summaries)
     readme_lines = [
         "# 中国全国父网格十等分交付包",
         "",
@@ -167,6 +311,9 @@ def main() -> None:
         "每个 `shards/shard_XX/` 目录可独立用于后续数据收集、预处理和 embedding 生产。",
         "`tenfold_partition_manifest.json` 是机器可读总清单；各分片目录中的",
         "`README.md` 提供范围和 UTM 分区统计。",
+        "`china_tenfold_shard_regions.geojson` 是十个分片的轻量范围索引（WGS84）。",
+        "其矩形仅由 Shape 中心经纬度范围生成，不能作为精确成员判定；精确范围以各分片",
+        "GeoParquet 的 `geometry` 和 `parent_key` 为准。",
         "",
         "## 分片范围概览",
         "",
@@ -190,7 +337,9 @@ def main() -> None:
             f"{summary['centroid_wgs84']['latitude']:.4f}",
             f"- 经度范围：{lon_min:.4f} – {lon_max:.4f}",
             f"- 纬度范围：{lat_min:.4f} – {lat_max:.4f}",
+            "- 范围索引：`region_bounds.geojson`（中心经纬度外接矩形，仅用于检索/预览）。",
             "- 该目录内 GeoParquet 保留原始父网格字段与 geometry，并追加 `shard_id`。",
+            "  精确成员关系必须以 GeoParquet 的 `geometry` 和 `parent_key` 为准。",
             "",
             "## UTM 分区计数",
             "",
@@ -210,6 +359,8 @@ def main() -> None:
         "- 未分配 Shape 数：0",
         "- 分片重叠规则：每条输入记录只在一次写入循环中分配给一个 `shard_id`。",
         "- 详细计数和范围见 `tenfold_partition_manifest.json`。",
+        "- 范围索引文件：`china_tenfold_shard_regions.geojson`，每片也有 `region_bounds.geojson`。",
+        "  它们是 Shape 中心经纬度的外接矩形；精确成员关系以 GeoParquet 为准。",
     ]
     (output_root / "QA.md").write_text("\n".join(qa_report) + "\n", encoding="utf-8")
 
