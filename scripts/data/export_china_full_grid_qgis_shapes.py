@@ -48,6 +48,17 @@ def write_qgis_geopackage(frame: gpd.GeoDataFrame, destination: Path, layer: str
     frame.to_file(destination, layer=layer, driver="GPKG", engine="pyogrio", index=False)
 
 
+def write_boundary_exports(
+    frame: gpd.GeoDataFrame,
+    shapefile_destination: Path,
+    geopackage_destination: Path,
+    layer: str,
+) -> None:
+    """Write each exact boundary in both requested Shapefile and GeoPackage formats."""
+    write_qgis_shapefile(frame, shapefile_destination)
+    write_qgis_geopackage(frame, geopackage_destination, layer=layer)
+
+
 def read_shard_grid_cells(shard_root: Path) -> gpd.GeoDataFrame:
     """Read a shard's exact WGS84 cell polygons from its GeoParquet pieces."""
     frames: list[pd.DataFrame] = []
@@ -116,11 +127,11 @@ def write_delivery_readmes(output_root: Path) -> None:
     root_readme.write_text(
         existing
         + "\n## QGIS 精确 Shape 文件\n\n"
-        + "`qgis_shapes/china_ten_regions_exact.gpkg` 含十个大区的精确裁剪边界；"
-        + "`qgis_shapes/china_full_grid_coverage_exact.gpkg` 是十区合并后的全国网格覆盖边界。"
-        + "二者均为 GeoPackage，可由 QGIS 直接打开，是大区边界的权威格式。\n\n"
+        + "`qgis_shapes/china_ten_regions_exact.shp` 含十个大区的精确裁剪边界；"
+        + "`qgis_shapes/china_full_grid_coverage_exact.shp` 是十区合并后的全国网格覆盖边界。"
+        + "二者都有同名 `.gpkg` 副本，可由 QGIS 直接打开。\n\n"
         + "每个 `qgis_shapes/shards/shard_XX/` 目录含：\n\n"
-        + "- `shard_XX_boundary_exact.gpkg`：该大区所有 1280 m 网格的精确并集边界；\n"
+        + "- `shard_XX_boundary_exact.shp`：该大区所有 1280 m 网格的精确并集边界；\n"
         + "- `shard_XX_grid_cells_1280m.shp`：该大区全部精确 1280 m × 1280 m 网格。\n\n"
         + "这些文件都由 GeoParquet 的实际 `geometry` 直接导出或精确并集而来；"
         + "边界网格已经遵循原始中国范围裁剪。"
@@ -162,8 +173,9 @@ def main() -> None:
         boundary = region.assign(src_shard=int(summaries[shard_id]["source_shard_id"]))[
             ["shard_id", "src_shard", "cell_count", "geometry"]
         ]
-        write_qgis_geopackage(
+        write_boundary_exports(
             boundary,
+            shard_shape_root / f"shard_{shard_id:02d}_boundary_exact.shp",
             shard_shape_root / f"shard_{shard_id:02d}_boundary_exact.gpkg",
             layer="boundary",
         )
@@ -178,11 +190,15 @@ def main() -> None:
         geometry="geometry",
         crs=WGS84,
     )
-    write_qgis_geopackage(
-        regions, shapes_root / "china_ten_regions_exact.gpkg", layer="ten_regions"
+    write_boundary_exports(
+        regions,
+        shapes_root / "china_ten_regions_exact.shp",
+        shapes_root / "china_ten_regions_exact.gpkg",
+        layer="ten_regions",
     )
-    write_qgis_geopackage(
+    write_boundary_exports(
         national,
+        shapes_root / "china_full_grid_coverage_exact.shp",
         shapes_root / "china_full_grid_coverage_exact.gpkg",
         layer="national_coverage",
     )

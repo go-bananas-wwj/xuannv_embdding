@@ -137,3 +137,27 @@ def test_boundary_geopackage_preserves_complex_polygon_validity(tmp_path: Path) 
     result = gpd.read_file(destination, layer="boundary").geometry.iloc[0]
     assert result.is_valid
     assert result.area == 8
+
+
+def test_boundary_export_writes_qgis_shapefile_and_geopackage(tmp_path: Path) -> None:
+    """Every large boundary export must include both requested .shp and robust .gpkg files."""
+    module = load_script()
+    boundary = gpd.GeoDataFrame(
+        {"shard_id": [1], "cell_count": [8]},
+        geometry=[
+            Polygon(
+                [(0, 0), (3, 0), (3, 3), (0, 3), (0, 0)],
+                holes=[[(1, 1), (2, 1), (2, 2), (1, 2), (1, 1)]],
+            )
+        ],
+        crs="EPSG:4326",
+    )
+    shp_path = tmp_path / "boundary_exact.shp"
+    gpkg_path = tmp_path / "boundary_exact.gpkg"
+
+    module.write_boundary_exports(boundary, shp_path, gpkg_path, layer="boundary")
+
+    assert shp_path.exists()
+    assert gpkg_path.exists()
+    assert gpd.read_file(shp_path).geometry.iloc[0].is_valid
+    assert gpd.read_file(gpkg_path, layer="boundary").geometry.iloc[0].is_valid
