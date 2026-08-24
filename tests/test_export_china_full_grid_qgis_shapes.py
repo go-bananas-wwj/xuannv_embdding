@@ -69,3 +69,27 @@ def test_write_grid_cells_shapefile_keeps_exact_cell_features(tmp_path: Path) ->
     assert len(result) == 2
     assert result["parent_key"].tolist() == ["32648:1:2", "32648:1:3"]
     assert result.geometry.iloc[0].equals(cells.geometry.iloc[0])
+
+
+def test_polygonal_validity_repair_removes_self_intersections() -> None:
+    """A topology repair must keep exported national boundaries valid for QGIS."""
+    module = load_script()
+    self_intersecting = Polygon([(0, 0), (2, 2), (0, 2), (2, 0), (0, 0)])
+
+    repaired = module.make_polygonal_valid(self_intersecting)
+
+    assert not self_intersecting.is_valid
+    assert repaired.is_valid
+    assert repaired.geom_type in {"Polygon", "MultiPolygon"}
+
+
+def test_qgis_readme_section_is_not_duplicated_on_regeneration(tmp_path: Path) -> None:
+    """Regenerating an interrupted local export must not duplicate README guidance."""
+    module = load_script()
+    readme = tmp_path / "README.md"
+    readme.write_text("# Delivery\n", encoding="utf-8")
+
+    module.write_delivery_readmes(tmp_path)
+    module.write_delivery_readmes(tmp_path)
+
+    assert readme.read_text(encoding="utf-8").count("## QGIS 精确 Shape 文件") == 1

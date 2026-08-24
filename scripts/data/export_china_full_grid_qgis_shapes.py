@@ -17,6 +17,23 @@ GRID_COLUMNS = ["parent_key", "shard_id", "grid_id", "grid_col", "grid_row", "ge
 WGS84 = "EPSG:4326"
 
 
+def make_polygonal_valid(geometry: shapely.Geometry) -> shapely.Geometry:
+    """Repair rare topology artifacts while retaining only polygonal coverage."""
+    if geometry.is_valid:
+        return geometry
+    repaired = shapely.make_valid(geometry, method="structure", keep_collapsed=False)
+    if repaired.geom_type in {"Polygon", "MultiPolygon"}:
+        return repaired
+    polygon_parts = [
+        part
+        for part in shapely.get_parts(repaired)
+        if part.geom_type in {"Polygon", "MultiPolygon"} and not part.is_empty
+    ]
+    if not polygon_parts:
+        raise ValueError("Topology repair produced no polygonal coverage")
+    return shapely.union_all(np.asarray(polygon_parts, dtype=object))
+
+
 def write_qgis_shapefile(frame: gpd.GeoDataFrame, destination: Path) -> None:
     """Write a UTF-8 ESRI Shapefile that QGIS can open directly."""
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -49,12 +66,16 @@ def dissolve_region_boundaries(
 
     records: list[dict[str, object]] = []
     for shard_id, shard_cells in cells.groupby("shard_id", sort=True):
-        geometry = shapely.union_all(np.asarray(shard_cells.geometry.array, dtype=object))
+        geometry = make_polygonal_valid(
+            shapely.union_all(np.asarray(shard_cells.geometry.array, dtype=object))
+        )
         records.append(
             {"shard_id": int(shard_id), "cell_count": len(shard_cells), "geometry": geometry}
         )
     regions = gpd.GeoDataFrame(records, geometry="geometry", crs=cells.crs)
-    national_geometry = shapely.union_all(np.asarray(regions.geometry.array, dtype=object))
+    national_geometry = make_polygonal_valid(
+        shapely.union_all(np.asarray(regions.geometry.array, dtype=object))
+    )
     national = gpd.GeoDataFrame(
         [{"coverage": "china_full_grid_ten_regions", "geometry": national_geometry}],
         geometry="geometry",
@@ -77,8 +98,11 @@ def parse_args() -> argparse.Namespace:
 def write_delivery_readmes(output_root: Path) -> None:
     """Describe the exact Shape exports without conflating them with bbox indices."""
     root_readme = output_root / "README.md"
+    existing = root_readme.read_text(encoding="utf-8")
+    if "## QGIS 精确 Shape 文件" in existing:
+        return
     root_readme.write_text(
-        root_readme.read_text(encoding="utf-8")
+        existing
         + "\n## QGIS 精确 Shape 文件\n\n"
         + "`qgis_shapes/china_ten_regions_exact.shp` 含十个大区的精确裁剪边界；"
         + "`qgis_shapes/china_full_grid_coverage_exact.shp` 是十区合并后的全国网格覆盖边界。\n\n"
@@ -128,7 +152,9 @@ def main() -> None:
         region_records.append(boundary.iloc[0].to_dict())
 
     regions = gpd.GeoDataFrame(region_records, geometry="geometry", crs=WGS84)
-    national_geometry = shapely.union_all(np.asarray(regions.geometry.array, dtype=object))
+    national_geometry = make_polygonal_valid(
+        shapely.union_all(np.asarray(regions.geometry.array, dtype=object))
+    )
     national = gpd.GeoDataFrame(
         [{"coverage": "china_full_grid_ten_regions", "geometry": national_geometry}],
         geometry="geometry",
