@@ -42,6 +42,12 @@ def write_qgis_shapefile(frame: gpd.GeoDataFrame, destination: Path) -> None:
     )
 
 
+def write_qgis_geopackage(frame: gpd.GeoDataFrame, destination: Path, layer: str) -> None:
+    """Write a GeoPackage layer for complex polygon boundaries without ring loss."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_file(destination, layer=layer, driver="GPKG", engine="pyogrio", index=False)
+
+
 def read_shard_grid_cells(shard_root: Path) -> gpd.GeoDataFrame:
     """Read a shard's exact WGS84 cell polygons from its GeoParquet pieces."""
     frames: list[pd.DataFrame] = []
@@ -92,6 +98,11 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="Existing V4 delivery directory to extend with qgis_shapes/.",
     )
+    parser.add_argument(
+        "--boundaries-only",
+        action="store_true",
+        help="Create canonical GeoPackage boundaries alongside existing grid-cell Shapefiles.",
+    )
     return parser.parse_args()
 
 
@@ -99,17 +110,19 @@ def write_delivery_readmes(output_root: Path) -> None:
     """Describe the exact Shape exports without conflating them with bbox indices."""
     root_readme = output_root / "README.md"
     existing = root_readme.read_text(encoding="utf-8")
-    if "## QGIS 精确 Shape 文件" in existing:
-        return
+    marker = "## QGIS 精确 Shape 文件"
+    if marker in existing:
+        existing = existing.split(marker, maxsplit=1)[0].rstrip() + "\n"
     root_readme.write_text(
         existing
         + "\n## QGIS 精确 Shape 文件\n\n"
-        + "`qgis_shapes/china_ten_regions_exact.shp` 含十个大区的精确裁剪边界；"
-        + "`qgis_shapes/china_full_grid_coverage_exact.shp` 是十区合并后的全国网格覆盖边界。\n\n"
+        + "`qgis_shapes/china_ten_regions_exact.gpkg` 含十个大区的精确裁剪边界；"
+        + "`qgis_shapes/china_full_grid_coverage_exact.gpkg` 是十区合并后的全国网格覆盖边界。"
+        + "二者均为 GeoPackage，可由 QGIS 直接打开，是大区边界的权威格式。\n\n"
         + "每个 `qgis_shapes/shards/shard_XX/` 目录含：\n\n"
-        + "- `shard_XX_boundary_exact.shp`：该大区所有 1280 m 网格的精确并集边界；\n"
+        + "- `shard_XX_boundary_exact.gpkg`：该大区所有 1280 m 网格的精确并集边界；\n"
         + "- `shard_XX_grid_cells_1280m.shp`：该大区全部精确 1280 m × 1280 m 网格。\n\n"
-        + "这些 Shape 都由 GeoParquet 的实际 `geometry` 直接导出或精确并集而来；"
+        + "这些文件都由 GeoParquet 的实际 `geometry` 直接导出或精确并集而来；"
         + "边界网格已经遵循原始中国范围裁剪。"
         + "`region_bounds.geojson` 仍只是一份经纬度外接矩形索引。\n",
         encoding="utf-8",
@@ -122,7 +135,7 @@ def main() -> None:
     if not delivery_root.is_dir():
         raise FileNotFoundError(f"Delivery directory does not exist: {delivery_root}")
     shapes_root = delivery_root / "qgis_shapes"
-    if shapes_root.exists():
+    if shapes_root.exists() and not args.boundaries_only:
         raise FileExistsError(f"Refusing to overwrite existing Shape directory: {shapes_root}")
 
     manifest = json.loads((delivery_root / "tenfold_partition_manifest.json").read_text())
@@ -130,7 +143,7 @@ def main() -> None:
     if sorted(summaries) != list(range(1, 11)):
         raise ValueError("Delivery manifest must contain shard_01 through shard_10")
 
-    shapes_root.mkdir(parents=True)
+    shapes_root.mkdir(parents=True, exist_ok=args.boundaries_only)
     region_records: list[dict[str, object]] = []
     for shard_id in range(1, 11):
         shard_root = delivery_root / "shards" / f"shard_{shard_id:02d}"
@@ -141,13 +154,18 @@ def main() -> None:
             raise ValueError(f"Incorrect shard_id values in shard_{shard_id:02d}")
 
         shard_shape_root = shapes_root / "shards" / f"shard_{shard_id:02d}"
-        write_qgis_shapefile(cells, shard_shape_root / f"shard_{shard_id:02d}_grid_cells_1280m.shp")
+        if not args.boundaries_only:
+            write_qgis_shapefile(
+                cells, shard_shape_root / f"shard_{shard_id:02d}_grid_cells_1280m.shp"
+            )
         region, _ = dissolve_region_boundaries(cells)
         boundary = region.assign(src_shard=int(summaries[shard_id]["source_shard_id"]))[
             ["shard_id", "src_shard", "cell_count", "geometry"]
         ]
-        write_qgis_shapefile(
-            boundary, shard_shape_root / f"shard_{shard_id:02d}_boundary_exact.shp"
+        write_qgis_geopackage(
+            boundary,
+            shard_shape_root / f"shard_{shard_id:02d}_boundary_exact.gpkg",
+            layer="boundary",
         )
         region_records.append(boundary.iloc[0].to_dict())
 
@@ -160,8 +178,14 @@ def main() -> None:
         geometry="geometry",
         crs=WGS84,
     )
-    write_qgis_shapefile(regions, shapes_root / "china_ten_regions_exact.shp")
-    write_qgis_shapefile(national, shapes_root / "china_full_grid_coverage_exact.shp")
+    write_qgis_geopackage(
+        regions, shapes_root / "china_ten_regions_exact.gpkg", layer="ten_regions"
+    )
+    write_qgis_geopackage(
+        national,
+        shapes_root / "china_full_grid_coverage_exact.gpkg",
+        layer="national_coverage",
+    )
     write_delivery_readmes(delivery_root)
 
 

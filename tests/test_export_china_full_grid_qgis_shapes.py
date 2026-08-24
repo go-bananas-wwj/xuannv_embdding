@@ -93,3 +93,47 @@ def test_qgis_readme_section_is_not_duplicated_on_regeneration(tmp_path: Path) -
     module.write_delivery_readmes(tmp_path)
 
     assert readme.read_text(encoding="utf-8").count("## QGIS 精确 Shape 文件") == 1
+
+
+def test_boundary_shapefile_preserves_polygon_holes_as_valid_geometry(tmp_path: Path) -> None:
+    """ESRI Shapefile ring orientation must not turn holes into nested shells."""
+    module = load_script()
+    boundary = gpd.GeoDataFrame(
+        {"shard_id": [1], "cell_count": [8]},
+        geometry=[
+            Polygon(
+                [(0, 0), (3, 0), (3, 3), (0, 3), (0, 0)],
+                holes=[[(1, 1), (2, 1), (2, 2), (1, 2), (1, 1)]],
+            )
+        ],
+        crs="EPSG:4326",
+    )
+    destination = tmp_path / "boundary.shp"
+
+    module.write_qgis_shapefile(boundary, destination)
+
+    result = gpd.read_file(destination).geometry.iloc[0]
+    assert result.is_valid
+    assert result.area == 8
+
+
+def test_boundary_geopackage_preserves_complex_polygon_validity(tmp_path: Path) -> None:
+    """The canonical QGIS boundary format must retain polygon holes without topology loss."""
+    module = load_script()
+    boundary = gpd.GeoDataFrame(
+        {"shard_id": [1], "cell_count": [8]},
+        geometry=[
+            Polygon(
+                [(0, 0), (3, 0), (3, 3), (0, 3), (0, 0)],
+                holes=[[(1, 1), (2, 1), (2, 2), (1, 2), (1, 1)]],
+            )
+        ],
+        crs="EPSG:4326",
+    )
+    destination = tmp_path / "boundary_exact.gpkg"
+
+    module.write_qgis_geopackage(boundary, destination, layer="boundary")
+
+    result = gpd.read_file(destination, layer="boundary").geometry.iloc[0]
+    assert result.is_valid
+    assert result.area == 8
