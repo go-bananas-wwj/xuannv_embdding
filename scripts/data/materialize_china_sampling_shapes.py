@@ -761,7 +761,8 @@ def write_package_readme(output_dir: Path, validation: dict[str, Any]) -> None:
 2. `china_quarterly_62000_candidate_footprints.shp`
    每个样本的 1,280 m x 1,280 m UTM 原生方格转换到 WGS84 后的范围。
 3. `china_quarterly_62000_candidate.gpkg`
-   推荐使用的无字段名截断版本，包含 `centers` 和 `footprints` 两个图层。
+   推荐优先使用的单文件空间数据，包含 `centers` 和 `footprints` 两个图层。
+   空间图层使用便于 GIS 软件读取的短字段名；完整注册字段以 JSONL 为准。
 4. `china_quarterly_62000_candidate_registry.jsonl`
    候选注册表，包含身份哈希、边界、分层原因和待办状态。
 5. `china_quarterly_62000_candidate_registry.csv`
@@ -770,6 +771,17 @@ def write_package_readme(output_dir: Path, validation: dict[str, Any]) -> None:
    修复、去重、跨 UTM 重叠和验收结果。
 7. `SHA256SUMS.json`
    文件完整性校验值。
+8. `先读我.docx`
+   中文交付说明，介绍采样方法、坐标系、文件内容、当前限制和后续工作。
+
+## 坐标系
+
+1. 规则网格和 1,280 m x 1,280 m 方框在所属的 WGS84 / UTM 北半球分区中
+   建立，范围为 EPSG:32643 至 EPSG:32653，单位为米。
+2. 交付的 Shapefile 和 GeoPackage 统一转换为 WGS84 / EPSG:4326。
+   坐标轴按 GIS 文件常用顺序保存：X 为经度，Y 为纬度，单位为十进制度。
+3. 距离、面积、缓冲区和重叠率计算必须按 `UTM_EPSG` 或 `grid_epsg`
+   投影回对应 UTM 分区，不能直接在 EPSG:4326 中按度计算米制距离。
 
 ## 已通过的空间检查
 
